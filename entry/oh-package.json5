@@ -1,0 +1,10 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Moonlight V+ 主入口模块",
+  "main": "",
+  "author": "",
+  "license": "GPL-3.0",
+  "dependencies": {}
+}

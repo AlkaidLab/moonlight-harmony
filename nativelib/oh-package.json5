@@ -1,0 +1,10 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "nativelib",
+  "version": "1.0.0",
+  "description": "Moonlight Native 串流核心库",
+  "main": "",
+  "author": "",
+  "license": "GPL-3.0",
+  "dependencies": {}
+}

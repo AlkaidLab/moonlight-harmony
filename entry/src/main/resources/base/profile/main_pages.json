@@ -1,0 +1,10 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/PcListPage",
+    "pages/AppListPage",
+    "pages/StreamPage",
+    "pages/SettingsPage",
+    "pages/AddPcPage"
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Moonlight V+ 主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Moonlight V+ 游戏串流客户端"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Moonlight V+"
+    },
+    {
+      "name": "streaming_service_desc",
+      "value": "串流后台服务"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "用于连接远程主机进行游戏串流"
+    },
+    {
+      "name": "permission_network_info_reason",
+      "value": "用于检测网络状态"
+    },
+    {
+      "name": "permission_wifi_info_reason",
+      "value": "用于发现局域网内的主机"
+    },
+    {
+      "name": "permission_microphone_reason",
+      "value": "用于麦克风重定向功能"
+    },
+    {
+      "name": "permission_vibrate_reason",
+      "value": "用于手柄震动反馈"
+    },
+    {
+      "name": "permission_background_reason",
+      "value": "用于保持串流连接在后台运行"
+    },
+    {
+      "name": "pc_list_title",
+      "value": "我的电脑"
+    },
+    {
+      "name": "app_list_title",
+      "value": "应用列表"
+    },
+    {
+      "name": "settings_title",
+      "value": "设置"
+    },
+    {
+      "name": "add_pc_title",
+      "value": "添加电脑"
+    },
+    {
+      "name": "streaming",
+      "value": "正在串流"
+    },
+    {
+      "name": "connecting",
+      "value": "正在连接..."
+    },
+    {
+      "name": "disconnected",
+      "value": "已断开连接"
+    },
+    {
+      "name": "online",
+      "value": "在线"
+    },
+    {
+      "name": "offline",
+      "value": "离线"
+    },
+    {
+      "name": "add_manually",
+      "value": "手动添加"
+    },
+    {
+      "name": "scan_network",
+      "value": "扫描网络"
+    },
+    {
+      "name": "enter_ip_address",
+      "value": "输入 IP 地址"
+    },
+    {
+      "name": "pair_with_pc",
+      "value": "与电脑配对"
+    },
+    {
+      "name": "wake_on_lan",
+      "value": "网络唤醒"
+    },
+    {
+      "name": "delete_pc",
+      "value": "删除电脑"
+    },
+    {
+      "name": "refresh",
+      "value": "刷新"
+    },
+    {
+      "name": "start_stream",
+      "value": "开始串流"
+    },
+    {
+      "name": "stop_stream",
+      "value": "停止串流"
+    }
+  ]
+}

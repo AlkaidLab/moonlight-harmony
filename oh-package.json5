@@ -1,0 +1,13 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "moonlight-harmonyos",
+  "version": "1.0.0",
+  "description": "Moonlight V+ - HarmonyOS 游戏串流客户端",
+  "main": "",
+  "author": "",
+  "license": "GPL-3.0",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.9"
+  }
+}

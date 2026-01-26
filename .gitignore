@@ -1,0 +1,36 @@
+# HarmonyOS / DevEco Studio
+.idea/
+*.iml
+build/
+.cxx/
+oh_modules/
+node_modules/
+.hvigor/
+.local.properties
+local.properties
+.preview/
+entry/.preview/
+nativelib/.preview/
+
+# Compiled files
+*.o
+*.so
+*.a
+*.hap
+*.app
+
+# Log files
+*.log
+
+# IDE
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+nul
+
+# Package lock files
+oh-package-lock.json5
