@@ -1,3 +1,13 @@
+/*
+ * Moonlight for HarmonyOS
+ * Copyright (C) 2024-2025 Moonlight/AlkaidLab
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
 import { preferences } from '@kit.ArkData';
 import { Context } from '@kit.AbilityKit';
 
@@ -7,15 +17,59 @@ import { Context } from '@kit.AbilityKit';
 export class PreferencesUtil {
   private static readonly PREFERENCES_NAME = 'moonlight_settings';
   private static preferencesInstance: preferences.Preferences | null = null;
+  private static contextRef: Context | null = null;
 
-  static async getPreferences(context: Context): Promise<preferences.Preferences> {
+  /**
+   * 初始化（需要在应用启动时调用）
+   */
+  static init(context: Context): void {
+    PreferencesUtil.contextRef = context;
+  }
+
+  static async getPreferences(context?: Context): Promise<preferences.Preferences> {
+    const ctx = context || PreferencesUtil.contextRef;
+    if (!ctx) {
+      throw new Error('PreferencesUtil: context not initialized');
+    }
     if (!PreferencesUtil.preferencesInstance) {
-      PreferencesUtil.preferencesInstance = await preferences.getPreferences(
-        context,
-        PreferencesUtil.PREFERENCES_NAME
-      );
+      try {
+        PreferencesUtil.preferencesInstance = await preferences.getPreferences(
+          ctx,
+          PreferencesUtil.PREFERENCES_NAME
+        );
+      } catch (e) {
+        throw new Error(`PreferencesUtil: failed to get preferences - ${e}`);
+      }
     }
     return PreferencesUtil.preferencesInstance;
+  }
+
+  /**
+   * 通用获取方法
+   * 注意：对于数字类型，如果存储的是字符串会自动转换
+   */
+  static async get<T>(key: string, defaultValue: T): Promise<T> {
+    const prefs = await PreferencesUtil.getPreferences();
+    const value = await prefs.get(key, defaultValue as preferences.ValueType);
+    
+    // 如果期望返回数字但得到字符串，尝试转换
+    if (typeof defaultValue === 'number' && typeof value === 'string') {
+      const parsed = Number(value);
+      if (!isNaN(parsed)) {
+        return parsed as T;
+      }
+    }
+    
+    return value as T;
+  }
+
+  /**
+   * 通用设置方法
+   */
+  static async put(key: string, value: preferences.ValueType): Promise<void> {
+    const prefs = await PreferencesUtil.getPreferences();
+    await prefs.put(key, value);
+    await prefs.flush();
   }
 
   static async getString(context: Context, key: string, defaultValue: string = ''): Promise<string> {

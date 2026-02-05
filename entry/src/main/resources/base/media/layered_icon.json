@@ -1,6 +1,6 @@
 {
   "layered-image": {
-    "background": "$media:startIcon",
-    "foreground": "$media:startIcon"
+    "background": "#1E88E5",
+    "foreground": "$media:ic_pc_default"
   }
 }

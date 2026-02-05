@@ -17,9 +17,9 @@
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
-        "icon": "$media:layered_icon",
+        "icon": "$media:app_icon",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:startIcon",
+        "startWindowIcon": "$media:app_icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [
@@ -33,40 +33,14 @@
           }
         ],
         "backgroundModes": [
-          "voip",
           "dataTransfer"
         ]
-      }
-    ],
-    "extensionAbilities": [
-      {
-        "name": "StreamingService",
-        "srcEntry": "./ets/services/StreamingService.ets",
-        "type": "service",
-        "description": "$string:streaming_service_desc",
-        "exported": false
       }
     ],
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET",
         "reason": "$string:permission_internet_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
-        "name": "ohos.permission.GET_NETWORK_INFO",
-        "reason": "$string:permission_network_info_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
-        "name": "ohos.permission.GET_WIFI_INFO",
-        "reason": "$string:permission_wifi_info_reason",
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "always"
@@ -94,6 +68,14 @@
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.ACCELEROMETER",
+        "reason": "$string:permission_accelerometer_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
         }
       }
     ]

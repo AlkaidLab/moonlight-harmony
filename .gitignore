@@ -11,6 +11,15 @@ local.properties
 .preview/
 entry/.preview/
 nativelib/.preview/
+.appanalyzer/
+
+# Build profile (contains signing config)
+build-profile.json5
+nativelib/BuildProfile.ets
+
+# Temp empty files
+Check
+More
 
 # Compiled files
 *.o
@@ -34,3 +43,4 @@ nul
 
 # Package lock files
 oh-package-lock.json5
+nativelib/src/main/cpp/mbedtls/

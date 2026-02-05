@@ -1,0 +1,116 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#1A1210"
+    },
+    {
+      "name": "primary",
+      "value": "#D7A574"
+    },
+    {
+      "name": "primary_dark",
+      "value": "#B8865A"
+    },
+    {
+      "name": "primary_light",
+      "value": "#E8C4A0"
+    },
+    {
+      "name": "accent",
+      "value": "#F5D59A"
+    },
+    {
+      "name": "accent_dark",
+      "value": "#D4B67A"
+    },
+    {
+      "name": "background",
+      "value": "#1A1210"
+    },
+    {
+      "name": "background_elevated",
+      "value": "#241C18"
+    },
+    {
+      "name": "surface",
+      "value": "#992A2220"
+    },
+    {
+      "name": "surface_dark",
+      "value": "#99201816"
+    },
+    {
+      "name": "card_background",
+      "value": "#992E2422"
+    },
+    {
+      "name": "card_border",
+      "value": "#803A302C"
+    },
+    {
+      "name": "surface_transparent",
+      "value": "#992A2220"
+    },
+    {
+      "name": "text_primary",
+      "value": "#F5F0EB"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#B8A898"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#786858"
+    },
+    {
+      "name": "text_on_primary",
+      "value": "#1A1210"
+    },
+    {
+      "name": "online_green",
+      "value": "#8BC34A"
+    },
+    {
+      "name": "offline_gray",
+      "value": "#786858"
+    },
+    {
+      "name": "error_red",
+      "value": "#FF7043"
+    },
+    {
+      "name": "warning_yellow",
+      "value": "#FFB74D"
+    },
+    {
+      "name": "success_green",
+      "value": "#8BC34A"
+    },
+    {
+      "name": "info_blue",
+      "value": "#4FC3F7"
+    },
+    {
+      "name": "divider",
+      "value": "#2E2422"
+    },
+    {
+      "name": "border",
+      "value": "#3A302C"
+    },
+    {
+      "name": "glow_primary",
+      "value": "#D7A57440"
+    },
+    {
+      "name": "glow_accent",
+      "value": "#F5D59A40"
+    },
+    {
+      "name": "overlay",
+      "value": "#000000B0"
+    }
+  ]
+}

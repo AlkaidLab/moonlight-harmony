@@ -1,0 +1,10 @@
+{
+  "name": "hvigor-deps",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hvigor dependencies for CI build",
+  "dependencies": {
+    "@ohos/hvigor": "6.22.2",
+    "@ohos/hvigor-ohos-plugin": "6.22.2"
+  }
+}

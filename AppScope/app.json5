@@ -1,10 +1,12 @@
 {
   "app": {
-    "bundleName": "com.limelight.moonlight",
+    "bundleName": "com.alkaidlab.sdream",
     "vendor": "Moonlight",
     "versionCode": 1000000,
     "versionName": "1.0.0",
     "icon": "$media:app_icon",
-    "label": "$string:app_name"
+    "label": "$string:app_name",
+    "bundleType": "app",
+    "entityType": "game"
   }
 }

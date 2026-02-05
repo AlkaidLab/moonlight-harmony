@@ -1,10 +1,11 @@
 {
   "src": [
     "pages/Index",
-    "pages/PcListPage",
-    "pages/AppListPage",
     "pages/StreamPage",
-    "pages/SettingsPage",
-    "pages/AddPcPage"
+    "pages/PcListPageV2",
+    "pages/AppListPageV2",
+    "pages/SettingsPageV2",
+    "pages/AddPcPageV2",
+    "pages/ControllerTestPage"
   ]
 }

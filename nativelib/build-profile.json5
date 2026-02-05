@@ -4,12 +4,16 @@
     "externalNativeOptions": {
       "path": "./src/main/cpp/CMakeLists.txt",
       "arguments": "",
-      "cppFlags": ""
+      "cppFlags": "",
+      "abiFilters": ["arm64-v8a", "x86_64"]
     }
   },
   "buildOptionSet": [
     {
-      "name": "release"
+      "name": "release",
+      "externalNativeOptions": {
+        "abiFilters": ["arm64-v8a"]
+      }
     }
   ],
   "targets": [

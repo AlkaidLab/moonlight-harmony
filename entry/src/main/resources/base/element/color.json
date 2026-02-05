@@ -2,51 +2,115 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#1a1a2e"
+      "value": "#F5F9FC"
     },
     {
       "name": "primary",
-      "value": "#6366f1"
+      "value": "#3D8ECF"
     },
     {
       "name": "primary_dark",
-      "value": "#4f46e5"
+      "value": "#2D6FA8"
+    },
+    {
+      "name": "primary_light",
+      "value": "#5FAEE8"
+    },
+    {
+      "name": "accent",
+      "value": "#A8D5E8"
+    },
+    {
+      "name": "accent_dark",
+      "value": "#7BC0DB"
     },
     {
       "name": "background",
-      "value": "#0f0f23"
+      "value": "#F5F9FC"
+    },
+    {
+      "name": "background_elevated",
+      "value": "#FFFFFF"
     },
     {
       "name": "surface",
-      "value": "#1a1a2e"
+      "value": "#B0FFFFFF"
+    },
+    {
+      "name": "surface_dark",
+      "value": "#B0F0F5F9"
     },
     {
       "name": "card_background",
-      "value": "#252542"
+      "value": "#B0FFFFFF"
+    },
+    {
+      "name": "card_border",
+      "value": "#80D4E6F0"
+    },
+    {
+      "name": "surface_transparent",
+      "value": "#99FFFFFF"
     },
     {
       "name": "text_primary",
-      "value": "#ffffff"
+      "value": "#1A3A4A"
     },
     {
       "name": "text_secondary",
-      "value": "#a1a1aa"
+      "value": "#5A7A8A"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#8AA0AA"
+    },
+    {
+      "name": "text_on_primary",
+      "value": "#FFFFFF"
     },
     {
       "name": "online_green",
-      "value": "#22c55e"
+      "value": "#4CAF50"
     },
     {
       "name": "offline_gray",
-      "value": "#71717a"
+      "value": "#9E9E9E"
     },
     {
       "name": "error_red",
-      "value": "#ef4444"
+      "value": "#F44336"
     },
     {
       "name": "warning_yellow",
-      "value": "#eab308"
+      "value": "#FF9800"
+    },
+    {
+      "name": "success_green",
+      "value": "#4CAF50"
+    },
+    {
+      "name": "info_blue",
+      "value": "#2196F3"
+    },
+    {
+      "name": "divider",
+      "value": "#E8F1F7"
+    },
+    {
+      "name": "border",
+      "value": "#D4E6F0"
+    },
+    {
+      "name": "glow_primary",
+      "value": "#3D8ECF40"
+    },
+    {
+      "name": "glow_accent",
+      "value": "#A8D5E840"
+    },
+    {
+      "name": "overlay",
+      "value": "#00000060"
     }
   ]
 }

@@ -1,0 +1,351 @@
+name: Build HarmonyOS HAP
+
+# CI 暂时禁用，等待修复 hvigor 构建问题
+# on:
+#   push:
+#     branches: [ master, main ]
+#     tags:
+#       - 'v*'
+#   pull_request:
+#     branches: [ master, main ]
+#   workflow_dispatch:
+#     inputs:
+#       build_type:
+#         description: 'Build type (debug/release)'
+#         required: false
+#         default: 'release'
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type (debug/release)'
+        required: false
+        default: 'release'
+
+env:
+  NODE_OPTIONS: '--max_old_space_size=4096'
+  # HarmonyOS SDK 版本
+  OHOS_SDK_VERSION: '5.0.0'
+  OHOS_API_VERSION: '12'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+    
+    - name: Get version info
+      id: version
+      run: |
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/v}
+        else
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev-${GITHUB_SHA:0:7}")
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version: $VERSION"
+    
+    # ===== 缓存 HarmonyOS SDK =====
+    - name: Cache HarmonyOS SDK
+      id: cache-sdk
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/ohos-sdk
+          ~/ohpm
+          ~/hvigor-tool
+          ~/.ohpm
+        key: ohos-sdk-${{ env.OHOS_SDK_VERSION }}-cmdtools-5.0.3.906-v1
+        restore-keys: |
+          ohos-sdk-${{ env.OHOS_SDK_VERSION }}-cmdtools-
+    
+    # ===== 下载并安装 HarmonyOS SDK =====
+    - name: Download HarmonyOS SDK
+      if: steps.cache-sdk.outputs.cache-hit != 'true'
+      run: |
+        echo "Downloading HarmonyOS SDK ${{ env.OHOS_SDK_VERSION }}..."
+        mkdir -p ~/ohos-sdk
+        cd ~/ohos-sdk
+        
+        # 下载 SDK (包含 Windows 和 Linux 版本)
+        SDK_URL="https://repo.huaweicloud.com/harmonyos/os/${{ env.OHOS_SDK_VERSION }}-Release/ohos-sdk-windows_linux-public.tar.gz"
+        
+        echo "Downloading from: $SDK_URL"
+        curl -L -o ohos-sdk.tar.gz "$SDK_URL" --progress-bar
+        
+        echo "Extracting SDK..."
+        tar -xzf ohos-sdk.tar.gz
+        rm ohos-sdk.tar.gz
+        
+        # 找到并解压 Linux 版本的工具
+        echo "Setting up Linux tools..."
+        if [ -d "linux" ]; then
+          cd linux
+          for zip in *.zip; do
+            if [ -f "$zip" ]; then
+              echo "Extracting $zip..."
+              unzip -q -o "$zip" -d ../
+            fi
+          done
+          cd ..
+        fi
+        
+        echo "SDK structure:"
+        ls -la ~/ohos-sdk/
+        
+        # 查找 hvigor
+        echo "Looking for hvigor in SDK..."
+        find ~/ohos-sdk -name "hvigor*" -type f 2>/dev/null | head -10 || true
+        find ~/ohos-sdk -name "*.tgz" -type f 2>/dev/null | head -10 || true
+    
+    # ===== 清理磁盘空间 =====
+    - name: Free disk space
+      run: |
+        echo "Freeing up disk space..."
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        df -h
+    
+    # ===== 下载并安装 ohpm 和 hvigor =====
+    - name: Download command-line-tools
+      if: steps.cache-sdk.outputs.cache-hit != 'true'
+      run: |
+        echo "Downloading command-line tools (full version with hvigor)..."
+        
+        # 5.0.3 版本包含 hvigor
+        TOOLS_URL="https://repo.huaweicloud.com/harmonyos/ohpm/5.0.3/commandline-tools-linux-x64-5.0.3.906.zip"
+        
+        cd ~
+        echo "Downloading from: $TOOLS_URL (approximately 3GB)..."
+        curl -L -o cmdline-tools.zip "$TOOLS_URL" --progress-bar --fail
+        
+        # 解压
+        echo "Extracting command-line tools..."
+        unzip -q cmdline-tools.zip
+        
+        # 设置目录结构
+        echo "Setting up tools..."
+        if [ -d command-line-tools ]; then
+          mv command-line-tools/ohpm ~/ohpm 2>/dev/null || true
+          mv command-line-tools/hvigor ~/hvigor-tool 2>/dev/null || true
+        fi
+        
+        rm -f cmdline-tools.zip
+        rm -rf command-line-tools
+        
+        # 设置权限
+        chmod -R +x ~/ohpm/bin/ 2>/dev/null || true
+        chmod -R +x ~/hvigor-tool/bin/ 2>/dev/null || true
+        
+        echo "Tools installed:"
+        ls -la ~/ohpm/bin/ 2>/dev/null || true
+        ls -la ~/hvigor-tool/bin/ 2>/dev/null || true
+        
+        df -h
+    
+    - name: Setup HarmonyOS SDK environment
+      run: |
+        echo "Setting up SDK environment..."
+        
+        # 设置 SDK 路径
+        SDK_HOME=~/ohos-sdk
+        
+        # 查找 toolchains 目录
+        TOOLCHAINS_PATH=$(find $SDK_HOME -name "toolchains" -type d 2>/dev/null | head -1)
+        
+        echo "Found paths:"
+        echo "  Toolchains: $TOOLCHAINS_PATH"
+        echo "  OHPM: ~/ohpm/bin"
+        echo "  Hvigor: ~/hvigor-tool/bin"
+        
+        # 添加到 PATH
+        if [ -n "$TOOLCHAINS_PATH" ]; then
+          echo "$TOOLCHAINS_PATH" >> $GITHUB_PATH
+        fi
+        
+        # 添加 ohpm 和 hvigor 到 PATH
+        echo "$HOME/ohpm/bin" >> $GITHUB_PATH
+        echo "$HOME/hvigor-tool/bin" >> $GITHUB_PATH
+        
+        # 设置环境变量
+        echo "OHOS_SDK_HOME=$SDK_HOME" >> $GITHUB_ENV
+        echo "HOS_SDK_HOME=$SDK_HOME" >> $GITHUB_ENV
+        
+        # 显示 SDK 结构
+        echo ""
+        echo "SDK directory structure:"
+        find $SDK_HOME -maxdepth 3 -type d | head -50
+    
+    # ===== 缓存项目依赖 =====
+    - name: Cache ohpm packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          oh_modules
+          entry/oh_modules
+          nativelib/oh_modules
+          ~/.ohpm/cache
+        key: ${{ runner.os }}-ohpm-${{ hashFiles('**/oh-package.json5') }}
+        restore-keys: |
+          ${{ runner.os }}-ohpm-
+    
+    # ===== 安装项目依赖 =====
+    - name: Install ohpm dependencies
+      run: |
+        echo "Installing project dependencies..."
+        
+        # 检查 ohpm 版本
+        echo "ohpm version: $(ohpm -v)"
+        
+        # 配置 ohpm 仓库
+        ohpm config set registry https://ohpm.openharmony.cn/ohpm/ || true
+        ohpm config set strict_ssl false || true
+        
+        # 安装 hvigor 依赖（从 hvigor-config.json5 读取）
+        echo "Installing hvigor dependencies..."
+        cd hvigor
+        npm install --legacy-peer-deps 2>/dev/null || {
+          # 如果 npm 失败，手动安装
+          echo "npm install failed, trying manual hvigor setup..."
+        }
+        cd ..
+        
+        # 安装项目依赖
+        echo "Installing project dependencies..."
+        ohpm install --all
+        
+        # 显示安装的包
+        echo "Installed packages:"
+        ls -la oh_modules/ 2>/dev/null || true
+        ls -la node_modules/ 2>/dev/null || true
+        ls -la .hvigor/ 2>/dev/null || true
+    
+    # ===== 验证 hvigor 安装 =====
+    - name: Verify hvigor
+      run: |
+        echo "Verifying hvigor installation..."
+        
+        # 设置项目的 hvigorw 脚本可执行
+        chmod +x ./hvigorw 2>/dev/null || true
+        
+        # 检查 hvigor 是否在 PATH 中
+        which hvigor && echo "hvigor found in PATH" || {
+          echo "hvigor not in PATH, checking ~/hvigor-tool/bin..."
+          ls -la ~/hvigor-tool/bin/ 2>/dev/null || true
+          
+          # 创建符号链接
+          if [ -f ~/hvigor-tool/bin/hvigor ]; then
+            sudo ln -sf ~/hvigor-tool/bin/hvigor /usr/local/bin/hvigor
+            echo "Created symlink for hvigor"
+          elif [ -f ~/hvigor-tool/bin/hvigorw ]; then
+            sudo ln -sf ~/hvigor-tool/bin/hvigorw /usr/local/bin/hvigor
+            echo "Created symlink for hvigorw as hvigor"
+          fi
+        }
+        
+        # 验证
+        which hvigor || echo "hvigor not in PATH, will use ./hvigorw"
+        hvigor --version 2>/dev/null || ./hvigorw --version 2>/dev/null || echo "hvigor version check skipped"
+    
+    # ===== 构建 HAP =====
+    - name: Build HAP (Debug)
+      if: github.event.inputs.build_type != 'release' && !startsWith(github.ref, 'refs/tags/')
+      run: |
+        echo "Building Debug HAP..."
+        
+        # 设置构建环境
+        export NODE_HOME=$(dirname $(dirname $(which node)))
+        export JAVA_HOME=$JAVA_HOME_17_X64
+        export OHOS_SDK_HOME=~/ohos-sdk
+        export HOS_SDK_HOME=~/ohos-sdk
+        
+        # 直接使用 node 运行 hvigorw.js 避免全局 hvigor 查找问题
+        echo "Running hvigor build..."
+        node ./hvigorw.js assembleHap --mode module -p product=default -p buildMode=debug --no-daemon
+    
+    - name: Build HAP (Release)
+      if: github.event.inputs.build_type == 'release' || startsWith(github.ref, 'refs/tags/')
+      run: |
+        echo "Building Release HAP..."
+        
+        # 设置构建环境
+        export NODE_HOME=$(dirname $(dirname $(which node)))
+        export JAVA_HOME=$JAVA_HOME_17_X64
+        export OHOS_SDK_HOME=~/ohos-sdk
+        export HOS_SDK_HOME=~/ohos-sdk
+        
+        # 直接使用 node 运行 hvigorw.js 避免全局 hvigor 查找问题
+        echo "Running hvigor build..."
+        node ./hvigorw.js assembleHap --mode module -p product=default -p buildMode=release --no-daemon
+    
+    # ===== 列出构建产物 =====
+    - name: List build outputs
+      run: |
+        echo "Checking build outputs..."
+        find . -name "*.hap" -type f 2>/dev/null | while read f; do
+          echo "Found: $f ($(du -h "$f" | cut -f1))"
+        done
+    
+    # ===== 上传构建产物 =====
+    - name: Upload HAP artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: moonlight-harmony-${{ steps.version.outputs.version }}
+        path: |
+          entry/build/default/outputs/**/*.hap
+          entry/build/outputs/**/*.hap
+          **/outputs/**/*.hap
+        if-no-files-found: warn
+        retention-days: 30
+
+  # ===== 发布 Release =====
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: moonlight-harmony-*
+        path: ./artifacts
+        merge-multiple: true
+    
+    - name: List downloaded files
+      run: |
+        echo "Downloaded artifacts:"
+        find ./artifacts -type f -name "*.hap" | head -20
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          ./artifacts/**/*.hap
+        draft: false
+        prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') || contains(github.ref, 'rc') }}
+        generate_release_notes: true
+        fail_on_unmatched_files: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

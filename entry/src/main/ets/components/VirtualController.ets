@@ -1,3 +1,13 @@
+/*
+ * Moonlight for HarmonyOS
+ * Copyright (C) 2024-2025 Moonlight/AlkaidLab
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
 import { InputEvent, InputType, ControllerButton, ControllerButtonEvent } from '../model/InputEvent';
 
 /**
@@ -66,13 +76,17 @@ export struct VirtualController {
   DPad() {
     Column() {
       // 上
-      this.DPadButton('↑', ControllerButton.UP)
-        .margin({ bottom: 4 })
+      Column() {
+        this.DPadButton('↑', ControllerButton.UP)
+      }
+      .margin({ bottom: 4 })
 
       Row() {
         // 左
-        this.DPadButton('←', ControllerButton.LEFT)
-          .margin({ right: 4 })
+        Column() {
+          this.DPadButton('←', ControllerButton.LEFT)
+        }
+        .margin({ right: 4 })
 
         // 中心
         Circle()
@@ -81,13 +95,17 @@ export struct VirtualController {
           .fill('#33ffffff')
 
         // 右
-        this.DPadButton('→', ControllerButton.RIGHT)
-          .margin({ left: 4 })
+        Column() {
+          this.DPadButton('→', ControllerButton.RIGHT)
+        }
+        .margin({ left: 4 })
       }
 
       // 下
-      this.DPadButton('↓', ControllerButton.DOWN)
-        .margin({ top: 4 })
+      Column() {
+        this.DPadButton('↓', ControllerButton.DOWN)
+      }
+      .margin({ top: 4 })
     }
     .opacity(this.controllerOpacity)
   }
@@ -110,22 +128,30 @@ export struct VirtualController {
   ActionButtons() {
     Column() {
       // Y
-      this.ActionButton('Y', ControllerButton.Y, '#FFCC00')
-        .margin({ bottom: 8 })
+      Column() {
+        this.ActionButton('Y', ControllerButton.Y, '#FFCC00')
+      }
+      .margin({ bottom: 8 })
 
       Row() {
         // X
-        this.ActionButton('X', ControllerButton.X, '#0066FF')
-          .margin({ right: 8 })
+        Column() {
+          this.ActionButton('X', ControllerButton.X, '#0066FF')
+        }
+        .margin({ right: 8 })
 
         // B
-        this.ActionButton('B', ControllerButton.B, '#FF3300')
-          .margin({ left: 8 })
+        Column() {
+          this.ActionButton('B', ControllerButton.B, '#FF3300')
+        }
+        .margin({ left: 8 })
       }
 
       // A
-      this.ActionButton('A', ControllerButton.A, '#00CC00')
-        .margin({ top: 8 })
+      Column() {
+        this.ActionButton('A', ControllerButton.A, '#00CC00')
+      }
+      .margin({ top: 8 })
     }
     .opacity(this.controllerOpacity)
   }

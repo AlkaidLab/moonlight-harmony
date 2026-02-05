@@ -2,165 +2,180 @@
 
 <div align="center">
   
-  # 🌙 Moonlight V+ 鸿蒙版
+  <img src="entry/src/main/resources/base/media/app_icon.png" width="128" height="128" alt="Logo">
+  
+  # 🌙 Moonlight V+
   
   **HarmonyOS 游戏串流客户端**
   
-  基于 [Moonlight](https://moonlight-stream.org/) 的鸿蒙原生移植版本
+  [![GitHub License](https://img.shields.io/github/license/AlkaidLab/moonlight-harmony)](LICENSE)
+  [![HarmonyOS](https://img.shields.io/badge/HarmonyOS-5.0%2B-blue)](https://www.harmonyos.com/)
+  [![API Version](https://img.shields.io/badge/API-12%2B-green)](https://developer.huawei.com/)
+  
+  基于 [Moonlight V+](https://github.com/qiin2333/moonlight-vplus) 的鸿蒙原生移植版本
+  
+  [功能特性](#-功能特性) • [下载安装](#-下载安装) • [使用说明](#-使用说明) • [相关项目](#-相关项目) • [开发指南](#-开发指南)
   
 </div>
 
-## 📋 项目概述
+---
 
-本项目是 Moonlight V+ Android 版的 HarmonyOS 移植版本，使用 ArkTS + C++ (NAPI) 实现，支持 HarmonyOS NEXT (5.0+) 设备。
+## ✨ 功能特性
 
-## 🏗️ 项目结构
+### 视频串流
+- 🎮 支持 H.264/HEVC 硬件解码
+- 📺 支持 4K@120fps 高清串流
+- 🌈 支持 HDR10/HLG 高动态范围
+- 🔄 支持 VRR 可变刷新率
 
-```
-moonlight-harmonyos/
-├── AppScope/                       # 应用级配置
-│   ├── app.json5                   # 应用配置
-│   └── resources/                  # 应用资源
-├── entry/                          # 主入口模块
-│   └── src/main/
-│       ├── ets/                    # ArkTS 代码
-│       │   ├── entryability/       # Ability 入口
-│       │   ├── pages/              # UI 页面
-│       │   │   ├── Index.ets       # 启动页
-│       │   │   ├── PcListPage.ets  # 电脑列表
-│       │   │   ├── AppListPage.ets # 应用列表
-│       │   │   ├── StreamPage.ets  # 串流页面
-│       │   │   ├── SettingsPage.ets# 设置页面
-│       │   │   └── AddPcPage.ets   # 添加电脑
-│       │   ├── components/         # UI 组件
-│       │   ├── model/              # 数据模型
-│       │   ├── service/            # 业务服务
-│       │   ├── services/           # 后台服务
-│       │   └── utils/              # 工具类
-│       ├── resources/              # 模块资源
-│       └── module.json5            # 模块配置
-├── nativelib/                      # Native 模块
-│   └── src/main/cpp/               # C/C++ 代码
-│       ├── CMakeLists.txt          # CMake 配置
-│       ├── napi_init.cpp           # NAPI 入口
-│       ├── moonlight_bridge.*      # 桥接层
-│       ├── video_decoder.*         # 视频解码
-│       ├── audio_decoder.*         # 音频解码
-│       └── input_handler.*         # 输入处理
-├── build-profile.json5             # 构建配置
-├── hvigorfile.ts                   # Hvigor 配置
-└── oh-package.json5                # 包配置
-```
+### 音频
+- 🔊 支持立体声/5.1/7.1 环绕声
+- 🎧 支持空间音频 (HarmonyOS 5.0+)
+- 🎙️ 支持麦克风重定向 (开发者模式)
 
-## 🚀 开发环境
+### 输入控制
+- 🎮 蓝牙/USB 手柄支持 (Xbox/PlayStation/Switch)
+- 📱 虚拟屏幕控制器
+- 🖱️ 触控/鼠标模拟
+- ⌨️ 完整键盘支持
+
+### 连接
+- 🔍 自动发现局域网主机
+- 🌐 支持远程串流 (需要端口转发或 WAN IP)
+- 🔒 AES-128 加密连接
+
+## 📥 下载安装
 
 ### 系统要求
+- HarmonyOS NEXT 5.0 或更高版本
+- 支持的设备：华为手机/平板/MatePad
 
-- **操作系统**: Windows 10/11, macOS 10.15+, 或 Ubuntu 18.04+
+### 安装方式
+
+1. **从 Release 下载**
+   - 前往 [Releases](https://github.com/AlkaidLab/moonlight-harmony/releases) 页面
+   - 下载最新版本的 HAP 文件
+   - 使用 HDC 安装到设备
+
+2. **从源码编译**
+   ```bash
+   git clone https://github.com/AlkaidLab/moonlight-harmony.git
+   cd moonlight-harmony
+   # 使用 DevEco Studio 打开并编译
+   ```
+
+## 📖 使用说明
+
+### 主机设置
+
+1. 在 PC 上安装 [Foundation Sunshine](https://github.com/qiin2333/foundation-sunshine) 或 NVIDIA GeForce Experience
+2. 启用游戏串流功能
+3. 确保 PC 和手机在同一局域网
+
+### 配对连接
+
+1. 打开 Moonlight V+ 应用
+2. 应用会自动发现局域网内的主机
+3. 点击主机进行配对（首次需要在 PC 端确认）
+4. 配对成功后即可选择游戏开始串流
+
+### 推荐设置
+
+| 网络环境 | 分辨率 | 帧率 | 码率 |
+|----------|--------|------|------|
+| 5GHz WiFi 局域网 | 1080p | 60fps | 20 Mbps |
+| 5GHz WiFi 局域网 | 4K | 60fps | 50 Mbps |
+| 有线/Wi-Fi 6 | 1080p | 120fps | 40 Mbps |
+
+## 🔗 相关项目
+
+| 项目 | 说明 |
+|------|------|
+| [Moonlight V+ Android](https://github.com/qiin2333/moonlight-vplus) | Android 增强版客户端 |
+| [Foundation Sunshine](https://github.com/qiin2333/foundation-sunshine) | 游戏串流服务端 |
+| [Moonlight](https://moonlight-stream.org/) | 官方 Moonlight 项目 |
+| [moonlight-common-c](https://github.com/moonlight-stream/moonlight-common-c) | 核心协议库 |
+
+## 🛠️ 开发指南
+
+### 开发环境
+
 - **DevEco Studio**: 5.0.0 或更高版本
 - **HarmonyOS SDK**: API 12 (HarmonyOS 5.0)
 - **Node.js**: 16.x 或更高版本
 
-### 环境配置
+### 项目结构
 
-1. 下载并安装 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/)
-2. 配置 HarmonyOS SDK
-3. 配置 Native SDK (用于 C++ 开发)
-
-## 📦 构建项目
-
-### 在 DevEco Studio 中打开项目
-
-1. 打开 DevEco Studio
-2. 选择 `File` → `Open` → 选择 `moonlight-harmonyos` 文件夹
-3. 等待项目同步完成
-
-### 编译运行
-
-```bash
-# 使用 hvigorw 命令行编译
-./hvigorw assembleHap
-
-# 或在 DevEco Studio 中点击运行按钮
+```
+moonlight-harmony/
+├── entry/                          # 主入口模块
+│   └── src/main/
+│       ├── ets/                    # ArkTS 代码
+│       │   ├── pages/              # UI 页面
+│       │   ├── components/         # UI 组件
+│       │   ├── service/            # 业务服务
+│       │   └── model/              # 数据模型
+│       └── resources/              # 模块资源
+├── nativelib/                      # Native 模块
+│   └── src/main/cpp/               # C/C++ 代码
+│       ├── moonlight_bridge.*      # NAPI 桥接层
+│       ├── video_decoder.*         # 视频解码 (AVCodec)
+│       ├── audio_renderer.*        # 音频播放 (OHAudio)
+│       └── moonlight-common-c/     # 核心协议库
+└── AppScope/                       # 应用配置
 ```
 
-## 🔧 开发指南
+### 核心技术
 
-### 页面导航
+| 功能 | 技术方案 |
+|------|----------|
+| UI 框架 | ArkUI (ArkTS) |
+| 视频解码 | HarmonyOS AVCodec API |
+| 音频播放 | OHAudio (低延迟模式) |
+| 网络协议 | moonlight-common-c |
+| Native 接口 | NAPI (C++) |
 
-| 页面 | 路径 | 说明 |
-|------|------|------|
-| 启动页 | `pages/Index` | 应用启动闪屏 |
-| 电脑列表 | `pages/PcListPage` | 显示已发现的电脑 |
-| 应用列表 | `pages/AppListPage` | 显示电脑上的游戏/应用 |
-| 串流页面 | `pages/StreamPage` | 视频串流主界面 |
-| 设置页面 | `pages/SettingsPage` | 应用设置 |
-| 添加电脑 | `pages/AddPcPage` | 手动添加电脑 |
+### 构建项目
 
-### 核心服务
+```bash
+# 克隆仓库
+git clone https://github.com/AlkaidLab/moonlight-harmony.git
 
-| 服务 | 文件 | 说明 |
-|------|------|------|
-| ComputerManager | `service/ComputerManager.ets` | 管理已发现的电脑 |
-| NvHttp | `service/NvHttp.ets` | 与服务器 HTTP 通信 |
-| StreamingSession | `service/StreamingSession.ets` | 管理串流会话 |
-| MdnsDiscovery | `service/MdnsDiscovery.ets` | mDNS 服务发现 |
+# 使用 DevEco Studio 打开项目
+# File → Open → 选择项目目录
 
-### Native 模块
+# 编译 HAP
+./hvigorw assembleHap
+```
 
-Native 模块使用 C++ 实现，通过 NAPI 与 ArkTS 交互：
+## 🐛 问题反馈
 
-- **moonlight_bridge**: 连接管理，封装 moonlight-common-c
-- **video_decoder**: 视频解码，使用 AVCodec API
-- **audio_decoder**: 音频播放，使用 OHAudio API
-- **input_handler**: 输入事件发送
+如果您遇到问题或有功能建议，请：
 
-## 📝 待完成功能
+1. 查看 [Issues](https://github.com/AlkaidLab/moonlight-harmony/issues) 是否已有相关问题
+2. 如果没有，请 [创建新 Issue](https://github.com/AlkaidLab/moonlight-harmony/issues/new)
 
-### 高优先级
-
-- [ ] 移植 moonlight-common-c 核心库
-- [ ] 实现完整的视频解码管线
-- [ ] 实现音频解码和播放
-- [ ] 实现输入处理（触控、手柄）
-
-### 中优先级
-
-- [ ] mDNS 服务发现
-- [ ] 证书生成和配对流程
-- [ ] 性能监控和统计
-- [ ] 手柄震动反馈
-
-### 低优先级
-
-- [ ] HDR 支持
-- [ ] 麦克风重定向
-- [ ] 多显示器支持
-- [ ] 自定义按键布局
-
-## 🔄 从 Android 迁移
-
-### API 对照表
-
-| Android | HarmonyOS | 说明 |
-|---------|-----------|------|
-| Activity | UIAbility | 页面入口 |
-| Service | ServiceExtensionAbility | 后台服务 |
-| View | ArkUI Component | UI 组件 |
-| MediaCodec | AVCodec | 视频编解码 |
-| AudioTrack | AudioRenderer / OHAudio | 音频播放 |
-| SurfaceView | XComponent | 视频渲染 |
-| SharedPreferences | Preferences | 数据存储 |
-| JNI | NAPI | Native 接口 |
-| OkHttp | @ohos.net.http | HTTP 请求 |
-| SensorManager | @ohos.sensor | 传感器 |
+反馈时请提供：
+- 设备型号和系统版本
+- 问题复现步骤
+- 错误日志（如有）
 
 ## 📄 许可证
 
-本项目基于 GPL v3 许可证开源。
+本项目基于 [GPL v3](LICENSE) 许可证开源。
 
 ## 🙏 致谢
 
-- [Moonlight Game Streaming](https://moonlight-stream.org/)
-- [moonlight-common-c](https://github.com/moonlight-stream/moonlight-common-c)
-- [Sunshine](https://github.com/LizardByte/Sunshine)
+- [Moonlight Game Streaming](https://moonlight-stream.org/) - 官方 Moonlight 项目
+- [moonlight-common-c](https://github.com/moonlight-stream/moonlight-common-c) - 核心协议库
+- [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine) - 开源串流服务端
+
+---
+
+<div align="center">
+  
+  **Powered by AlkaidLab** ✨
+  
+  如果这个项目对您有帮助，欢迎给一个 ⭐️
+  
+</div>

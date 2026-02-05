@@ -3,7 +3,8 @@
   "name": "nativelib",
   "version": "1.0.0",
   "description": "Moonlight Native 串流核心库",
-  "main": "",
+  "main": "./src/main/ets/Index.ets",
+  "types": "",
   "author": "",
   "license": "GPL-3.0",
   "dependencies": {}

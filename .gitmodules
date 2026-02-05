@@ -2,3 +2,6 @@
 	path = nativelib/src/main/cpp/moonlight-common-c
 	url = https://github.com/qiin2333/moonlight-common-c.git
 	branch = mic
+[submodule "nativelib/src/main/cpp/ohos-openssl"]
+	path = nativelib/src/main/cpp/ohos-openssl
+	url = https://gitee.com/ohos-rs/ohos-openssl.git

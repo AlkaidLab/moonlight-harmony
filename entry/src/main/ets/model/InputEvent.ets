@@ -1,3 +1,13 @@
+/*
+ * Moonlight for HarmonyOS
+ * Copyright (C) 2024-2025 Moonlight/AlkaidLab
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
 /**
  * 输入事件模型
  */
@@ -86,7 +96,14 @@ export enum ControllerButton {
   RS = 0x0080,
   START = 0x0010,
   BACK = 0x0020,
-  SPECIAL = 0x0400
+  SPECIAL = 0x0400,
+  // 扩展按钮 (Sunshine 专用)
+  PADDLE1 = 0x010000,
+  PADDLE2 = 0x020000,
+  PADDLE3 = 0x040000,
+  PADDLE4 = 0x080000,
+  TOUCHPAD = 0x100000,  // Sony 控制器的触摸板按钮
+  MISC = 0x200000       // Share/Mic/Capture/Mute 按钮
 }
 
 export enum ControllerAxis {

@@ -1,54 +1,134 @@
+/*
+ * Moonlight for HarmonyOS
+ * Copyright (C) 2024-2025 Moonlight/AlkaidLab
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
 import { router } from '@kit.ArkUI';
+import { AppColors } from '../common/Theme';
 
 @Entry
 @Component
 struct Index {
   @State isLoading: boolean = true;
+  @State logoScale: number = 0.6;
+  @State logoOpacity: number = 0;
+  @State contentOpacity: number = 0;
+  @State bottomOpacity: number = 0;
 
   aboutToAppear(): void {
-    // 模拟初始化加载
+    this.startAnimation();
+  }
+
+  startAnimation(): void {
+    // Logo 淡入
+    animateTo({
+      duration: 500,
+      curve: Curve.EaseOut,
+    }, () => {
+      this.logoOpacity = 1;
+      this.logoScale = 1;
+    });
+
+    // 内容淡入
+    setTimeout(() => {
+      animateTo({
+        duration: 400,
+        curve: Curve.EaseOut,
+      }, () => {
+        this.contentOpacity = 1;
+      });
+    }, 300);
+
+    // 底部淡入
+    setTimeout(() => {
+      animateTo({
+        duration: 400,
+        curve: Curve.EaseOut,
+      }, () => {
+        this.bottomOpacity = 1;
+      });
+    }, 500);
+
+    // 跳转
     setTimeout(() => {
       this.isLoading = false;
-      // 自动跳转到主页
-      router.replaceUrl({
-        url: 'pages/PcListPage'
-      });
-    }, 1500);
+      try {
+        router.replaceUrl({ url: 'pages/PcListPageV2' });
+      } catch (e) {
+        console.error('Index: navigation failed - ' + e);
+      }
+    }, 2000);
   }
 
   build() {
     Column() {
+      Blank()
+        .layoutWeight(1)
+
       // Logo
-      Image($r('app.media.startIcon'))
-        .width(120)
-        .height(120)
+      Image($r('app.media.app_icon'))
+        .width(100)
+        .height(100)
+        .borderRadius(20)
+        .scale({ x: this.logoScale, y: this.logoScale })
+        .opacity(this.logoOpacity)
         .margin({ bottom: 24 })
 
-      // 应用名称
-      Text('Moonlight V+')
-        .fontSize(32)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .margin({ bottom: 8 })
+      // 标题
+      Column() {
+        Text('Moonlight')
+          .fontSize(36)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.TextPrimary)
 
-      // 副标题
-      Text('HarmonyOS 游戏串流客户端')
-        .fontSize(16)
-        .fontColor($r('app.color.text_secondary'))
-        .margin({ bottom: 48 })
+        Row() {
+          Text('V+')
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(AppColors.Primary)
+            .backgroundColor(AppColors.PrimaryGlow)
+            .borderRadius(4)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .margin({ right: 6 })
 
-      // 加载指示器
+          Text('for HarmonyOS')
+            .fontSize(14)
+            .fontColor(AppColors.TextSecondary)
+        }
+        .margin({ top: 8 })
+      }
+      .opacity(this.contentOpacity)
+      .margin({ bottom: 48 })
+
+      // 加载
       if (this.isLoading) {
         LoadingProgress()
-          .width(48)
-          .height(48)
-          .color($r('app.color.primary'))
+          .width(36)
+          .height(36)
+          .color(AppColors.Primary)
+          .opacity(this.contentOpacity)
       }
+
+      Blank()
+        .layoutWeight(1)
+
+      // 底部
+      Column() {
+        Text('Powered by AlkaidLab')
+          .fontSize(12)
+          .fontColor(AppColors.TextTertiary)
+      }
+      .opacity(this.bottomOpacity)
+      .margin({ bottom: 32 })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.background'))
-    .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+    .backgroundColor(AppColors.Background)
   }
 }

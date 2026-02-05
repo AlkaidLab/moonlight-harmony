@@ -1,14 +1,11 @@
 {
   "module": {
     "name": "nativelib",
-    "type": "shared",
-    "description": "$string:module_desc",
+    "type": "har",
     "deviceTypes": [
       "phone",
       "tablet",
       "tv"
-    ],
-    "deliveryWithInstall": true,
-    "installationFree": false
+    ]
   }
 }

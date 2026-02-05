@@ -1,0 +1,54 @@
+#!/bin/bash
+
+#
+# Hvigor wrapper script for HarmonyOS projects
+# Auto-generated for CI/CD compatibility
+#
+
+# Resolve project directory
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$SCRIPT_DIR"
+
+# Set environment variables if not already set
+export NODE_OPTIONS="${NODE_OPTIONS:---max_old_space_size=4096}"
+
+# Run hvigor with all passed arguments
+cd "$PROJECT_DIR"
+
+# 1. Check if hvigor is in PATH (CI environment with global install)
+if command -v hvigor &> /dev/null; then
+    exec hvigor "$@"
+fi
+
+# 2. Check in ~/hvigor-tool/bin (CI cached tools)
+if [ -f "$HOME/hvigor-tool/bin/hvigor" ]; then
+    exec "$HOME/hvigor-tool/bin/hvigor" "$@"
+fi
+
+# 3. Check hvigor/node_modules (hvigor deps installed via npm)
+if [ -f "$PROJECT_DIR/hvigor/node_modules/@ohos/hvigor/bin/hvigor.js" ]; then
+    exec node "$PROJECT_DIR/hvigor/node_modules/@ohos/hvigor/bin/hvigor.js" "$@"
+fi
+
+# 4. Check root node_modules (local hvigor install via ohpm)
+if [ -f "$PROJECT_DIR/node_modules/@ohos/hvigor/bin/hvigor.js" ]; then
+    exec node "$PROJECT_DIR/node_modules/@ohos/hvigor/bin/hvigor.js" "$@"
+fi
+
+# 5. Check .hvigor directory (hvigor cache)
+if [ -d "$PROJECT_DIR/.hvigor" ]; then
+    hvigor_js=$(find "$PROJECT_DIR/.hvigor" -name "hvigor.js" -type f 2>/dev/null | head -1)
+    if [ -n "$hvigor_js" ]; then
+        exec node "$hvigor_js" "$@"
+    fi
+fi
+
+# 6. Try using npx
+if command -v npx &> /dev/null; then
+    exec npx @ohos/hvigor "$@"
+fi
+
+echo "Error: Cannot find hvigor. Please install it via:"
+echo "  cd hvigor && npm install"
+echo "  or: ohpm install"
+exit 1
