@@ -49,10 +49,10 @@ export struct AnalogStick {
   @State showClickFeedback: boolean = false;
   
   // 配置值
-  private outerRadius: number = 60;
-  private innerRadius: number = 28;
-  private deadzone: number = 0.15;
-  private opacity: number = 0.8;
+  private stickOuterRadius: number = 60;
+  private stickInnerRadius: number = 28;
+  private stickDeadzone: number = 0.15;
+  private stickOpacity: number = 0.8;
   
   // 双击检测
   private lastTapTime: number = 0;
@@ -61,16 +61,16 @@ export struct AnalogStick {
   aboutToAppear(): void {
     // 应用配置
     if (this.config.outerRadius) {
-      this.outerRadius = this.config.outerRadius;
+      this.stickOuterRadius = this.config.outerRadius;
     }
     if (this.config.innerRadius) {
-      this.innerRadius = this.config.innerRadius;
+      this.stickInnerRadius = this.config.innerRadius;
     }
     if (this.config.deadzone !== undefined) {
-      this.deadzone = this.config.deadzone;
+      this.stickDeadzone = this.config.deadzone;
     }
     if (this.config.opacity !== undefined) {
-      this.opacity = this.config.opacity;
+      this.stickOpacity = this.config.opacity;
     }
   }
 
@@ -78,8 +78,8 @@ export struct AnalogStick {
     Stack() {
       // 外圈背景
       Circle()
-        .width(this.outerRadius * 2)
-        .height(this.outerRadius * 2)
+        .width(this.stickOuterRadius * 2)
+        .height(this.stickOuterRadius * 2)
         .fill('transparent')
         .stroke('#FFFFFF')
         .strokeWidth(2)
@@ -87,8 +87,8 @@ export struct AnalogStick {
       
       // 死区指示圈
       Circle()
-        .width(this.outerRadius * 2 * this.deadzone)
-        .height(this.outerRadius * 2 * this.deadzone)
+        .width(this.stickOuterRadius * 2 * this.stickDeadzone)
+        .height(this.stickOuterRadius * 2 * this.stickDeadzone)
         .fill('transparent')
         .stroke('#FFFFFF')
         .strokeWidth(1)
@@ -96,8 +96,8 @@ export struct AnalogStick {
       
       // 摇杆头
       Circle()
-        .width(this.innerRadius * 2)
-        .height(this.innerRadius * 2)
+        .width(this.stickInnerRadius * 2)
+        .height(this.stickInnerRadius * 2)
         .fill(this.isPressed ? '#5090FF' : '#FFFFFF')
         .fillOpacity(this.isPressed ? 0.9 : 0.6)
         .shadow({
@@ -107,8 +107,8 @@ export struct AnalogStick {
           offsetY: 2
         })
         .translate({
-          x: this.stickX * (this.outerRadius - this.innerRadius),
-          y: this.stickY * (this.outerRadius - this.innerRadius)
+          x: this.stickX * (this.stickOuterRadius - this.stickInnerRadius),
+          y: this.stickY * (this.stickOuterRadius - this.stickInnerRadius)
         })
         .animation({
           duration: this.isPressed ? 0 : 100,
@@ -118,15 +118,15 @@ export struct AnalogStick {
       // 点击反馈
       if (this.showClickFeedback) {
         Circle()
-          .width(this.innerRadius * 2 + 16)
-          .height(this.innerRadius * 2 + 16)
+          .width(this.stickInnerRadius * 2 + 16)
+          .height(this.stickInnerRadius * 2 + 16)
           .fill('transparent')
           .stroke('#5090FF')
           .strokeWidth(3)
           .opacity(0.8)
           .translate({
-            x: this.stickX * (this.outerRadius - this.innerRadius),
-            y: this.stickY * (this.outerRadius - this.innerRadius)
+            x: this.stickX * (this.stickOuterRadius - this.stickInnerRadius),
+            y: this.stickY * (this.stickOuterRadius - this.stickInnerRadius)
           })
       }
       
@@ -137,13 +137,13 @@ export struct AnalogStick {
         .fontWeight(FontWeight.Bold)
         .opacity(0.4)
         .translate({
-          x: this.stickX * (this.outerRadius - this.innerRadius),
-          y: this.stickY * (this.outerRadius - this.innerRadius)
+          x: this.stickX * (this.stickOuterRadius - this.stickInnerRadius),
+          y: this.stickY * (this.stickOuterRadius - this.stickInnerRadius)
         })
     }
-    .width(this.outerRadius * 2)
-    .height(this.outerRadius * 2)
-    .opacity(this.opacity)
+    .width(this.stickOuterRadius * 2)
+    .height(this.stickOuterRadius * 2)
+    .opacity(this.stickOpacity)
     .onTouch((event) => this.handleTouch(event))
   }
 
@@ -152,8 +152,8 @@ export struct AnalogStick {
     if (touches.length === 0) return;
     
     const touch = touches[0];
-    const centerX = this.outerRadius;
-    const centerY = this.outerRadius;
+    const centerX = this.stickOuterRadius;
+    const centerY = this.stickOuterRadius;
     
     switch (event.type) {
       case TouchType.Down:
@@ -177,7 +177,7 @@ export struct AnalogStick {
   }
   
   private updateStickPosition(dx: number, dy: number): void {
-    const maxDistance = this.outerRadius - this.innerRadius;
+    const maxDistance = this.stickOuterRadius - this.stickInnerRadius;
     
     // 计算距离和角度
     let distance = Math.sqrt(dx * dx + dy * dy);
@@ -194,13 +194,13 @@ export struct AnalogStick {
     
     // 应用死区
     const magnitude = Math.sqrt(normalizedX * normalizedX + normalizedY * normalizedY);
-    if (magnitude < this.deadzone) {
+    if (magnitude < this.stickDeadzone) {
       normalizedX = 0;
       normalizedY = 0;
     } else {
       // 重新映射死区外的值
-      const scale = (magnitude - this.deadzone) / (1 - this.deadzone);
-      const normalizedMagnitude = magnitude > 0 ? scale / magnitude : 0;
+      const remapScale = (magnitude - this.stickDeadzone) / (1 - this.stickDeadzone);
+      const normalizedMagnitude = magnitude > 0 ? remapScale / magnitude : 0;
       normalizedX *= normalizedMagnitude;
       normalizedY *= normalizedMagnitude;
     }

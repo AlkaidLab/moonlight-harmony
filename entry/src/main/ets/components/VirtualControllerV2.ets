@@ -52,9 +52,9 @@ export struct VirtualControllerV2 {
   onInput: (input: InputEvent) => void = () => {};
   
   // 计算后的配置值
-  private opacity: number = 0.75;
-  private scale: number = 1.0;
-  private deadzone: number = 0.15;
+  private controllerOpacity: number = 0.75;
+  private controllerScale: number = 1.0;
+  private controllerDeadzone: number = 0.15;
   
   // 按钮状态（用于多点触控）
   @State pressedButtons: Set<ControllerButton> = new Set();
@@ -66,13 +66,13 @@ export struct VirtualControllerV2 {
   aboutToAppear(): void {
     // 应用配置
     if (this.config.opacity !== undefined) {
-      this.opacity = this.config.opacity;
+      this.controllerOpacity = this.config.opacity;
     }
     if (this.config.scale !== undefined) {
-      this.scale = this.config.scale;
+      this.controllerScale = this.config.scale;
     }
     if (this.config.deadzone !== undefined) {
-      this.deadzone = this.config.deadzone;
+      this.controllerDeadzone = this.config.deadzone;
     }
   }
 
@@ -82,23 +82,97 @@ export struct VirtualControllerV2 {
       Column() {
         // 左摇杆
         if (this.config.showLeftStick !== false) {
-          AnalogStick({
-            config: {
-              isLeftStick: true,
-              outerRadius: 55 * this.scale,
-              innerRadius: 24 * this.scale,
-              deadzone: this.deadzone,
-              opacity: this.opacity,
-              enableClick: true
-            } as AnalogStickConfig,
-            onInput: (event: InputEvent) => this.onInput(event)
-          })
+          Column() {
+            AnalogStick({
+              config: {
+                isLeftStick: true,
+                outerRadius: 55 * this.controllerScale,
+                innerRadius: 24 * this.controllerScale,
+                deadzone: this.controllerDeadzone,
+                opacity: this.controllerOpacity,
+                enableClick: true
+              } as AnalogStickConfig,
+              onInput: (event: InputEvent) => this.onInput(event)
+            })
+          }
           .margin({ bottom: 20 })
         }
         
         // D-Pad
         if (this.config.showDpad !== false) {
-          this.DPad()
+          Column() {
+            // 上
+            Button() {
+              Text('▲')
+                .fontSize(16 * this.controllerScale)
+                .fontColor('#FFFFFF')
+                .fontWeight(FontWeight.Bold)
+            }
+            .width(44 * this.controllerScale)
+            .height(44 * this.controllerScale)
+            .backgroundColor(this.pressedButtons.has(ControllerButton.UP) ? '#5090FF' : '#000000')
+            .opacity(this.pressedButtons.has(ControllerButton.UP) ? 1 : 0.6)
+            .borderRadius(8)
+            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.UP) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
+            .onTouch((event) => this.handleButtonTouch(ControllerButton.UP, event))
+            .margin({ bottom: 4 })
+
+            Row({ space: 4 }) {
+              // 左
+              Button() {
+                Text('◀')
+                  .fontSize(16 * this.controllerScale)
+                  .fontColor('#FFFFFF')
+                  .fontWeight(FontWeight.Bold)
+              }
+              .width(44 * this.controllerScale)
+              .height(44 * this.controllerScale)
+              .backgroundColor(this.pressedButtons.has(ControllerButton.LEFT) ? '#5090FF' : '#000000')
+              .opacity(this.pressedButtons.has(ControllerButton.LEFT) ? 1 : 0.6)
+              .borderRadius(8)
+              .border({ width: 1, color: this.pressedButtons.has(ControllerButton.LEFT) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
+              .onTouch((event) => this.handleButtonTouch(ControllerButton.LEFT, event))
+              
+              // 中心
+              Circle()
+                .width(36 * this.controllerScale)
+                .height(36 * this.controllerScale)
+                .fill('#FFFFFF')
+                .fillOpacity(0.1)
+              
+              // 右
+              Button() {
+                Text('▶')
+                  .fontSize(16 * this.controllerScale)
+                  .fontColor('#FFFFFF')
+                  .fontWeight(FontWeight.Bold)
+              }
+              .width(44 * this.controllerScale)
+              .height(44 * this.controllerScale)
+              .backgroundColor(this.pressedButtons.has(ControllerButton.RIGHT) ? '#5090FF' : '#000000')
+              .opacity(this.pressedButtons.has(ControllerButton.RIGHT) ? 1 : 0.6)
+              .borderRadius(8)
+              .border({ width: 1, color: this.pressedButtons.has(ControllerButton.RIGHT) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
+              .onTouch((event) => this.handleButtonTouch(ControllerButton.RIGHT, event))
+            }
+
+            // 下
+            Button() {
+              Text('▼')
+                .fontSize(16 * this.controllerScale)
+                .fontColor('#FFFFFF')
+                .fontWeight(FontWeight.Bold)
+            }
+            .width(44 * this.controllerScale)
+            .height(44 * this.controllerScale)
+            .backgroundColor(this.pressedButtons.has(ControllerButton.DOWN) ? '#5090FF' : '#000000')
+            .opacity(this.pressedButtons.has(ControllerButton.DOWN) ? 1 : 0.6)
+            .borderRadius(8)
+            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.DOWN) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
+            .onTouch((event) => this.handleButtonTouch(ControllerButton.DOWN, event))
+            .margin({ top: 4 })
+          }
+          .opacity(this.controllerOpacity)
         }
       }
       .alignItems(HorizontalAlign.Center)
@@ -109,8 +183,26 @@ export struct VirtualControllerV2 {
       Column() {
         // ABXY 按钮
         if (this.config.showButtons !== false) {
-          this.ActionButtons()
-            .margin({ bottom: 20 })
+          Column() {
+            // Y
+            this.buildActionButton('Y', ControllerButton.Y, '#FFB900')
+            
+            Row({ space: 6 }) {
+              // X
+              this.buildActionButton('X', ControllerButton.X, '#0078D4')
+              // B
+              this.buildActionButton('B', ControllerButton.B, '#E81123')
+            }
+            .margin({ top: 6 })
+
+            // A
+            Column() {
+              this.buildActionButton('A', ControllerButton.A, '#107C10')
+            }
+            .margin({ top: 6 })
+          }
+          .opacity(this.controllerOpacity)
+          .margin({ bottom: 20 })
         }
         
         // 右摇杆
@@ -118,10 +210,10 @@ export struct VirtualControllerV2 {
           AnalogStick({
             config: {
               isLeftStick: false,
-              outerRadius: 55 * this.scale,
-              innerRadius: 24 * this.scale,
-              deadzone: this.deadzone,
-              opacity: this.opacity,
+              outerRadius: 55 * this.controllerScale,
+              innerRadius: 24 * this.controllerScale,
+              deadzone: this.controllerDeadzone,
+              opacity: this.controllerOpacity,
               enableClick: true
             } as AnalogStickConfig,
             onInput: (event: InputEvent) => this.onInput(event)
@@ -138,8 +230,36 @@ export struct VirtualControllerV2 {
         Row() {
           // 左侧肩键组
           Column() {
-            this.TriggerButton('LT', true)
-            this.ShoulderButton('LB', ControllerButton.LB)
+            // LT
+            Button() {
+              Text('LT')
+                .fontSize(12 * this.controllerScale)
+                .fontColor('#FFFFFF')
+                .fontWeight(FontWeight.Bold)
+            }
+            .width(60 * this.controllerScale)
+            .height(48 * this.controllerScale)
+            .backgroundColor(this.leftTriggerActive ? '#5090FF' : '#000000')
+            .opacity(this.leftTriggerActive ? 1 : 0.6)
+            .borderRadius(8)
+            .border({ width: 1, color: this.leftTriggerActive ? '#5090FF' : 'rgba(255,255,255,0.3)' })
+            .onTouch((event) => this.handleTriggerTouch(true, event))
+            
+            // LB
+            Button() {
+              Text('LB')
+                .fontSize(13 * this.controllerScale)
+                .fontColor('#FFFFFF')
+                .fontWeight(FontWeight.Medium)
+            }
+            .width(68 * this.controllerScale)
+            .height(36 * this.controllerScale)
+            .backgroundColor(this.pressedButtons.has(ControllerButton.LB) ? '#5090FF' : '#000000')
+            .opacity(this.pressedButtons.has(ControllerButton.LB) ? 1 : 0.6)
+            .borderRadius(18 * this.controllerScale)
+            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.LB) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
+            .onTouch((event) => this.handleButtonTouch(ControllerButton.LB, event))
+            .margin({ top: 4 })
           }
           .alignItems(HorizontalAlign.Start)
           
@@ -147,8 +267,36 @@ export struct VirtualControllerV2 {
           
           // 右侧肩键组
           Column() {
-            this.TriggerButton('RT', false)
-            this.ShoulderButton('RB', ControllerButton.RB)
+            // RT
+            Button() {
+              Text('RT')
+                .fontSize(12 * this.controllerScale)
+                .fontColor('#FFFFFF')
+                .fontWeight(FontWeight.Bold)
+            }
+            .width(60 * this.controllerScale)
+            .height(48 * this.controllerScale)
+            .backgroundColor(this.rightTriggerActive ? '#5090FF' : '#000000')
+            .opacity(this.rightTriggerActive ? 1 : 0.6)
+            .borderRadius(8)
+            .border({ width: 1, color: this.rightTriggerActive ? '#5090FF' : 'rgba(255,255,255,0.3)' })
+            .onTouch((event) => this.handleTriggerTouch(false, event))
+            
+            // RB
+            Button() {
+              Text('RB')
+                .fontSize(13 * this.controllerScale)
+                .fontColor('#FFFFFF')
+                .fontWeight(FontWeight.Medium)
+            }
+            .width(68 * this.controllerScale)
+            .height(36 * this.controllerScale)
+            .backgroundColor(this.pressedButtons.has(ControllerButton.RB) ? '#5090FF' : '#000000')
+            .opacity(this.pressedButtons.has(ControllerButton.RB) ? 1 : 0.6)
+            .borderRadius(18 * this.controllerScale)
+            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.RB) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
+            .onTouch((event) => this.handleButtonTouch(ControllerButton.RB, event))
+            .margin({ top: 4 })
           }
           .alignItems(HorizontalAlign.End)
         }
@@ -160,13 +308,57 @@ export struct VirtualControllerV2 {
       if (this.config.showCenter !== false) {
         Row({ space: 16 }) {
           // Back 按钮
-          this.CenterButton('⏴', ControllerButton.BACK, 'BACK')
+          Button() {
+            Column() {
+              Text('⏴')
+                .fontSize(14 * this.controllerScale)
+                .fontColor('#FFFFFF')
+              Text('BACK')
+                .fontSize(8 * this.controllerScale)
+                .fontColor('#FFFFFF')
+                .opacity(0.7)
+            }
+          }
+          .width(52 * this.controllerScale)
+          .height(36 * this.controllerScale)
+          .backgroundColor(this.pressedButtons.has(ControllerButton.BACK) ? '#5090FF' : '#000000')
+          .opacity(this.pressedButtons.has(ControllerButton.BACK) ? 1 : 0.5)
+          .borderRadius(18 * this.controllerScale)
+          .border({ width: 1, color: this.pressedButtons.has(ControllerButton.BACK) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
+          .onTouch((event) => this.handleButtonTouch(ControllerButton.BACK, event))
           
           // Guide 按钮
-          this.GuideButton()
+          Button() {
+            Text('◉')
+              .fontSize(20 * this.controllerScale)
+              .fontColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? '#FFFFFF' : '#5090FF')
+          }
+          .width(44 * this.controllerScale)
+          .height(44 * this.controllerScale)
+          .backgroundColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? '#5090FF' : 'transparent')
+          .borderRadius(22 * this.controllerScale)
+          .border({ width: 2, color: '#5090FF' })
+          .onTouch((event) => this.handleButtonTouch(ControllerButton.SPECIAL, event))
           
           // Start 按钮
-          this.CenterButton('⏵', ControllerButton.START, 'START')
+          Button() {
+            Column() {
+              Text('⏵')
+                .fontSize(14 * this.controllerScale)
+                .fontColor('#FFFFFF')
+              Text('START')
+                .fontSize(8 * this.controllerScale)
+                .fontColor('#FFFFFF')
+                .opacity(0.7)
+            }
+          }
+          .width(52 * this.controllerScale)
+          .height(36 * this.controllerScale)
+          .backgroundColor(this.pressedButtons.has(ControllerButton.START) ? '#5090FF' : '#000000')
+          .opacity(this.pressedButtons.has(ControllerButton.START) ? 1 : 0.5)
+          .borderRadius(18 * this.controllerScale)
+          .border({ width: 1, color: this.pressedButtons.has(ControllerButton.START) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
+          .onTouch((event) => this.handleButtonTouch(ControllerButton.START, event))
         }
         .position({ x: '50%', y: '100%' })
         .translate({ x: '-50%', y: '-100%' })
@@ -176,9 +368,37 @@ export struct VirtualControllerV2 {
       // ===== 独立 L3/R3 按钮（可选）=====
       if (this.config.showL3R3 === true) {
         Row() {
-          this.L3R3Button('L3', ControllerButton.LS)
+          // L3
+          Button() {
+            Text('L3')
+              .fontSize(12 * this.controllerScale)
+              .fontColor('#FFFFFF')
+              .fontWeight(FontWeight.Medium)
+          }
+          .width(48 * this.controllerScale)
+          .height(32 * this.controllerScale)
+          .backgroundColor(this.pressedButtons.has(ControllerButton.LS) ? '#5090FF' : '#000000')
+          .opacity(this.pressedButtons.has(ControllerButton.LS) ? 1 : 0.5)
+          .borderRadius(16 * this.controllerScale)
+          .border({ width: 1, color: this.pressedButtons.has(ControllerButton.LS) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
+          .onTouch((event) => this.handleButtonTouch(ControllerButton.LS, event))
+          
           Blank()
-          this.L3R3Button('R3', ControllerButton.RS)
+          
+          // R3
+          Button() {
+            Text('R3')
+              .fontSize(12 * this.controllerScale)
+              .fontColor('#FFFFFF')
+              .fontWeight(FontWeight.Medium)
+          }
+          .width(48 * this.controllerScale)
+          .height(32 * this.controllerScale)
+          .backgroundColor(this.pressedButtons.has(ControllerButton.RS) ? '#5090FF' : '#000000')
+          .opacity(this.pressedButtons.has(ControllerButton.RS) ? 1 : 0.5)
+          .borderRadius(16 * this.controllerScale)
+          .border({ width: 1, color: this.pressedButtons.has(ControllerButton.RS) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
+          .onTouch((event) => this.handleButtonTouch(ControllerButton.RS, event))
         }
         .width('100%')
         .padding({ left: 100, right: 100 })
@@ -192,210 +412,25 @@ export struct VirtualControllerV2 {
     .hitTestBehavior(HitTestMode.Transparent)
   }
 
-  // ==================== D-Pad ====================
-  @Builder
-  DPad() {
-    Column() {
-      // 上
-      this.DPadButton('▲', ControllerButton.UP)
-        .margin({ bottom: 4 })
-
-      Row({ space: 4 }) {
-        // 左
-        this.DPadButton('◀', ControllerButton.LEFT)
-        
-        // 中心
-        Circle()
-          .width(36 * this.scale)
-          .height(36 * this.scale)
-          .fill('#FFFFFF')
-          .fillOpacity(0.1)
-        
-        // 右
-        this.DPadButton('▶', ControllerButton.RIGHT)
-      }
-
-      // 下
-      this.DPadButton('▼', ControllerButton.DOWN)
-        .margin({ top: 4 })
-    }
-    .opacity(this.opacity)
-  }
-
-  @Builder
-  DPadButton(icon: string, button: ControllerButton) {
-    Button() {
-      Text(icon)
-        .fontSize(16 * this.scale)
-        .fontColor('#FFFFFF')
-        .fontWeight(FontWeight.Bold)
-    }
-    .width(44 * this.scale)
-    .height(44 * this.scale)
-    .backgroundColor(this.pressedButtons.has(button) ? '#5090FF' : '#000000')
-    .backgroundBlurStyle(BlurStyle.Regular)
-    .opacity(this.pressedButtons.has(button) ? 1 : 0.6)
-    .borderRadius(8)
-    .border({ width: 1, color: '#FFFFFF', style: BorderStyle.Solid })
-    .borderColor(this.pressedButtons.has(button) ? '#5090FF' : 'rgba(255,255,255,0.3)')
-    .onTouch((event) => this.handleButtonTouch(button, event))
-  }
-
   // ==================== ABXY 按钮 ====================
   @Builder
-  ActionButtons() {
-    Column() {
-      // Y
-      this.ActionButton('Y', ControllerButton.Y, '#FFB900')
-        .margin({ bottom: 6 })
-
-      Row({ space: 6 }) {
-        // X
-        this.ActionButton('X', ControllerButton.X, '#0078D4')
-        // B
-        this.ActionButton('B', ControllerButton.B, '#E81123')
-      }
-
-      // A
-      this.ActionButton('A', ControllerButton.A, '#107C10')
-        .margin({ top: 6 })
-    }
-    .opacity(this.opacity)
-  }
-
-  @Builder
-  ActionButton(label: string, button: ControllerButton, color: string) {
+  buildActionButton(label: string, button: ControllerButton, color: string) {
     Button() {
       Text(label)
-        .fontSize(18 * this.scale)
+        .fontSize(18 * this.controllerScale)
         .fontColor('#FFFFFF')
         .fontWeight(FontWeight.Bold)
     }
-    .width(52 * this.scale)
-    .height(52 * this.scale)
+    .width(52 * this.controllerScale)
+    .height(52 * this.controllerScale)
     .backgroundColor(this.pressedButtons.has(button) ? color : this.adjustColor(color, -40))
-    .borderRadius(26 * this.scale)
+    .borderRadius(26 * this.controllerScale)
     .shadow({
       radius: this.pressedButtons.has(button) ? 12 : 4,
       color: this.pressedButtons.has(button) ? color : 'transparent',
       offsetX: 0,
       offsetY: 2
     })
-    .scale({ x: this.pressedButtons.has(button) ? 0.92 : 1, y: this.pressedButtons.has(button) ? 0.92 : 1 })
-    .animation({ duration: 50 })
-    .onTouch((event) => this.handleButtonTouch(button, event))
-  }
-
-  // ==================== 肩键 ====================
-  @Builder
-  ShoulderButton(label: string, button: ControllerButton) {
-    Button() {
-      Text(label)
-        .fontSize(13 * this.scale)
-        .fontColor('#FFFFFF')
-        .fontWeight(FontWeight.Medium)
-    }
-    .width(68 * this.scale)
-    .height(36 * this.scale)
-    .backgroundColor(this.pressedButtons.has(button) ? '#5090FF' : '#000000')
-    .backgroundBlurStyle(BlurStyle.Regular)
-    .opacity(this.pressedButtons.has(button) ? 1 : 0.6)
-    .borderRadius(18 * this.scale)
-    .border({ width: 1, color: this.pressedButtons.has(button) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-    .margin({ top: 4 })
-    .onTouch((event) => this.handleButtonTouch(button, event))
-  }
-
-  // ==================== 扳机 ====================
-  @Builder
-  TriggerButton(label: string, isLeft: boolean) {
-    Button() {
-      Column() {
-        Text(label)
-          .fontSize(12 * this.scale)
-          .fontColor('#FFFFFF')
-          .fontWeight(FontWeight.Bold)
-        
-        // 扳机进度条
-        Row()
-          .width('80%')
-          .height(4)
-          .backgroundColor('#333333')
-          .borderRadius(2)
-        Row()
-          .width((isLeft ? this.leftTriggerActive : this.rightTriggerActive) ? '80%' : '0%')
-          .height(4)
-          .backgroundColor('#5090FF')
-          .borderRadius(2)
-          .position({ x: '10%', y: 0 })
-          .animation({ duration: 50 })
-      }
-      .justifyContent(FlexAlign.Center)
-    }
-    .width(60 * this.scale)
-    .height(48 * this.scale)
-    .backgroundColor((isLeft ? this.leftTriggerActive : this.rightTriggerActive) ? '#5090FF' : '#000000')
-    .backgroundBlurStyle(BlurStyle.Regular)
-    .opacity((isLeft ? this.leftTriggerActive : this.rightTriggerActive) ? 1 : 0.6)
-    .borderRadius(8)
-    .border({ width: 1, color: (isLeft ? this.leftTriggerActive : this.rightTriggerActive) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-    .onTouch((event) => this.handleTriggerTouch(isLeft, event))
-  }
-
-  // ==================== 中间按钮 ====================
-  @Builder
-  CenterButton(icon: string, button: ControllerButton, label: string) {
-    Button() {
-      Column() {
-        Text(icon)
-          .fontSize(14 * this.scale)
-          .fontColor('#FFFFFF')
-        Text(label)
-          .fontSize(8 * this.scale)
-          .fontColor('#FFFFFF')
-          .opacity(0.7)
-      }
-    }
-    .width(52 * this.scale)
-    .height(36 * this.scale)
-    .backgroundColor(this.pressedButtons.has(button) ? '#5090FF' : '#000000')
-    .backgroundBlurStyle(BlurStyle.Regular)
-    .opacity(this.pressedButtons.has(button) ? 1 : 0.5)
-    .borderRadius(18 * this.scale)
-    .border({ width: 1, color: this.pressedButtons.has(button) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
-    .onTouch((event) => this.handleButtonTouch(button, event))
-  }
-  
-  @Builder
-  GuideButton() {
-    Button() {
-      Text('◉')
-        .fontSize(20 * this.scale)
-        .fontColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? '#FFFFFF' : '#5090FF')
-    }
-    .width(44 * this.scale)
-    .height(44 * this.scale)
-    .backgroundColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? '#5090FF' : 'transparent')
-    .borderRadius(22 * this.scale)
-    .border({ width: 2, color: '#5090FF' })
-    .onTouch((event) => this.handleButtonTouch(ControllerButton.SPECIAL, event))
-  }
-  
-  @Builder
-  L3R3Button(label: string, button: ControllerButton) {
-    Button() {
-      Text(label)
-        .fontSize(12 * this.scale)
-        .fontColor('#FFFFFF')
-        .fontWeight(FontWeight.Medium)
-    }
-    .width(48 * this.scale)
-    .height(32 * this.scale)
-    .backgroundColor(this.pressedButtons.has(button) ? '#5090FF' : '#000000')
-    .backgroundBlurStyle(BlurStyle.Regular)
-    .opacity(this.pressedButtons.has(button) ? 1 : 0.5)
-    .borderRadius(16 * this.scale)
-    .border({ width: 1, color: this.pressedButtons.has(button) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
     .onTouch((event) => this.handleButtonTouch(button, event))
   }
 
