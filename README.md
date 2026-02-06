@@ -164,6 +164,20 @@ git clone https://github.com/AlkaidLab/moonlight-harmony.git
 
 本项目基于 [GPL v3](LICENSE) 许可证开源。
 
+### 第三方资源声明
+
+本应用的背景壁纸功能使用了第三方 API 服务：
+
+| 来源 | 说明 | 版权 |
+|------|------|------|
+| [Pipw API](https://img-api.pipw.top) | 二次元壁纸（默认）| 图片版权归原作者所有 |
+| [Lorem Picsum](https://picsum.photos) | 摄影壁纸（可选）| Unsplash 授权 |
+
+**重要声明**：
+- 本应用仅提供技术链接，不存储、不拥有这些图片的版权
+- 如有版权问题，请联系原图片来源方
+- 用户可在设置中随时关闭壁纸功能或切换为其他来源
+
 ## 🙏 致谢
 
 - [Moonlight Game Streaming](https://moonlight-stream.org/) - 官方 Moonlight 项目

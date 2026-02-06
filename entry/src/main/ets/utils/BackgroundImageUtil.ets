@@ -22,6 +22,7 @@ import { common } from '@kit.AbilityKit';
 
 const BACKGROUND_IMAGE_URL_KEY = 'settings_background_image_url';
 const BACKGROUND_IMAGE_TYPE_KEY = 'settings_background_image_type';
+const BACKGROUND_DISCLAIMER_ACCEPTED_KEY = 'settings_background_disclaimer_accepted';
 // 本地缓存文件名
 const CACHED_BACKGROUND_FILENAME = 'cached_background.jpg';
 
@@ -65,8 +66,9 @@ export const BACKGROUND_API_SOURCES: BackgroundApiSourceCollection = {
 
 // 背景图类型
 export enum BackgroundImageType {
-  DEFAULT = 'default',  // 使用默认 API (Lorem Picsum)
-  PIPW = 'pipw',        // 使用 Pipw 二次元壁纸 API
+  DEFAULT = 'default',  // 使用默认 API (Pipw 二次元壁纸)
+  PICSUM = 'picsum',    // Lorem Picsum 摄影壁纸
+  PIPW = 'pipw',        // 使用 Pipw 二次元壁纸 API (兼容旧设置)
   API = 'api',          // 自定义 API URL
   LOCAL = 'local',      // 本地图片（暂不支持）
   NONE = 'none'         // 不使用背景图
@@ -210,21 +212,23 @@ export class BackgroundImageUtil {
             // 如果自定义 URL 为空，回退到默认 API
             this.cachedType = BackgroundImageType.DEFAULT;
             await this.setBackgroundImageType(BackgroundImageType.DEFAULT);
-            return this.getDefaultApiUrl();
+            return this.getPipwApiUrl();
           }
           break;
           
-        case BackgroundImageType.PIPW:
-          this.cachedUrl = this.getPipwApiUrl();
+        case BackgroundImageType.PICSUM:
+          this.cachedUrl = this.getPicsumApiUrl();
           break;
           
         case BackgroundImageType.NONE:
           this.cachedUrl = '';
           break;
           
+        case BackgroundImageType.PIPW:
         case BackgroundImageType.DEFAULT:
         default:
-          this.cachedUrl = this.getDefaultApiUrl();
+          // 默认使用 Pipw 二次元壁纸
+          this.cachedUrl = this.getPipwApiUrl();
           break;
       }
       
@@ -258,10 +262,10 @@ export class BackgroundImageUtil {
   }
 
   /**
-   * 获取默认 API URL（根据屏幕方向）- 使用 Lorem Picsum
+   * 获取 Lorem Picsum 摄影壁纸 API URL（根据屏幕方向）
    * 注意：只在首次加载或明确刷新时更新时间戳，避免频繁刷新
    */
-  getDefaultApiUrl(): string {
+  getPicsumApiUrl(): string {
     try {
       const displayInfo = display.getDefaultDisplaySync();
       const isPortrait = displayInfo.height > displayInfo.width;
@@ -293,6 +297,41 @@ export class BackgroundImageUtil {
     } catch (err) {
       console.error('BackgroundImageUtil: 保存背景图类型失败', err);
     }
+  }
+
+  /**
+   * 检查用户是否已同意背景图免责声明
+   * @returns true 表示已同意，可以加载背景图
+   */
+  async isDisclaimerAccepted(): Promise<boolean> {
+    try {
+      return await PreferencesUtil.get<boolean>(BACKGROUND_DISCLAIMER_ACCEPTED_KEY, false);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  /**
+   * 设置用户已同意背景图免责声明
+   */
+  async setDisclaimerAccepted(): Promise<void> {
+    try {
+      await PreferencesUtil.put(BACKGROUND_DISCLAIMER_ACCEPTED_KEY, true);
+    } catch (err) {
+      console.error('BackgroundImageUtil: 保存免责声明状态失败', err);
+    }
+  }
+
+  /**
+   * 获取背景图免责声明文本
+   */
+  getDisclaimerText(): string {
+    return '背景壁纸功能说明\n\n' +
+      '本应用的背景壁纸来自互联网公开资源（Pipw API），图片版权归原作者所有。\n\n' +
+      '• 本应用仅提供技术链接，不存储、不拥有这些图片的版权\n' +
+      '• 如有侵权，请联系原图片来源方\n' +
+      '• 您可以在设置中随时关闭壁纸功能或切换为其他来源\n\n' +
+      '继续使用即表示您知悉并同意上述条款。';
   }
 
   /**

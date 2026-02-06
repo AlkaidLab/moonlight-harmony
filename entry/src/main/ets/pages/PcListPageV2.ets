@@ -128,12 +128,68 @@ struct PcListPageV2 {
   
   private async loadBackgroundImage(): Promise<void> {
     try {
+      // 首次使用检查免责声明
+      const disclaimerAccepted = await this.backgroundUtil.isDisclaimerAccepted();
+      if (!disclaimerAccepted) {
+        // 显示免责声明弹窗
+        this.showBackgroundDisclaimerDialog();
+        return;
+      }
+      
       // 优先使用本地缓存的图片
       const localPath = await this.backgroundUtil.downloadToLocalCache();
       if (localPath) {
         this.backgroundImageUrl = 'file://' + localPath;
       } else {
         // 如果本地缓存失败，使用在线 URL
+        this.backgroundImageUrl = await this.backgroundUtil.getBackgroundImageUrl();
+      }
+    } catch (err) {
+      // 忽略错误
+    }
+  }
+  
+  /**
+   * 显示背景图免责声明弹窗
+   */
+  private showBackgroundDisclaimerDialog(): void {
+    const config: ConfirmDialogConfig = {
+      title: '背景壁纸功能说明',
+      message: '本应用的背景壁纸来自互联网公开资源（Pipw API），图片版权归原作者所有。\n\n' +
+        '• 本应用仅提供技术链接，不存储、不拥有这些图片的版权\n' +
+        '• 如有侵权，请联系原图片来源方\n' +
+        '• 您可以在设置中随时关闭壁纸功能或切换为其他来源\n\n' +
+        '继续使用即表示您知悉并同意上述条款。',
+      cancelButton: {
+        text: '关闭壁纸',
+        onClick: async () => {
+          // 用户选择关闭壁纸，设置为 NONE
+          await this.backgroundUtil.setDisclaimerAccepted();
+          await this.backgroundUtil.disableBackgroundImage();
+          this.backgroundImageUrl = '';
+        }
+      },
+      confirmButton: {
+        text: '知悉并继续',
+        onClick: async () => {
+          // 用户同意，保存状态并加载壁纸
+          await this.backgroundUtil.setDisclaimerAccepted();
+          this.loadBackgroundImageAfterDisclaimer();
+        }
+      }
+    };
+    this.showConfirmDialog(config);
+  }
+  
+  /**
+   * 免责声明确认后加载背景图
+   */
+  private async loadBackgroundImageAfterDisclaimer(): Promise<void> {
+    try {
+      const localPath = await this.backgroundUtil.downloadToLocalCache();
+      if (localPath) {
+        this.backgroundImageUrl = 'file://' + localPath;
+      } else {
         this.backgroundImageUrl = await this.backgroundUtil.getBackgroundImageUrl();
       }
     } catch (err) {

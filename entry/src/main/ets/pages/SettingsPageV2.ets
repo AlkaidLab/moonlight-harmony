@@ -2610,22 +2610,23 @@ struct SettingsPageV2 {
   private getBackgroundImageTypeLabel(): string {
     switch (this.backgroundImageType) {
       case 'default':
-        return 'Lorem Picsum (摄影壁纸)';
       case 'pipw':
-        return 'Pipw 二次元';
+        return 'Pipw 二次元 (默认)';
+      case 'picsum':
+        return 'Lorem Picsum (摄影)';
       case 'api':
         return '自定义 URL';
       case 'none':
         return '关闭';
       default:
-        return 'Lorem Picsum (摄影壁纸)';
+        return 'Pipw 二次元 (默认)';
     }
   }
   
   private showBackgroundImageTypePicker(): void {
     const options: PickerOption[] = [
-      { title: 'Lorem Picsum', subtitle: '摄影壁纸 (Unsplash授权)', value: 'default' } as PickerOption,
-      { title: 'Pipw 二次元', subtitle: '二次元壁纸 (第三方)', value: 'pipw' } as PickerOption,
+      { title: 'Pipw 二次元', subtitle: '二次元壁纸 (默认)', value: 'default' } as PickerOption,
+      { title: 'Lorem Picsum', subtitle: '摄影壁纸 (Unsplash授权)', value: 'picsum' } as PickerOption,
       { title: '自定义 URL', subtitle: '使用自定义图片链接', value: 'api' } as PickerOption,
       { title: '关闭', subtitle: '不使用背景图片', value: 'none' } as PickerOption
     ];
