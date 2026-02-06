@@ -144,6 +144,7 @@ export struct AnalogStick {
     .width(this.stickOuterRadius * 2)
     .height(this.stickOuterRadius * 2)
     .opacity(this.stickOpacity)
+    .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到下层（游戏画面）
     .onTouch((event) => this.handleTouch(event))
   }
 

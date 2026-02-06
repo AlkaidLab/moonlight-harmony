@@ -178,6 +178,7 @@ export struct VirtualControllerV2 {
       .alignItems(HorizontalAlign.Center)
       .position({ x: 24, y: '50%' })
       .translate({ y: '-50%' })
+      .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
 
       // ===== 右侧区域 =====
       Column() {
@@ -224,6 +225,7 @@ export struct VirtualControllerV2 {
       .position({ x: '100%', y: '50%' })
       .translate({ x: '-100%', y: '-50%' })
       .margin({ right: 24 })
+      .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
 
       // ===== 上方 - 肩键和扳机 =====
       if (this.config.showShoulder !== false) {
@@ -302,6 +304,7 @@ export struct VirtualControllerV2 {
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 16 })
+        .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
       }
 
       // ===== 中间 - Start/Back/Guide =====
@@ -363,6 +366,7 @@ export struct VirtualControllerV2 {
         .position({ x: '50%', y: '100%' })
         .translate({ x: '-50%', y: '-100%' })
         .margin({ bottom: 24 })
+        .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
       }
       
       // ===== 独立 L3/R3 按钮（可选）=====
@@ -405,6 +409,7 @@ export struct VirtualControllerV2 {
         .position({ y: '100%' })
         .translate({ y: '-100%' })
         .margin({ bottom: 80 })
+        .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
       }
     }
     .width('100%')
