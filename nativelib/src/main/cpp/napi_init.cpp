@@ -22,6 +22,7 @@
 #include "callbacks.h"
 #include "gamepad_napi.h"
 #include "game_controller_native.h"
+#include "input_interceptor.h"
 // SDL3 库尚未移植到 HarmonyOS，暂时禁用
 // #include "sdl3/sdl3_gamepad_napi.h"
 
@@ -134,6 +135,9 @@ static napi_value Init(napi_env env, napi_value exports) {
     
     // 初始化 Game Controller Kit NAPI (添加 GameController 对象, 统一 USB/蓝牙手柄支持)
     GameControllerNapi_Init(env, exports);
+    
+    // 初始化输入拦截器 NAPI (拦截被系统劫持的手柄按键)
+    InputInterceptor_Init(env, exports);
     
     // SDL3 库尚未移植到 HarmonyOS，SDL3 NAPI 暂时禁用
     // 当前使用内置的 SDL GameControllerDB 映射数据替代

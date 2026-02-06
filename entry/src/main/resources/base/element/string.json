@@ -107,6 +107,10 @@
     {
       "name": "permission_accelerometer_reason",
       "value": "用于摇一摇刷新壁纸"
+    },
+    {
+      "name": "permission_intercept_input_reason",
+      "value": "用于拦截手柄按键事件，防止系统劫持Home键等按键"
     }
   ]
 }

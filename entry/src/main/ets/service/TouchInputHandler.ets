@@ -14,6 +14,7 @@
  * 处理触摸事件并转换为相应的输入指令
  */
 import nativeLib from 'libmoonlight_nativelib.so';
+import { AbsoluteMouseManager } from './LocalCursorManager';
 
 /**
  * 触摸输入模式
@@ -68,6 +69,12 @@ export interface TouchInputConfig {
   clickThreshold?: number;
   /** 长按时间阈值（毫秒） */
   longPressThreshold?: number;
+  /** 是否启用绝对鼠标模式 */
+  absoluteMouseMode?: boolean;
+  /** 视图宽度（用于绝对定位） */
+  viewWidth?: number;
+  /** 视图高度（用于绝对定位） */
+  viewHeight?: number;
 }
 
 /**
@@ -78,6 +85,10 @@ export class TouchInputHandler {
   private mode: TouchInputMode = TouchInputMode.TRACKPAD;
   private touchStates: Map<number, TouchState> = new Map();
   private config: TouchInputConfig;
+  /** 绝对鼠标管理器 */
+  private absoluteMouseManager: AbsoluteMouseManager | null = null;
+  /** 是否启用绝对鼠标模式 */
+  private absoluteMouseMode: boolean = false;
   
   // 默认配置
   private static readonly DEFAULT_SENSITIVITY = 1.5;
@@ -89,8 +100,58 @@ export class TouchInputHandler {
     this.config = {
       sensitivity: config?.sensitivity ?? TouchInputHandler.DEFAULT_SENSITIVITY,
       clickThreshold: config?.clickThreshold ?? TouchInputHandler.DEFAULT_CLICK_THRESHOLD,
-      longPressThreshold: config?.longPressThreshold ?? TouchInputHandler.DEFAULT_LONG_PRESS_THRESHOLD
+      longPressThreshold: config?.longPressThreshold ?? TouchInputHandler.DEFAULT_LONG_PRESS_THRESHOLD,
+      absoluteMouseMode: config?.absoluteMouseMode ?? false,
+      viewWidth: config?.viewWidth ?? 1920,
+      viewHeight: config?.viewHeight ?? 1080
     };
+    
+    // 初始化绝对鼠标管理器
+    if (config?.absoluteMouseMode) {
+      this.initializeAbsoluteMouseManager();
+    }
+  }
+  
+  /**
+   * 初始化绝对鼠标管理器
+   */
+  private initializeAbsoluteMouseManager(): void {
+    this.absoluteMouseManager = AbsoluteMouseManager.getInstance();
+    this.absoluteMouseMode = this.config.absoluteMouseMode ?? false;
+    this.absoluteMouseManager.setAbsoluteMouseMode(this.absoluteMouseMode);
+    console.info(`TouchInputHandler: 绝对鼠标模式已初始化, enabled=${this.absoluteMouseMode}`);
+  }
+  
+  /**
+   * 设置是否启用绝对鼠标模式
+   */
+  setAbsoluteMouseMode(enabled: boolean): void {
+    this.absoluteMouseMode = enabled;
+    this.config.absoluteMouseMode = enabled;
+    if (enabled && !this.absoluteMouseManager) {
+      this.initializeAbsoluteMouseManager();
+    } else if (this.absoluteMouseManager) {
+      this.absoluteMouseManager.setAbsoluteMouseMode(enabled);
+    }
+    console.info(`TouchInputHandler: 绝对鼠标模式 = ${enabled}`);
+  }
+  
+  /**
+   * 更新视图尺寸（用于绝对定位计算）
+   */
+  updateViewSize(width: number, height: number): void {
+    this.config.viewWidth = width;
+    this.config.viewHeight = height;
+    if (this.absoluteMouseManager) {
+      this.absoluteMouseManager.updateViewSize(width, height);
+    }
+  }
+  
+  /**
+   * 获取绝对鼠标管理器
+   */
+  getAbsoluteMouseManager(): AbsoluteMouseManager | null {
+    return this.absoluteMouseManager;
   }
   
   /**
@@ -273,16 +334,28 @@ export class TouchInputHandler {
     if (this.mode === TouchInputMode.TRACKPAD) {
       // 触摸板模式：发送相对移动
       const sensitivity = this.config.sensitivity!;
-      this.nativeInput.sendMouseMove(
-        Math.floor(deltaX * sensitivity),
-        Math.floor(deltaY * sensitivity)
-      );
+      
+      // 检查是否启用绝对鼠标模式
+      if (this.absoluteMouseMode && this.absoluteMouseManager) {
+        // 绝对鼠标模式：使用管理器处理
+        this.absoluteMouseManager.handleRelativeMove(deltaX, deltaY, sensitivity);
+      } else {
+        // 标准相对移动模式
+        this.nativeInput.sendMouseMove(
+          Math.floor(deltaX * sensitivity),
+          Math.floor(deltaY * sensitivity)
+        );
+      }
     } else if (this.mode === TouchInputMode.MOUSE) {
       // 鼠标模式：移动光标
-      this.nativeInput.sendMouseMove(
-        Math.floor(deltaX),
-        Math.floor(deltaY)
-      );
+      if (this.absoluteMouseMode && this.absoluteMouseManager) {
+        this.absoluteMouseManager.handleRelativeMove(deltaX, deltaY, 1.0);
+      } else {
+        this.nativeInput.sendMouseMove(
+          Math.floor(deltaX),
+          Math.floor(deltaY)
+        );
+      }
     }
   }
   
@@ -404,5 +477,9 @@ export class TouchInputHandler {
    */
   dispose(): void {
     this.touchStates.clear();
+    if (this.absoluteMouseManager) {
+      this.absoluteMouseManager.destroy();
+      this.absoluteMouseManager = null;
+    }
   }
 }

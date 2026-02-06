@@ -140,6 +140,17 @@ private:
     // 运行状态
     std::atomic<bool> running_{false};
     std::atomic<bool> configured_{false};
+    
+    // 错误恢复
+    std::atomic<bool> needRestart_{false};     // 标记需要重启
+    std::atomic<int> consecutiveErrors_{0};     // 连续错误计数
+    static constexpr int MAX_ERRORS_BEFORE_RESTART = 3;  // 触发重启的错误阈值
+    
+    /**
+     * 尝试重启音频渲染器（内部使用）
+     * @return 0 成功，负数失败
+     */
+    int TryRestart();
 };
 
 /**

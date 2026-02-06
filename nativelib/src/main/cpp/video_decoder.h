@@ -146,6 +146,14 @@ struct VideoDecoderStats {
 };
 
 /**
+ * 数据分段（用于 scatter-gather 零拷贝提交）
+ */
+struct BufferSegment {
+    const uint8_t* data;
+    int length;
+};
+
+/**
  * AVCodec 视频解码器封装类
  */
 class VideoDecoder {
@@ -175,6 +183,24 @@ public:
                           int frameNumber, VideoFrameType frameType,
                           int64_t timestamp,
                           uint16_t hostProcessingLatency = 0);
+    
+    /**
+     * 提交解码单元（scatter-gather 零拷贝模式）
+     * 直接将分散的数据段写入解码器 AVBuffer，避免中间缓冲区和额外的 memcpy
+     * @param segments 数据分段数组
+     * @param segmentCount 分段数量
+     * @param totalSize 所有分段的总大小
+     * @param frameNumber 帧号
+     * @param frameType 帧类型
+     * @param timestamp 时间戳（微秒）
+     * @param hostProcessingLatency 主机处理延迟（1/10 ms 单位），0 表示无效
+     * @return 0 成功，负数失败
+     */
+    int SubmitDecodeUnitScatter(const BufferSegment* segments, int segmentCount,
+                                int totalSize,
+                                int frameNumber, VideoFrameType frameType,
+                                int64_t timestamp,
+                                uint16_t hostProcessingLatency = 0);
     
     /**
      * 启动解码器
@@ -394,6 +420,21 @@ namespace VideoDecoderInstance {
      * @param hostProcessingLatency 主机处理延迟（1/10 ms 单位）
      */
     int SubmitDecodeUnit(const uint8_t* data, int size, int frameNumber, int frameType, uint16_t hostProcessingLatency = 0);
+    
+    /**
+     * 提交解码单元（scatter-gather 零拷贝模式）
+     * 直接将分散的数据段写入解码器 AVBuffer，避免中间缓冲区和额外的 memcpy
+     * @param segments 数据分段数组
+     * @param segmentCount 分段数量
+     * @param totalSize 所有分段的总大小
+     * @param frameNumber 帧号
+     * @param frameType 帧类型
+     * @param hostProcessingLatency 主机处理延迟（1/10 ms 单位）
+     * @return 0 成功，负数失败
+     */
+    int SubmitDecodeUnitScatter(const BufferSegment* segments, int segmentCount,
+                                int totalSize, int frameNumber, int frameType,
+                                uint16_t hostProcessingLatency = 0);
     
     /**
      * 启动解码器

@@ -392,6 +392,14 @@ export class ShortcutManager {
         icon: '📁',
         color: '#D4C5A9',  // 莫兰迪暖棕
         isBuiltin: true
+      },
+      {
+        id: 'builtin_toggle_cursor',
+        name: '切换远端光标',
+        keys: [VirtualKey.VK_CONTROL, VirtualKey.VK_MENU, VirtualKey.VK_SHIFT, VirtualKey.VK_N],
+        icon: '🖱️',
+        color: '#A9C4D4',  // 莫兰迪天蓝
+        isBuiltin: true
       }
     ];
   }

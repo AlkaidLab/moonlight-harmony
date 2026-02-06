@@ -14,6 +14,7 @@
  */
 import { InputEvent, InputType, ControllerButton, ControllerButtonEvent, ControllerAxis, ControllerAxisEvent } from '../model/InputEvent';
 import { AnalogStick, AnalogStickConfig } from './AnalogStick';
+import { vibrator } from '@kit.SensorServiceKit';
 
 /**
  * 虚拟控制器配置
@@ -76,16 +77,152 @@ export struct VirtualControllerV2 {
     }
   }
 
+  // 辅助方法：给 6 位 hex 颜色添加 alpha 前缀（ArkUI 使用 #AARRGGBB 格式）
+  private withAlpha(color: string, alpha: number): string {
+    const hex = Math.round(alpha * 255).toString(16).padStart(2, '0');
+    return '#' + hex + color.substring(1);
+  }
+
   build() {
-    Stack() {
-      // ===== 左侧区域 =====
-      Column() {
-        // 左摇杆
-        if (this.config.showLeftStick !== false) {
-          Column() {
+    // 使用 Column + Row 标准 flex 布局
+    // 确保所有子组件正确参与 ArkUI 触摸测试树
+    Column() {
+      // ===== 上方 - 肩键和扳机 =====
+      if (this.config.showShoulder !== false) {
+        Row() {
+          // 左侧肩键组
+          Column({ space: 6 }) {
+            // LT
+            Button() {
+              Text('LT')
+                .fontSize(12 * this.controllerScale)
+                .fontColor(this.leftTriggerActive ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+                .fontWeight(FontWeight.Bold)
+            }
+            .width(60 * this.controllerScale)
+            .height(44 * this.controllerScale)
+            .backgroundColor(this.leftTriggerActive ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+            .borderRadius(12)
+            .border({ width: 1, color: this.leftTriggerActive ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.15) })
+            .onTouch((event) => this.handleTriggerTouch(true, event))
+
+            // LB
+            Button() {
+              Text('LB')
+                .fontSize(12 * this.controllerScale)
+                .fontColor(this.pressedButtons.has(ControllerButton.LB) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+                .fontWeight(FontWeight.Medium)
+            }
+            .width(64 * this.controllerScale)
+            .height(34 * this.controllerScale)
+            .backgroundColor(this.pressedButtons.has(ControllerButton.LB) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+            .borderRadius(17 * this.controllerScale)
+            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.LB) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.15) })
+            .onTouch((event) => this.handleButtonTouch(ControllerButton.LB, event))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+
+          // 右侧肩键组
+          Column({ space: 6 }) {
+            // RT
+            Button() {
+              Text('RT')
+                .fontSize(12 * this.controllerScale)
+                .fontColor(this.rightTriggerActive ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+                .fontWeight(FontWeight.Bold)
+            }
+            .width(60 * this.controllerScale)
+            .height(44 * this.controllerScale)
+            .backgroundColor(this.rightTriggerActive ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+            .borderRadius(12)
+            .border({ width: 1, color: this.rightTriggerActive ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.15) })
+            .onTouch((event) => this.handleTriggerTouch(false, event))
+
+            // RB
+            Button() {
+              Text('RB')
+                .fontSize(12 * this.controllerScale)
+                .fontColor(this.pressedButtons.has(ControllerButton.RB) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+                .fontWeight(FontWeight.Medium)
+            }
+            .width(64 * this.controllerScale)
+            .height(34 * this.controllerScale)
+            .backgroundColor(this.pressedButtons.has(ControllerButton.RB) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+            .borderRadius(17 * this.controllerScale)
+            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.RB) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.15) })
+            .onTouch((event) => this.handleButtonTouch(ControllerButton.RB, event))
+          }
+          .alignItems(HorizontalAlign.End)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 16 })
+      }
+
+      // ===== 中间区域 - 左摇杆+D-Pad / ABXY+右摇杆 =====
+      Row() {
+        // 左侧：左摇杆 + D-Pad
+        Column() {
+          // 左摇杆
+          if (this.config.showLeftStick !== false) {
+            Column() {
+              AnalogStick({
+                config: {
+                  isLeftStick: true,
+                  outerRadius: 55 * this.controllerScale,
+                  innerRadius: 24 * this.controllerScale,
+                  deadzone: this.controllerDeadzone,
+                  opacity: this.controllerOpacity,
+                  enableClick: true
+                } as AnalogStickConfig,
+                onInput: (event: InputEvent) => this.onInput(event)
+              })
+            }
+            .margin({ bottom: 16 })
+          }
+
+          // D-Pad（可爱十字键造型）
+          if (this.config.showDpad !== false) {
+            this.buildCrossDpad()
+          }
+        }
+        .alignItems(HorizontalAlign.Center)
+        .justifyContent(FlexAlign.Center)
+        .padding({ left: 24 })
+
+        Blank()
+
+        // 右侧：ABXY + 右摇杆
+        Column() {
+          // ABXY 按钮
+          if (this.config.showButtons !== false) {
+            Column() {
+              // Y
+              this.buildActionButton('Y', ControllerButton.Y, '#FFB900')
+
+              Row({ space: 8 }) {
+                // X
+                this.buildActionButton('X', ControllerButton.X, '#4BA3E3')
+                // B
+                this.buildActionButton('B', ControllerButton.B, '#E87070')
+              }
+              .margin({ top: 8 })
+
+              // A
+              Column() {
+                this.buildActionButton('A', ControllerButton.A, '#50C878')
+              }
+              .margin({ top: 8 })
+            }
+            .margin({ bottom: 16 })
+          }
+
+          // 右摇杆
+          if (this.config.showRightStick !== false) {
             AnalogStick({
               config: {
-                isLeftStick: true,
+                isLeftStick: false,
                 outerRadius: 55 * this.controllerScale,
                 innerRadius: 24 * this.controllerScale,
                 deadzone: this.controllerDeadzone,
@@ -95,347 +232,224 @@ export struct VirtualControllerV2 {
               onInput: (event: InputEvent) => this.onInput(event)
             })
           }
-          .margin({ bottom: 20 })
         }
-        
-        // D-Pad
-        if (this.config.showDpad !== false) {
-          Column() {
-            // 上
-            Button() {
-              Text('▲')
-                .fontSize(16 * this.controllerScale)
-                .fontColor('#FFFFFF')
-                .fontWeight(FontWeight.Bold)
-            }
-            .width(44 * this.controllerScale)
-            .height(44 * this.controllerScale)
-            .backgroundColor(this.pressedButtons.has(ControllerButton.UP) ? '#5090FF' : '#000000')
-            .opacity(this.pressedButtons.has(ControllerButton.UP) ? 1 : 0.6)
-            .borderRadius(8)
-            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.UP) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-            .onTouch((event) => this.handleButtonTouch(ControllerButton.UP, event))
-            .margin({ bottom: 4 })
-
-            Row({ space: 4 }) {
-              // 左
-              Button() {
-                Text('◀')
-                  .fontSize(16 * this.controllerScale)
-                  .fontColor('#FFFFFF')
-                  .fontWeight(FontWeight.Bold)
-              }
-              .width(44 * this.controllerScale)
-              .height(44 * this.controllerScale)
-              .backgroundColor(this.pressedButtons.has(ControllerButton.LEFT) ? '#5090FF' : '#000000')
-              .opacity(this.pressedButtons.has(ControllerButton.LEFT) ? 1 : 0.6)
-              .borderRadius(8)
-              .border({ width: 1, color: this.pressedButtons.has(ControllerButton.LEFT) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-              .onTouch((event) => this.handleButtonTouch(ControllerButton.LEFT, event))
-              
-              // 中心
-              Circle()
-                .width(36 * this.controllerScale)
-                .height(36 * this.controllerScale)
-                .fill('#FFFFFF')
-                .fillOpacity(0.1)
-              
-              // 右
-              Button() {
-                Text('▶')
-                  .fontSize(16 * this.controllerScale)
-                  .fontColor('#FFFFFF')
-                  .fontWeight(FontWeight.Bold)
-              }
-              .width(44 * this.controllerScale)
-              .height(44 * this.controllerScale)
-              .backgroundColor(this.pressedButtons.has(ControllerButton.RIGHT) ? '#5090FF' : '#000000')
-              .opacity(this.pressedButtons.has(ControllerButton.RIGHT) ? 1 : 0.6)
-              .borderRadius(8)
-              .border({ width: 1, color: this.pressedButtons.has(ControllerButton.RIGHT) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-              .onTouch((event) => this.handleButtonTouch(ControllerButton.RIGHT, event))
-            }
-
-            // 下
-            Button() {
-              Text('▼')
-                .fontSize(16 * this.controllerScale)
-                .fontColor('#FFFFFF')
-                .fontWeight(FontWeight.Bold)
-            }
-            .width(44 * this.controllerScale)
-            .height(44 * this.controllerScale)
-            .backgroundColor(this.pressedButtons.has(ControllerButton.DOWN) ? '#5090FF' : '#000000')
-            .opacity(this.pressedButtons.has(ControllerButton.DOWN) ? 1 : 0.6)
-            .borderRadius(8)
-            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.DOWN) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-            .onTouch((event) => this.handleButtonTouch(ControllerButton.DOWN, event))
-            .margin({ top: 4 })
-          }
-          .opacity(this.controllerOpacity)
-        }
+        .alignItems(HorizontalAlign.Center)
+        .justifyContent(FlexAlign.Center)
+        .padding({ right: 24 })
       }
-      .alignItems(HorizontalAlign.Center)
-      .position({ x: 24, y: '50%' })
-      .translate({ y: '-50%' })
-      .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
+      .width('100%')
+      .layoutWeight(1)
 
-      // ===== 右侧区域 =====
-      Column() {
-        // ABXY 按钮
-        if (this.config.showButtons !== false) {
-          Column() {
-            // Y
-            this.buildActionButton('Y', ControllerButton.Y, '#FFB900')
-            
-            Row({ space: 6 }) {
-              // X
-              this.buildActionButton('X', ControllerButton.X, '#0078D4')
-              // B
-              this.buildActionButton('B', ControllerButton.B, '#E81123')
-            }
-            .margin({ top: 6 })
-
-            // A
-            Column() {
-              this.buildActionButton('A', ControllerButton.A, '#107C10')
-            }
-            .margin({ top: 6 })
-          }
-          .opacity(this.controllerOpacity)
-          .margin({ bottom: 20 })
-        }
-        
-        // 右摇杆
-        if (this.config.showRightStick !== false) {
-          AnalogStick({
-            config: {
-              isLeftStick: false,
-              outerRadius: 55 * this.controllerScale,
-              innerRadius: 24 * this.controllerScale,
-              deadzone: this.controllerDeadzone,
-              opacity: this.controllerOpacity,
-              enableClick: true
-            } as AnalogStickConfig,
-            onInput: (event: InputEvent) => this.onInput(event)
-          })
-        }
-      }
-      .alignItems(HorizontalAlign.Center)
-      .position({ x: '100%', y: '50%' })
-      .translate({ x: '-100%', y: '-50%' })
-      .margin({ right: 24 })
-      .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
-
-      // ===== 上方 - 肩键和扳机 =====
-      if (this.config.showShoulder !== false) {
-        Row() {
-          // 左侧肩键组
-          Column() {
-            // LT
-            Button() {
-              Text('LT')
-                .fontSize(12 * this.controllerScale)
-                .fontColor('#FFFFFF')
-                .fontWeight(FontWeight.Bold)
-            }
-            .width(60 * this.controllerScale)
-            .height(48 * this.controllerScale)
-            .backgroundColor(this.leftTriggerActive ? '#5090FF' : '#000000')
-            .opacity(this.leftTriggerActive ? 1 : 0.6)
-            .borderRadius(8)
-            .border({ width: 1, color: this.leftTriggerActive ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-            .onTouch((event) => this.handleTriggerTouch(true, event))
-            
-            // LB
-            Button() {
-              Text('LB')
-                .fontSize(13 * this.controllerScale)
-                .fontColor('#FFFFFF')
-                .fontWeight(FontWeight.Medium)
-            }
-            .width(68 * this.controllerScale)
-            .height(36 * this.controllerScale)
-            .backgroundColor(this.pressedButtons.has(ControllerButton.LB) ? '#5090FF' : '#000000')
-            .opacity(this.pressedButtons.has(ControllerButton.LB) ? 1 : 0.6)
-            .borderRadius(18 * this.controllerScale)
-            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.LB) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-            .onTouch((event) => this.handleButtonTouch(ControllerButton.LB, event))
-            .margin({ top: 4 })
-          }
-          .alignItems(HorizontalAlign.Start)
-          
-          Blank()
-          
-          // 右侧肩键组
-          Column() {
-            // RT
-            Button() {
-              Text('RT')
-                .fontSize(12 * this.controllerScale)
-                .fontColor('#FFFFFF')
-                .fontWeight(FontWeight.Bold)
-            }
-            .width(60 * this.controllerScale)
-            .height(48 * this.controllerScale)
-            .backgroundColor(this.rightTriggerActive ? '#5090FF' : '#000000')
-            .opacity(this.rightTriggerActive ? 1 : 0.6)
-            .borderRadius(8)
-            .border({ width: 1, color: this.rightTriggerActive ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-            .onTouch((event) => this.handleTriggerTouch(false, event))
-            
-            // RB
-            Button() {
-              Text('RB')
-                .fontSize(13 * this.controllerScale)
-                .fontColor('#FFFFFF')
-                .fontWeight(FontWeight.Medium)
-            }
-            .width(68 * this.controllerScale)
-            .height(36 * this.controllerScale)
-            .backgroundColor(this.pressedButtons.has(ControllerButton.RB) ? '#5090FF' : '#000000')
-            .opacity(this.pressedButtons.has(ControllerButton.RB) ? 1 : 0.6)
-            .borderRadius(18 * this.controllerScale)
-            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.RB) ? '#5090FF' : 'rgba(255,255,255,0.3)' })
-            .onTouch((event) => this.handleButtonTouch(ControllerButton.RB, event))
-            .margin({ top: 4 })
-          }
-          .alignItems(HorizontalAlign.End)
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 16 })
-        .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
-      }
-
-      // ===== 中间 - Start/Back/Guide =====
+      // ===== 底部 - Start/Back/Guide =====
       if (this.config.showCenter !== false) {
-        Row({ space: 16 }) {
-          // Back 按钮
-          Button() {
-            Column() {
-              Text('⏴')
-                .fontSize(14 * this.controllerScale)
-                .fontColor('#FFFFFF')
-              Text('BACK')
-                .fontSize(8 * this.controllerScale)
-                .fontColor('#FFFFFF')
-                .opacity(0.7)
-            }
-          }
-          .width(52 * this.controllerScale)
-          .height(36 * this.controllerScale)
-          .backgroundColor(this.pressedButtons.has(ControllerButton.BACK) ? '#5090FF' : '#000000')
-          .opacity(this.pressedButtons.has(ControllerButton.BACK) ? 1 : 0.5)
-          .borderRadius(18 * this.controllerScale)
-          .border({ width: 1, color: this.pressedButtons.has(ControllerButton.BACK) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
-          .onTouch((event) => this.handleButtonTouch(ControllerButton.BACK, event))
-          
-          // Guide 按钮
+        Row({ space: 12 }) {
+          // Back
+          this.buildCenterButton('◂', 'BACK', ControllerButton.BACK)
+
+          // Guide
           Button() {
             Text('◉')
-              .fontSize(20 * this.controllerScale)
-              .fontColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? '#FFFFFF' : '#5090FF')
+              .fontSize(18 * this.controllerScale)
+              .fontColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? '#FFFFFF' : this.withAlpha('#7EB8E0', 0.6))
           }
-          .width(44 * this.controllerScale)
-          .height(44 * this.controllerScale)
-          .backgroundColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? '#5090FF' : 'transparent')
-          .borderRadius(22 * this.controllerScale)
-          .border({ width: 2, color: '#5090FF' })
+          .width(42 * this.controllerScale)
+          .height(42 * this.controllerScale)
+          .backgroundColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+          .borderRadius(21 * this.controllerScale)
+          .border({ width: 1.5, color: this.pressedButtons.has(ControllerButton.SPECIAL) ? '#5090FF' : this.withAlpha('#7EB8E0', 0.25) })
           .onTouch((event) => this.handleButtonTouch(ControllerButton.SPECIAL, event))
-          
-          // Start 按钮
-          Button() {
-            Column() {
-              Text('⏵')
-                .fontSize(14 * this.controllerScale)
-                .fontColor('#FFFFFF')
-              Text('START')
-                .fontSize(8 * this.controllerScale)
-                .fontColor('#FFFFFF')
-                .opacity(0.7)
-            }
-          }
-          .width(52 * this.controllerScale)
-          .height(36 * this.controllerScale)
-          .backgroundColor(this.pressedButtons.has(ControllerButton.START) ? '#5090FF' : '#000000')
-          .opacity(this.pressedButtons.has(ControllerButton.START) ? 1 : 0.5)
-          .borderRadius(18 * this.controllerScale)
-          .border({ width: 1, color: this.pressedButtons.has(ControllerButton.START) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
-          .onTouch((event) => this.handleButtonTouch(ControllerButton.START, event))
+
+          // Start
+          this.buildCenterButton('▸', 'START', ControllerButton.START)
         }
-        .position({ x: '50%', y: '100%' })
-        .translate({ x: '-50%', y: '-100%' })
-        .margin({ bottom: 24 })
-        .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
+        .justifyContent(FlexAlign.Center)
+        .margin({ bottom: 20 })
       }
-      
+
       // ===== 独立 L3/R3 按钮（可选）=====
       if (this.config.showL3R3 === true) {
         Row() {
-          // L3
-          Button() {
-            Text('L3')
-              .fontSize(12 * this.controllerScale)
-              .fontColor('#FFFFFF')
-              .fontWeight(FontWeight.Medium)
-          }
-          .width(48 * this.controllerScale)
-          .height(32 * this.controllerScale)
-          .backgroundColor(this.pressedButtons.has(ControllerButton.LS) ? '#5090FF' : '#000000')
-          .opacity(this.pressedButtons.has(ControllerButton.LS) ? 1 : 0.5)
-          .borderRadius(16 * this.controllerScale)
-          .border({ width: 1, color: this.pressedButtons.has(ControllerButton.LS) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
-          .onTouch((event) => this.handleButtonTouch(ControllerButton.LS, event))
-          
+          this.buildSmallButton('L3', ControllerButton.LS)
           Blank()
-          
-          // R3
-          Button() {
-            Text('R3')
-              .fontSize(12 * this.controllerScale)
-              .fontColor('#FFFFFF')
-              .fontWeight(FontWeight.Medium)
-          }
-          .width(48 * this.controllerScale)
-          .height(32 * this.controllerScale)
-          .backgroundColor(this.pressedButtons.has(ControllerButton.RS) ? '#5090FF' : '#000000')
-          .opacity(this.pressedButtons.has(ControllerButton.RS) ? 1 : 0.5)
-          .borderRadius(16 * this.controllerScale)
-          .border({ width: 1, color: this.pressedButtons.has(ControllerButton.RS) ? '#5090FF' : 'rgba(255,255,255,0.2)' })
-          .onTouch((event) => this.handleButtonTouch(ControllerButton.RS, event))
+          this.buildSmallButton('R3', ControllerButton.RS)
         }
         .width('100%')
         .padding({ left: 100, right: 100 })
-        .position({ y: '100%' })
-        .translate({ y: '-100%' })
-        .margin({ bottom: 80 })
-        .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到游戏画面
+        .margin({ bottom: 16 })
       }
     }
     .width('100%')
     .height('100%')
-    .hitTestBehavior(HitTestMode.Transparent)
+    .hitTestBehavior(HitTestMode.Default)
+    .onTouch(() => {})
   }
 
-  // ==================== ABXY 按钮 ====================
+  // ==================== ABXY 按钮（全透明 + 彩色边框）====================
   @Builder
   buildActionButton(label: string, button: ControllerButton, color: string) {
     Button() {
       Text(label)
-        .fontSize(18 * this.controllerScale)
-        .fontColor('#FFFFFF')
+        .fontSize(17 * this.controllerScale)
+        .fontColor(this.pressedButtons.has(button) ? '#FFFFFF' : this.withAlpha(color, 0.7))
         .fontWeight(FontWeight.Bold)
     }
-    .width(52 * this.controllerScale)
-    .height(52 * this.controllerScale)
-    .backgroundColor(this.pressedButtons.has(button) ? color : this.adjustColor(color, -40))
-    .borderRadius(26 * this.controllerScale)
+    .width(48 * this.controllerScale)
+    .height(48 * this.controllerScale)
+    .backgroundColor(this.pressedButtons.has(button) ? this.withAlpha(color, 0.35) : Color.Transparent)
+    .borderRadius(24 * this.controllerScale)
+    .border({ width: 1.5, color: this.pressedButtons.has(button) ? color : this.withAlpha(color, 0.35) })
     .shadow({
-      radius: this.pressedButtons.has(button) ? 12 : 4,
-      color: this.pressedButtons.has(button) ? color : 'transparent',
+      radius: this.pressedButtons.has(button) ? 8 : 0,
+      color: this.pressedButtons.has(button) ? this.withAlpha(color, 0.3) : 'transparent',
       offsetX: 0,
-      offsetY: 2
+      offsetY: 0
     })
+    .onTouch((event) => this.handleButtonTouch(button, event))
+  }
+
+  // ==================== 十字键（Cross D-Pad）====================
+  @Builder
+  buildCrossDpad() {
+    // 十字键：3x3 网格，只填充十字位置，外角圆润
+    // 每个格子 36x36，间距 1px
+    Column() {
+      // 第一行：空 | 上 | 空
+      Row() {
+        Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
+        Column() {
+          Text('▴')
+            .fontSize(14 * this.controllerScale)
+            .fontColor(this.pressedButtons.has(ControllerButton.UP) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(36 * this.controllerScale)
+        .height(36 * this.controllerScale)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.pressedButtons.has(ControllerButton.UP) ? this.withAlpha('#5090FF', 0.35) : Color.Transparent)
+        .borderRadius({ topLeft: 14, topRight: 14, bottomLeft: 0, bottomRight: 0 })
+        .border({
+          width: { top: 1, left: 1, right: 1, bottom: 0 },
+          color: this.pressedButtons.has(ControllerButton.UP) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.18)
+        })
+        .onTouch((event) => this.handleButtonTouch(ControllerButton.UP, event))
+
+        Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
+      }
+
+      // 第二行：左 | 中心 | 右
+      Row() {
+        Column() {
+          Text('◂')
+            .fontSize(14 * this.controllerScale)
+            .fontColor(this.pressedButtons.has(ControllerButton.LEFT) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(36 * this.controllerScale)
+        .height(36 * this.controllerScale)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.pressedButtons.has(ControllerButton.LEFT) ? this.withAlpha('#5090FF', 0.35) : Color.Transparent)
+        .borderRadius({ topLeft: 14, topRight: 0, bottomLeft: 14, bottomRight: 0 })
+        .border({
+          width: { top: 1, left: 1, right: 0, bottom: 1 },
+          color: this.pressedButtons.has(ControllerButton.LEFT) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.18)
+        })
+        .onTouch((event) => this.handleButtonTouch(ControllerButton.LEFT, event))
+
+        // 中心格（十字交叉点）
+        Column() {
+          Circle()
+            .width(8 * this.controllerScale)
+            .height(8 * this.controllerScale)
+            .fill('#FFFFFF')
+            .fillOpacity(0.12)
+        }
+        .width(36 * this.controllerScale)
+        .height(36 * this.controllerScale)
+        .justifyContent(FlexAlign.Center)
+        .border({
+          width: { top: 0, left: 0, right: 0, bottom: 0 },
+          color: this.withAlpha('#FFFFFF', 0.18)
+        })
+
+        Column() {
+          Text('▸')
+            .fontSize(14 * this.controllerScale)
+            .fontColor(this.pressedButtons.has(ControllerButton.RIGHT) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(36 * this.controllerScale)
+        .height(36 * this.controllerScale)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.pressedButtons.has(ControllerButton.RIGHT) ? this.withAlpha('#5090FF', 0.35) : Color.Transparent)
+        .borderRadius({ topLeft: 0, topRight: 14, bottomLeft: 0, bottomRight: 14 })
+        .border({
+          width: { top: 1, left: 0, right: 1, bottom: 1 },
+          color: this.pressedButtons.has(ControllerButton.RIGHT) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.18)
+        })
+        .onTouch((event) => this.handleButtonTouch(ControllerButton.RIGHT, event))
+      }
+
+      // 第三行：空 | 下 | 空
+      Row() {
+        Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
+        Column() {
+          Text('▾')
+            .fontSize(14 * this.controllerScale)
+            .fontColor(this.pressedButtons.has(ControllerButton.DOWN) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(36 * this.controllerScale)
+        .height(36 * this.controllerScale)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.pressedButtons.has(ControllerButton.DOWN) ? this.withAlpha('#5090FF', 0.35) : Color.Transparent)
+        .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 14, bottomRight: 14 })
+        .border({
+          width: { top: 0, left: 1, right: 1, bottom: 1 },
+          color: this.pressedButtons.has(ControllerButton.DOWN) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.18)
+        })
+        .onTouch((event) => this.handleButtonTouch(ControllerButton.DOWN, event))
+
+        Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
+      }
+    }
+  }
+
+  // ==================== 中间功能键（Back/Start）====================
+  @Builder
+  buildCenterButton(icon: string, label: string, button: ControllerButton) {
+    Button() {
+      Row({ space: 4 }) {
+        Text(icon)
+          .fontSize(13 * this.controllerScale)
+          .fontColor(this.pressedButtons.has(button) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.4))
+        Text(label)
+          .fontSize(8 * this.controllerScale)
+          .fontColor(this.pressedButtons.has(button) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.4))
+          .fontWeight(FontWeight.Medium)
+      }
+    }
+    .height(34 * this.controllerScale)
+    .padding({ left: 10, right: 10 })
+    .backgroundColor(this.pressedButtons.has(button) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+    .borderRadius(17 * this.controllerScale)
+    .border({ width: 1, color: this.pressedButtons.has(button) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.12) })
+    .onTouch((event) => this.handleButtonTouch(button, event))
+  }
+
+  // ==================== L3/R3 小按钮 ====================
+  @Builder
+  buildSmallButton(label: string, button: ControllerButton) {
+    Button() {
+      Text(label)
+        .fontSize(11 * this.controllerScale)
+        .fontColor(this.pressedButtons.has(button) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.4))
+        .fontWeight(FontWeight.Medium)
+    }
+    .width(44 * this.controllerScale)
+    .height(30 * this.controllerScale)
+    .backgroundColor(this.pressedButtons.has(button) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+    .borderRadius(15 * this.controllerScale)
+    .border({ width: 1, color: this.pressedButtons.has(button) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.12) })
     .onTouch((event) => this.handleButtonTouch(button, event))
   }
 
@@ -513,31 +527,16 @@ export struct VirtualControllerV2 {
   
   private triggerVibration(): void {
     try {
-      // HarmonyOS 震动 API
-      // import { vibrator } from '@kit.SensorServiceKit';
-      // vibrator.startVibration({ type: 'time', duration: 30 });
+      vibrator.startVibration({
+        type: 'time',
+        duration: 30
+      }, {
+        id: 0,
+        usage: 'touch'
+      });
     } catch (e) {
       // 忽略震动错误
     }
   }
   
-  /**
-   * 调整颜色亮度
-   */
-  private adjustColor(hex: string, amount: number): string {
-    // 简单的颜色调整
-    let color = hex.replace('#', '');
-    let r = parseInt(color.substring(0, 2), 16);
-    let g = parseInt(color.substring(2, 4), 16);
-    let b = parseInt(color.substring(4, 6), 16);
-    
-    r = Math.max(0, Math.min(255, r + amount));
-    g = Math.max(0, Math.min(255, g + amount));
-    b = Math.max(0, Math.min(255, b + amount));
-    
-    return '#' + 
-      r.toString(16).padStart(2, '0') +
-      g.toString(16).padStart(2, '0') +
-      b.toString(16).padStart(2, '0');
-  }
 }

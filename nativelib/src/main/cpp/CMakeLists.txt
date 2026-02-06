@@ -55,6 +55,7 @@ set(SOURCE_FILES
     audio_renderer.cpp
     gamepad_napi.cpp
     game_controller_native.cpp
+    input_interceptor.cpp
     native_render.cpp
     sdl_gamecontrollerdb.cpp
 )
@@ -124,6 +125,7 @@ target_link_libraries(moonlight_nativelib PUBLIC
     libohaudio.so
     libqos.so
     libohgame_controller.z.so
+    libohinput.so
     ${OPENSSL_CRYPTO_LIBRARY}
     ${OPENSSL_SSL_LIBRARY}
 )

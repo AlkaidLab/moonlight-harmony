@@ -93,6 +93,7 @@ class SettingsKeys {
   static readonly ENABLE_START_KEY_MENU: string = 'settings_enable_start_key_menu';
   static readonly IGNORE_DEVICE_DISCONNECT: string = 'settings_ignore_device_disconnect';
   static readonly GC_BUTTON_HOME_MAPPING: string = 'settings_gc_button_home_mapping';
+  static readonly ENABLE_KEY_INTERCEPTOR: string = 'settings_enable_key_interceptor';
   
   // 输入 - 屏幕控制器
   static readonly ENABLE_ONSCREEN_CONTROLS: string = 'settings_enable_onscreen_controls';
@@ -230,6 +231,7 @@ struct SettingsPageV2 {
   @State gamepadTouchpadMouse: boolean = false;
   @State enableStartKeyMenu: boolean = true;
   @State ignoreDeviceDisconnect: boolean = false;
+  @State enableKeyInterceptor: boolean = false;
   @State gcButtonHomeMapping: string = 'guide';  // 2313键（Home键）动作映射
   
   // 输入 - 屏幕控制器
@@ -478,6 +480,7 @@ struct SettingsPageV2 {
       this.gamepadTouchpadMouse = await this.loadBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
       this.enableStartKeyMenu = await this.loadBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true);
       this.ignoreDeviceDisconnect = await this.loadBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false);
+      this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false);
       this.gcButtonHomeMapping = await PreferencesUtil.get<string>(SettingsKeys.GC_BUTTON_HOME_MAPPING, 'guide');
       
       // 输入 - 屏幕控制器
@@ -1071,6 +1074,16 @@ struct SettingsPageV2 {
                 action: () => {
                   this.ignoreDeviceDisconnect = !this.ignoreDeviceDisconnect;
                   this.saveSetting(SettingsKeys.IGNORE_DEVICE_DISCONNECT, this.ignoreDeviceDisconnect);
+                }
+              },
+              {
+                title: '按键反劫持',
+                subtitle: '拦截被系统吃掉的手柄按键（如蓝牙手柄 Home 键），需要受限权限',
+                type: 'toggle',
+                value: this.enableKeyInterceptor,
+                action: () => {
+                  this.enableKeyInterceptor = !this.enableKeyInterceptor;
+                  this.saveSetting(SettingsKeys.ENABLE_KEY_INTERCEPTOR, this.enableKeyInterceptor);
                 }
               },
               {

@@ -76,36 +76,23 @@ export struct AnalogStick {
 
   build() {
     Stack() {
-      // 外圈背景
+      // 外圈（全透明 + 细边框）
       Circle()
         .width(this.stickOuterRadius * 2)
         .height(this.stickOuterRadius * 2)
         .fill('transparent')
         .stroke('#FFFFFF')
-        .strokeWidth(2)
-        .strokeOpacity(0.3)
-      
-      // 死区指示圈
-      Circle()
-        .width(this.stickOuterRadius * 2 * this.stickDeadzone)
-        .height(this.stickOuterRadius * 2 * this.stickDeadzone)
-        .fill('transparent')
-        .stroke('#FFFFFF')
         .strokeWidth(1)
         .strokeOpacity(0.15)
       
-      // 摇杆头
+      // 摇杆头（全透明 + 轮廓）
       Circle()
         .width(this.stickInnerRadius * 2)
         .height(this.stickInnerRadius * 2)
-        .fill(this.isPressed ? '#5090FF' : '#FFFFFF')
-        .fillOpacity(this.isPressed ? 0.9 : 0.6)
-        .shadow({
-          radius: 8,
-          color: this.isPressed ? '#5090FF' : '#000000',
-          offsetX: 0,
-          offsetY: 2
-        })
+        .fill(this.isPressed ? '#005090FF' : 'transparent')
+        .stroke(this.isPressed ? '#5090FF' : '#FFFFFF')
+        .strokeWidth(1.5)
+        .strokeOpacity(this.isPressed ? 0.7 : 0.35)
         .translate({
           x: this.stickX * (this.stickOuterRadius - this.stickInnerRadius),
           y: this.stickY * (this.stickOuterRadius - this.stickInnerRadius)
@@ -122,20 +109,20 @@ export struct AnalogStick {
           .height(this.stickInnerRadius * 2 + 16)
           .fill('transparent')
           .stroke('#5090FF')
-          .strokeWidth(3)
-          .opacity(0.8)
+          .strokeWidth(2)
+          .strokeOpacity(0.6)
           .translate({
             x: this.stickX * (this.stickOuterRadius - this.stickInnerRadius),
             y: this.stickY * (this.stickOuterRadius - this.stickInnerRadius)
           })
       }
       
-      // L3/R3 标签
+      // L/R 标签
       Text(this.config.isLeftStick ? 'L' : 'R')
-        .fontSize(12)
+        .fontSize(11)
         .fontColor('#FFFFFF')
-        .fontWeight(FontWeight.Bold)
-        .opacity(0.4)
+        .fontWeight(FontWeight.Medium)
+        .opacity(0.3)
         .translate({
           x: this.stickX * (this.stickOuterRadius - this.stickInnerRadius),
           y: this.stickY * (this.stickOuterRadius - this.stickInnerRadius)
@@ -144,7 +131,7 @@ export struct AnalogStick {
     .width(this.stickOuterRadius * 2)
     .height(this.stickOuterRadius * 2)
     .opacity(this.stickOpacity)
-    .hitTestBehavior(HitTestMode.Block) // 阻止触摸事件穿透到下层（游戏画面）
+    .hitTestBehavior(HitTestMode.Block)
     .onTouch((event) => this.handleTouch(event))
   }
 
@@ -216,7 +203,8 @@ export struct AnalogStick {
     
     // 转换为 -32768 到 32767
     const xValue = Math.round(normalizedX * 32767);
-    const yValue = Math.round(normalizedY * 32767);
+    // Y 轴取反：屏幕坐标系 Y 向下为正，游戏协议 Y 向上为正
+    const yValue = Math.round(-normalizedY * 32767);
     
     this.onAxisChange(xAxis, xValue, yAxis, yValue);
     

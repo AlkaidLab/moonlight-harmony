@@ -30,6 +30,9 @@ import { GamepadManager, GamepadInputListener, GamepadState } from '../service/G
 import { AppStateService, AppState } from '../service/AppStateService';
 import { MoonBridge } from '../service/MoonBridge';
 import { SuperCmd } from '../service/NvHttp';
+import { AbsoluteMouseManager } from '../service/LocalCursorManager';
+import { VirtualKey } from '../components/StreamMenuManager';
+import { InputInterceptorService } from '../service/InputInterceptorService';
 
 interface StreamPageParams {
   computerId: string;
@@ -49,6 +52,9 @@ struct StreamPage {
   // UI 状态
   @State xComponentWidth: Length = '100%';
   @State xComponentHeight: Length = '100%';
+  
+  // 绝对鼠标管理器
+  private absoluteMouseManager: AbsoluteMouseManager | null = null;
   
   // 对话框控制器
   private gameMenuDialogController: CustomDialogController | null = null;
@@ -212,6 +218,9 @@ struct StreamPage {
     
     // 清理触摸处理器
     this.touchInputHandler.dispose();
+    
+    // 停止按键拦截器
+    InputInterceptorService.getInstance().stop();
     
     // 清理手柄监听并重置会话状态（防止内存泄漏和重复绑定）
     this.gamepadManager.setListener(null);
@@ -516,9 +525,27 @@ struct StreamPage {
       const touchModeStr = this.viewModel.touchMode as string;
       this.touchInputHandler.setMode(touchModeStr as TouchInputMode);
       
+      // 初始化绝对鼠标模式
+      this.initializeAbsoluteMouseMode();
+      
       // 获取 surfaceId 并开始串流
       const surfaceId = this.xComponentController.getXComponentSurfaceId();
       await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+
+      // 启动按键拦截器（拦截被系统劫持的手柄按键，如蓝牙手柄 Home 键）
+      if (this.viewModel.inputSettings?.enableKeyInterceptor) {
+        this.startKeyInterceptor();
+      }
+
+      // 绝对鼠标模式下自动隐藏远端光标
+      // 发送 Ctrl+Alt+Shift+N 切换 Sunshine display_cursor
+      if (this.viewModel.absoluteMouseMode) {
+        setTimeout(() => {
+          const session = this.viewModel.getSession();
+          session?.sendKeys([VirtualKey.VK_CONTROL, VirtualKey.VK_MENU, VirtualKey.VK_SHIFT, VirtualKey.VK_N]);
+          console.info('StreamPage: 绝对鼠标模式 - 已发送隐藏远端光标指令');
+        }, 500); // 延迟 500ms 确保连接稳定
+      }
       
     } catch (err) {
       console.error('开始串流失败:', err);
@@ -589,7 +616,102 @@ struct StreamPage {
     if (!this.viewModel.isConnected) {
       return;
     }
+    // 虚拟手柄显示时不处理触摸输入，避免与虚拟按键手势竞争
+    if (this.viewModel.showController) {
+      return;
+    }
     this.touchInputHandler.handleTouchEvent(event);
+  }
+  
+  /**
+   * 初始化绝对鼠标模式
+   */
+  private initializeAbsoluteMouseMode(): void {
+    const absoluteMouseMode = this.viewModel.absoluteMouseMode;
+    
+    if (absoluteMouseMode) {
+      // 初始化绝对鼠标管理器
+      this.absoluteMouseManager = AbsoluteMouseManager.getInstance();
+      
+      const viewWidth = this.viewModel.displayInfo.screenWidth;
+      const viewHeight = this.viewModel.displayInfo.screenHeight;
+      
+      this.absoluteMouseManager.initialize(MoonBridge, viewWidth, viewHeight);
+      this.absoluteMouseManager.setAbsoluteMouseMode(true);
+      
+      // 同步到 TouchInputHandler
+      this.touchInputHandler.setAbsoluteMouseMode(true);
+      this.touchInputHandler.updateViewSize(viewWidth, viewHeight);
+      
+      console.info(`StreamPage: 绝对鼠标模式已初始化 ${viewWidth}x${viewHeight}`);
+    }
+  }
+
+  /**
+   * 启动按键事件拦截器
+   * 拦截被系统劫持的手柄按键和特殊键盘按键，转发给 GamepadManager / StreamingSession 处理
+   */
+  private startKeyInterceptor(): void {
+    const result = InputInterceptorService.getInstance().start((event) => {
+      if (!this.viewModel.isConnected) {
+        return;
+      }
+      const keyCode = event.keyCode;
+      // action: 1=KEY_DOWN, 2=KEY_UP
+      const isPressed = event.action === 1;
+
+      // 1. 手柄按键范围 (2300-2320 GC Kit / 110 标准 Mode) - 转发给 GamepadManager
+      if ((keyCode >= 2300 && keyCode <= 2320) || keyCode === 110) {
+        this.gamepadManager.handleKeyEvent(0, keyCode, isPressed);
+        return;
+      }
+
+      // 2. 容易被系统劫持的特殊键盘按键 - 转发到主机
+      //    Home(1), Back(2), 多任务(3),
+      //    媒体键: Play/Pause(10), Stop(11), Next(12), Previous(13),
+      //    音量键: Volume Up(16), Volume Down(17), Mute(22),
+      //    Power(18), Camera(19)
+      const SYSTEM_HIJACKED_KEYS: Set<number> = new Set([
+        1, 2, 3,                   // Home, Back, Recent
+        10, 11, 12, 13,            // Media keys
+        16, 17, 22,                // Volume Up, Volume Down, Mute
+        18, 19                     // Power, Camera
+      ]);
+
+      if (SYSTEM_HIJACKED_KEYS.has(keyCode)) {
+        const session = this.viewModel.getSession();
+        if (session) {
+          // HarmonyOS keyCode -> Windows VK 映射
+          const vkCode = this.mapSystemKeyToVK(keyCode);
+          if (vkCode > 0) {
+            const keyAction = isPressed ? 0x03 : 0x04; // KEY_DOWN : KEY_UP
+            session.sendKeyboardInput(vkCode, keyAction, 0);
+          }
+        }
+      }
+    });
+    if (result !== 0) {
+      console.warn(`StreamPage: 按键拦截器启动失败 (${result})，手柄 Home 键可能被系统劫持`);
+    }
+  }
+
+  /**
+   * 将 HarmonyOS 系统按键码映射到 Windows 虚拟键码
+   */
+  private mapSystemKeyToVK(keyCode: number): number {
+    switch (keyCode) {
+      case 1: return 0; // Home - 不转发（避免触发 Windows 开始菜单）
+      case 2: return 0x1B; // Back → VK_ESCAPE
+      case 3: return 0; // Recent/多任务 - 不转发
+      case 10: return 0xB3; // Media Play/Pause → VK_MEDIA_PLAY_PAUSE
+      case 11: return 0xB2; // Media Stop → VK_MEDIA_STOP
+      case 12: return 0xB0; // Media Next → VK_MEDIA_NEXT_TRACK
+      case 13: return 0xB1; // Media Previous → VK_MEDIA_PREV_TRACK
+      case 16: return 0xAF; // Volume Up → VK_VOLUME_UP
+      case 17: return 0xAE; // Volume Down → VK_VOLUME_DOWN
+      case 22: return 0xAD; // Mute → VK_VOLUME_MUTE
+      default: return 0;
+    }
   }
   
   /**
@@ -675,6 +797,7 @@ struct StreamPage {
         })
         .width(this.xComponentWidth)
         .height(this.xComponentHeight)
+        .hitTestBehavior(this.viewModel.showController ? HitTestMode.None : HitTestMode.Default)
         .onTouch((event: TouchEvent) => {
           this.handleTouch(event);
         })
@@ -699,6 +822,7 @@ struct StreamPage {
       }
 
       // 虚拟控制器层
+      // 使用 flex 布局 (Column+Row)，HitTestMode.Default 阻塞 XComponent 兄弟节点的触摸
       if (this.viewModel.isConnected && this.viewModel.showController) {
         VirtualControllerV2({
           config: {
@@ -731,8 +855,11 @@ struct StreamPage {
       return this.handleKeyEvent(event);
     })
     .onMouse((event: MouseEvent) => {
-      // 调试：打印鼠标/指针事件（可能包含手柄摇杆）
-      console.info(`[GAMEPAD-MOUSE] MouseEvent: button=${event.button}, action=${event.action}, x=${event.x}, y=${event.y}`);
+      // 物理鼠标事件处理
+      if (this.viewModel.isConnected && this.absoluteMouseManager && event.action === MouseAction.Move) {
+        // 绝对鼠标模式：发送鼠标绝对位置
+        this.absoluteMouseManager.handleMouseEvent(event.x, event.y);
+      }
     })
   }
 

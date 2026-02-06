@@ -40,6 +40,9 @@ int OpusAVCodecDecoder::Init(POPUS_MULTISTREAM_CONFIGURATION opusConfig) {
         return 0;
     }
     
+    // 保存配置（用于错误恢复时重建）
+    memcpy(&savedConfig_, opusConfig, sizeof(savedConfig_));
+    
     // 保存配置
     sampleRate_ = opusConfig->sampleRate;
     channelCount_ = opusConfig->channelCount;
@@ -118,6 +121,8 @@ int OpusAVCodecDecoder::Init(POPUS_MULTISTREAM_CONFIGURATION opusConfig) {
     }
     
     running_ = true;
+    needReset_ = false;
+    consecutiveErrors_ = 0;
     OH_LOG_INFO(LOG_APP, "AVCodec Opus decoder initialized successfully");
     
     return 0;
@@ -126,7 +131,24 @@ int OpusAVCodecDecoder::Init(POPUS_MULTISTREAM_CONFIGURATION opusConfig) {
 int OpusAVCodecDecoder::Decode(const unsigned char* opusData, int opusLength,
                                 short* pcmOut, int maxSamples) {
     if (!running_ || decoder_ == nullptr) {
-        return -1;
+        // 如果需要重建，尝试重建
+        if (needReset_.load()) {
+            int ret = TryRebuild();
+            if (ret != 0) {
+                return -1;
+            }
+        } else {
+            return -1;
+        }
+    }
+    
+    // 处理 NULL 数据（PLC - 丢包补偿）
+    // moonlight-common-c 在检测到丢包时传 NULL 表示需要 PLC
+    // AVCodec 不支持 PLC，直接输出静音
+    if (opusData == nullptr || opusLength <= 0) {
+        int silenceSamples = std::min(samplesPerFrame_, maxSamples);
+        memset(pcmOut, 0, silenceSamples * channelCount_ * sizeof(short));
+        return silenceSamples;
     }
     
     // 获取输入缓冲区
@@ -197,6 +219,17 @@ int OpusAVCodecDecoder::Decode(const unsigned char* opusData, int opusLength,
         }
     }
     
+    if (decodedSamples_ > 0) {
+        consecutiveErrors_ = 0;  // 成功解码，重置错误计数
+    } else {
+        int errors = ++consecutiveErrors_;
+        if (errors >= MAX_DECODE_ERRORS) {
+            OH_LOG_ERROR(LOG_APP, "Too many consecutive decode errors (%{public}d), scheduling rebuild", errors);
+            needReset_ = true;
+            running_ = false;
+        }
+    }
+    
     return decodedSamples_;
 }
 
@@ -230,12 +263,53 @@ void OpusAVCodecDecoder::Cleanup() {
     OH_LOG_INFO(LOG_APP, "AVCodec Opus decoder cleaned up");
 }
 
+int OpusAVCodecDecoder::TryRebuild() {
+    OH_LOG_INFO(LOG_APP, "Attempting Opus decoder rebuild...");
+    
+    // 先完全清理
+    if (decoder_ != nullptr) {
+        OH_AudioCodec_Stop(decoder_);
+        OH_AudioCodec_Destroy(decoder_);
+        decoder_ = nullptr;
+    }
+    
+    // 清空队列
+    {
+        std::lock_guard<std::mutex> lock(inputMutex_);
+        while (!inputIndexQueue_.empty()) inputIndexQueue_.pop();
+        while (!inputBufferQueue_.empty()) inputBufferQueue_.pop();
+    }
+    {
+        std::lock_guard<std::mutex> lock(outputMutex_);
+        while (!outputIndexQueue_.empty()) outputIndexQueue_.pop();
+        while (!outputBufferQueue_.empty()) outputBufferQueue_.pop();
+    }
+    
+    // 重新初始化
+    needReset_ = false;
+    int ret = Init(&savedConfig_);
+    if (ret != 0) {
+        OH_LOG_ERROR(LOG_APP, "Failed to rebuild Opus decoder");
+        return -1;
+    }
+    
+    OH_LOG_INFO(LOG_APP, "Opus decoder rebuilt successfully");
+    return 0;
+}
+
 // =============================================================================
 // AVCodec 回调实现
 // =============================================================================
 
 void OpusAVCodecDecoder::OnError(OH_AVCodec* codec, int32_t errorCode, void* userData) {
     OH_LOG_ERROR(LOG_APP, "AVCodec error: %{public}d", errorCode);
+    
+    OpusAVCodecDecoder* self = static_cast<OpusAVCodecDecoder*>(userData);
+    if (self != nullptr) {
+        OH_LOG_ERROR(LOG_APP, "AVCodec Opus decoder error, scheduling rebuild");
+        self->needReset_ = true;
+        self->running_ = false;
+    }
 }
 
 void OpusAVCodecDecoder::OnOutputFormatChanged(OH_AVCodec* codec, OH_AVFormat* format, void* userData) {

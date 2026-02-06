@@ -14,11 +14,10 @@
  * 管理串流相关的状态、配置和业务逻辑
  */
 import { StreamConfig, getDefaultStreamConfig } from '../model/StreamConfig';
-import { SettingsService, InputSettings, DisplaySettings } from '../service/SettingsService';
+import { SettingsService, InputSettings, DisplaySettings, SettingsKeys } from '../service/SettingsService';
 import { StreamingSession, StreamStats } from '../service/StreamingSession';
 import { InputEvent } from '../model/InputEvent';
-import { OverlayConfig, PerformanceData, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';
-import { GamepadManager } from '../service/GamepadManager';
+import { OverlayConfig, PerformanceData, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/GamepadManager';
 import { batteryInfo } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 
@@ -112,6 +111,9 @@ export class StreamViewModel {
   // 覆盖层状态
   overlayState: OverlayState = new OverlayState();
   
+  // 绝对鼠标模式（适合远程桌面）
+  absoluteMouseMode: boolean = false;
+  
   // 配置
   streamConfig: StreamConfig | null = null;
   inputSettings: InputSettings | null = null;
@@ -175,17 +177,26 @@ export class StreamViewModel {
     this.displayInfo.streamWidth = this.streamConfig.width;
     this.displayInfo.streamHeight = this.streamConfig.height;
     
+    // 加载绝对鼠标模式设置
+    this.absoluteMouseMode = this.inputSettings.absoluteMouseMode ?? false;
+    
     // 确定触摸模式
-    if (this.inputSettings.absoluteMouseMode) {
-      this.touchMode = TouchMode.DIRECT;
+    // 优先使用用户在菜单中选择过的模式（持久化在 LAST_TOUCH_MODE）
+    const lastTouchMode = await PreferencesUtil.get<string>(SettingsKeys.LAST_TOUCH_MODE, '');
+    if (lastTouchMode && (lastTouchMode === 'trackpad' || lastTouchMode === 'direct' || lastTouchMode === 'mouse')) {
+      this.touchMode = lastTouchMode as TouchMode;
     } else if (this.inputSettings.touchscreenTrackpad) {
       this.touchMode = TouchMode.TRACKPAD;
     } else if (this.inputSettings.mouseEmulation) {
       this.touchMode = TouchMode.MOUSE;
+    } else {
+      // 默认使用触摸板模式
+      this.touchMode = TouchMode.TRACKPAD;
     }
     
     console.info(`StreamViewModel: 配置加载完成 - ${this.streamConfig.width}x${this.streamConfig.height}@${this.streamConfig.fps}fps`);
-    console.info(`StreamViewModel: 触摸模式=${this.touchMode}, 性能覆盖层=${this.showOverlay}, 虚拟控制器=${this.showController}`);
+    console.info(`StreamViewModel: 触摸模式=${this.touchMode}, 绝对鼠标=${this.absoluteMouseMode}`);
+    console.info(`StreamViewModel: 性能覆盖层=${this.showOverlay}, 虚拟控制器=${this.showController}`);
     
     // 配置震动设置
     const deviceVibrateEnabled = this.streamConfig.enableVibration && this.streamConfig.vibrateFallbackStrength > 0;
@@ -445,6 +456,10 @@ export class StreamViewModel {
    */
   setTouchMode(mode: TouchMode): void {
     this.touchMode = mode;
+    // 持久化用户在菜单中选择的触摸模式，断开重连后恢复
+    PreferencesUtil.put(SettingsKeys.LAST_TOUCH_MODE, mode as string).catch((err: Error) => {
+      console.warn(`StreamViewModel: 保存触摸模式失败: ${err.message}`);
+    });
     console.info(`StreamViewModel: 触摸模式切换为 ${mode}`);
   }
   

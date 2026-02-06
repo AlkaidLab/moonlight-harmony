@@ -588,6 +588,202 @@ void VideoDecoder::Cleanup() {
     OH_LOG_INFO(LOG_APP, "Video decoder cleaned up");
 }
 
+// 辅助函数：将 scatter-gather 分段写入目标缓冲区
+static void CopySegmentsToBuffer(uint8_t* dest, const BufferSegment* segments, int segmentCount) {
+    int offset = 0;
+    for (int i = 0; i < segmentCount; i++) {
+        memcpy(dest + offset, segments[i].data, segments[i].length);
+        offset += segments[i].length;
+    }
+}
+
+int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int segmentCount,
+                                           int totalSize,
+                                           int frameNumber, VideoFrameType frameType,
+                                           int64_t timestamp,
+                                           uint16_t hostProcessingLatency) {
+    if (!running_ || decoder_ == nullptr) {
+        return -1;
+    }
+    
+    // 首次调用时设置当前线程的 QoS 等级为高优先级
+    static thread_local bool qosSet = false;
+    if (!qosSet) {
+        int ret = OH_QoS_SetThreadQoS(QOS_DEADLINE_REQUEST);
+        if (ret == 0) {
+            OH_LOG_INFO(LOG_APP, "Set decode thread QoS to DEADLINE_REQUEST");
+        } else {
+            ret = OH_QoS_SetThreadQoS(QOS_USER_INITIATED);
+            if (ret == 0) {
+                OH_LOG_INFO(LOG_APP, "Set decode thread QoS to USER_INITIATED");
+            }
+        }
+        qosSet = true;
+    }
+    
+    // 同步模式：直接提交到解码器（scatter-gather 直写 AVBuffer）
+    if (config_.decoderMode == DecoderMode::SYNC) {
+        UpdateReceivedStats(totalSize, hostProcessingLatency);
+        
+        if (!firstFrameReceived_) {
+            firstFrameReceived_ = true;
+            OH_LOG_INFO(LOG_APP, "First video frame (scatter sync): %{public}dx%{public}d", 
+                        config_.width, config_.height);
+        }
+        
+        int retryCount = 0;
+        while (retryCount < kMaxDirectSubmitRetries && running_) {
+            uint32_t inputIndex = 0;
+            OH_AVErrCode ret = OH_VideoDecoder_QueryInputBuffer(decoder_, &inputIndex, kSyncInputTimeoutUs);
+            
+            if (ret == AV_ERR_OK) {
+                OH_AVBuffer* inputBuffer = OH_VideoDecoder_GetInputBuffer(decoder_, inputIndex);
+                if (inputBuffer == nullptr) { retryCount++; continue; }
+                
+                uint8_t* bufferAddr = OH_AVBuffer_GetAddr(inputBuffer);
+                if (bufferAddr == nullptr) { retryCount++; continue; }
+                
+                int32_t capacity = OH_AVBuffer_GetCapacity(inputBuffer);
+                if (totalSize > capacity) {
+                    OH_LOG_ERROR(LOG_APP, "Scatter sync: frame too large %{public}d > %{public}d", totalSize, capacity);
+                    return -1;
+                }
+                
+                // 直接将分段数据写入 AVBuffer（无中间缓冲区）
+                CopySegmentsToBuffer(bufferAddr, segments, segmentCount);
+                
+                OH_AVCodecBufferAttr attr = {0};
+                attr.size = totalSize;
+                attr.offset = 0;
+                attr.pts = timestamp;
+                attr.flags = (frameType == VideoFrameType::I_FRAME) ? 
+                             AVCODEC_BUFFER_FLAGS_SYNC_FRAME : AVCODEC_BUFFER_FLAGS_NONE;
+                OH_AVBuffer_SetBufferAttr(inputBuffer, &attr);
+                
+                auto enqueueTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                {
+                    std::lock_guard<std::mutex> lock(timestampMutex_);
+                    timestampToEnqueueTime_[timestamp] = enqueueTimeMs;
+                    if (timestampToEnqueueTime_.size() > kMaxTimestampMapSize) {
+                        timestampToEnqueueTime_.erase(timestampToEnqueueTime_.begin());
+                    }
+                }
+                
+                ret = OH_VideoDecoder_PushInputBuffer(decoder_, inputIndex);
+                if (ret == AV_ERR_OK) {
+                    return 0;
+                }
+                retryCount++;
+            } else if (ret == AV_ERR_TRY_AGAIN_LATER) {
+                retryCount++;
+            } else if (ret == AV_ERR_UNSUPPORT) {
+                break;
+            } else {
+                break;
+            }
+        }
+        
+        // 直接提交失败，回退到队列（需要合并数据）
+        {
+            std::lock_guard<std::mutex> lock(pendingFrameMutex_);
+            while (pendingFrameQueue_.size() >= maxPendingFrames_) {
+                pendingFrameQueue_.pop();
+                std::lock_guard<std::mutex> statsLock(statsMutex_);
+                stats_.droppedFrames++;
+            }
+            
+            PendingFrame frame;
+            frame.data.resize(totalSize);
+            CopySegmentsToBuffer(frame.data.data(), segments, segmentCount);
+            frame.frameNumber = frameNumber;
+            frame.frameType = frameType;
+            frame.timestamp = timestamp;
+            frame.hostProcessingLatency = hostProcessingLatency;
+            
+            pendingFrameQueue_.push(std::move(frame));
+            pendingFrameCond_.notify_one();
+        }
+        
+        return 0;
+    }
+    
+    // 异步模式：scatter-gather 直写
+    uint32_t inputIndex;
+    OH_AVBuffer* inputBuffer = nullptr;
+    
+    {
+        std::unique_lock<std::mutex> lock(inputMutex_);
+        int timeoutMs = kMaxTimeoutMs;
+        
+        if (inputIndexQueue_.empty()) {
+            if (!inputCond_.wait_for(lock, std::chrono::milliseconds(timeoutMs), 
+                [this] { return !inputIndexQueue_.empty() || !running_; })) {
+                std::lock_guard<std::mutex> statsLock(statsMutex_);
+                stats_.droppedFrames++;
+                return -1;
+            }
+        }
+        
+        if (!running_ || inputIndexQueue_.empty()) {
+            return -1;
+        }
+        
+        inputIndex = inputIndexQueue_.front();
+        inputBuffer = inputBufferQueue_.front();
+        inputIndexQueue_.pop();
+        inputBufferQueue_.pop();
+    }
+    
+    uint8_t* bufferAddr = OH_AVBuffer_GetAddr(inputBuffer);
+    if (bufferAddr == nullptr) {
+        OH_LOG_ERROR(LOG_APP, "Failed to get input buffer address");
+        return -1;
+    }
+    
+    int32_t bufferCapacity = OH_AVBuffer_GetCapacity(inputBuffer);
+    if (totalSize > bufferCapacity) {
+        OH_LOG_ERROR(LOG_APP, "Frame size %{public}d > buffer capacity %{public}d", totalSize, bufferCapacity);
+        return -1;
+    }
+    
+    // 直接将分段数据写入 AVBuffer
+    CopySegmentsToBuffer(bufferAddr, segments, segmentCount);
+    
+    OH_AVCodecBufferAttr attr = {0};
+    attr.size = totalSize;
+    attr.offset = 0;
+    attr.pts = timestamp;
+    attr.flags = (frameType == VideoFrameType::I_FRAME) ? 
+                 AVCODEC_BUFFER_FLAGS_SYNC_FRAME : AVCODEC_BUFFER_FLAGS_NONE;
+    OH_AVBuffer_SetBufferAttr(inputBuffer, &attr);
+    
+    auto enqueueTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    {
+        std::lock_guard<std::mutex> lock(timestampMutex_);
+        timestampToEnqueueTime_[timestamp] = enqueueTimeMs;
+        if (timestampToEnqueueTime_.size() > kMaxTimestampMapSize) {
+            timestampToEnqueueTime_.erase(timestampToEnqueueTime_.begin());
+        }
+    }
+    
+    int32_t ret = OH_VideoDecoder_PushInputBuffer(decoder_, inputIndex);
+    if (ret != AV_ERR_OK) {
+        OH_LOG_ERROR(LOG_APP, "Failed to push input buffer: %{public}d", ret);
+        return -1;
+    }
+    
+    UpdateReceivedStats(totalSize, hostProcessingLatency);
+    
+    if (!firstFrameReceived_) {
+        firstFrameReceived_ = true;
+        OH_LOG_INFO(LOG_APP, "First video frame (scatter async): %{public}dx%{public}d", config_.width, config_.height);
+    }
+    
+    return 0;
+}
+
 int VideoDecoder::SubmitDecodeUnit(const uint8_t* data, int size, 
                                     int frameNumber, VideoFrameType frameType,
                                     int64_t timestamp,
@@ -1410,10 +1606,28 @@ int SubmitDecodeUnit(const uint8_t* data, int size, int frameNumber, int frameTy
     // FRAME_TYPE_IDR = 1, FRAME_TYPE_I = 2
     VideoFrameType type = (frameType == 1 || frameType == 2) ? VideoFrameType::I_FRAME : VideoFrameType::P_FRAME;
     
-    // 计算时间戳（基于帧号，假设 60fps）
-    int64_t timestamp = static_cast<int64_t>(frameNumber) * 1000000LL / 60;
+    // 使用实际帧率计算时间戳（微秒），避免 VSync 模式下帧呈现时间不准
+    double fps = (g_savedFps > 0) ? g_savedFps : 60.0;
+    int64_t timestamp = static_cast<int64_t>(static_cast<double>(frameNumber) * 1000000.0 / fps);
     
     return g_videoDecoder->SubmitDecodeUnit(data, size, frameNumber, type, timestamp, hostProcessingLatency);
+}
+
+int SubmitDecodeUnitScatter(const BufferSegment* segments, int segmentCount,
+                            int totalSize, int frameNumber, int frameType,
+                            uint16_t hostProcessingLatency) {
+    if (g_videoDecoder == nullptr) {
+        return -1;
+    }
+    
+    VideoFrameType type = (frameType == 1 || frameType == 2) ? VideoFrameType::I_FRAME : VideoFrameType::P_FRAME;
+    
+    // 使用实际帧率计算时间戳（微秒）
+    double fps = (g_savedFps > 0) ? g_savedFps : 60.0;
+    int64_t timestamp = static_cast<int64_t>(static_cast<double>(frameNumber) * 1000000.0 / fps);
+    
+    return g_videoDecoder->SubmitDecodeUnitScatter(segments, segmentCount, totalSize,
+                                                    frameNumber, type, timestamp, hostProcessingLatency);
 }
 
 int Start() {

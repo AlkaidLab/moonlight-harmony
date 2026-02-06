@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <mutex>
 #include <queue>
+#include <atomic>
 #include <condition_variable>
 #include <multimedia/player_framework/native_avcodec_audiocodec.h>
 #include <multimedia/player_framework/native_avcapability.h>
@@ -118,6 +119,18 @@ private:
     
     // 是否运行中
     bool running_ = false;
+    
+    // 错误恢复
+    std::atomic<bool> needReset_{false};         // 解码器是否需要重置
+    std::atomic<int> consecutiveErrors_{0};
+    static constexpr int MAX_DECODE_ERRORS = 5;  // 最大连续解码错误数
+    OPUS_MULTISTREAM_CONFIGURATION savedConfig_; // 保存配置用于重建
+    
+    /**
+     * 尝试重建解码器
+     * @return 0 成功，负数失败
+     */
+    int TryRebuild();
 };
 
 /**

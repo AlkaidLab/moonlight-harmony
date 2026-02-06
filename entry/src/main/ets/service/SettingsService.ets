@@ -66,6 +66,7 @@ export class SettingsKeys {
   static readonly ENABLE_START_KEY_MENU: string = 'settings_enable_start_key_menu';
   static readonly IGNORE_DEVICE_DISCONNECT: string = 'settings_ignore_device_disconnect';  // 忽略手柄断开信号（用于电源管理问题的手柄）
   static readonly GC_BUTTON_HOME_MAPPING: string = 'settings_gc_button_home_mapping';  // Game Controller Kit 2313按键映射
+  static readonly ENABLE_KEY_INTERCEPTOR: string = 'settings_enable_key_interceptor';  // 按键反劫持（拦截系统劫持的手柄按键）
 
   // 输入 - 屏幕控制器
   static readonly ENABLE_ONSCREEN_CONTROLS: string = 'settings_enable_onscreen_controls';
@@ -85,6 +86,7 @@ export class SettingsKeys {
   static readonly ENABLE_LOCAL_CURSOR: string = 'settings_enable_local_cursor';
   static readonly ANALOG_SCROLLING: string = 'settings_analog_scrolling';
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
+  static readonly LAST_TOUCH_MODE: string = 'settings_last_touch_mode';  // 运行时触摸模式（菜单切换后持久化）
 
   // 增强触控设置
   static readonly ENABLE_ENHANCED_TOUCH: string = 'settings_enable_enhanced_touch';
@@ -145,6 +147,7 @@ export interface InputSettings {
   gamepadTouchpadMouse: boolean;
   enableStartKeyMenu: boolean;
   ignoreDeviceDisconnect: boolean;  // 忽略手柄断开信号
+  enableKeyInterceptor: boolean;  // 按键反劫持
 
   // 屏幕控制器
   enableOnscreenControls: boolean;
@@ -639,6 +642,7 @@ export class SettingsService {
       gamepadTouchpadMouse: await this.getBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false),
       enableStartKeyMenu: await this.getBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true),
       ignoreDeviceDisconnect: await this.getBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false),
+      enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false),
 
       // 屏幕控制器
       enableOnscreenControls: await this.getBoolean(SettingsKeys.ENABLE_ONSCREEN_CONTROLS, false),

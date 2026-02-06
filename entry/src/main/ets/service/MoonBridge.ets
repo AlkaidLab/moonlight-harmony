@@ -16,6 +16,7 @@
  */
 
 import nativeLib from 'libmoonlight_nativelib.so';
+import { MouseSender } from './LocalCursorManager';
 
 // =============================================================================
 // 常量定义
@@ -230,7 +231,7 @@ export interface StreamConfiguration {
 // MoonBridge 类
 // =============================================================================
 
-class MoonBridgeClass {
+class MoonBridgeClass implements MouseSender {
   private callbacks: MoonBridgeCallbacks | null = null;
 
   /**

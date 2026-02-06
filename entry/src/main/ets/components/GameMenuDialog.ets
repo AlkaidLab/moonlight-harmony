@@ -70,12 +70,13 @@ export struct GameMenuDialog {
     { icon: '✦', label: 'HDR', bgColor: '#F7EBC7', borderColor: '#D0A850' },       // HDR
     { icon: '⌨', label: '键盘', bgColor: '#C7F7E0', borderColor: '#50C080' },      // 键盘
     { icon: '☝', label: '触控', bgColor: '#E0D4F7', borderColor: '#9080C0' },      // 触控
+    { icon: '🎮', label: '手柄', bgColor: '#D4E8F7', borderColor: '#6098C0' },      // 虚拟手柄
     { icon: '◐', label: '休眠', bgColor: '#E8E8E8', borderColor: '#909090' },      // 休眠
     { icon: '✕', label: '退出', bgColor: '#F7CFCF', borderColor: '#D06060' }       // 退出
   ];
   
   // 菜单项水平偏移（不规则排列）
-  private readonly offsets: number[] = [15, 55, 25, 70, 35, 10, 50];
+  private readonly offsets: number[] = [15, 55, 25, 70, 35, 45, 10, 50];
   
   // 动画状态：translateX 位置（正值向右，负值向左）
   @State private pos0: number = 200;  // 初始在屏幕右边外面
@@ -85,6 +86,7 @@ export struct GameMenuDialog {
   @State private pos4: number = 200;
   @State private pos5: number = 200;
   @State private pos6: number = 200;
+  @State private pos7: number = 200;
   
   // 动画状态：缩放（初始为 1.0，不缩小）
   @State private scale0: number = 1.0;
@@ -94,6 +96,7 @@ export struct GameMenuDialog {
   @State private scale4: number = 1.0;
   @State private scale5: number = 1.0;
   @State private scale6: number = 1.0;
+  @State private scale7: number = 1.0;
   
   // 二级菜单状态
   @State private expandedMenu: string = '';
@@ -132,7 +135,7 @@ export struct GameMenuDialog {
   private animateInStaggered(): void {
     const staggerDelay = 50;  // 每个按钮启动间隔 50ms
     
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 8; i++) {
       setTimeout(() => {
         animateTo({ 
           duration: 200,  // 单个动画时长
@@ -148,14 +151,14 @@ export struct GameMenuDialog {
    * 递归执行进入动画（备用方案）
    */
   private animateInSequence(index: number): void {
-    if (index >= 7) return;
+    if (index >= 8) return;
     
     animateTo({ 
       duration: 280,  // 稍快的动画
       curve: Curve.FastOutSlowIn,  // 更流畅的曲线
       onFinish: () => {
         // 动画完成后触发下一个
-        if (index < 6) {
+        if (index < 7) {
           this.animateInSequence(index + 1);
         }
       }
@@ -182,7 +185,7 @@ export struct GameMenuDialog {
       duration: 200, 
       curve: Curve.FastOutLinearIn 
     }, () => {
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < 8; i++) {
         this.setPos(i, 200);
       }
     });
@@ -205,6 +208,7 @@ export struct GameMenuDialog {
     else if (i === 4) this.pos4 = v;
     else if (i === 5) this.pos5 = v;
     else if (i === 6) this.pos6 = v;
+    else if (i === 7) this.pos7 = v;
   }
   
   private getPos(i: number): number {
@@ -215,6 +219,7 @@ export struct GameMenuDialog {
     if (i === 4) return this.pos4;
     if (i === 5) return this.pos5;
     if (i === 6) return this.pos6;
+    if (i === 7) return this.pos7;
     return 0;
   }
   
@@ -226,6 +231,7 @@ export struct GameMenuDialog {
     else if (i === 4) this.scale4 = v;
     else if (i === 5) this.scale5 = v;
     else if (i === 6) this.scale6 = v;
+    else if (i === 7) this.scale7 = v;
   }
   
   private getScale(i: number): number {
@@ -236,6 +242,7 @@ export struct GameMenuDialog {
     if (i === 4) return this.scale4;
     if (i === 5) return this.scale5;
     if (i === 6) return this.scale6;
+    if (i === 7) return this.scale7;
     return 1;
   }
   
@@ -500,10 +507,14 @@ export struct GameMenuDialog {
       case 4: // 触控
         this.showTouchModeDialog();
         break;
-      case 5: // 休眠
+      case 5: // 虚拟手柄
+        this.viewModel.toggleController();
+        this.animateOut();
+        break;
+      case 6: // 休眠
         this.showSleepDialog();
         break;
-      case 6: // 退出
+      case 7: // 退出
         this.showExitDialog();
         break;
     }
@@ -530,8 +541,12 @@ export struct GameMenuDialog {
         this.SockButton(2)
         this.SockButton(3)
         this.SockButton(4)
-        this.SockButton(5)
+        // 虚拟手柄按钮仅在设置启用时显示
+        if (this.viewModel.inputSettings?.enableOnscreenControls) {
+          this.SockButton(5)
+        }
         this.SockButton(6)
+        this.SockButton(7)
       }
       .alignItems(HorizontalAlign.End)
       .justifyContent(FlexAlign.Center)

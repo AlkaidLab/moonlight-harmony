@@ -99,6 +99,8 @@ interface NativeModule {
   sendMultiControllerInput(controllerNumber: number, activeGamepadMask: number,
     buttonFlags: number, leftTrigger: number, rightTrigger: number,
     leftStickX: number, leftStickY: number, rightStickX: number, rightStickY: number): void;
+  sendControllerArrivalEvent(controllerNumber: number, activeGamepadMask: number,
+    type: number, supportedButtonFlags: number, capabilities: number): number;
 }
 
 interface StreamCallbacks {
@@ -317,6 +319,7 @@ export class StreamingSession {
   async stop(): Promise<void> {
     console.info('停止串流');
     this.isRunning = false;
+    this.virtualControllerArrived = false;
     
     await this.cleanup();
   }
@@ -390,6 +393,9 @@ export class StreamingSession {
     }
   }
 
+  // 虚拟手柄是否已发送 arrival 事件
+  private virtualControllerArrived: boolean = false;
+
   // 当前控制器状态接口
   private controllerState: ControllerState = {
     buttonFlags: 0,
@@ -434,10 +440,21 @@ export class StreamingSession {
         this.controllerState.rightStickY = event.value;
         break;
       case 4: // LEFT_TRIGGER
-        this.controllerState.leftTrigger = Math.floor((event.value + 32768) / 256);
+        // 兼容两种输入源：
+        // - 虚拟手柄: 0~255
+        // - 物理手柄: -32768~32767
+        if (event.value >= 0 && event.value <= 255) {
+          this.controllerState.leftTrigger = event.value;
+        } else {
+          this.controllerState.leftTrigger = Math.floor((event.value + 32768) / 256);
+        }
         break;
       case 5: // RIGHT_TRIGGER
-        this.controllerState.rightTrigger = Math.floor((event.value + 32768) / 256);
+        if (event.value >= 0 && event.value <= 255) {
+          this.controllerState.rightTrigger = event.value;
+        } else {
+          this.controllerState.rightTrigger = Math.floor((event.value + 32768) / 256);
+        }
         break;
     }
     
@@ -445,9 +462,43 @@ export class StreamingSession {
   }
 
   /**
+   * 确保虚拟手柄 arrival 事件已发送
+   * 主机需要先收到 arrival 事件才能正确创建虚拟手柄设备
+   */
+  private ensureVirtualControllerArrival(controllerIndex: number): void {
+    if (!this.virtualControllerArrived) {
+      // LI_CTYPE_XBOX = 0x01
+      const LI_CTYPE_XBOX = 0x01;
+      // LI_CCAP_ANALOG_TRIGGERS = 0x01, LI_CCAP_RUMBLE = 0x02
+      const LI_CCAP_ANALOG_TRIGGERS = 0x01;
+      const LI_CCAP_RUMBLE = 0x02;
+      // 所有标准 Xbox 按钮
+      const supportedButtons = 0x1000 | 0x2000 | 0x4000 | 0x8000 // A B X Y
+        | 0x0001 | 0x0002 | 0x0004 | 0x0008 // UP DOWN LEFT RIGHT
+        | 0x0100 | 0x0200 // LB RB
+        | 0x0040 | 0x0080 // LS RS
+        | 0x0010 | 0x0020 | 0x0400; // START BACK SPECIAL
+      const capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
+      const ret = this.nativeModule.sendControllerArrivalEvent(
+        controllerIndex,
+        1 << controllerIndex,
+        LI_CTYPE_XBOX,
+        supportedButtons,
+        capabilities
+      );
+      if (ret >= 0) {
+        this.virtualControllerArrived = true;
+      } else {
+        console.warn(`[VirtualCtrl] Controller arrival failed (ret=${ret}), will retry`);
+      }
+    }
+  }
+
+  /**
    * 发送控制器状态到服务器
    */
   private sendControllerState(controllerIndex: number): void {
+    this.ensureVirtualControllerArrival(controllerIndex);
     this.nativeModule.sendMultiControllerInput(
       controllerIndex,
       1 << controllerIndex, // activeGamepadMask

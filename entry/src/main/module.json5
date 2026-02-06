@@ -7,7 +7,8 @@
     "deviceTypes": [
       "phone",
       "tablet",
-      "tv"
+      "tv",
+      "2in1"
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
@@ -73,6 +74,14 @@
       {
         "name": "ohos.permission.ACCELEROMETER",
         "reason": "$string:permission_accelerometer_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.INTERCEPT_INPUT_EVENT",
+        "reason": "$string:permission_intercept_input_reason",
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "inuse"

@@ -260,6 +260,8 @@ int AudioRenderer::Start() {
     }
     
     running_ = true;
+    needRestart_ = false;
+    consecutiveErrors_ = 0;
     OH_LOG_INFO(LOG_APP, "Audio renderer started");
     
     return 0;
@@ -305,7 +307,16 @@ void AudioRenderer::Cleanup() {
 }
 
 int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
-    if (!running_ || renderer_ == nullptr) {
+    if (renderer_ == nullptr) {
+        return -1;
+    }
+    
+    // 如果需要重启，尝试恢复
+    if (needRestart_.load()) {
+        TryRestart();
+    }
+    
+    if (!running_) {
         return -1;
     }
     
@@ -335,6 +346,66 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
         stats_.totalSamples += sampleCount;
     }
     
+    return 0;
+}
+
+int AudioRenderer::TryRestart() {
+    OH_LOG_INFO(LOG_APP, "Attempting audio renderer restart...");
+    
+    if (renderer_ == nullptr) {
+        OH_LOG_ERROR(LOG_APP, "Cannot restart: renderer is null");
+        return -1;
+    }
+    
+    // 先停止当前渲染器
+    OH_AudioRenderer_Stop(renderer_);
+    
+    // 清空队列，避免播放过时数据
+    {
+        std::lock_guard<std::mutex> lock(queueMutex_);
+        while (!pcmQueue_.empty()) {
+            auto& item = pcmQueue_.front();
+            delete[] item.first;
+            pcmQueue_.pop();
+        }
+    }
+    
+    // 尝试重新启动
+    OH_AudioStream_Result result = OH_AudioRenderer_Start(renderer_);
+    if (result != AUDIOSTREAM_SUCCESS) {
+        OH_LOG_ERROR(LOG_APP, "Failed to restart renderer: %{public}d", result);
+        
+        // 完全重建渲染器
+        OH_LOG_INFO(LOG_APP, "Attempting full renderer rebuild...");
+        OH_AudioRenderer_Release(renderer_);
+        renderer_ = nullptr;
+        
+        if (builder_ != nullptr) {
+            result = OH_AudioStreamBuilder_GenerateRenderer(builder_, &renderer_);
+            if (result != AUDIOSTREAM_SUCCESS || renderer_ == nullptr) {
+                OH_LOG_ERROR(LOG_APP, "Failed to rebuild renderer: %{public}d", result);
+                return -1;
+            }
+            
+            if (config_.volume > 0.0f && config_.volume <= 1.0f) {
+                OH_AudioRenderer_SetVolume(renderer_, config_.volume);
+            }
+            
+            result = OH_AudioRenderer_Start(renderer_);
+            if (result != AUDIOSTREAM_SUCCESS) {
+                OH_LOG_ERROR(LOG_APP, "Failed to start rebuilt renderer: %{public}d", result);
+                return -1;
+            }
+        } else {
+            OH_LOG_ERROR(LOG_APP, "Cannot rebuild: builder is null");
+            return -1;
+        }
+    }
+    
+    running_ = true;
+    needRestart_ = false;
+    consecutiveErrors_ = 0;
+    OH_LOG_INFO(LOG_APP, "Audio renderer restarted successfully");
     return 0;
 }
 
@@ -422,6 +493,17 @@ int32_t AudioRenderer::OnWriteData(OH_AudioRenderer* renderer, void* userData,
 int32_t AudioRenderer::OnStreamEvent(OH_AudioRenderer* renderer, void* userData,
                                       OH_AudioStream_Event event) {
     OH_LOG_INFO(LOG_APP, "Audio stream event: %{public}d", event);
+    
+    AudioRenderer* self = static_cast<AudioRenderer*>(userData);
+    if (self == nullptr) return 0;
+    
+    // AUDIOSTREAM_EVENT_ROUTING_CHANGED 等事件可能需要重启
+    // 标记 needRestart 让下次 PlaySamples 时触发恢复
+    if (event != 0) {
+        // 非正常事件，检查渲染器状态
+        OH_LOG_WARN(LOG_APP, "Audio stream event %{public}d received, checking state", event);
+    }
+    
     return 0;
 }
 
@@ -434,11 +516,18 @@ int32_t AudioRenderer::OnInterruptEvent(OH_AudioRenderer* renderer, void* userDa
     if (self == nullptr) return 0;
     
     if (hint == AUDIOSTREAM_INTERRUPT_HINT_PAUSE) {
-        // 被系统暂停
+        // 被系统暂停（如来电）
+        OH_LOG_WARN(LOG_APP, "Audio paused by system interrupt");
         self->running_ = false;
     } else if (hint == AUDIOSTREAM_INTERRUPT_HINT_RESUME) {
-        // 可以恢复
-        self->running_ = true;
+        // 系统通知可以恢复，标记重启
+        OH_LOG_INFO(LOG_APP, "Audio resume hint received, scheduling restart");
+        self->needRestart_ = true;
+    } else if (hint == AUDIOSTREAM_INTERRUPT_HINT_STOP) {
+        // 被系统永久停止，需要重建
+        OH_LOG_WARN(LOG_APP, "Audio stopped by system, scheduling restart");
+        self->running_ = false;
+        self->needRestart_ = true;
     }
     
     return 0;
@@ -447,6 +536,19 @@ int32_t AudioRenderer::OnInterruptEvent(OH_AudioRenderer* renderer, void* userDa
 int32_t AudioRenderer::OnError(OH_AudioRenderer* renderer, void* userData,
                                 OH_AudioStream_Result error) {
     OH_LOG_ERROR(LOG_APP, "Audio renderer error: %{public}d", error);
+    
+    AudioRenderer* self = static_cast<AudioRenderer*>(userData);
+    if (self == nullptr) return 0;
+    
+    int errors = ++self->consecutiveErrors_;
+    OH_LOG_ERROR(LOG_APP, "Audio consecutive errors: %{public}d", errors);
+    
+    if (errors >= MAX_ERRORS_BEFORE_RESTART) {
+        OH_LOG_WARN(LOG_APP, "Too many audio errors, scheduling restart");
+        self->running_ = false;
+        self->needRestart_ = true;
+    }
+    
     return 0;
 }
 

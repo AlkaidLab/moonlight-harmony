@@ -498,34 +498,51 @@ void BridgeDrCleanup(void) {
 int BridgeDrSubmitDecodeUnit(void* decodeUnitPtr) {
     PDECODE_UNIT decodeUnit = (PDECODE_UNIT)decodeUnitPtr;
     
-    // 计算总大小
+    // 计算总大小和分段数量
     int totalSize = 0;
+    int segmentCount = 0;
     PLENTRY entry = decodeUnit->bufferList;
     while (entry != nullptr) {
         totalSize += entry->length;
+        segmentCount++;
         entry = entry->next;
     }
     
-    // 复制数据
-    uint8_t* buffer = (uint8_t*)malloc(totalSize);
-    int offset = 0;
+    // 构建 scatter-gather 分段数组（栈上分配，避免动态内存）
+    // 典型帧由 SPS/PPS/VPS + NAL 组成，分段数很少（通常 < 16）
+    constexpr int kMaxStackSegments = 32;
+    BufferSegment stackSegments[kMaxStackSegments];
+    BufferSegment* segments = stackSegments;
+    
+    // 极端情况下分段数超限，回退到堆分配
+    bool heapAllocated = false;
+    if (segmentCount > kMaxStackSegments) {
+        segments = new BufferSegment[segmentCount];
+        heapAllocated = true;
+    }
+    
+    int i = 0;
     entry = decodeUnit->bufferList;
     while (entry != nullptr) {
-        memcpy(buffer + offset, entry->data, entry->length);
-        offset += entry->length;
+        segments[i].data = reinterpret_cast<const uint8_t*>(entry->data);
+        segments[i].length = entry->length;
+        i++;
         entry = entry->next;
     }
     
-    // 提交到硬件解码器（传递主机处理延迟）
-    int result = VideoDecoderInstance::SubmitDecodeUnit(
-        buffer, 
-        totalSize, 
+    // 直接提交到硬件解码器（scatter-gather 零拷贝：链表数据直写 AVBuffer）
+    int result = VideoDecoderInstance::SubmitDecodeUnitScatter(
+        segments,
+        segmentCount,
+        totalSize,
         decodeUnit->frameNumber, 
         decodeUnit->frameType,
         decodeUnit->frameHostProcessingLatency
     );
     
-    free(buffer);
+    if (heapAllocated) {
+        delete[] segments;
+    }
     
     // 同时通知 ArkTS 层（可选，用于统计等）
     if (g_videoCallbacks.tsfn_submitDecodeUnit) {
@@ -625,6 +642,7 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     }
     
     // 使用 HarmonyOS AVCodec Opus 解码器
+    // 注意：sampleData 可能为 NULL（丢包补偿 PLC），OpusDecoder::Decode 内部会处理
     int decodeLen = OpusDecoder::Decode(
         (const unsigned char*)sampleData,
         sampleLength,
