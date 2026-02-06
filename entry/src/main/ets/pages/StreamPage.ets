@@ -16,7 +16,7 @@
 import { router, promptAction } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { VirtualController } from '../components/VirtualController';
+import { VirtualControllerV2, VirtualControllerConfig } from '../components/VirtualControllerV2';
 import { PerformanceOverlay } from '../components/PerformanceOverlay';
 import { OptionPickerDialog, OptionPickerDialogConfig } from '../components/OptionPickerDialog';
 import { GameMenuDialog, GameMenuCallbacks } from '../components/GameMenuDialog';
@@ -700,7 +700,20 @@ struct StreamPage {
 
       // 虚拟控制器层
       if (this.viewModel.isConnected && this.viewModel.showController) {
-        VirtualController({
+        VirtualControllerV2({
+          config: {
+            opacity: 0.75,
+            scale: 1.0,
+            deadzone: 0.15,
+            showLeftStick: true,
+            showRightStick: true,
+            showDpad: true,
+            showButtons: true,
+            showShoulder: true,
+            showCenter: true,
+            showL3R3: false,
+            enableVibration: true
+          } as VirtualControllerConfig,
           onInput: (input) => {
             this.viewModel.sendInput(input);
           }

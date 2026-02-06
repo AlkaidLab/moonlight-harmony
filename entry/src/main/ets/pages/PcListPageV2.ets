@@ -516,7 +516,7 @@ struct PcListPageV2 {
         .fontColor(AppColors.Primary)
         .margin({ bottom: AppSpacing.Small })
 
-      Text('扫描网络发现运行 GeForce Experience 的电脑')
+      Text('扫描网络发现运行 Foundation Sunshine 的电脑')
         .fontSize(AppSizes.FontBody)
         .fontColor(AppColors.TextSecondary)
         .textAlign(TextAlign.Center)
