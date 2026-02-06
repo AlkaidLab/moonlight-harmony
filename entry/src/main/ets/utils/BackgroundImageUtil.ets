@@ -158,13 +158,14 @@ export class BackgroundImageUtil {
           fileIo.closeSync(file.fd);
           return this.localCachePath;
         }
-      } catch (e) {
+      } catch (error) {
         // 文件不存在，继续下载
+        console.debug('BackgroundImageUtil: 缓存文件不存在，将下载新图片');
       }
     }
     
-    // 获取 API URL
-    const apiUrl = this.getDefaultApiUrl();
+    // 获取 API URL（使用 Pipw 作为默认）
+    const apiUrl = this.getPipwApiUrl();
     
     // 下载图片数据
     const imageData = await this.downloadImage(apiUrl);
@@ -236,7 +237,7 @@ export class BackgroundImageUtil {
       return this.cachedUrl;
     } catch (err) {
       console.error('BackgroundImageUtil: 加载背景图设置失败', err);
-      return this.getDefaultApiUrl();
+      return this.getPipwApiUrl();
     }
   }
 
