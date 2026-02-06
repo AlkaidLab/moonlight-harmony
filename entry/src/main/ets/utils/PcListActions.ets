@@ -36,6 +36,15 @@ export interface PairResult {
 }
 
 /**
+ * 快速串流应用信息
+ */
+export interface QuickStreamAppInfo {
+  appId: number;
+  appName: string;
+  resume: boolean;
+}
+
+/**
  * PC 列表业务逻辑处理类
  */
 export class PcListActions {
@@ -318,7 +327,7 @@ export class PcListActions {
   /**
    * 获取快速串流应用（第一个应用或正在运行的应用）
    */
-  async getQuickStreamApp(computer: ObservableComputer): Promise<{ appId: number; appName: string; resume: boolean } | null> {
+  async getQuickStreamApp(computer: ObservableComputer): Promise<QuickStreamAppInfo | null> {
     if (!computer.isOnline || !computer.isPaired) {
       promptAction.showToast({ message: '设备未就绪' });
       return null;
@@ -335,7 +344,8 @@ export class PcListActions {
       
       // 如果有正在运行的游戏，直接恢复
       if (computer.runningGameId > 0) {
-        return { appId: computer.runningGameId, appName: '正在运行', resume: true };
+        const result: QuickStreamAppInfo = { appId: computer.runningGameId, appName: '正在运行', resume: true };
+        return result;
       }
       
       // 获取应用列表
@@ -348,7 +358,8 @@ export class PcListActions {
       }
       
       const firstApp = apps[0];
-      return { appId: firstApp.id, appName: firstApp.name, resume: false };
+      const appResult: QuickStreamAppInfo = { appId: firstApp.id, appName: firstApp.name, resume: false };
+      return appResult;
     } catch (err) {
       promptAction.showToast({ message: `启动失败: ${(err as Error).message}` });
       return null;
