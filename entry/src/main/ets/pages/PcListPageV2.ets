@@ -26,6 +26,9 @@ import { ConfirmDialog, ConfirmDialogConfig, InfoDialog, InfoDialogConfig } from
 import { BusinessError } from '@kit.BasicServicesKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
+// 新增：使用抽取的辅助类
+import { ComputerMenuHelper, ComputerMenuCallbacks } from '../utils/ComputerMenuHelper';
+import { PcListActions } from '../utils/PcListActions';
 
 /**
  * 电脑列表页面 (现代化版本)
@@ -1186,105 +1189,33 @@ struct PcListPageV2 {
   }
 
   private showComputerMenu(computer: ObservableComputer): void {
-    const options: OptionItem[] = [];
-    const actionMap = new Map<string, () => void>();
-    let actionIndex = 0;
-    
-    if (!computer.isOnline) {
-      const key = `action_${actionIndex++}`;
-      actionMap.set(key, () => this.wakeComputer(computer));
-      options.push({
-        title: '发送唤醒包 (WOL)',
-        subtitle: '尝试通过网络唤醒电脑',
-        value: key
-      });
-    } else if (!computer.isPaired) {
-      const key = `action_${actionIndex++}`;
-      actionMap.set(key, () => this.pairWithComputer(computer));
-      options.push({
-        title: '配对',
-        subtitle: '与电脑建立安全连接',
-        value: key
-      });
-    } else {
-      if (computer.isGaming) {
-        const resumeKey = `action_${actionIndex++}`;
-        actionMap.set(resumeKey, () => this.resumeGame(computer));
-        options.push({
-          title: '恢复游戏',
-          subtitle: '继续之前的游戏会话',
-          value: resumeKey
-        });
-        
-        const quitKey = `action_${actionIndex++}`;
-        actionMap.set(quitKey, () => this.quitGame(computer));
-        options.push({
-          title: '退出游戏',
-          subtitle: '结束当前运行的游戏',
-          value: quitKey
-        });
-      }
-      
-      const appListKey = `action_${actionIndex++}`;
-      actionMap.set(appListKey, () => router.pushUrl({
+    // 使用 ComputerMenuHelper 生成菜单
+    const callbacks: ComputerMenuCallbacks = {
+      onWake: (c) => this.wakeComputer(c),
+      onPair: (c) => this.pairWithComputer(c),
+      onResumeGame: (c) => this.resumeGame(c),
+      onQuitGame: (c) => this.quitGame(c),
+      onAppList: (c) => router.pushUrl({
         url: 'pages/AppListPageV2',
-        params: { computerId: computer.uuid }
-      }));
-      options.push({
-        title: '应用列表',
-        subtitle: '查看可串流的应用',
-        value: appListKey
-      });
-      
-      const unpairKey = `action_${actionIndex++}`;
-      actionMap.set(unpairKey, () => this.unpairComputer(computer));
-      options.push({
-        title: '取消配对',
-        subtitle: '断开与电脑的配对',
-        value: unpairKey
-      });
-      
-      const sleepKey = `action_${actionIndex++}`;
-      actionMap.set(sleepKey, () => this.sleepComputer(computer));
-      options.push({
-        title: '休眠电脑',
-        subtitle: '让电脑进入休眠状态',
-        value: sleepKey
-      });
-    }
+        params: { computerId: c.uuid }
+      }),
+      onUnpair: (c) => this.unpairComputer(c),
+      onSleep: (c) => this.sleepComputer(c),
+      onTestNetwork: (c) => this.testNetwork(c),
+      onShowDetails: (c) => this.showComputerDetails(c),
+      onDelete: (c) => this.deleteComputer(c)
+    };
     
-    const networkKey = `action_${actionIndex++}`;
-    actionMap.set(networkKey, () => this.testNetwork(computer));
-    options.push({
-      title: '网络测试',
-      subtitle: '测试与电脑的网络连接',
-      value: networkKey
-    });
-    
-    const detailsKey = `action_${actionIndex++}`;
-    actionMap.set(detailsKey, () => this.showComputerDetails(computer));
-    options.push({
-      title: '查看详情',
-      subtitle: '显示电脑的详细信息',
-      value: detailsKey
-    });
-    
-    const deleteKey = `action_${actionIndex++}`;
-    actionMap.set(deleteKey, () => this.deleteComputer(computer));
-    options.push({
-      title: '删除电脑',
-      subtitle: '从列表中移除此电脑',
-      value: deleteKey
-    });
+    const menuResult = ComputerMenuHelper.generateMenu(computer, callbacks);
 
     // 设置配置
     this.optionPickerDialogConfig = {
       title: computer.name,
       subtitle: computer.statusText,
-      options: options,
+      options: menuResult.options,
       selectedValue: '',
       onSelect: (option: OptionItem) => {
-        const action = actionMap.get(option.value as string);
+        const action = menuResult.actionMap.get(option.value as string);
         if (action) {
           action();
         }
