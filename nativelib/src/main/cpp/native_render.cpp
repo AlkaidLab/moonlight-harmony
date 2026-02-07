@@ -27,6 +27,21 @@
 #undef LOG_TAG
 #define LOG_TAG "NativeRender"
 
+// RenderOutputBufferAtTime 是 API 14+ 的函数，低版本设备不存在
+// 通过 dlsym 动态加载，避免硬依赖
+typedef OH_AVErrCode (*PFN_RenderOutputBufferAtTime)(OH_AVCodec*, uint32_t, int64_t);
+static PFN_RenderOutputBufferAtTime g_pfnRenderAtTime = nullptr;
+static bool g_renderAtTimeChecked = false;
+
+static PFN_RenderOutputBufferAtTime GetRenderAtTimeFunc() {
+    if (!g_renderAtTimeChecked) {
+        g_renderAtTimeChecked = true;
+        g_pfnRenderAtTime = (PFN_RenderOutputBufferAtTime)
+            dlsym(RTLD_DEFAULT, "OH_VideoDecoder_RenderOutputBufferAtTime");
+    }
+    return g_pfnRenderAtTime;
+}
+
 // =============================================================================
 // 动态加载 API 20 函数（用于向后兼容）
 // =============================================================================
@@ -277,12 +292,21 @@ void NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t 
     
     if (vsyncEnabled_.load()) {
         // VSync 模式：使用 RenderOutputBufferAtTime 精确控制呈现时间
-        int64_t presentTimeNs = CalculatePresentTime(pts);
-        renderResult = OH_VideoDecoder_RenderOutputBufferAtTime(codec, bufferIndex, presentTimeNs);
-        
-        if (renderResult != 0) {
-            OH_LOG_WARN(LOG_APP, "RenderOutputBufferAtTime failed: %{public}d, pts=%{public}lld, presentNs=%{public}lld",
-                        renderResult, static_cast<long long>(pts), static_cast<long long>(presentTimeNs));
+        PFN_RenderOutputBufferAtTime renderAtTime = GetRenderAtTimeFunc();
+        if (renderAtTime != nullptr) {
+            int64_t presentTimeNs = CalculatePresentTime(pts);
+            renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
+            
+            if (renderResult != 0) {
+                OH_LOG_WARN(LOG_APP, "RenderOutputBufferAtTime failed: %{public}d, pts=%{public}lld, presentNs=%{public}lld",
+                            renderResult, static_cast<long long>(pts), static_cast<long long>(presentTimeNs));
+            }
+        } else {
+            // RenderOutputBufferAtTime 不可用，回退到直接渲染
+            renderResult = OH_VideoDecoder_RenderOutputBuffer(codec, bufferIndex);
+            if (renderResult != 0) {
+                OH_LOG_WARN(LOG_APP, "RenderOutputBuffer (vsync fallback) failed: %{public}d", renderResult);
+            }
         }
     } else {
         // 低延迟模式：直接渲染

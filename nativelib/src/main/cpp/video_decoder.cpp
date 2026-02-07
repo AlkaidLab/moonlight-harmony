@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstring>
 #include <time.h>
+#include <dlfcn.h>
 #include <qos/qos.h>
 
 #define LOG_TAG "VideoDecoder"
@@ -27,6 +28,52 @@
 // 是否启用异步渲染（通过 NativeRender）
 // 启用后可利用 SetExpectedFrameRateRange 优化高帧率显示
 static bool g_useAsyncRender = true;
+
+// =============================================================================
+// 同步模式 API 动态加载（API 14+，HarmonyOS 5.0.5 等低版本不存在这些符号）
+// 使用 dlsym 在运行时按需加载，避免硬依赖导致整个 native 模块加载失败
+// =============================================================================
+typedef OH_AVErrCode (*PFN_OH_VideoDecoder_QueryInputBuffer)(OH_AVCodec*, uint32_t*, int64_t);
+typedef OH_AVErrCode (*PFN_OH_VideoDecoder_QueryOutputBuffer)(OH_AVCodec*, uint32_t*, int64_t);
+typedef OH_AVErrCode (*PFN_OH_VideoDecoder_RenderOutputBufferAtTime)(OH_AVCodec*, uint32_t, int64_t);
+
+static PFN_OH_VideoDecoder_QueryInputBuffer  pfn_QueryInputBuffer = nullptr;
+static PFN_OH_VideoDecoder_QueryOutputBuffer pfn_QueryOutputBuffer = nullptr;
+static PFN_OH_VideoDecoder_RenderOutputBufferAtTime pfn_RenderOutputBufferAtTime = nullptr;
+static bool g_syncApiLoaded = false;
+static bool g_syncApiAvailable = false;
+
+/**
+ * 尝试在运行时加载同步模式 API 函数
+ * 这些函数在 API 14+ 才可用，低版本设备上 dlsym 返回 nullptr
+ */
+static bool TryLoadSyncModeApis() {
+    if (g_syncApiLoaded) return g_syncApiAvailable;
+    g_syncApiLoaded = true;
+    
+    // libnative_media_vdec.so 已经链接，直接用 RTLD_DEFAULT 在全局符号中查找
+    pfn_QueryInputBuffer = (PFN_OH_VideoDecoder_QueryInputBuffer)
+        dlsym(RTLD_DEFAULT, "OH_VideoDecoder_QueryInputBuffer");
+    pfn_QueryOutputBuffer = (PFN_OH_VideoDecoder_QueryOutputBuffer)
+        dlsym(RTLD_DEFAULT, "OH_VideoDecoder_QueryOutputBuffer");
+    pfn_RenderOutputBufferAtTime = (PFN_OH_VideoDecoder_RenderOutputBufferAtTime)
+        dlsym(RTLD_DEFAULT, "OH_VideoDecoder_RenderOutputBufferAtTime");
+    
+    g_syncApiAvailable = (pfn_QueryInputBuffer != nullptr && pfn_QueryOutputBuffer != nullptr);
+    
+    OH_LOG_INFO(LOG_APP, "Sync mode API availability: QueryInputBuffer=%{public}s, "
+                "QueryOutputBuffer=%{public}s, RenderOutputBufferAtTime=%{public}s",
+                pfn_QueryInputBuffer ? "YES" : "NO",
+                pfn_QueryOutputBuffer ? "YES" : "NO",
+                pfn_RenderOutputBufferAtTime ? "YES" : "NO");
+    
+    if (!g_syncApiAvailable) {
+        OH_LOG_WARN(LOG_APP, "Sync mode APIs not available on this device, "
+                    "will fall back to async mode");
+    }
+    
+    return g_syncApiAvailable;
+}
 
 // 视频格式掩码（来自 moonlight-common-c/Limelight.h）
 #define VIDEO_FORMAT_MASK_H264   0x000F
@@ -246,9 +293,15 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     bool needAsyncFallback = false;
     
     if (config_.decoderMode == DecoderMode::SYNC) {
+        // 先检查同步模式 API 是否可用（API 14+）
+        if (!TryLoadSyncModeApis()) {
+            OH_LOG_WARN(LOG_APP, "{Init} Sync mode APIs (QueryInputBuffer/QueryOutputBuffer) not available, "
+                        "falling back to async mode");
+            needAsyncFallback = true;
+        }
         // 尝试启用同步模式 - OH_MD_KEY_ENABLE_SYNC_MODE 在 API 20+ 可用
         // 由于 availability 属性，如果 API < 20，符号地址为 nullptr
-        if (OH_MD_KEY_ENABLE_SYNC_MODE != nullptr) {
+        else if (OH_MD_KEY_ENABLE_SYNC_MODE != nullptr) {
             OH_AVFormat_SetIntValue(format, OH_MD_KEY_ENABLE_SYNC_MODE, 1);
             syncModeConfigured = true;
             OH_LOG_INFO(LOG_APP, "{Init} Sync decode mode configured via OH_MD_KEY_ENABLE_SYNC_MODE");
@@ -652,7 +705,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
         int retryCount = 0;
         while (retryCount < kMaxDirectSubmitRetries && running_) {
             uint32_t inputIndex = 0;
-            OH_AVErrCode ret = OH_VideoDecoder_QueryInputBuffer(decoder_, &inputIndex, kSyncInputTimeoutUs);
+            OH_AVErrCode ret = pfn_QueryInputBuffer(decoder_, &inputIndex, kSyncInputTimeoutUs);
             
             if (ret == AV_ERR_OK) {
                 OH_AVBuffer* inputBuffer = OH_VideoDecoder_GetInputBuffer(decoder_, inputIndex);
@@ -848,7 +901,7 @@ int VideoDecoder::SubmitDecodeUnit(const uint8_t* data, int size,
         int retryCount = 0;
         while (retryCount < kMaxDirectSubmitRetries && running_) {
             uint32_t inputIndex = 0;
-            OH_AVErrCode ret = OH_VideoDecoder_QueryInputBuffer(decoder_, &inputIndex, kSyncInputTimeoutUs);
+            OH_AVErrCode ret = pfn_QueryInputBuffer(decoder_, &inputIndex, kSyncInputTimeoutUs);
             
             if (ret == AV_ERR_OK) {
                 // 获得了输入 buffer，直接填充并提交
@@ -1215,10 +1268,10 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     // 同步渲染（fallback）
     // 检查是否启用 VSync 模式
     NativeRender* render = NativeRender::GetInstance();
-    if (render != nullptr && render->IsVsyncEnabled()) {
+    if (render != nullptr && render->IsVsyncEnabled() && pfn_RenderOutputBufferAtTime != nullptr) {
         // VSync 模式：使用 RenderOutputBufferAtTime 计算呈现时间
         int64_t presentTimeNs = render->CalculatePresentTime(pts);
-        OH_VideoDecoder_RenderOutputBufferAtTime(codec, index, presentTimeNs);
+        pfn_RenderOutputBufferAtTime(codec, index, presentTimeNs);
     } else {
         // 低延迟模式：直接渲染
         OH_VideoDecoder_RenderOutputBuffer(codec, index);
@@ -1425,7 +1478,7 @@ int VideoDecoder::SyncProcessInput(int64_t timeoutUs) {
     
     // 有帧要处理，先查询输入 buffer
     uint32_t inputIndex = 0;
-    OH_AVErrCode ret = OH_VideoDecoder_QueryInputBuffer(decoder_, &inputIndex, timeoutUs);
+    OH_AVErrCode ret = pfn_QueryInputBuffer(decoder_, &inputIndex, timeoutUs);
     
     if (ret == AV_ERR_TRY_AGAIN_LATER) {
         // 没有可用的输入 buffer，下次再试
@@ -1519,7 +1572,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     
     // 使用同步 API 获取输出 buffer
     uint32_t outputIndex = 0;
-    OH_AVErrCode ret = OH_VideoDecoder_QueryOutputBuffer(decoder_, &outputIndex, timeoutUs);
+    OH_AVErrCode ret = pfn_QueryOutputBuffer(decoder_, &outputIndex, timeoutUs);
     
     if (ret == AV_ERR_TRY_AGAIN_LATER) {
         // 没有输出帧可用，正常情况
@@ -1569,7 +1622,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     int drainedCount = 0;
     while (running_ && syncDecodeRunning_) {
         uint32_t nextOutputIndex = 0;
-        OH_AVErrCode nextRet = OH_VideoDecoder_QueryOutputBuffer(decoder_, &nextOutputIndex, 0);
+        OH_AVErrCode nextRet = pfn_QueryOutputBuffer(decoder_, &nextOutputIndex, 0);
         if (nextRet != AV_ERR_OK) {
             break;  // 没有更多可用帧
         }
