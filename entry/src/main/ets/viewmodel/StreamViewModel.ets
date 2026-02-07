@@ -302,7 +302,8 @@ export class StreamViewModel {
     rightStickX: number,
     rightStickY: number,
     leftTrigger: number,
-    rightTrigger: number
+    rightTrigger: number,
+    controllerType: number = 1  // 默认 Xbox (LI_CTYPE_XBOX = 0x01)
   ): void {
     this.streamingSession?.sendGamepadState(
       controllerIndex,
@@ -312,7 +313,8 @@ export class StreamViewModel {
       rightStickX,
       rightStickY,
       leftTrigger,
-      rightTrigger
+      rightTrigger,
+      controllerType
     );
   }
   

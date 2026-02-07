@@ -25,6 +25,8 @@ const BACKGROUND_IMAGE_TYPE_KEY = 'settings_background_image_type';
 const BACKGROUND_DISCLAIMER_ACCEPTED_KEY = 'settings_background_disclaimer_accepted';
 // 本地缓存文件名
 const CACHED_BACKGROUND_FILENAME = 'cached_background.jpg';
+// 背景图缓存过期时间：24小时（毫秒）
+const BACKGROUND_CACHE_EXPIRE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * 背景图 API 源配置
@@ -151,12 +153,20 @@ export class BackgroundImageUtil {
       try {
         const stat = fileIo.statSync(this.localCachePath);
         if (stat && stat.size > 0) {
-          // 已有缓存，同时读取到内存缓存
-          const file = fileIo.openSync(this.localCachePath, fileIo.OpenMode.READ_ONLY);
-          this.cachedImageData = new ArrayBuffer(stat.size);
-          fileIo.readSync(file.fd, this.cachedImageData);
-          fileIo.closeSync(file.fd);
-          return this.localCachePath;
+          // 检查缓存是否过期（超过24小时则重新下载）
+          const cacheAge = Date.now() - stat.mtime * 1000;
+          if (cacheAge > BACKGROUND_CACHE_EXPIRE_MS) {
+            console.info('BackgroundImageUtil: 缓存已过期，将下载新图片');
+            // 重置 refreshTimestamp 以获取新图片 URL
+            this.refreshTimestamp = Date.now();
+          } else {
+            // 缓存未过期，直接使用
+            const file = fileIo.openSync(this.localCachePath, fileIo.OpenMode.READ_ONLY);
+            this.cachedImageData = new ArrayBuffer(stat.size);
+            fileIo.readSync(file.fd, this.cachedImageData);
+            fileIo.closeSync(file.fd);
+            return this.localCachePath;
+          }
         }
       } catch (error) {
         // 文件不存在，继续下载

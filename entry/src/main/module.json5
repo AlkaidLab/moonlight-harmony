@@ -80,6 +80,14 @@
         }
       },
       {
+        "name": "ohos.permission.GYROSCOPE",
+        "reason": "$string:permission_gyroscope_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
         "name": "ohos.permission.INTERCEPT_INPUT_EVENT",
         "reason": "$string:permission_intercept_input_reason",
         "usedScene": {

@@ -101,6 +101,8 @@ interface NativeModule {
     leftStickX: number, leftStickY: number, rightStickX: number, rightStickY: number): void;
   sendControllerArrivalEvent(controllerNumber: number, activeGamepadMask: number,
     type: number, supportedButtonFlags: number, capabilities: number): number;
+  sendControllerMotionEvent(controllerNumber: number, motionType: number,
+    x: number, y: number, z: number): number;
 }
 
 interface StreamCallbacks {
@@ -122,6 +124,9 @@ interface StreamCallbacks {
   clConnectionStatusUpdate?: (connectionStatus: number) => void;
   setHdrMode?: (enabled: boolean) => void;
   rumble?: (controllerNumber: number, lowFreqMotor: number, highFreqMotor: number) => void;
+  rumbleTriggers?: (controllerNumber: number, leftTrigger: number, rightTrigger: number) => void;
+  setMotionEventState?: (controllerNumber: number, motionType: number, reportRateHz: number) => void;
+  setControllerLED?: (controllerNumber: number, r: number, g: number, b: number) => void;
 }
 
 interface VideoStats {
@@ -320,6 +325,11 @@ export class StreamingSession {
     console.info('停止串流');
     this.isRunning = false;
     this.virtualControllerArrived = false;
+    this.physicalControllerArrived.clear();
+    this.activeGamepadMask = 0;
+    
+    // 停止传感器
+    GamepadManager.getInstance().stopAllSensors();
     
     await this.cleanup();
   }
@@ -395,6 +405,13 @@ export class StreamingSession {
 
   // 虚拟手柄是否已发送 arrival 事件
   private virtualControllerArrived: boolean = false;
+
+  // 物理手柄 arrival 跟踪 (controllerIndex → arrived)
+  private physicalControllerArrived = new Set<number>();
+
+  // 全局 activeGamepadMask — 与 Android moonlight 一致
+  // 位掩码记录所有曾活跃的手柄，每次 sendMultiControllerInput 都传此值
+  private activeGamepadMask: number = 0;
 
   // 当前控制器状态接口
   private controllerState: ControllerState = {
@@ -479,9 +496,11 @@ export class StreamingSession {
         | 0x0040 | 0x0080 // LS RS
         | 0x0010 | 0x0020 | 0x0400; // START BACK SPECIAL
       const capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
+      // 更新全局手柄掩码
+      this.activeGamepadMask |= (1 << controllerIndex);
       const ret = this.nativeModule.sendControllerArrivalEvent(
         controllerIndex,
-        1 << controllerIndex,
+        this.activeGamepadMask,
         LI_CTYPE_XBOX,
         supportedButtons,
         capabilities
@@ -501,7 +520,7 @@ export class StreamingSession {
     this.ensureVirtualControllerArrival(controllerIndex);
     this.nativeModule.sendMultiControllerInput(
       controllerIndex,
-      1 << controllerIndex, // activeGamepadMask
+      this.activeGamepadMask, // 全局手柄掩码，与 Android 一致
       this.controllerState.buttonFlags,
       this.controllerState.leftTrigger,
       this.controllerState.rightTrigger,
@@ -522,6 +541,7 @@ export class StreamingSession {
    * @param rightStickY 右摇杆Y (-32768~32767)
    * @param leftTrigger 左扳机 (0~255)
    * @param rightTrigger 右扳机 (0~255)
+   * @param controllerType 控制器类型 (0=Unknown, 1=Xbox, 2=PS, 3=Nintendo)
    */
   sendGamepadState(
     controllerIndex: number,
@@ -531,15 +551,19 @@ export class StreamingSession {
     rightStickX: number,
     rightStickY: number,
     leftTrigger: number,
-    rightTrigger: number
+    rightTrigger: number,
+    controllerType: number = 1  // 默认 Xbox
   ): void {
     if (!this.isRunning) {
       return;
     }
-    
+
+    // 确保物理手柄的 arrival 事件已发送（传递真实控制器类型）
+    this.ensurePhysicalControllerArrival(controllerIndex, controllerType);
+
     this.nativeModule.sendMultiControllerInput(
       controllerIndex,
-      1 << controllerIndex, // activeGamepadMask
+      this.activeGamepadMask, // 全局手柄掩码，与 Android 一致
       buttons,
       leftTrigger,
       rightTrigger,
@@ -548,6 +572,53 @@ export class StreamingSession {
       rightStickX,
       rightStickY
     );
+  }
+
+  /**
+   * 确保物理手柄的 arrival 事件已发送
+   * 与 Android ControllerHandler.assignControllerNumberIfNeeded() + sendControllerArrival() 对应
+   * @param controllerIndex 控制器索引
+   * @param controllerType 控制器类型 (0=Unknown, 1=Xbox, 2=PS, 3=Nintendo)，对应 LI_CTYPE_*
+   */
+  private ensurePhysicalControllerArrival(controllerIndex: number, controllerType: number = 1): void {
+    if (this.physicalControllerArrived.has(controllerIndex)) {
+      return;
+    }
+
+    const LI_CCAP_ANALOG_TRIGGERS = 0x01;
+    const LI_CCAP_RUMBLE = 0x02;
+    const supportedButtons = 0x1000 | 0x2000 | 0x4000 | 0x8000 // A B X Y
+      | 0x0001 | 0x0002 | 0x0004 | 0x0008 // UP DOWN LEFT RIGHT
+      | 0x0100 | 0x0200 // LB RB
+      | 0x0040 | 0x0080 // LS RS
+      | 0x0010 | 0x0020 | 0x0400; // START BACK SPECIAL
+    let capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
+
+    // 添加传感器能力（设备传感器回退或手柄自带传感器）
+    capabilities |= GamepadManager.getInstance().getSensorCapabilities();
+
+    // 如果使用设备传感器模拟运动传感器，且手柄不是 PS 类型，
+    // 需要将控制器类型改为 Unknown（和 Android 一致），
+    // 否则主机可能不会请求运动事件
+    let reportedType = controllerType;
+    if (capabilities & 0x30 && controllerType !== 0x02) {  // 0x30 = ACCEL|GYRO, 0x02 = PS
+      reportedType = 0x00;  // LI_CTYPE_UNKNOWN
+    }
+
+    // 更新全局手柄掩码
+    this.activeGamepadMask |= (1 << controllerIndex);
+
+    const ret = this.nativeModule.sendControllerArrivalEvent(
+      controllerIndex,
+      this.activeGamepadMask,
+      reportedType,
+      supportedButtons,
+      capabilities
+    );
+    if (ret >= 0) {
+      this.physicalControllerArrived.add(controllerIndex);
+      console.info(`[Gamepad] Physical controller ${controllerIndex} arrival sent, type=${reportedType}(orig=${controllerType}), caps=0x${capabilities.toString(16)}, mask=0x${this.activeGamepadMask.toString(16)}`);
+    }
   }
 
   /**
@@ -725,6 +796,8 @@ export class StreamingSession {
       clConnectionTerminated: (errorCode: number): void => {
         console.info(`连接已终止: ${errorCode}`);
         this.isRunning = false;
+        // 停止传感器
+        GamepadManager.getInstance().stopAllSensors();
         // 停止麦克风
         this.stopMicrophone();
       },
@@ -747,8 +820,29 @@ export class StreamingSession {
         // 将服务器发送的震动命令传递给 GamepadManager
         console.info(`收到震动回调: controller=${controllerNumber}, low=${lowFreqMotor}, high=${highFreqMotor}`);
         GamepadManager.getInstance().handleRumble(controllerNumber, lowFreqMotor, highFreqMotor);
+      },
+      rumbleTriggers: (controllerNumber: number, leftTrigger: number, rightTrigger: number): void => {
+        GamepadManager.getInstance().handleRumbleTriggers(controllerNumber, leftTrigger, rightTrigger);
+      },
+      setMotionEventState: (controllerNumber: number, motionType: number, reportRateHz: number): void => {
+        // 主机请求启用/禁用运动传感器
+        console.info(`收到传感器状态回调: controller=${controllerNumber}, type=${motionType}, rate=${reportRateHz}`);
+        GamepadManager.getInstance().handleSetMotionEventState(controllerNumber, motionType, reportRateHz);
+      },
+      setControllerLED: (controllerNumber: number, r: number, g: number, b: number): void => {
+        console.info(`收到 LED 回调: controller=${controllerNumber}, rgb=(${r},${g},${b})`);
+        // TODO: 实现 LED 控制
       }
     };
+    
+    // 设置 GamepadManager 的传感器数据回调
+    GamepadManager.getInstance().setSensorDataCallback(
+      (controllerNumber: number, motionType: number, x: number, y: number, z: number): void => {
+        if (this.isRunning) {
+          this.nativeModule.sendControllerMotionEvent(controllerNumber, motionType, x, y, z);
+        }
+      }
+    );
     
     this.nativeModule.init(callbacks);
   }

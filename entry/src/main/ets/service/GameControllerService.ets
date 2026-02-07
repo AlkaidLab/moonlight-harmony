@@ -26,6 +26,7 @@ export interface GameControllerDeviceInfo {
   product: number;
   deviceType: number;  // 0=未知, 1=手柄
   isConnected: boolean;
+  physicalAddress?: string;  // 物理地址，用于去重同一物理设备的多个 HID 接口
 }
 
 /**
@@ -116,29 +117,8 @@ export class ButtonCode {
   static readonly DPAD_RIGHT = 2015;
 }
 
-/**
- * 按键码到 Moonlight 按钮标志的映射
- * ArkTS 不支持计算属性名，改用 Map
- */
-const buttonCodeToFlagMap = new Map<number, number>();
-buttonCodeToFlagMap.set(ButtonCode.BUTTON_A, 0x1000);
-buttonCodeToFlagMap.set(ButtonCode.BUTTON_B, 0x2000);
-buttonCodeToFlagMap.set(ButtonCode.BUTTON_X, 0x4000);
-buttonCodeToFlagMap.set(ButtonCode.BUTTON_Y, 0x8000);
-buttonCodeToFlagMap.set(ButtonCode.LEFT_SHOULDER, 0x0100);
-buttonCodeToFlagMap.set(ButtonCode.RIGHT_SHOULDER, 0x0200);
-buttonCodeToFlagMap.set(ButtonCode.LEFT_THUMBSTICK, 0x0040);
-buttonCodeToFlagMap.set(ButtonCode.RIGHT_THUMBSTICK, 0x0080);
-buttonCodeToFlagMap.set(ButtonCode.BUTTON_HOME, 0x0400);
-buttonCodeToFlagMap.set(ButtonCode.BUTTON_MENU, 0x0010);  // START
-buttonCodeToFlagMap.set(ButtonCode.DPAD_UP, 0x0001);
-buttonCodeToFlagMap.set(ButtonCode.DPAD_DOWN, 0x0002);
-buttonCodeToFlagMap.set(ButtonCode.DPAD_LEFT, 0x0004);
-buttonCodeToFlagMap.set(ButtonCode.DPAD_RIGHT, 0x0008);
-
-export function getButtonFlag(buttonCode: number): number {
-  return buttonCodeToFlagMap.get(buttonCode) ?? 0;
-}
+// 按键码到 Moonlight 按钮标志的映射已统一在 GamepadManager.ets 的 gcButtonMap 中
+// 此处仅保留 ButtonCode 常量类供引用
 
 /**
  * Game Controller Kit 服务类

@@ -82,6 +82,20 @@ export const CONTROLLER_TYPE_XBOX = 0x01;
 export const CONTROLLER_TYPE_PS = 0x02;
 export const CONTROLLER_TYPE_NINTENDO = 0x03;
 
+// 手柄能力标志
+export const LI_CCAP_ANALOG_TRIGGERS = 0x01;
+export const LI_CCAP_RUMBLE = 0x02;
+export const LI_CCAP_TRIGGER_RUMBLE = 0x04;
+export const LI_CCAP_TOUCHPAD = 0x08;
+export const LI_CCAP_ACCEL = 0x10;
+export const LI_CCAP_GYRO = 0x20;
+export const LI_CCAP_BATTERY_STATE = 0x40;
+export const LI_CCAP_RGB_LED = 0x80;
+
+// 运动传感器类型
+export const LI_MOTION_TYPE_ACCEL = 0x01;
+export const LI_MOTION_TYPE_GYRO = 0x02;
+
 // 视频格式
 export const VIDEO_FORMAT_H264 = 0x0001;
 export const VIDEO_FORMAT_H265 = 0x0100;

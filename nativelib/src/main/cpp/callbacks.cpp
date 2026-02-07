@@ -193,6 +193,52 @@ static void CallJs_SetHdrMode(napi_env env, napi_value js_callback, void* contex
     delete cbData;
 }
 
+static void CallJs_SetMotionEventState(napi_env env, napi_value js_callback, void* context, void* data) {
+    CallbackData* cbData = (CallbackData*)data;
+    if (env != nullptr && js_callback != nullptr) {
+        napi_value argv[3];
+        napi_create_int32(env, cbData->intParams[0], &argv[0]); // controllerNumber
+        napi_create_int32(env, cbData->intParams[1], &argv[1]); // motionType
+        napi_create_int32(env, cbData->intParams[2], &argv[2]); // reportRateHz
+        
+        napi_value undefined;
+        napi_get_undefined(env, &undefined);
+        napi_call_function(env, undefined, js_callback, 3, argv, nullptr);
+    }
+    delete cbData;
+}
+
+static void CallJs_SetControllerLED(napi_env env, napi_value js_callback, void* context, void* data) {
+    CallbackData* cbData = (CallbackData*)data;
+    if (env != nullptr && js_callback != nullptr) {
+        napi_value argv[4];
+        napi_create_int32(env, cbData->intParams[0], &argv[0]); // controllerNumber
+        napi_create_int32(env, cbData->intParams[1], &argv[1]); // r
+        napi_create_int32(env, cbData->intParams[2], &argv[2]); // g
+        napi_create_int32(env, cbData->intParams[3], &argv[3]); // b
+        
+        napi_value undefined;
+        napi_get_undefined(env, &undefined);
+        napi_call_function(env, undefined, js_callback, 4, argv, nullptr);
+    }
+    delete cbData;
+}
+
+static void CallJs_RumbleTriggers(napi_env env, napi_value js_callback, void* context, void* data) {
+    CallbackData* cbData = (CallbackData*)data;
+    if (env != nullptr && js_callback != nullptr) {
+        napi_value argv[3];
+        napi_create_int32(env, cbData->intParams[0], &argv[0]); // controllerNumber
+        napi_create_int32(env, cbData->intParams[1], &argv[1]); // leftTrigger
+        napi_create_int32(env, cbData->intParams[2], &argv[2]); // rightTrigger
+        
+        napi_value undefined;
+        napi_get_undefined(env, &undefined);
+        napi_call_function(env, undefined, js_callback, 3, argv, nullptr);
+    }
+    delete cbData;
+}
+
 static void CallJs_ResolutionChanged(napi_env env, napi_value js_callback, void* context, void* data) {
     CallbackData* cbData = (CallbackData*)data;
     if (env != nullptr && js_callback != nullptr) {
@@ -359,6 +405,15 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     if (napi_get_named_property(env, callbacks, "setHdrMode", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "setHdrMode", CallJs_SetHdrMode, &g_connCallbacks.tsfn_setHdrMode);
     }
+    if (napi_get_named_property(env, callbacks, "setMotionEventState", &callback) == napi_ok) {
+        CreateThreadsafeFunction(env, callback, "setMotionEventState", CallJs_SetMotionEventState, &g_connCallbacks.tsfn_setMotionEventState);
+    }
+    if (napi_get_named_property(env, callbacks, "setControllerLED", &callback) == napi_ok) {
+        CreateThreadsafeFunction(env, callback, "setControllerLED", CallJs_SetControllerLED, &g_connCallbacks.tsfn_setControllerLED);
+    }
+    if (napi_get_named_property(env, callbacks, "rumbleTriggers", &callback) == napi_ok) {
+        CreateThreadsafeFunction(env, callback, "rumbleTriggers", CallJs_RumbleTriggers, &g_connCallbacks.tsfn_rumbleTriggers);
+    }
     if (napi_get_named_property(env, callbacks, "resolutionChanged", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "resolutionChanged", CallJs_ResolutionChanged, &g_connCallbacks.tsfn_resolutionChanged);
     }
@@ -390,6 +445,9 @@ void Callbacks_Cleanup(void) {
     if (g_connCallbacks.tsfn_rumble) napi_release_threadsafe_function(g_connCallbacks.tsfn_rumble, napi_tsfn_release);
     if (g_connCallbacks.tsfn_connectionStatusUpdate) napi_release_threadsafe_function(g_connCallbacks.tsfn_connectionStatusUpdate, napi_tsfn_release);
     if (g_connCallbacks.tsfn_setHdrMode) napi_release_threadsafe_function(g_connCallbacks.tsfn_setHdrMode, napi_tsfn_release);
+    if (g_connCallbacks.tsfn_setMotionEventState) napi_release_threadsafe_function(g_connCallbacks.tsfn_setMotionEventState, napi_tsfn_release);
+    if (g_connCallbacks.tsfn_setControllerLED) napi_release_threadsafe_function(g_connCallbacks.tsfn_setControllerLED, napi_tsfn_release);
+    if (g_connCallbacks.tsfn_rumbleTriggers) napi_release_threadsafe_function(g_connCallbacks.tsfn_rumbleTriggers, napi_tsfn_release);
     if (g_connCallbacks.tsfn_resolutionChanged) napi_release_threadsafe_function(g_connCallbacks.tsfn_resolutionChanged, napi_tsfn_release);
     
     memset(&g_videoCallbacks, 0, sizeof(g_videoCallbacks));
@@ -743,15 +801,35 @@ void BridgeClSetHdrMode(int enabled, void* hdrMetadata) {
 }
 
 void BridgeClRumbleTriggers(unsigned short controllerNumber, unsigned short leftTrigger, unsigned short rightTrigger) {
-    // TODO: 实现触发器震动
+    if (g_connCallbacks.tsfn_rumbleTriggers) {
+        CallbackData* data = new CallbackData();
+        data->intParams[0] = controllerNumber;
+        data->intParams[1] = leftTrigger;
+        data->intParams[2] = rightTrigger;
+        napi_call_threadsafe_function(g_connCallbacks.tsfn_rumbleTriggers, data, napi_tsfn_nonblocking);
+    }
 }
 
 void BridgeClSetMotionEventState(unsigned short controllerNumber, unsigned char motionType, unsigned short reportRateHz) {
-    // TODO: 实现动作感应状态
+    OH_LOG_INFO(LOG_APP, "SetMotionEventState: controller=%u, type=%u, rate=%u", controllerNumber, motionType, reportRateHz);
+    if (g_connCallbacks.tsfn_setMotionEventState) {
+        CallbackData* data = new CallbackData();
+        data->intParams[0] = controllerNumber;
+        data->intParams[1] = motionType;
+        data->intParams[2] = reportRateHz;
+        napi_call_threadsafe_function(g_connCallbacks.tsfn_setMotionEventState, data, napi_tsfn_nonblocking);
+    }
 }
 
 void BridgeClSetControllerLED(unsigned short controllerNumber, unsigned char r, unsigned char g, unsigned char b) {
-    // TODO: 实现手柄 LED 控制
+    if (g_connCallbacks.tsfn_setControllerLED) {
+        CallbackData* data = new CallbackData();
+        data->intParams[0] = controllerNumber;
+        data->intParams[1] = r;
+        data->intParams[2] = g;
+        data->intParams[3] = b;
+        napi_call_threadsafe_function(g_connCallbacks.tsfn_setControllerLED, data, napi_tsfn_nonblocking);
+    }
 }
 
 void BridgeClResolutionChanged(unsigned int width, unsigned int height) {

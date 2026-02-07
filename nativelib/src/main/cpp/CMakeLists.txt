@@ -110,6 +110,10 @@ add_library(moonlight_nativelib SHARED
     ${RS_SOURCES}
 )
 
+# Game Controller Kit 可能不存在于所有设备 (如 HarmonyOS 5.0.5)
+# 不链接 libohgame_controller.z.so，改为运行时 dlopen 加载
+# 所有 OH_Game* 函数通过 dlsym 获取的函数指针调用
+
 # 链接库
 target_link_libraries(moonlight_nativelib PUBLIC
     libace_napi.z.so
@@ -124,7 +128,6 @@ target_link_libraries(moonlight_nativelib PUBLIC
     libnative_media_avsource.so
     libohaudio.so
     libqos.so
-    libohgame_controller.z.so
     libohinput.so
     ${OPENSSL_CRYPTO_LIBRARY}
     ${OPENSSL_SSL_LIBRARY}

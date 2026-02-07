@@ -57,6 +57,9 @@ export struct AnalogStick {
   // 双击检测
   private lastTapTime: number = 0;
   private doubleTapThreshold: number = 300; // ms
+
+  // 触摸跟踪：记录落在本组件上的手指 ID，避免多指触控时取错手指
+  private trackingTouchId: number = -1;
   
   aboutToAppear(): void {
     // 应用配置
@@ -136,32 +139,57 @@ export struct AnalogStick {
   }
 
   private handleTouch(event: TouchEvent): void {
-    const touches = event.touches;
-    if (touches.length === 0) return;
-    
-    const touch = touches[0];
     const centerX = this.stickOuterRadius;
     const centerY = this.stickOuterRadius;
-    
+
     switch (event.type) {
-      case TouchType.Down:
+      case TouchType.Down: {
+        // 从 changedTouches 获取刚按下的手指，记录其 ID
+        const changed = event.changedTouches;
+        if (changed.length === 0) return;
+        const touch = changed[0];
+        this.trackingTouchId = touch.id;
         this.isPressed = true;
         this.updateStickPosition(touch.x - centerX, touch.y - centerY);
         this.checkDoubleTap();
         break;
-        
-      case TouchType.Move:
-        if (this.isPressed) {
+      }
+
+      case TouchType.Move: {
+        if (!this.isPressed) break;
+        // 在 touches 中查找我们跟踪的手指
+        const touch = this.findTrackedTouch(event.touches);
+        if (touch) {
           this.updateStickPosition(touch.x - centerX, touch.y - centerY);
         }
         break;
-        
+      }
+
       case TouchType.Up:
-      case TouchType.Cancel:
-        this.isPressed = false;
-        this.resetStick();
+      case TouchType.Cancel: {
+        // 检查抬起的是否是我们跟踪的手指
+        const changed = event.changedTouches;
+        const isOurFinger = changed.some(t => t.id === this.trackingTouchId);
+        if (isOurFinger) {
+          this.trackingTouchId = -1;
+          this.isPressed = false;
+          this.resetStick();
+        }
         break;
+      }
     }
+  }
+
+  /**
+   * 在触摸列表中查找我们正在跟踪的手指
+   */
+  private findTrackedTouch(touches: TouchObject[]): TouchObject | null {
+    for (const t of touches) {
+      if (t.id === this.trackingTouchId) {
+        return t;
+      }
+    }
+    return null;
   }
   
   private updateStickPosition(dx: number, dy: number): void {

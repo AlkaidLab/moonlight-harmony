@@ -15,6 +15,7 @@
 
 import { usbManager } from '@kit.BasicServicesKit';
 import { UsbDriverService, UsbDriverListener, ControllerType, AbstractController, ButtonFlags } from '../service/usbdriver';
+import { GamepadManager } from '../service/GamepadManager';
 import { AppColors } from '../common/Theme';
 
 // 手柄状态类
@@ -91,14 +92,20 @@ export struct UsbControllerTestView {
   private pollCountInternal: number = 0;
   private lastPollStatTime: number = 0;
   private pollRateTimer: number = -1;
+  private uiRefreshTimer: number = -1;
+  // 内部缓冲区：USB 轮询回调（高频，125-1000Hz）写入此变量，
+  // 由 UI 刷新定时器同步到 @State 以正确触发 UI 重渲染
+  private internalLastInputState: ControllerInputState | null = null;
 
   aboutToAppear(): void {
     this.addLog('USB 手柄测试视图初始化');
     this.checkUsbDevices();
     this.startPollRateTimer();
+    this.startUiRefreshTimer();
   }
 
   aboutToDisappear(): void {
+    this.stopUiRefreshTimer();
     this.stopPollRateTimer();
     this.stopDriver();
   }
@@ -127,6 +134,22 @@ export struct UsbControllerTestView {
       this.pollRateTimer = -1;
     }
   }
+
+  // 30Hz UI 刷新定时器：将内部缓冲区同步到 @State 变量
+  private startUiRefreshTimer(): void {
+    this.uiRefreshTimer = setInterval(() => {
+      if (this.internalLastInputState !== null) {
+        this.lastInputState = this.internalLastInputState;
+      }
+    }, 33);
+  }
+
+  private stopUiRefreshTimer(): void {
+    if (this.uiRefreshTimer !== -1) {
+      clearInterval(this.uiRefreshTimer);
+      this.uiRefreshTimer = -1;
+    }
+  }
   
   incrementPollCount(): void {
     this.pollCountInternal++;
@@ -138,7 +161,7 @@ export struct UsbControllerTestView {
   }
   
   updateInputState(state: ControllerInputState): void {
-    this.lastInputState = state;
+    this.internalLastInputState = state;
   }
   
   onDeviceAdded(controller: AbstractController): void {
@@ -178,21 +201,35 @@ export struct UsbControllerTestView {
 
     this.listener = new TestViewDriverListener(this);
     this.usbDriverService = UsbDriverService.getInstance();
+    // 临时接管 listener 用于测试（覆盖 GamepadManager 的 listener）
     this.usbDriverService.setListener(this.listener);
     this.usbDriverService.start();
     this.isRunning = true;
-    this.addLog('USB 驱动服务已启动');
+    this.addLog('USB 驱动服务已启动（测试模式）');
   }
 
   private stopDriver(): void {
     if (this.usbDriverService !== null) {
-      this.usbDriverService.stop();
+      // 不调用 stop()，避免停止全局 USB 驱动服务影响 GamepadManager
+      // 只需恢复 GamepadManager 的 listener
+      this.restoreGamepadManagerListener();
       this.usbDriverService = null;
       this.listener = null;
       this.isRunning = false;
       this.connectedDevices = [];
       this.lastInputState = null;
-      this.addLog('USB 驱动服务已停止');
+      this.addLog('USB 驱动测试已停止（已恢复 GamepadManager 监听）');
+    }
+  }
+  
+  /**
+   * 恢复 GamepadManager 的 USB 驱动 listener，避免测试页面退出后串流手柄输入丢失
+   */
+  private restoreGamepadManagerListener(): void {
+    try {
+      GamepadManager.getInstance().reattachInputCallbacks();
+    } catch (err) {
+      console.error('[UsbControllerTest] 恢复 GamepadManager listener 失败:', err);
     }
   }
 

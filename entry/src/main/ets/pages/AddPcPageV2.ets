@@ -11,7 +11,6 @@
 import { router, promptAction } from '@kit.ArkUI';
 import { ComputerManager } from '../service/ComputerManager';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
-import { common } from '@kit.AbilityKit';
 
 /**
  * 地址解析结果

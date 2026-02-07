@@ -26,7 +26,7 @@ import { TouchInputHandler, TouchInputMode } from '../service/TouchInputHandler'
 import { StreamWindowManager } from '../service/StreamWindowManager';
 import { ShortcutManager, Shortcut } from '../components/ShortcutManager';
 import { ShortcutEditorDialog, ShortcutEditorCallbacks, ShortcutEditData } from '../components/ShortcutEditorDialog';
-import { GamepadManager, GamepadInputListener, GamepadState } from '../service/GamepadManager';
+import { GamepadManager, GamepadInputListener, GamepadState, MoonlightControllerType } from '../service/GamepadManager';
 import { AppStateService, AppState } from '../service/AppStateService';
 import { MoonBridge } from '../service/MoonBridge';
 import { SuperCmd } from '../service/NvHttp';
@@ -74,6 +74,7 @@ struct StreamPage {
   private menuManager: StreamMenuManager | null = null;
   private shortcutManager: ShortcutManager = ShortcutManager.getInstance();
   private gamepadManager: GamepadManager = GamepadManager.getInstance();
+  private controllerTypes: Map<number, number> = new Map();  // slot → MoonlightControllerType
   private appStateService: AppStateService = AppStateService.getInstance();
   
   // 应用状态相关
@@ -152,12 +153,14 @@ struct StreamPage {
    */
   private initializeGamepad(): void {
     this.gamepadManager.setListener({
-      onGamepadConnected: (deviceId: number, name: string) => {
-        console.info(`手柄已连接: ${name} (ID: ${deviceId})`);
+      onGamepadConnected: (deviceId: number, name: string, controllerType: number) => {
+        console.info(`手柄已连接: ${name} (ID: ${deviceId}, Type: ${controllerType})`);
+        this.controllerTypes.set(deviceId, controllerType);
         promptAction.showToast({ message: `手柄已连接: ${name}` });
       },
       onGamepadDisconnected: (deviceId: number) => {
         console.info(`手柄已断开: ID ${deviceId}`);
+        this.controllerTypes.delete(deviceId);
         promptAction.showToast({ message: '手柄已断开' });
       },
       onGamepadInput: (deviceId: number, state: GamepadState) => {
@@ -174,6 +177,9 @@ struct StreamPage {
       return;
     }
     
+    // 获取控制器类型（默认 Xbox）
+    const controllerType = this.controllerTypes.get(deviceId) ?? MoonlightControllerType.XBOX;
+    
     // 直接发送完整的手柄状态
     this.viewModel.sendGamepadState(
       deviceId,
@@ -183,7 +189,8 @@ struct StreamPage {
       state.rightStickX,
       state.rightStickY,
       state.leftTrigger,
-      state.rightTrigger
+      state.rightTrigger,
+      controllerType
     );
   }
   

@@ -14,6 +14,7 @@
  */
 
 import { gameControllerService, GameControllerService, ButtonCode } from '../service/GameControllerService';
+import { GamepadManager } from '../service/GamepadManager';
 import { AppColors } from '../common/Theme';
 
 // 手柄状态类
@@ -91,14 +92,16 @@ export struct GameControllerTestView {
   
   // 接收来自父组件的 KeyEvent 处理器注册函数
   onKeyEventRef?: (handler: (event: KeyEvent) => boolean) => void;
-  
-  private originalDeviceCallback: ((deviceId: string, isConnected: boolean, info: object | null) => void) | null = null;
-  private originalButtonCallback: ((deviceId: string, buttonCode: number, isPressed: boolean) => void) | null = null;
-  private originalAxisCallback: ((deviceId: string, axisType: number, x: number, y: number) => void) | null = null;
+
+  // 内部缓冲区：回调写入此变量，由 UI 刷新定时器同步到 @State
+  private internalInputStates: Map<string, ControllerInputState> = new Map();
+  private inputStatesDirty: boolean = false;
+  private uiRefreshTimer: number = -1;
 
   aboutToAppear(): void {
     this.addLog('Game Controller Kit 测试视图初始化');
     this.checkAvailability();
+    this.startUiRefreshTimer();
     
     // 注册 KeyEvent 处理器
     if (this.onKeyEventRef) {
@@ -107,7 +110,25 @@ export struct GameControllerTestView {
   }
 
   aboutToDisappear(): void {
+    this.stopUiRefreshTimer();
     this.stopMonitoring();
+  }
+
+  // 30Hz UI 刷新定时器：将内部缓冲区同步到 @State 变量
+  private startUiRefreshTimer(): void {
+    this.uiRefreshTimer = setInterval(() => {
+      if (this.inputStatesDirty) {
+        this.inputStates = new Map(this.internalInputStates);
+        this.inputStatesDirty = false;
+      }
+    }, 33);
+  }
+
+  private stopUiRefreshTimer(): void {
+    if (this.uiRefreshTimer !== -1) {
+      clearInterval(this.uiRefreshTimer);
+      this.uiRefreshTimer = -1;
+    }
   }
   
   /**
@@ -178,7 +199,7 @@ export struct GameControllerTestView {
       return;
     }
     
-    // 设置回调
+    // 临时接管回调（覆盖 GamepadManager 的回调用于测试）
     gameControllerService.setDeviceCallback((deviceId, isConnected, info) => {
       this.onDeviceChanged(deviceId, isConnected, info);
     });
@@ -191,7 +212,7 @@ export struct GameControllerTestView {
       this.handleAxisEvent(deviceId, axisType, x, y);
     });
     
-    // 开始监听
+    // 开始监听（如果已在监听中会直接返回 true）
     if (!gameControllerService.startMonitor()) {
       this.addLog('错误: 开始监听失败');
       return;
@@ -207,16 +228,51 @@ export struct GameControllerTestView {
   private stopMonitoring(): void {
     if (!this.isMonitoring) return;
     
-    gameControllerService.stopMonitor();
+    // 不调用 stopMonitor()，避免停止全局监听影响 GamepadManager
+    // 只需恢复 GamepadManager 的回调即可
+    this.restoreGamepadManagerCallbacks();
+    
     this.isMonitoring = false;
-    this.addLog('停止监听');
+    this.addLog('停止监听（已恢复 GamepadManager 回调）');
+  }
+  
+  /**
+   * 恢复 GamepadManager 的回调，避免测试页面退出后串流手柄输入丢失
+   */
+  private restoreGamepadManagerCallbacks(): void {
+    try {
+      GamepadManager.getInstance().reattachInputCallbacks();
+    } catch (err) {
+      console.error('[GameControllerTest] 恢复 GamepadManager 回调失败:', err);
+    }
   }
   
   private refreshConnectedDevices(): void {
     const devices = gameControllerService.getAllDevices();
     this.connectedDevices = [];
-    
+
+    // 按 physicalAddress 去重：同一物理设备的多个 HID 接口只保留第一个
+    const seenPhysicalAddresses = new Set<string>();
+    const seenNameProduct = new Set<string>();
+
     for (const device of devices) {
+      // 主去重：physicalAddress
+      if (device.physicalAddress && device.physicalAddress.length > 0) {
+        if (seenPhysicalAddresses.has(device.physicalAddress)) {
+          this.addLog(`跳过重复接口: ${device.name} (物理地址: ${device.physicalAddress})`);
+          continue;
+        }
+        seenPhysicalAddresses.add(device.physicalAddress);
+      } else {
+        // 备用去重：name + product
+        const key = `${device.name}::${device.product}`;
+        if (seenNameProduct.has(key)) {
+          this.addLog(`跳过重复接口: ${device.name} (name+product去重)`);
+          continue;
+        }
+        seenNameProduct.add(key);
+      }
+
       const info = new GCDeviceInfo();
       info.deviceId = device.deviceId;
       info.name = device.name;
@@ -237,7 +293,8 @@ export struct GameControllerTestView {
     } else {
       this.addLog(`设备断开: ${deviceId}`);
       this.connectedDevices = this.connectedDevices.filter(d => d.deviceId !== deviceId);
-      this.inputStates.delete(deviceId);
+      this.internalInputStates.delete(deviceId);
+      this.inputStatesDirty = true;
     }
   }
   
@@ -246,11 +303,11 @@ export struct GameControllerTestView {
     this.addButtonEventLog(deviceId, buttonCode, isPressed);
     this.addLog(`按键事件: device=${deviceId}, code=${buttonCode}, pressed=${isPressed}`);
     
-    // 更新状态
-    let state = this.inputStates.get(deviceId);
+    // 更新内部缓冲区状态
+    let state = this.internalInputStates.get(deviceId);
     if (!state) {
       state = new ControllerInputState();
-      this.inputStates.set(deviceId, state);
+      this.internalInputStates.set(deviceId, state);
     }
     
     const flag = this.buttonCodeToFlag(buttonCode);
@@ -260,8 +317,8 @@ export struct GameControllerTestView {
       } else {
         state.buttons &= ~flag;
       }
-      // 触发更新
-      this.inputStates = new Map(this.inputStates);
+      // 标记脏数据，由定时器同步到 @State
+      this.inputStatesDirty = true;
     }
   }
   
@@ -288,10 +345,10 @@ export struct GameControllerTestView {
   }
   
   private handleAxisEvent(deviceId: string, axisType: number, x: number, y: number): void {
-    let state = this.inputStates.get(deviceId);
+    let state = this.internalInputStates.get(deviceId);
     if (!state) {
       state = new ControllerInputState();
-      this.inputStates.set(deviceId, state);
+      this.internalInputStates.set(deviceId, state);
     }
     
     // AxisType: 0=左摇杆, 1=右摇杆, 2=D-Pad, 3=左扳机, 4=右扳机
@@ -312,8 +369,8 @@ export struct GameControllerTestView {
         break;
     }
     
-    // 触发更新
-    this.inputStates = new Map(this.inputStates);
+    // 标记脏数据，由定时器同步到 @State
+    this.inputStatesDirty = true;
   }
 
   private formatStickValue(value: number): string {

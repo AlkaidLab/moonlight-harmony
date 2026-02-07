@@ -22,11 +22,11 @@
 #include <mutex>
 #include <map>
 #include <string>
+#include <dlfcn.h>
 
-// 尝试包含 Game Controller Kit 头文件
+// 尝试包含 Game Controller Kit 头文件 (仅用于类型定义)
 // 注意：这些头文件在 API 21+ 可用
 #if defined(__OHOS__)
-// 检查头文件是否存在
 #if __has_include(<GameControllerKit/game_device.h>) && __has_include(<GameControllerKit/game_pad.h>)
 #include <GameControllerKit/game_device.h>
 #include <GameControllerKit/game_pad.h>
@@ -37,6 +37,186 @@
 #else
 #define GAME_CONTROLLER_KIT_AVAILABLE 0
 #endif
+
+// ==================== 动态加载 Game Controller Kit ====================
+// libohgame_controller.z.so 不存在于所有设备 (如 HarmonyOS 5.0.5 Mate 60)
+// 从 CMake 移除硬链接依赖，改为运行时 dlopen + dlsym
+// 所有 OH_Game* 函数通过函数指针调用，避免未解析符号导致 native 模块加载失败
+
+#if GAME_CONTROLLER_KIT_AVAILABLE
+
+// Step 1: 使用 decltype 从 SDK 头文件声明中获取函数指针类型，并声明静态函数指针变量
+// decltype 是不求值上下文，不会产生对原始函数符号的引用
+#define DECLARE_FUNC_PTR(name) \
+    using PFN_##name = decltype(&name); \
+    static PFN_##name pfn_##name = nullptr;
+
+// DeviceEvent 查询函数
+DECLARE_FUNC_PTR(OH_GameDevice_DeviceEvent_GetChangedType)
+DECLARE_FUNC_PTR(OH_GameDevice_DeviceEvent_GetDeviceInfo)
+DECLARE_FUNC_PTR(OH_GameDevice_DeviceInfo_GetDeviceId)
+DECLARE_FUNC_PTR(OH_GameDevice_DeviceInfo_GetName)
+DECLARE_FUNC_PTR(OH_GameDevice_DeviceInfo_GetProduct)
+DECLARE_FUNC_PTR(OH_GameDevice_DeviceInfo_GetVersion)
+DECLARE_FUNC_PTR(OH_GameDevice_DeviceInfo_GetPhysicalAddress)
+DECLARE_FUNC_PTR(OH_GameDevice_DeviceInfo_GetDeviceType)
+DECLARE_FUNC_PTR(OH_GameDevice_DestroyDeviceInfo)
+
+// ButtonEvent 查询函数
+DECLARE_FUNC_PTR(OH_GamePad_ButtonEvent_GetDeviceId)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonEvent_GetButtonAction)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonEvent_GetButtonCode)
+
+// AxisEvent 查询函数
+DECLARE_FUNC_PTR(OH_GamePad_AxisEvent_GetDeviceId)
+DECLARE_FUNC_PTR(OH_GamePad_AxisEvent_GetXAxisValue)
+DECLARE_FUNC_PTR(OH_GamePad_AxisEvent_GetYAxisValue)
+DECLARE_FUNC_PTR(OH_GamePad_AxisEvent_GetZAxisValue)
+DECLARE_FUNC_PTR(OH_GamePad_AxisEvent_GetRZAxisValue)
+DECLARE_FUNC_PTR(OH_GamePad_AxisEvent_GetHatXAxisValue)
+DECLARE_FUNC_PTR(OH_GamePad_AxisEvent_GetHatYAxisValue)
+DECLARE_FUNC_PTR(OH_GamePad_AxisEvent_GetBrakeAxisValue)
+DECLARE_FUNC_PTR(OH_GamePad_AxisEvent_GetGasAxisValue)
+
+// 设备监听注册/注销
+DECLARE_FUNC_PTR(OH_GameDevice_RegisterDeviceMonitor)
+DECLARE_FUNC_PTR(OH_GameDevice_UnregisterDeviceMonitor)
+
+// 按键监听注册
+DECLARE_FUNC_PTR(OH_GamePad_ButtonA_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonB_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonX_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonY_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonC_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_LeftShoulder_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightShoulder_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_LeftTrigger_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightTrigger_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightThumbstick_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonHome_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonMenu_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor)
+
+// 轴监听注册
+DECLARE_FUNC_PTR(OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightThumbstick_RegisterAxisInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_RegisterAxisInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_LeftTrigger_RegisterAxisInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightTrigger_RegisterAxisInputMonitor)
+
+// 按键监听注销
+DECLARE_FUNC_PTR(OH_GamePad_ButtonA_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonB_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonX_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonY_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonC_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightShoulder_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightTrigger_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonHome_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor)
+
+// 轴监听注销
+DECLARE_FUNC_PTR(OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_Dpad_UnregisterAxisInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor)
+DECLARE_FUNC_PTR(OH_GamePad_RightTrigger_UnregisterAxisInputMonitor)
+
+// 全设备查询
+DECLARE_FUNC_PTR(OH_GameDevice_GetAllDeviceInfos)
+DECLARE_FUNC_PTR(OH_GameDevice_AllDeviceInfos_GetCount)
+DECLARE_FUNC_PTR(OH_GameDevice_AllDeviceInfos_GetDeviceInfo)
+DECLARE_FUNC_PTR(OH_GameDevice_DestroyAllDeviceInfos)
+
+#undef DECLARE_FUNC_PTR
+
+// Step 2: 宏重定向 - 将所有 OH_Game* 函数调用重定向为函数指针调用
+// 代码中的直接函数调用 OH_Xxx() 将被预处理器展开为 pfn_OH_Xxx()
+#define OH_GameDevice_DeviceEvent_GetChangedType pfn_OH_GameDevice_DeviceEvent_GetChangedType
+#define OH_GameDevice_DeviceEvent_GetDeviceInfo pfn_OH_GameDevice_DeviceEvent_GetDeviceInfo
+#define OH_GameDevice_DeviceInfo_GetDeviceId pfn_OH_GameDevice_DeviceInfo_GetDeviceId
+#define OH_GameDevice_DeviceInfo_GetName pfn_OH_GameDevice_DeviceInfo_GetName
+#define OH_GameDevice_DeviceInfo_GetProduct pfn_OH_GameDevice_DeviceInfo_GetProduct
+#define OH_GameDevice_DeviceInfo_GetVersion pfn_OH_GameDevice_DeviceInfo_GetVersion
+#define OH_GameDevice_DeviceInfo_GetPhysicalAddress pfn_OH_GameDevice_DeviceInfo_GetPhysicalAddress
+#define OH_GameDevice_DeviceInfo_GetDeviceType pfn_OH_GameDevice_DeviceInfo_GetDeviceType
+#define OH_GameDevice_DestroyDeviceInfo pfn_OH_GameDevice_DestroyDeviceInfo
+#define OH_GamePad_ButtonEvent_GetDeviceId pfn_OH_GamePad_ButtonEvent_GetDeviceId
+#define OH_GamePad_ButtonEvent_GetButtonAction pfn_OH_GamePad_ButtonEvent_GetButtonAction
+#define OH_GamePad_ButtonEvent_GetButtonCode pfn_OH_GamePad_ButtonEvent_GetButtonCode
+#define OH_GamePad_AxisEvent_GetDeviceId pfn_OH_GamePad_AxisEvent_GetDeviceId
+#define OH_GamePad_AxisEvent_GetXAxisValue pfn_OH_GamePad_AxisEvent_GetXAxisValue
+#define OH_GamePad_AxisEvent_GetYAxisValue pfn_OH_GamePad_AxisEvent_GetYAxisValue
+#define OH_GamePad_AxisEvent_GetZAxisValue pfn_OH_GamePad_AxisEvent_GetZAxisValue
+#define OH_GamePad_AxisEvent_GetRZAxisValue pfn_OH_GamePad_AxisEvent_GetRZAxisValue
+#define OH_GamePad_AxisEvent_GetHatXAxisValue pfn_OH_GamePad_AxisEvent_GetHatXAxisValue
+#define OH_GamePad_AxisEvent_GetHatYAxisValue pfn_OH_GamePad_AxisEvent_GetHatYAxisValue
+#define OH_GamePad_AxisEvent_GetBrakeAxisValue pfn_OH_GamePad_AxisEvent_GetBrakeAxisValue
+#define OH_GamePad_AxisEvent_GetGasAxisValue pfn_OH_GamePad_AxisEvent_GetGasAxisValue
+#define OH_GameDevice_RegisterDeviceMonitor pfn_OH_GameDevice_RegisterDeviceMonitor
+#define OH_GameDevice_UnregisterDeviceMonitor pfn_OH_GameDevice_UnregisterDeviceMonitor
+#define OH_GamePad_ButtonA_RegisterButtonInputMonitor pfn_OH_GamePad_ButtonA_RegisterButtonInputMonitor
+#define OH_GamePad_ButtonB_RegisterButtonInputMonitor pfn_OH_GamePad_ButtonB_RegisterButtonInputMonitor
+#define OH_GamePad_ButtonX_RegisterButtonInputMonitor pfn_OH_GamePad_ButtonX_RegisterButtonInputMonitor
+#define OH_GamePad_ButtonY_RegisterButtonInputMonitor pfn_OH_GamePad_ButtonY_RegisterButtonInputMonitor
+#define OH_GamePad_ButtonC_RegisterButtonInputMonitor pfn_OH_GamePad_ButtonC_RegisterButtonInputMonitor
+#define OH_GamePad_LeftShoulder_RegisterButtonInputMonitor pfn_OH_GamePad_LeftShoulder_RegisterButtonInputMonitor
+#define OH_GamePad_RightShoulder_RegisterButtonInputMonitor pfn_OH_GamePad_RightShoulder_RegisterButtonInputMonitor
+#define OH_GamePad_LeftTrigger_RegisterButtonInputMonitor pfn_OH_GamePad_LeftTrigger_RegisterButtonInputMonitor
+#define OH_GamePad_RightTrigger_RegisterButtonInputMonitor pfn_OH_GamePad_RightTrigger_RegisterButtonInputMonitor
+#define OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor pfn_OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor
+#define OH_GamePad_RightThumbstick_RegisterButtonInputMonitor pfn_OH_GamePad_RightThumbstick_RegisterButtonInputMonitor
+#define OH_GamePad_ButtonHome_RegisterButtonInputMonitor pfn_OH_GamePad_ButtonHome_RegisterButtonInputMonitor
+#define OH_GamePad_ButtonMenu_RegisterButtonInputMonitor pfn_OH_GamePad_ButtonMenu_RegisterButtonInputMonitor
+#define OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor pfn_OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor
+#define OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor pfn_OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor
+#define OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor pfn_OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor
+#define OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor pfn_OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor
+#define OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor pfn_OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor
+#define OH_GamePad_RightThumbstick_RegisterAxisInputMonitor pfn_OH_GamePad_RightThumbstick_RegisterAxisInputMonitor
+#define OH_GamePad_Dpad_RegisterAxisInputMonitor pfn_OH_GamePad_Dpad_RegisterAxisInputMonitor
+#define OH_GamePad_LeftTrigger_RegisterAxisInputMonitor pfn_OH_GamePad_LeftTrigger_RegisterAxisInputMonitor
+#define OH_GamePad_RightTrigger_RegisterAxisInputMonitor pfn_OH_GamePad_RightTrigger_RegisterAxisInputMonitor
+#define OH_GamePad_ButtonA_UnregisterButtonInputMonitor pfn_OH_GamePad_ButtonA_UnregisterButtonInputMonitor
+#define OH_GamePad_ButtonB_UnregisterButtonInputMonitor pfn_OH_GamePad_ButtonB_UnregisterButtonInputMonitor
+#define OH_GamePad_ButtonX_UnregisterButtonInputMonitor pfn_OH_GamePad_ButtonX_UnregisterButtonInputMonitor
+#define OH_GamePad_ButtonY_UnregisterButtonInputMonitor pfn_OH_GamePad_ButtonY_UnregisterButtonInputMonitor
+#define OH_GamePad_ButtonC_UnregisterButtonInputMonitor pfn_OH_GamePad_ButtonC_UnregisterButtonInputMonitor
+#define OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor pfn_OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor
+#define OH_GamePad_RightShoulder_UnregisterButtonInputMonitor pfn_OH_GamePad_RightShoulder_UnregisterButtonInputMonitor
+#define OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor pfn_OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor
+#define OH_GamePad_RightTrigger_UnregisterButtonInputMonitor pfn_OH_GamePad_RightTrigger_UnregisterButtonInputMonitor
+#define OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor pfn_OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor
+#define OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor pfn_OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor
+#define OH_GamePad_ButtonHome_UnregisterButtonInputMonitor pfn_OH_GamePad_ButtonHome_UnregisterButtonInputMonitor
+#define OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor pfn_OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor
+#define OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor pfn_OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor
+#define OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor pfn_OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor
+#define OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor pfn_OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor
+#define OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor pfn_OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor
+#define OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor pfn_OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor
+#define OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor pfn_OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor
+#define OH_GamePad_Dpad_UnregisterAxisInputMonitor pfn_OH_GamePad_Dpad_UnregisterAxisInputMonitor
+#define OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor pfn_OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor
+#define OH_GamePad_RightTrigger_UnregisterAxisInputMonitor pfn_OH_GamePad_RightTrigger_UnregisterAxisInputMonitor
+#define OH_GameDevice_GetAllDeviceInfos pfn_OH_GameDevice_GetAllDeviceInfos
+#define OH_GameDevice_AllDeviceInfos_GetCount pfn_OH_GameDevice_AllDeviceInfos_GetCount
+#define OH_GameDevice_AllDeviceInfos_GetDeviceInfo pfn_OH_GameDevice_AllDeviceInfos_GetDeviceInfo
+#define OH_GameDevice_DestroyAllDeviceInfos pfn_OH_GameDevice_DestroyAllDeviceInfos
+
+#endif // GAME_CONTROLLER_KIT_AVAILABLE
 
 #undef LOG_TAG
 #undef LOG_DOMAIN
@@ -52,6 +232,138 @@
 static bool g_initialized = false;
 static bool g_monitoring = false;
 static std::mutex g_mutex;
+
+// 运行时动态库加载状态
+// Game Controller Kit 的 .so 可能不存在于所有设备上 (如 HarmonyOS 5.0.5 Mate 60)
+// 使用 dlopen 在运行时按需加载，避免硬依赖导致整个 native 模块加载失败
+static void* g_gcLibHandle = nullptr;
+static bool g_gcLibAvailable = false;
+
+/**
+ * 尝试在运行时加载 Game Controller Kit 动态库
+ * 使用 dlopen 加载 .so，然后用 dlsym 获取所有函数指针
+ */
+static bool TryLoadGameControllerLib() {
+    if (g_gcLibHandle) return true;
+    
+    g_gcLibHandle = dlopen("libohgame_controller.z.so", RTLD_LAZY);
+    if (!g_gcLibHandle) {
+        LOGW("Game Controller Kit 动态库不可用: %s", dlerror());
+        g_gcLibAvailable = false;
+        return false;
+    }
+    
+#if GAME_CONTROLLER_KIT_AVAILABLE
+    // 使用 dlsym 加载所有函数指针
+    // 注意: 函数名在 #define 重定向之前已被宏展开为 pfn_ 前缀
+    // 这里使用字符串字面量直接指定原始符号名
+    #define LOAD_FUNC(name) pfn_##name = (PFN_##name)dlsym(g_gcLibHandle, #name)
+    
+    // DeviceEvent 查询函数
+    LOAD_FUNC(OH_GameDevice_DeviceEvent_GetChangedType);
+    LOAD_FUNC(OH_GameDevice_DeviceEvent_GetDeviceInfo);
+    LOAD_FUNC(OH_GameDevice_DeviceInfo_GetDeviceId);
+    LOAD_FUNC(OH_GameDevice_DeviceInfo_GetName);
+    LOAD_FUNC(OH_GameDevice_DeviceInfo_GetProduct);
+    LOAD_FUNC(OH_GameDevice_DeviceInfo_GetVersion);
+    LOAD_FUNC(OH_GameDevice_DeviceInfo_GetPhysicalAddress);
+    LOAD_FUNC(OH_GameDevice_DeviceInfo_GetDeviceType);
+    LOAD_FUNC(OH_GameDevice_DestroyDeviceInfo);
+    
+    // ButtonEvent 查询函数
+    LOAD_FUNC(OH_GamePad_ButtonEvent_GetDeviceId);
+    LOAD_FUNC(OH_GamePad_ButtonEvent_GetButtonAction);
+    LOAD_FUNC(OH_GamePad_ButtonEvent_GetButtonCode);
+    
+    // AxisEvent 查询函数
+    LOAD_FUNC(OH_GamePad_AxisEvent_GetDeviceId);
+    LOAD_FUNC(OH_GamePad_AxisEvent_GetXAxisValue);
+    LOAD_FUNC(OH_GamePad_AxisEvent_GetYAxisValue);
+    LOAD_FUNC(OH_GamePad_AxisEvent_GetZAxisValue);
+    LOAD_FUNC(OH_GamePad_AxisEvent_GetRZAxisValue);
+    LOAD_FUNC(OH_GamePad_AxisEvent_GetHatXAxisValue);
+    LOAD_FUNC(OH_GamePad_AxisEvent_GetHatYAxisValue);
+    LOAD_FUNC(OH_GamePad_AxisEvent_GetBrakeAxisValue);
+    LOAD_FUNC(OH_GamePad_AxisEvent_GetGasAxisValue);
+    
+    // 设备监听注册/注销
+    LOAD_FUNC(OH_GameDevice_RegisterDeviceMonitor);
+    LOAD_FUNC(OH_GameDevice_UnregisterDeviceMonitor);
+    
+    // 按键监听注册
+    LOAD_FUNC(OH_GamePad_ButtonA_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonB_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonX_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonY_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonC_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_LeftShoulder_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightShoulder_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_LeftTrigger_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightTrigger_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightThumbstick_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonHome_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonMenu_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor);
+    
+    // 轴监听注册
+    LOAD_FUNC(OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightThumbstick_RegisterAxisInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_RegisterAxisInputMonitor);
+    LOAD_FUNC(OH_GamePad_LeftTrigger_RegisterAxisInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightTrigger_RegisterAxisInputMonitor);
+    
+    // 按键监听注销
+    LOAD_FUNC(OH_GamePad_ButtonA_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonB_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonX_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonY_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonC_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightShoulder_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightTrigger_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonHome_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor);
+    
+    // 轴监听注销
+    LOAD_FUNC(OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor);
+    LOAD_FUNC(OH_GamePad_Dpad_UnregisterAxisInputMonitor);
+    LOAD_FUNC(OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor);
+    LOAD_FUNC(OH_GamePad_RightTrigger_UnregisterAxisInputMonitor);
+    
+    // 全设备查询
+    LOAD_FUNC(OH_GameDevice_GetAllDeviceInfos);
+    LOAD_FUNC(OH_GameDevice_AllDeviceInfos_GetCount);
+    LOAD_FUNC(OH_GameDevice_AllDeviceInfos_GetDeviceInfo);
+    LOAD_FUNC(OH_GameDevice_DestroyAllDeviceInfos);
+    
+    #undef LOAD_FUNC
+    
+    // 验证关键函数是否加载成功
+    if (!pfn_OH_GameDevice_RegisterDeviceMonitor) {
+        LOGW("Game Controller Kit 核心函数加载失败");
+        dlclose(g_gcLibHandle);
+        g_gcLibHandle = nullptr;
+        g_gcLibAvailable = false;
+        return false;
+    }
+#endif
+    
+    LOGI("Game Controller Kit 动态库加载成功");
+    g_gcLibAvailable = true;
+    return true;
+}
 
 // 回调函数
 static GameControllerDeviceCallback g_deviceCallback = nullptr;
@@ -197,13 +509,14 @@ static void OnButtonEvent(const struct GamePad_ButtonEvent* buttonEvent, const c
             switch (buttonCode) {
                 case GC_KEYCODE_BUTTON_A: flag = GC_BTN_A; break;
                 case GC_KEYCODE_BUTTON_B: flag = GC_BTN_B; break;
+                case GC_KEYCODE_BUTTON_C: flag = GC_BTN_BACK; break;  // ButtonC = Select/Back（鸿蒙无原生 Select 按键）
                 case GC_KEYCODE_BUTTON_X: flag = GC_BTN_X; break;
                 case GC_KEYCODE_BUTTON_Y: flag = GC_BTN_Y; break;
                 case GC_KEYCODE_LEFT_SHOULDER: flag = GC_BTN_LB; break;
                 case GC_KEYCODE_RIGHT_SHOULDER: flag = GC_BTN_RB; break;
                 case GC_KEYCODE_LEFT_THUMBSTICK: flag = GC_BTN_LS_CLK; break;
                 case GC_KEYCODE_RIGHT_THUMBSTICK: flag = GC_BTN_RS_CLK; break;
-                case GC_KEYCODE_BUTTON_HOME: flag = GC_BTN_HOME; break;
+                case GC_KEYCODE_BUTTON_HOME: flag = GC_BTN_BACK; break;  // GCK 名为 Home，实测为 Select/Back
                 case GC_KEYCODE_BUTTON_MENU: flag = GC_BTN_START; break;
                 case GC_KEYCODE_DPAD_UP: flag = GC_BTN_UP; break;
                 case GC_KEYCODE_DPAD_DOWN: flag = GC_BTN_DOWN; break;
@@ -446,7 +759,12 @@ static void OnRightTriggerAxis(const struct GamePad_AxisEvent* axisEvent) {
 
 bool GameController_IsAvailable(void) {
 #if GAME_CONTROLLER_KIT_AVAILABLE
-    return true;
+    // 编译时头文件可用, 运行时通过 dlopen 检查库是否存在
+    // 首次调用时尝试加载，确保在 Init() 之前调用也能正确返回
+    if (!g_gcLibHandle) {
+        TryLoadGameControllerLib();
+    }
+    return g_gcLibAvailable;
 #else
     return false;
 #endif
@@ -461,6 +779,14 @@ int GameController_Init(void) {
     }
     
 #if GAME_CONTROLLER_KIT_AVAILABLE
+    // 运行时尝试加载动态库
+    if (!TryLoadGameControllerLib()) {
+        LOGW("Game Controller Kit 动态库不存在，手柄功能将不可用");
+        // 标记初始化完成但不可用，不报错 - 这是可选功能
+        g_initialized = true;
+        return 0;
+    }
+    
     LOGI("初始化 Game Controller Kit");
     g_initialized = true;
     return 0;
@@ -475,11 +801,20 @@ void GameController_Uninit(void) {
     
     if (!g_initialized) return;
     
-    GameController_StopMonitor();
+    if (g_gcLibAvailable) {
+        GameController_StopMonitor();
+    }
     
     g_deviceStates.clear();
     g_deviceInfos.clear();
     g_initialized = false;
+    
+    // 关闭动态库
+    if (g_gcLibHandle) {
+        dlclose(g_gcLibHandle);
+        g_gcLibHandle = nullptr;
+        g_gcLibAvailable = false;
+    }
     
     LOGI("Game Controller Kit 已反初始化");
 }
@@ -502,6 +837,11 @@ int GameController_StartMonitor(void) {
     
     if (!g_initialized) {
         LOGE("Game Controller Kit 未初始化");
+        return -1;
+    }
+    
+    if (!g_gcLibAvailable) {
+        LOGW("Game Controller Kit 动态库未加载，跳过手柄监听");
         return -1;
     }
     
@@ -606,9 +946,14 @@ int GameController_StartMonitor(void) {
 
 void GameController_StopMonitor(void) {
 #if GAME_CONTROLLER_KIT_AVAILABLE
-    std::lock_guard<std::mutex> lock(g_mutex);
+    // 注意: 此函数可能在 Uninit 的锁内被调用，不要再加锁
     
     if (!g_monitoring) return;
+    
+    if (!g_gcLibAvailable) {
+        g_monitoring = false;
+        return;
+    }
     
     LOGI("停止监听游戏控制器...");
     
@@ -680,7 +1025,7 @@ int GameController_HeartbeatCheck(void) {
 #if GAME_CONTROLLER_KIT_AVAILABLE
     std::lock_guard<std::mutex> lock(g_mutex);
     
-    if (!g_initialized || !g_monitoring) {
+    if (!g_initialized || !g_monitoring || !g_gcLibAvailable) {
         return 0;
     }
     
@@ -809,6 +1154,9 @@ static void DeviceCallbackCallJS(napi_env env, napi_value js_callback, void* con
     
     napi_get_boolean(env, eventData->info.isConnected, &val);
     napi_set_named_property(env, argv[2], "isConnected", val);
+
+    napi_create_string_utf8(env, eventData->info.physicalAddress, NAPI_AUTO_LENGTH, &val);
+    napi_set_named_property(env, argv[2], "physicalAddress", val);
     
     napi_call_function(env, nullptr, js_callback, 3, argv, nullptr);
     
@@ -1053,6 +1401,9 @@ static napi_value NapiGetDeviceInfo(napi_env env, napi_callback_info info) {
     
     napi_get_boolean(env, deviceInfo.isConnected, &val);
     napi_set_named_property(env, result, "isConnected", val);
+
+    napi_create_string_utf8(env, deviceInfo.physicalAddress, NAPI_AUTO_LENGTH, &val);
+    napi_set_named_property(env, result, "physicalAddress", val);
     
     return result;
 }

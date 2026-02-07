@@ -10,12 +10,13 @@
 
 /**
  * 手柄测试页面
- * 支持 USB 驱动和 Game Controller Kit (蓝牙/系统) 两种模式
+ * 支持 USB 驱动、Game Controller Kit (蓝牙/系统) 和设备传感器三种测试模式
  */
 
 import { router } from '@kit.ArkUI';
 import { UsbControllerTestView } from '../components/UsbControllerTestView';
 import { GameControllerTestView } from '../components/GameControllerTestView';
+import { SensorTestView } from '../components/SensorTestView';
 import { AppColors } from '../common/Theme';
 
 @Entry
@@ -72,7 +73,7 @@ struct ControllerTestPage {
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor(AppColors.TextPrimary)
-          Text(this.currentTabIndex === 0 ? 'USB 驱动模式' : 'Game Controller Kit 模式')
+          Text(this.currentTabIndex === 0 ? 'USB 驱动模式' : this.currentTabIndex === 1 ? 'Game Controller Kit 模式' : '设备传感器测试')
             .fontSize(12)
             .fontColor(AppColors.TextSecondary)
         }
@@ -86,8 +87,8 @@ struct ControllerTestPage {
           Circle()
             .width(8)
             .height(8)
-            .fill(this.currentTabIndex === 0 ? '#4CAF50' : '#2196F3')
-          Text(this.currentTabIndex === 0 ? 'USB' : 'GC Kit')
+            .fill(this.currentTabIndex === 0 ? '#4CAF50' : this.currentTabIndex === 1 ? '#2196F3' : '#FF9800')
+          Text(this.currentTabIndex === 0 ? 'USB' : this.currentTabIndex === 1 ? 'GC Kit' : '传感器')
             .fontSize(11)
             .fontColor(AppColors.TextSecondary)
         }
@@ -103,7 +104,8 @@ struct ControllerTestPage {
       // 标签页切换
       Row({ space: 0 }) {
         this.TabButton('USB 驱动', '有线手柄', 0)
-        this.TabButton('系统/蓝牙', 'Game Controller Kit', 1)
+        this.TabButton('系统/蓝牙', 'GC Kit', 1)
+        this.TabButton('传感器', '陀螺仪/加速度计', 2)
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -113,12 +115,14 @@ struct ControllerTestPage {
       // 内容区域
       if (this.currentTabIndex === 0) {
         UsbControllerTestView()
-      } else {
+      } else if (this.currentTabIndex === 1) {
         GameControllerTestView({
           onKeyEventRef: (handler: (event: KeyEvent) => boolean) => {
             this.gcKeyEventHandler = handler;
           }
         })
+      } else {
+        SensorTestView()
       }
       
       // KeyEvent 日志显示区域

@@ -106,7 +106,11 @@
     },
     {
       "name": "permission_accelerometer_reason",
-      "value": "用于摇一摇刷新壁纸"
+      "value": "用于体感控制功能，采集加速度计数据"
+    },
+    {
+      "name": "permission_gyroscope_reason",
+      "value": "用于体感控制功能，采集陀螺仪数据实现体感瞄准"
     },
     {
       "name": "permission_intercept_input_reason",
