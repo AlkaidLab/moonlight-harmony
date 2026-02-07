@@ -18,6 +18,7 @@ import { UsbControllerTestView } from '../components/UsbControllerTestView';
 import { GameControllerTestView } from '../components/GameControllerTestView';
 import { SensorTestView } from '../components/SensorTestView';
 import { AppColors } from '../common/Theme';
+import { GamepadManager } from '../service/GamepadManager';
 
 @Entry
 @Component
@@ -27,6 +28,23 @@ struct ControllerTestPage {
   
   // KeyEvent 处理器引用
   private gcKeyEventHandler: ((event: KeyEvent) => boolean) | null = null;
+  
+  /**
+   * 页面销毁时恢复 GamepadManager 的完整回调链路。
+   *
+   * 子 Tab 的 aboutToDisappear 会在 Page 销毁前触发，但
+   * UsbControllerTestView.stopDriver() 在释放设备后不再重启驱动
+   * （避免切到 GCK Tab 时设备被立即重新独占）。
+   * 因此当整个测试页面退出时，需要在此处完整恢复 GamepadManager。
+   */
+  aboutToDisappear(): void {
+    try {
+      GamepadManager.getInstance().reattachInputCallbacks();
+      console.info('[ControllerTestPage] 页面销毁，已恢复 GamepadManager 回调');
+    } catch (err) {
+      console.error('[ControllerTestPage] 恢复 GamepadManager 回调失败:', err);
+    }
+  }
   
   /**
    * 处理所有按键事件

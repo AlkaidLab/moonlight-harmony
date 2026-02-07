@@ -56,6 +56,7 @@ set(SOURCE_FILES
     gamepad_napi.cpp
     game_controller_native.cpp
     input_interceptor.cpp
+    usb_helper.cpp
     native_render.cpp
     sdl_gamecontrollerdb.cpp
 )

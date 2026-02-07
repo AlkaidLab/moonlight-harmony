@@ -182,6 +182,25 @@ export class GenericHidController extends AbstractController {
     this.running = false;
     this.notifyDeviceRemoved();
     
+    // 释放 USB 接口，确保系统 HID 驱动能重新接管设备
+    if (this.pipe && this.device) {
+      try {
+        const config = this.device.configs[0];
+        if (config && config.interfaces) {
+          for (let i = 0; i < config.interfaces.length; i++) {
+            const iface = config.interfaces[i];
+            if (iface.clazz === UsbClass.USB_CLASS_HID) {
+              usbManager.releaseInterface(this.pipe, iface);
+              console.info(`${TAG} 已释放 HID 接口`);
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`${TAG} 释放接口失败:`, err);
+      }
+    }
+    
     // 关闭 USB 连接
     try {
       usbManager.closePipe(this.pipe);

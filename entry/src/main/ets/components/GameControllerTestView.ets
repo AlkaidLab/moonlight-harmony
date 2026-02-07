@@ -221,12 +221,43 @@ export struct GameControllerTestView {
     this.isMonitoring = true;
     this.addLog('开始监听 Game Controller Kit 事件');
     
-    // 获取已连接设备
+    // 立即从缓存读取当前设备（可能为空）
+    const cachedCount = gameControllerService.getDeviceCount();
+    this.addLog(`当前 GCK 缓存设备数: ${cachedCount}`);
     this.refreshConnectedDevices();
+    
+    // USB 驱动释放设备后，UsbDriverService 会在 300ms 后通过 native ioctl (USBDEVFS_CONNECT)
+    // 重绑定内核 HID 驱动。GCK 需要额外时间才能检测到重新绑定的设备。
+    // 分多次延迟刷新，覆盖不同设备重新枚举的时间差异。
+    const refreshDelays = [1000, 2000, 4000, 7000];
+    for (const delay of refreshDelays) {
+      setTimeout(() => {
+        if (this.isMonitoring) {
+          const newCount = gameControllerService.refreshDeviceCache();
+          const totalCount = gameControllerService.getDeviceCount();
+          if (newCount > 0) {
+            this.addLog(`刷新(${delay}ms): 新发现 ${newCount} 个设备，总计 ${totalCount}`);
+            this.refreshConnectedDevices();
+          } else if (newCount < 0) {
+            this.addLog(`刷新(${delay}ms): 查询失败`);
+          }
+          
+          // 最后一次刷新：如果仍然没有设备，给出重插提示
+          if (delay === 7000 && totalCount === 0) {
+            this.addLog('⚠ 未检测到手柄设备。如果之前使用过 USB 驱动测试，可能需要重新插拔手柄。');
+          }
+        }
+      }, delay);
+    }
   }
   
+  /**
+   * 停止监听 Game Controller Kit 事件
+   */
   private stopMonitoring(): void {
-    if (!this.isMonitoring) return;
+    if (!this.isMonitoring) {
+      return;
+    }
     
     // 不调用 stopMonitor()，避免停止全局监听影响 GamepadManager
     // 只需恢复 GamepadManager 的回调即可
@@ -419,6 +450,11 @@ export struct GameControllerTestView {
 
           Button('刷新设备')
             .onClick(() => {
+              // 先查询系统设备列表更新缓存，再从缓存读取
+              const newCount = gameControllerService.refreshDeviceCache();
+              if (newCount > 0) {
+                this.addLog(`手动刷新: 新发现 ${newCount} 个设备`);
+              }
               this.refreshConnectedDevices();
             })
             .backgroundColor(AppColors.Primary)

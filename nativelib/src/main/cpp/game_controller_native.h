@@ -205,6 +205,21 @@ int GameController_GetDeviceInfo(int index, GameControllerInfo* outInfo);
 bool GameController_IsAvailable(void);
 
 /**
+ * 主动刷新设备缓存
+ *
+ * 调用 OH_GameDevice_GetAllDeviceInfos() 重新查询系统中当前连接的设备，
+ * 并与内部缓存 (g_deviceInfos) 做差异比较：
+ *   - 新出现的设备 → 添加到缓存并触发 ONLINE 回调
+ *   - 消失的设备   → 从缓存移除并触发 OFFLINE 回调
+ *
+ * 用途：USB 驱动释放设备后，GCK 监听器可能不会立即收到 ONLINE 事件。
+ *       此函数可在 USB 驱动 stop() 之后显式调用，强制更新设备列表。
+ *
+ * @return 新发现的设备数量 (>=0)，负值表示错误
+ */
+int GameController_RefreshDevices(void);
+
+/**
  * 心跳检测 - 检查设备是否仍然连接
  * 
  * 对于某些设备（如雷蛇手柄），电源管理不透明，

@@ -27,6 +27,20 @@ import { DualSenseController } from './DualSenseController';
 import { SwitchProController } from './SwitchProController';
 import { NativeHidController } from './NativeHidController';
 import { SettingsService } from '../../service/SettingsService';
+import nativeLib from 'libmoonlight_nativelib.so';
+
+/**
+ * Native USB Helper 接口
+ */
+interface NativeUsbHelper {
+  reattachKernelDriver(fd: number, interfaceNumber: number): number;
+}
+
+interface NativeLibWithUsbHelper {
+  UsbHelper?: NativeUsbHelper;
+}
+
+const usbHelper = (nativeLib as NativeLibWithUsbHelper).UsbHelper;
 
 const TAG = '[USB-SERVICE]';
 
@@ -307,7 +321,8 @@ export class UsbDriverService implements UsbDriverListener {
       return;
     }
     
-    console.info(`${TAG} 停止 USB 驱动服务`);
+    const controllerCount = this.controllers.length;
+    console.info(`${TAG} 停止 USB 驱动服务，需释放 ${controllerCount} 个控制器`);
     this.started = false;
     
     // 停止定期重新扫描定时器
@@ -316,15 +331,117 @@ export class UsbDriverService implements UsbDriverListener {
     // 取消订阅 USB 事件
     this.unsubscribeUsbEvents();
     
-    // 停止所有控制器
+    // 保存已处理设备的键值，用于后续内核驱动重绑定
+    const releasedDeviceKeys = new Set(this.processedDevices);
+    
+    // 停止所有控制器（释放 USB 接口独占 + 关闭管道）
+    let stoppedCount = 0;
     while (this.controllers.length > 0) {
       const controller = this.controllers.shift();
       if (controller) {
+        console.info(`${TAG} 释放控制器: ${controller.getName()} (VID=0x${controller.getVendorId().toString(16)}, PID=0x${controller.getProductId().toString(16)})`);
         controller.stop();
+        stoppedCount++;
       }
     }
     
     this.processedDevices.clear();
+    console.info(`${TAG} USB 驱动服务已停止，已释放 ${stoppedCount} 个控制器的 USB 独占`);
+    
+    // 尝试触发内核 HID 驱动重新绑定
+    // 背景：claimInterface(force=true) 会解绑内核 HID 驱动，
+    // 但 releaseInterface() + closePipe() 后内核不会自动重新绑定。
+    // 策略：重新打开设备，通过 native ioctl (USBDEVFS_CONNECT) 显式通知内核重绑定。
+    if (stoppedCount > 0) {
+      setTimeout(() => {
+        this.resetReleasedUsbDevices(releasedDeviceKeys);
+      }, 300);  // 等待 300ms 确保管道完全关闭
+    }
+  }
+  
+  /**
+   * 尝试重置已释放的 USB 设备，使系统 HID 驱动重新绑定
+   * 
+   * 工作原理：
+   * 1. 重新连接设备获取文件描述符
+   * 2. 通过 ioctl(USBDEVFS_IOCTL + USBDEVFS_CONNECT) 通知内核重绑定接口驱动
+   *    等价于 libusb_attach_kernel_driver()
+   * 3. 如果 CONNECT 失败，后备方案使用 USBDEVFS_RESET 重置设备
+   */
+  private resetReleasedUsbDevices(releasedKeys: Set<string>): void {
+    if (!usbHelper) {
+      console.warn(`${TAG} UsbHelper native 模块不可用，无法重绑定内核驱动`);
+      return;
+    }
+    
+    try {
+      const devices: usbManager.USBDevice[] = usbManager.getDevices();
+      let resetCount = 0;
+      
+      for (let i = 0; i < devices.length; i++) {
+        const device = devices[i];
+        const key = `${device.vendorId}:${device.productId}:${device.busNum}:${device.devAddress}`;
+        
+        if (!releasedKeys.has(key)) continue;
+        if (!this.deviceHasHidInterface(device)) continue;
+        
+        try {
+          // 检查权限（之前已授权，应该仍然有效）
+          if (!usbManager.hasRight(device.name)) {
+            console.warn(`${TAG} 设备重置跳过（无权限）: ${device.name}`);
+            continue;
+          }
+          
+          // 重新连接设备
+          const pipe = usbManager.connectDevice(device);
+          
+          // 获取文件描述符并重绑定内核驱动
+          const fd = usbManager.getFileDescriptor(pipe);
+          
+          // 对每个 HID 接口调用 native ioctl 重绑定内核驱动
+          if (fd >= 0 && device.configs) {
+            for (let ci = 0; ci < device.configs.length; ci++) {
+              const config = device.configs[ci];
+              if (!config.interfaces) continue;
+              for (let ii = 0; ii < config.interfaces.length; ii++) {
+                const iface = config.interfaces[ii];
+                if (iface.clazz === 3) { // USB_CLASS_HID
+                  usbHelper.reattachKernelDriver(fd, iface.id);
+                }
+              }
+            }
+          }
+          
+          // 关闭连接
+          usbManager.closePipe(pipe);
+          resetCount++;
+          console.info(`${TAG} USB 设备内核驱动重绑定完成: ${device.name}`);
+        } catch (e) {
+          console.warn(`${TAG} USB 设备重置失败 (${device.name}):`, e);
+        }
+      }
+      
+      if (resetCount > 0) {
+        console.info(`${TAG} 已尝试重绑定 ${resetCount} 个 USB 设备的内核 HID 驱动`);
+      }
+    } catch (e) {
+      console.warn(`${TAG} resetReleasedUsbDevices 异常:`, e);
+    }
+  }
+  
+  /**
+   * 检查设备是否包含 HID 接口
+   */
+  private deviceHasHidInterface(device: usbManager.USBDevice): boolean {
+    if (!device.configs) return false;
+    for (let ci = 0; ci < device.configs.length; ci++) {
+      const config = device.configs[ci];
+      if (!config.interfaces) continue;
+      for (let ii = 0; ii < config.interfaces.length; ii++) {
+        if (config.interfaces[ii].clazz === 3) return true; // USB_CLASS_HID
+      }
+    }
+    return false;
   }
   
   /**

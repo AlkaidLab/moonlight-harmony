@@ -59,6 +59,7 @@ interface NativeGameController {
   getDeviceCount(): number;
   getDeviceInfo(index: number): GameControllerDeviceInfo | null;
   heartbeatCheck(): number;  // 心跳检测 - 返回断开的设备数量
+  refreshDevices(): number;  // 主动刷新设备缓存 - 返回新发现的设备数量
   
   // 常量
   AXIS_LEFT_THUMBSTICK: number;
@@ -286,6 +287,27 @@ export class GameControllerService {
       }
     }
     return devices;
+  }
+
+  /**
+   * 主动刷新设备缓存
+   * 
+   * 调用 OH_GameDevice_GetAllDeviceInfos() 重新查询系统，
+   * 并与内部缓存做差异比较，触发 ONLINE/OFFLINE 回调。
+   * 
+   * 用途：USB 驱动释放设备后，GCK 监听器可能不会立即收到 ONLINE 事件。
+   *       此方法可显式刷新设备列表。
+   * 
+   * @returns 新发现的设备数量 (>=0)，负值表示错误
+   */
+  refreshDeviceCache(): number {
+    if (!native || !this.initialized) {
+      console.warn('[GameController] refreshDeviceCache: 未初始化');
+      return -1;
+    }
+    const result = native.refreshDevices();
+    console.info(`[GameController] refreshDeviceCache: 新发现 ${result} 个设备`);
+    return result;
   }
 
   /**

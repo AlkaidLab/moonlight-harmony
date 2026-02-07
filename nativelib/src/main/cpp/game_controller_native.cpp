@@ -991,6 +991,161 @@ void GameController_StopMonitor(void) {
 #endif
 }
 
+int GameController_RefreshDevices(void) {
+#if GAME_CONTROLLER_KIT_AVAILABLE
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    if (!g_initialized || !g_gcLibAvailable) {
+        LOGW("RefreshDevices: GCK 未初始化或不可用");
+        return -1;
+    }
+
+    // 查询系统当前连接的设备
+    GameDevice_AllDeviceInfos* allDeviceInfos;
+    GameController_ErrorCode errorCode = OH_GameDevice_GetAllDeviceInfos(&allDeviceInfos);
+    if (errorCode != GAME_CONTROLLER_SUCCESS) {
+        LOGW("RefreshDevices: OH_GameDevice_GetAllDeviceInfos 失败, errorCode=%d", errorCode);
+        return -1;
+    }
+
+    int count = 0;
+    OH_GameDevice_AllDeviceInfos_GetCount(allDeviceInfos, &count);
+    LOGI("RefreshDevices: 系统报告 %d 个设备", count);
+
+    // 构建当前设备集合
+    std::map<std::string, GameControllerInfo> currentDevices;
+    for (int i = 0; i < count; i++) {
+        GameDevice_DeviceInfo* deviceInfo;
+        errorCode = OH_GameDevice_AllDeviceInfos_GetDeviceInfo(allDeviceInfos, i, &deviceInfo);
+        if (errorCode != GAME_CONTROLLER_SUCCESS) continue;
+
+        GameControllerInfo info = {};
+
+        char* deviceId = nullptr;
+        OH_GameDevice_DeviceInfo_GetDeviceId(deviceInfo, &deviceId);
+        if (deviceId) {
+            strncpy(info.deviceId, deviceId, sizeof(info.deviceId) - 1);
+        }
+
+        char* name = nullptr;
+        OH_GameDevice_DeviceInfo_GetName(deviceInfo, &name);
+        if (name) {
+            strncpy(info.name, name, sizeof(info.name) - 1);
+            free(name);
+        }
+
+        int product = 0;
+        OH_GameDevice_DeviceInfo_GetProduct(deviceInfo, &product);
+        info.product = product;
+
+        int version = 0;
+        OH_GameDevice_DeviceInfo_GetVersion(deviceInfo, &version);
+        info.version = version;
+
+        char* physicalAddress = nullptr;
+        OH_GameDevice_DeviceInfo_GetPhysicalAddress(deviceInfo, &physicalAddress);
+        if (physicalAddress) {
+            strncpy(info.physicalAddress, physicalAddress, sizeof(info.physicalAddress) - 1);
+            free(physicalAddress);
+        }
+
+        GameDevice_DeviceType deviceType;
+        OH_GameDevice_DeviceInfo_GetDeviceType(deviceInfo, &deviceType);
+        info.deviceType = (int32_t)deviceType;
+
+        info.isConnected = true;
+
+        std::string key = deviceId ? deviceId : "";
+        currentDevices[key] = info;
+
+        if (deviceId) free(deviceId);
+        OH_GameDevice_DestroyDeviceInfo(&deviceInfo);
+    }
+    OH_GameDevice_DestroyAllDeviceInfos(&allDeviceInfos);
+
+    // 差异对比：找出新上线的设备
+    int newDeviceCount = 0;
+    std::vector<std::pair<std::string, GameControllerInfo>> newDevices;
+    for (auto& pair : currentDevices) {
+        if (g_deviceInfos.find(pair.first) == g_deviceInfos.end()) {
+            newDevices.push_back(pair);
+            newDeviceCount++;
+        }
+    }
+
+    // 差异对比：找出消失的设备
+    std::vector<std::pair<std::string, GameControllerInfo>> goneDevices;
+    for (auto& pair : g_deviceInfos) {
+        if (currentDevices.find(pair.first) == currentDevices.end()) {
+            goneDevices.push_back(pair);
+        }
+    }
+
+    // 更新缓存：添加新设备
+    for (auto& pair : newDevices) {
+        g_deviceInfos[pair.first] = pair.second;
+        g_deviceStates[pair.first] = GameControllerState{};
+        strncpy(g_deviceStates[pair.first].deviceId, pair.first.c_str(),
+                sizeof(g_deviceStates[pair.first].deviceId) - 1);
+        LOGI("RefreshDevices: 新设备上线 deviceId=%s, name=%s",
+             pair.first.c_str(), pair.second.name);
+    }
+
+    // 更新缓存：移除消失的设备
+    for (auto& pair : goneDevices) {
+        g_deviceInfos.erase(pair.first);
+        g_deviceStates.erase(pair.first);
+        LOGI("RefreshDevices: 设备离线 deviceId=%s, name=%s",
+             pair.first.c_str(), pair.second.name);
+    }
+
+    // 发送回调（在锁内，简化处理）
+    for (auto& pair : newDevices) {
+        if (g_deviceCallback) {
+            g_deviceCallback(pair.first.c_str(), true, &pair.second);
+        }
+        if (g_tsfnDevice) {
+            struct DeviceEventData {
+                char deviceId[64];
+                bool isConnected;
+                GameControllerInfo info;
+            };
+            DeviceEventData* data = new DeviceEventData();
+            strncpy(data->deviceId, pair.first.c_str(), sizeof(data->deviceId) - 1);
+            data->isConnected = true;
+            data->info = pair.second;
+            napi_call_threadsafe_function(g_tsfnDevice, data, napi_tsfn_nonblocking);
+        }
+    }
+    for (auto& pair : goneDevices) {
+        if (g_deviceCallback) {
+            GameControllerInfo info = pair.second;
+            info.isConnected = false;
+            g_deviceCallback(pair.first.c_str(), false, &info);
+        }
+        if (g_tsfnDevice) {
+            struct DeviceEventData {
+                char deviceId[64];
+                bool isConnected;
+                GameControllerInfo info;
+            };
+            DeviceEventData* data = new DeviceEventData();
+            strncpy(data->deviceId, pair.first.c_str(), sizeof(data->deviceId) - 1);
+            data->isConnected = false;
+            data->info = pair.second;
+            data->info.isConnected = false;
+            napi_call_threadsafe_function(g_tsfnDevice, data, napi_tsfn_nonblocking);
+        }
+    }
+
+    LOGI("RefreshDevices: 新增 %d 个, 移除 %d 个, 当前共 %d 个设备",
+         (int)newDevices.size(), (int)goneDevices.size(), (int)g_deviceInfos.size());
+    return newDeviceCount;
+#else
+    return -1;
+#endif
+}
+
 int GameController_GetDeviceCount(void) {
     std::lock_guard<std::mutex> lock(g_mutex);
     return (int)g_deviceInfos.size();
@@ -1419,6 +1574,16 @@ static napi_value NapiHeartbeatCheck(napi_env env, napi_callback_info info) {
 }
 
 /**
+ * refreshDevices(): number
+ * 主动刷新设备缓存 - 返回新发现的设备数量
+ */
+static napi_value NapiRefreshDevices(napi_env env, napi_callback_info info) {
+    napi_value result;
+    napi_create_int32(env, GameController_RefreshDevices(), &result);
+    return result;
+}
+
+/**
  * 初始化 NAPI 模块
  */
 napi_value GameControllerNapi_Init(napi_env env, napi_value exports) {
@@ -1440,6 +1605,7 @@ napi_value GameControllerNapi_Init(napi_env env, napi_value exports) {
         { "getDeviceCount", nullptr, NapiGetDeviceCount, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getDeviceInfo", nullptr, NapiGetDeviceInfo, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "heartbeatCheck", nullptr, NapiHeartbeatCheck, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "refreshDevices", nullptr, NapiRefreshDevices, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
     
     napi_define_properties(env, gameControllerObj, sizeof(props) / sizeof(props[0]), props);

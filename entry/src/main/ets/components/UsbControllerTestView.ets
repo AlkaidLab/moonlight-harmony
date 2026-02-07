@@ -210,24 +210,39 @@ export struct UsbControllerTestView {
 
   private stopDriver(): void {
     if (this.usbDriverService !== null) {
-      // 不调用 stop()，避免停止全局 USB 驱动服务影响 GamepadManager
-      // 只需恢复 GamepadManager 的 listener
-      this.restoreGamepadManagerListener();
+      // 测试页面场景：必须调用 stop() 释放 USB 设备的独占声明（claimInterface），
+      // 否则切换到 GCK 测试页时，Game Controller Kit 无法通过系统 HID 输入栈检测到该设备。
+      // 注意：这不影响串流，因为测试页面不在串流路径上。
+      // 用户切回 USB Tab 时 startDriver() 会重新调用 start() 重新枚举设备。
+      this.usbDriverService.stop();
+      
+      // 重要：仅恢复 GamepadManager 的 listener 引用，但不重启 USB 驱动。
+      // 之前调用 reattachInputCallbacks() 会在传统模式下执行 usbDriverService.start()，
+      // 导致设备被立即重新独占，GCK 测试页面无法检测到手柄。
+      // GamepadManager 会在需要时（如串流启动）自行重启 USB 驱动。
+      this.restoreGamepadManagerListenerOnly();
+      
       this.usbDriverService = null;
       this.listener = null;
       this.isRunning = false;
       this.connectedDevices = [];
       this.lastInputState = null;
-      this.addLog('USB 驱动测试已停止（已恢复 GamepadManager 监听）');
+      this.addLog('USB 驱动测试已停止（已释放设备独占）');
     }
   }
   
   /**
-   * 恢复 GamepadManager 的 USB 驱动 listener，避免测试页面退出后串流手柄输入丢失
+   * 仅恢复 GamepadManager 的 USB 驱动 listener，不重启驱动。
+   * 
+   * 与 reattachInputCallbacks() 不同，此方法不会调用 usbDriverService.start()，
+   * 避免在切换到 GCK 测试页时立即重新独占 USB 设备。
    */
-  private restoreGamepadManagerListener(): void {
+  private restoreGamepadManagerListenerOnly(): void {
     try {
-      GamepadManager.getInstance().reattachInputCallbacks();
+      const gamepadManager = GamepadManager.getInstance();
+      // 仅恢复 listener，不启动驱动
+      UsbDriverService.getInstance().setListener(gamepadManager);
+      console.info('[UsbControllerTest] 已恢复 GamepadManager listener（未重启驱动）');
     } catch (err) {
       console.error('[UsbControllerTest] 恢复 GamepadManager listener 失败:', err);
     }

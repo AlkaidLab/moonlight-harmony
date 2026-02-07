@@ -257,10 +257,35 @@ export class NativeHidController extends AbstractController {
     this.running = false;
     this.notifyDeviceRemoved();
 
+    // 释放 USB 接口，确保系统 HID 驱动能重新接管设备
+    if (this.pipe && this.device) {
+      try {
+        const config = this.device.configs[0];
+        if (config && config.interfaces) {
+          let released = false;
+          for (let i = 0; i < config.interfaces.length; i++) {
+            const iface = config.interfaces[i];
+            if (iface.clazz === 3 /* USB_CLASS_HID */) {
+              usbManager.releaseInterface(this.pipe, iface);
+              console.info(`${TAG} 已释放 HID 接口 ${i}`);
+              released = true;
+              break;
+            }
+          }
+          if (!released) {
+            console.warn(`${TAG} 未找到 HID 接口（共 ${config.interfaces.length} 个接口）`);
+          }
+        }
+      } catch (err) {
+        console.error(`${TAG} 释放接口异常:`, err);
+      }
+    }
+
     try {
       usbManager.closePipe(this.pipe);
+      console.info(`${TAG} closePipe 成功`);
     } catch (err) {
-      console.error(`${TAG} 关闭管道失败:`, err);
+      console.error(`${TAG} closePipe 失败:`, err);
     }
 
     console.info(`${TAG} 控制器已停止: ${this.deviceName}`);

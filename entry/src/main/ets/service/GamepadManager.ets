@@ -500,9 +500,10 @@ export class GamepadManager implements UsbDriverListener {
       gameControllerService.startMonitor();
       console.info('[GAMEPAD] GC Kit 回调已恢复');
     } else {
-      // 传统模式：重新设置 USB 驱动 listener
+      // 传统模式：重新设置 USB 驱动 listener 并确保驱动运行中
       this.usbDriverService.setListener(this);
-      console.info('[GAMEPAD] USB 驱动 listener 已恢复');
+      this.usbDriverService.start();
+      console.info('[GAMEPAD] USB 驱动 listener 已恢复并重启');
     }
   }
   
