@@ -17,6 +17,14 @@
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from '../service/DeviceSensorService';
 import { AppColors } from '../common/Theme';
 
+// @Builder 按引用传参接口
+interface AxisBarParams {
+  axis: string;
+  value: number;
+  maxRange: number;
+  color: string;
+}
+
 // 传感器数据记录
 class SensorDataRecord {
   timestamp: string;
@@ -549,9 +557,9 @@ export struct SensorTestView {
           .padding(12)
       } else {
         // 三轴数据条
-        this.buildAxisBar('X', this.gyroX, 500, '#F44336')
-        this.buildAxisBar('Y', this.gyroY, 500, '#4CAF50')
-        this.buildAxisBar('Z', this.gyroZ, 500, '#2196F3')
+        this.buildAxisBar({ axis: 'X', value: this.gyroX, maxRange: 500, color: '#F44336' })
+        this.buildAxisBar({ axis: 'Y', value: this.gyroY, maxRange: 500, color: '#4CAF50' })
+        this.buildAxisBar({ axis: 'Z', value: this.gyroZ, maxRange: 500, color: '#2196F3' })
 
         // 数值显示
         Row({ space: 16 }) {
@@ -620,9 +628,9 @@ export struct SensorTestView {
           .padding(12)
       } else {
         // 三轴数据条
-        this.buildAxisBar('X', this.accelX, 20, '#FF9800')
-        this.buildAxisBar('Y', this.accelY, 20, '#9C27B0')
-        this.buildAxisBar('Z', this.accelZ, 20, '#00BCD4')
+        this.buildAxisBar({ axis: 'X', value: this.accelX, maxRange: 20, color: '#FF9800' })
+        this.buildAxisBar({ axis: 'Y', value: this.accelY, maxRange: 20, color: '#9C27B0' })
+        this.buildAxisBar({ axis: 'Z', value: this.accelZ, maxRange: 20, color: '#00BCD4' })
 
         // 数值显示
         Row({ space: 16 }) {
@@ -677,12 +685,12 @@ export struct SensorTestView {
   }
 
   @Builder
-  buildAxisBar(axis: string, value: number, maxRange: number, color: string) {
+  buildAxisBar($$: AxisBarParams) {
     Row({ space: 8 }) {
-      Text(axis)
+      Text($$.axis)
         .fontSize(13)
         .fontWeight(FontWeight.Bold)
-        .fontColor(color)
+        .fontColor($$.color)
         .width(16)
 
       Stack() {
@@ -702,12 +710,12 @@ export struct SensorTestView {
 
         // 数据条（从中心向外延伸）
         Row()
-          .width(`${Math.min(50, Math.abs(value / maxRange) * 50)}%`)
+          .width(`${Math.min(50, Math.abs($$.value / $$.maxRange) * 50)}%`)
           .height(12)
-          .backgroundColor(color)
+          .backgroundColor($$.color)
           .borderRadius(6)
           .position({
-            x: value >= 0 ? '50%' : `${50 - Math.min(50, Math.abs(value / maxRange) * 50)}%`,
+            x: $$.value >= 0 ? '50%' : `${50 - Math.min(50, Math.abs($$.value / $$.maxRange) * 50)}%`,
             y: 0
           })
       }

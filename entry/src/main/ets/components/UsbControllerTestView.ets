@@ -29,6 +29,31 @@ class ControllerInputState {
   rightTrigger: number = 0;
 }
 
+// @Builder 按引用传参接口
+interface StickVisualizerParams {
+  x: number;
+  y: number;
+  isRight: boolean;
+}
+
+interface TriggerBarParams {
+  value: number;
+  isLeft: boolean;
+}
+
+interface ButtonStateParams {
+  label: string;
+  buttons: number;
+  flag: number;
+}
+
+interface ABXYButtonParams {
+  label: string;
+  buttons: number;
+  flag: number;
+  color: string;
+}
+
 // 设备信息类
 class DeviceInfo {
   name: string = '';
@@ -82,7 +107,15 @@ export struct UsbControllerTestView {
   @State isRunning: boolean = false;
   @State deviceCount: number = 0;
   @State connectedDevices: DeviceInfo[] = [];
-  @State lastInputState: ControllerInputState | null = null;
+  // 使用纯原始类型 @State —— ArkUI 对 number/boolean 的变化检测最可靠
+  @State displayButtons: number = 0;
+  @State displayLSX: number = 0;
+  @State displayLSY: number = 0;
+  @State displayRSX: number = 0;
+  @State displayRSY: number = 0;
+  @State displayLT: number = 0;
+  @State displayRT: number = 0;
+  @State hasInput: boolean = false;
   @State logMessages: string[] = [];
   @State pollRate: number = 0;
   @State pollCount: number = 0;
@@ -136,10 +169,20 @@ export struct UsbControllerTestView {
   }
 
   // 30Hz UI 刷新定时器：将内部缓冲区同步到 @State 变量
+  // USB 轮询回调频率为 125-1000Hz，远高于 UI 刷新需求。
+  // 使用纯原始类型赋值确保 ArkUI 可靠检测变化。
   private startUiRefreshTimer(): void {
     this.uiRefreshTimer = setInterval(() => {
       if (this.internalLastInputState !== null) {
-        this.lastInputState = this.internalLastInputState;
+        const s = this.internalLastInputState;
+        this.displayButtons = s.buttons;
+        this.displayLSX = s.leftStickX;
+        this.displayLSY = s.leftStickY;
+        this.displayRSX = s.rightStickX;
+        this.displayRSY = s.rightStickY;
+        this.displayLT = s.leftTrigger;
+        this.displayRT = s.rightTrigger;
+        this.hasInput = true;
       }
     }, 33);
   }
@@ -226,7 +269,15 @@ export struct UsbControllerTestView {
       this.listener = null;
       this.isRunning = false;
       this.connectedDevices = [];
-      this.lastInputState = null;
+      this.hasInput = false;
+      this.displayButtons = 0;
+      this.displayLSX = 0;
+      this.displayLSY = 0;
+      this.displayRSX = 0;
+      this.displayRSY = 0;
+      this.displayLT = 0;
+      this.displayRT = 0;
+      this.internalLastInputState = null;
       this.addLog('USB 驱动测试已停止（已释放设备独占）');
     }
   }
@@ -466,7 +517,7 @@ export struct UsbControllerTestView {
         .border({ width: 1, color: AppColors.CardBorder })
 
         // 输入状态卡片 - 手柄形状可视化
-        if (this.lastInputState !== null) {
+        if (this.hasInput) {
           Column({ space: 12 }) {
             Row() {
               Text('🕹️')
@@ -488,21 +539,21 @@ export struct UsbControllerTestView {
                   Text('LT')
                     .fontSize(10)
                     .fontColor(AppColors.TextSecondary)
-                  this.TriggerBar(this.lastInputState!.leftTrigger, true)
+                  this.TriggerBar({ value: this.displayLT, isLeft: true })
                 }
                 // 左肩键 LB
-                this.ShoulderButton('LB', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.LB_FLAG))
+                this.ShoulderButton({ label: 'LB', buttons: this.displayButtons, flag: ButtonFlags.LB_FLAG })
                 
                 Blank()
                 
                 // 右肩键 RB
-                this.ShoulderButton('RB', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.RB_FLAG))
+                this.ShoulderButton({ label: 'RB', buttons: this.displayButtons, flag: ButtonFlags.RB_FLAG })
                 // 右扳机 RT
                 Column({ space: 2 }) {
                   Text('RT')
                     .fontSize(10)
                     .fontColor(AppColors.TextSecondary)
-                  this.TriggerBar(this.lastInputState!.rightTrigger, false)
+                  this.TriggerBar({ value: this.displayRT, isLeft: false })
                 }
               }
               .width('100%')
@@ -514,13 +565,13 @@ export struct UsbControllerTestView {
                 Column({ space: 16 }) {
                   // 左摇杆
                   Column({ space: 4 }) {
-                    this.StickVisualizer(this.lastInputState!.leftStickX, this.lastInputState!.leftStickY, false)
+                    this.StickVisualizer({ x: this.displayLSX, y: this.displayLSY, isRight: false })
                     Row() {
                       Text('L3')
                         .fontSize(9)
-                        .fontColor(this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.LS_CLK_FLAG) ? 
+                        .fontColor((this.displayButtons & ButtonFlags.LS_CLK_FLAG) !== 0 ? 
                           AppColors.Primary : AppColors.TextTertiary)
-                        .fontWeight(this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.LS_CLK_FLAG) ? 
+                        .fontWeight((this.displayButtons & ButtonFlags.LS_CLK_FLAG) !== 0 ? 
                           FontWeight.Bold : FontWeight.Normal)
                     }
                   }
@@ -535,9 +586,9 @@ export struct UsbControllerTestView {
                 Column({ space: 12 }) {
                   // Back / Start
                   Row({ space: 16 }) {
-                    this.FunctionButton('⏪', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.BACK_FLAG))
-                    this.FunctionButton('🏠', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.SPECIAL_BUTTON_FLAG))
-                    this.FunctionButton('⏯', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.PLAY_FLAG))
+                    this.FunctionButton({ label: '⏪', buttons: this.displayButtons, flag: ButtonFlags.BACK_FLAG })
+                    this.FunctionButton({ label: '🏠', buttons: this.displayButtons, flag: ButtonFlags.SPECIAL_BUTTON_FLAG })
+                    this.FunctionButton({ label: '⏯', buttons: this.displayButtons, flag: ButtonFlags.PLAY_FLAG })
                   }
                 }
                 .layoutWeight(1)
@@ -551,13 +602,13 @@ export struct UsbControllerTestView {
                   
                   // 右摇杆
                   Column({ space: 4 }) {
-                    this.StickVisualizer(this.lastInputState!.rightStickX, this.lastInputState!.rightStickY, true)
+                    this.StickVisualizer({ x: this.displayRSX, y: this.displayRSY, isRight: true })
                     Row() {
                       Text('R3')
                         .fontSize(9)
-                        .fontColor(this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.RS_CLK_FLAG) ? 
+                        .fontColor((this.displayButtons & ButtonFlags.RS_CLK_FLAG) !== 0 ? 
                           AppColors.Error : AppColors.TextTertiary)
-                        .fontWeight(this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.RS_CLK_FLAG) ? 
+                        .fontWeight((this.displayButtons & ButtonFlags.RS_CLK_FLAG) !== 0 ? 
                           FontWeight.Bold : FontWeight.Normal)
                     }
                   }
@@ -580,7 +631,7 @@ export struct UsbControllerTestView {
                 Text('左摇杆')
                   .fontSize(10)
                   .fontColor(AppColors.TextTertiary)
-                Text(`${this.formatStickValue(this.lastInputState!.leftStickX)}, ${this.formatStickValue(this.lastInputState!.leftStickY)}`)
+                Text(`${this.formatStickValue(this.displayLSX)}, ${this.formatStickValue(this.displayLSY)}`)
                   .fontSize(11)
                   .fontColor(AppColors.TextSecondary)
                   .fontFamily('monospace')
@@ -594,7 +645,7 @@ export struct UsbControllerTestView {
                 Text('扳机')
                   .fontSize(10)
                   .fontColor(AppColors.TextTertiary)
-                Text(`L:${this.formatTriggerValue(this.lastInputState!.leftTrigger)} R:${this.formatTriggerValue(this.lastInputState!.rightTrigger)}`)
+                Text(`L:${this.formatTriggerValue(this.displayLT)} R:${this.formatTriggerValue(this.displayRT)}`)
                   .fontSize(11)
                   .fontColor(AppColors.TextSecondary)
                   .fontFamily('monospace')
@@ -608,7 +659,7 @@ export struct UsbControllerTestView {
                 Text('右摇杆')
                   .fontSize(10)
                   .fontColor(AppColors.TextTertiary)
-                Text(`${this.formatStickValue(this.lastInputState!.rightStickX)}, ${this.formatStickValue(this.lastInputState!.rightStickY)}`)
+                Text(`${this.formatStickValue(this.displayRSX)}, ${this.formatStickValue(this.displayRSY)}`)
                   .fontSize(11)
                   .fontColor(AppColors.TextSecondary)
                   .fontFamily('monospace')
@@ -677,7 +728,7 @@ export struct UsbControllerTestView {
 
   // 摇杆可视化 - 实时动画
   @Builder
-  StickVisualizer(x: number, y: number, isRight: boolean) {
+  StickVisualizer($$: StickVisualizerParams) {
     Stack() {
       // 外圈
       Circle()
@@ -709,10 +760,10 @@ export struct UsbControllerTestView {
       Circle()
         .width(8)
         .height(8)
-        .fill(isRight ? '#E8112320' : '#3D8ECF20')
+        .fill($$.isRight ? '#E8112320' : '#3D8ECF20')
         .offset({
-          x: (x / 32767) * 30,
-          y: -(y / 32767) * 30
+          x: ($$.x / 32767) * 30,
+          y: -($$.y / 32767) * 30
         })
         .animation({ duration: 150, curve: Curve.EaseOut })
       
@@ -720,11 +771,11 @@ export struct UsbControllerTestView {
       Circle()
         .width(16)
         .height(16)
-        .fill(isRight ? AppColors.Error : AppColors.Primary)
-        .shadow({ radius: 8, color: isRight ? '#E8112360' : '#3D8ECF60', offsetX: 0, offsetY: 0 })
+        .fill($$.isRight ? AppColors.Error : AppColors.Primary)
+        .shadow({ radius: 8, color: $$.isRight ? '#E8112360' : '#3D8ECF60', offsetX: 0, offsetY: 0 })
         .offset({
-          x: (x / 32767) * 30,
-          y: -(y / 32767) * 30
+          x: ($$.x / 32767) * 30,
+          y: -($$.y / 32767) * 30
         })
         .animation({ duration: 50, curve: Curve.Linear })  // 快速响应
     }
@@ -734,7 +785,7 @@ export struct UsbControllerTestView {
 
   // 扳机条 - 实时动画
   @Builder
-  TriggerBar(value: number, isLeft: boolean) {
+  TriggerBar($$: TriggerBarParams) {
     Stack({ alignContent: Alignment.Bottom }) {
       // 背景
       Column()
@@ -744,11 +795,11 @@ export struct UsbControllerTestView {
         .borderRadius(12)
       
       // 发光层 (value > 0 时显示)
-      if (value > 0.1) {
+      if ($$.value > 0.1) {
         Column()
           .width(24)
-          .height(Math.max(4, value * 60))
-          .backgroundColor(isLeft ? '#3D8ECF40' : '#E8112340')
+          .height(Math.max(4, $$.value * 60))
+          .backgroundColor($$.isLeft ? '#3D8ECF40' : '#E8112340')
           .borderRadius(12)
           .animation({ duration: 80, curve: Curve.EaseOut })
       }
@@ -756,8 +807,8 @@ export struct UsbControllerTestView {
       // 填充 - 添加平滑动画
       Column()
         .width(24)
-        .height(Math.max(4, value * 60))
-        .backgroundColor(isLeft ? AppColors.Primary : AppColors.Error)
+        .height(Math.max(4, $$.value * 60))
+        .backgroundColor($$.isLeft ? AppColors.Primary : AppColors.Error)
         .borderRadius(12)
         .animation({ duration: 50, curve: Curve.Linear })  // 快速响应
     }
@@ -767,39 +818,39 @@ export struct UsbControllerTestView {
   
   // 肩键按钮 - 带按下动画
   @Builder
-  ShoulderButton(label: string, pressed: boolean) {
+  ShoulderButton($$: ButtonStateParams) {
     Column() {
-      Text(label)
+      Text($$.label)
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
-        .fontColor(pressed ? '#FFFFFF' : AppColors.TextTertiary)
+        .fontColor(($$.buttons & $$.flag) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
     }
     .width(48)
     .height(24)
     .borderRadius(12)
-    .backgroundColor(pressed ? AppColors.Primary : AppColors.SurfaceDark)
+    .backgroundColor(($$.buttons & $$.flag) !== 0 ? AppColors.Primary : AppColors.SurfaceDark)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .margin({ left: 8, right: 8 })
-    .scale({ x: pressed ? 0.95 : 1, y: pressed ? 0.95 : 1 })
+    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 0.95 : 1, y: ($$.buttons & $$.flag) !== 0 ? 0.95 : 1 })
     .animation({ duration: 60 })
   }
   
   // 功能键（Back/Start/Home）- 带按下动画
   @Builder
-  FunctionButton(label: string, pressed: boolean) {
+  FunctionButton($$: ButtonStateParams) {
     Column() {
-      Text(label)
+      Text($$.label)
         .fontSize(14)
-        .fontColor(pressed ? '#FFFFFF' : AppColors.TextTertiary)
+        .fontColor(($$.buttons & $$.flag) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
     }
     .width(32)
     .height(32)
     .borderRadius(16)
-    .backgroundColor(pressed ? AppColors.Primary : AppColors.SurfaceDark)
+    .backgroundColor(($$.buttons & $$.flag) !== 0 ? AppColors.Primary : AppColors.SurfaceDark)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .scale({ x: pressed ? 0.9 : 1, y: pressed ? 0.9 : 1 })
+    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 0.9 : 1, y: ($$.buttons & $$.flag) !== 0 ? 0.9 : 1 })
     .animation({ duration: 80 })
   }
   
@@ -808,36 +859,36 @@ export struct UsbControllerTestView {
   ABXYVisualizer() {
     Column({ space: 2 }) {
       // Y 在上
-      this.ABXYButton('Y', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.Y_FLAG), '#FFB900')
+      this.ABXYButton({ label: 'Y', buttons: this.displayButtons, flag: ButtonFlags.Y_FLAG, color: '#FFB900' })
       
       // X 和 B 在中间
       Row({ space: 24 }) {
-        this.ABXYButton('X', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.X_FLAG), '#0078D4')
-        this.ABXYButton('B', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.B_FLAG), '#E81123')
+        this.ABXYButton({ label: 'X', buttons: this.displayButtons, flag: ButtonFlags.X_FLAG, color: '#0078D4' })
+        this.ABXYButton({ label: 'B', buttons: this.displayButtons, flag: ButtonFlags.B_FLAG, color: '#E81123' })
       }
       
       // A 在下
-      this.ABXYButton('A', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.A_FLAG), '#107C10')
+      this.ABXYButton({ label: 'A', buttons: this.displayButtons, flag: ButtonFlags.A_FLAG, color: '#107C10' })
     }
   }
   
   // 单个 ABXY 按钮 - 带按下动画
   @Builder
-  ABXYButton(label: string, pressed: boolean, color: string) {
+  ABXYButton($$: ABXYButtonParams) {
     Column() {
-      Text(label)
+      Text($$.label)
         .fontSize(14)
         .fontWeight(FontWeight.Bold)
-        .fontColor(pressed ? '#FFFFFF' : AppColors.TextTertiary)
+        .fontColor(($$.buttons & $$.flag) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
     }
     .width(36)
     .height(36)
     .borderRadius(18)
-    .backgroundColor(pressed ? color : AppColors.SurfaceDark)
+    .backgroundColor(($$.buttons & $$.flag) !== 0 ? $$.color : AppColors.SurfaceDark)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .shadow(pressed ? { radius: 12, color: color, offsetX: 0, offsetY: 2 } : undefined)
-    .scale({ x: pressed ? 1.15 : 1, y: pressed ? 1.15 : 1 })
+    .shadow(($$.buttons & $$.flag) !== 0 ? { radius: 12, color: $$.color, offsetX: 0, offsetY: 2 } : undefined)
+    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 1.15 : 1, y: ($$.buttons & $$.flag) !== 0 ? 1.15 : 1 })
     .animation({ duration: 60 })
   }
   
@@ -846,40 +897,40 @@ export struct UsbControllerTestView {
   DPadVisualizer() {
     Column({ space: 2 }) {
       // 上
-      this.DPadArrow('▲', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.UP_FLAG))
+      this.DPadArrow({ label: '▲', buttons: this.displayButtons, flag: ButtonFlags.UP_FLAG })
       
       // 左 中心 右
       Row({ space: 2 }) {
-        this.DPadArrow('◀', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.LEFT_FLAG))
+        this.DPadArrow({ label: '◀', buttons: this.displayButtons, flag: ButtonFlags.LEFT_FLAG })
         // 中心占位
         Column()
           .width(28)
           .height(28)
           .backgroundColor(AppColors.SurfaceDark)
           .borderRadius(4)
-        this.DPadArrow('▶', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.RIGHT_FLAG))
+        this.DPadArrow({ label: '▶', buttons: this.displayButtons, flag: ButtonFlags.RIGHT_FLAG })
       }
       
       // 下
-      this.DPadArrow('▼', this.isButtonPressed(this.lastInputState!.buttons, ButtonFlags.DOWN_FLAG))
+      this.DPadArrow({ label: '▼', buttons: this.displayButtons, flag: ButtonFlags.DOWN_FLAG })
     }
   }
   
   // D-Pad 单个方向键 - 带按下动画
   @Builder
-  DPadArrow(label: string, pressed: boolean) {
+  DPadArrow($$: ButtonStateParams) {
     Column() {
-      Text(label)
+      Text($$.label)
         .fontSize(12)
-        .fontColor(pressed ? '#FFFFFF' : AppColors.TextTertiary)
+        .fontColor(($$.buttons & $$.flag) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
     }
     .width(28)
     .height(28)
     .borderRadius(4)
-    .backgroundColor(pressed ? AppColors.Primary : AppColors.SurfaceDark)
+    .backgroundColor(($$.buttons & $$.flag) !== 0 ? AppColors.Primary : AppColors.SurfaceDark)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .scale({ x: pressed ? 1.1 : 1, y: pressed ? 1.1 : 1 })
+    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 1.1 : 1, y: ($$.buttons & $$.flag) !== 0 ? 1.1 : 1 })
     .animation({ duration: 60 })
   }
 }

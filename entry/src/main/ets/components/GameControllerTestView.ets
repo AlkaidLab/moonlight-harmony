@@ -17,6 +17,13 @@ import { gameControllerService, GameControllerService, ButtonCode } from '../ser
 import { GamepadManager } from '../service/GamepadManager';
 import { AppColors } from '../common/Theme';
 
+// @Builder 按引用传参接口
+interface ButtonIndicatorParams {
+  name: string;
+  buttons: number;
+  flag: number;
+}
+
 // 手柄状态类
 class ControllerInputState {
   buttons: number = 0;
@@ -84,18 +91,34 @@ export struct GameControllerTestView {
   @State isMonitoring: boolean = false;
   @State isAvailable: boolean = false;
   @State connectedDevices: GCDeviceInfo[] = [];
-  @State inputStates: Map<string, ControllerInputState> = new Map();
+  // 使用纯原始类型 @State —— ArkUI 对 number/boolean 的变化检测最可靠
+  @State displayButtons: number = 0;
+  @State displayLSX: number = 0;
+  @State displayLSY: number = 0;
+  @State displayRSX: number = 0;
+  @State displayRSY: number = 0;
+  @State displayLT: number = 0;
+  @State displayRT: number = 0;
+  @State hasInput: boolean = false;  // 是否收到过输入数据
   @State logMessages: string[] = [];
   @State buttonEventLogs: ButtonEventLog[] = [];
   @State rawButtonEvents: string[] = [];
-  @State keyEventLogs: string[] = [];  // 新增：KeyEvent 日志
+  @State keyEventLogs: string[] = [];
   
   // 接收来自父组件的 KeyEvent 处理器注册函数
   onKeyEventRef?: (handler: (event: KeyEvent) => boolean) => void;
 
-  // 内部缓冲区：回调写入此变量，由 UI 刷新定时器同步到 @State
-  private internalInputStates: Map<string, ControllerInputState> = new Map();
-  private inputStatesDirty: boolean = false;
+  // 内部缓冲区：GCK 回调在系统线程，直接写 @State 不可靠且导致卡顿
+  // 所有回调数据先写入缓冲区，由 30Hz UI 刷新定时器统一同步到 @State
+  private internalState: ControllerInputState = new ControllerInputState();
+  private stateDirty: boolean = false;
+  private internalLogs: string[] = [];
+  private logsDirty: boolean = false;
+  private internalRawButtonEvents: string[] = [];
+  private internalButtonEventLogs: ButtonEventLog[] = [];
+  private buttonEventsDirty: boolean = false;
+  private internalKeyEventLogs: string[] = [];
+  private keyEventsDirty: boolean = false;
   private uiRefreshTimer: number = -1;
 
   aboutToAppear(): void {
@@ -114,12 +137,38 @@ export struct GameControllerTestView {
     this.stopMonitoring();
   }
 
-  // 30Hz UI 刷新定时器：将内部缓冲区同步到 @State 变量
+  // 30Hz UI 刷新定时器：将内部缓冲区统一同步到 @State 变量
+  // GCK 回调运行在系统线程，直接赋值 @State 不可靠且会引发高频重渲染
   private startUiRefreshTimer(): void {
     this.uiRefreshTimer = setInterval(() => {
-      if (this.inputStatesDirty) {
-        this.inputStates = new Map(this.internalInputStates);
-        this.inputStatesDirty = false;
+      // 同步手柄状态（纯原始类型赋值，ArkUI 可靠检测变化）
+      if (this.stateDirty) {
+        const s = this.internalState;
+        this.displayButtons = s.buttons;
+        this.displayLSX = s.leftStickX;
+        this.displayLSY = s.leftStickY;
+        this.displayRSX = s.rightStickX;
+        this.displayRSY = s.rightStickY;
+        this.displayLT = s.leftTrigger;
+        this.displayRT = s.rightTrigger;
+        this.hasInput = true;
+        this.stateDirty = false;
+      }
+      // 同步日志
+      if (this.logsDirty) {
+        this.logMessages = [...this.internalLogs];
+        this.logsDirty = false;
+      }
+      // 同步按键事件
+      if (this.buttonEventsDirty) {
+        this.rawButtonEvents = [...this.internalRawButtonEvents];
+        this.buttonEventLogs = [...this.internalButtonEventLogs];
+        this.buttonEventsDirty = false;
+      }
+      // 同步 KeyEvent 日志
+      if (this.keyEventsDirty) {
+        this.keyEventLogs = [...this.internalKeyEventLogs];
+        this.keyEventsDirty = false;
       }
     }, 33);
   }
@@ -145,7 +194,8 @@ export struct GameControllerTestView {
     if (keyCode >= 2300 && keyCode <= 2320) {
       const buttonName = ButtonEventLog.getButtonName(keyCode);
       const logEntry = `[${timestamp}] KeyEvent: code=${keyCode} (${buttonName}) ${isPressed ? '按下' : '释放'}`;
-      this.keyEventLogs = [logEntry, ...this.keyEventLogs.slice(0, 29)];
+      this.internalKeyEventLogs = [logEntry, ...this.internalKeyEventLogs.slice(0, 29)];
+      this.keyEventsDirty = true;
       this.addLog(`KeyEvent: ${keyCode} (${buttonName}) ${isPressed ? '按下' : '释放'}`);
       
       // 特别标记 2313
@@ -172,14 +222,16 @@ export struct GameControllerTestView {
 
   addLog(message: string): void {
     const timestamp = new Date().toLocaleTimeString();
-    this.logMessages = [`[${timestamp}] ${message}`, ...this.logMessages.slice(0, 99)];
+    this.internalLogs = [`[${timestamp}] ${message}`, ...this.internalLogs.slice(0, 99)];
+    this.logsDirty = true;
   }
   
   private addButtonEventLog(deviceId: string, buttonCode: number, isPressed: boolean): void {
     const log = new ButtonEventLog(deviceId, buttonCode, isPressed);
-    this.buttonEventLogs = [log, ...this.buttonEventLogs.slice(0, 49)];
-    this.rawButtonEvents = [`[${log.timestamp}] ${isPressed ? '按下' : '释放'} buttonCode=${buttonCode} (${log.buttonName})`, 
-                            ...this.rawButtonEvents.slice(0, 29)];
+    this.internalButtonEventLogs = [log, ...this.internalButtonEventLogs.slice(0, 49)];
+    this.internalRawButtonEvents = [`[${log.timestamp}] ${isPressed ? '按下' : '释放'} buttonCode=${buttonCode} (${log.buttonName})`, 
+                            ...this.internalRawButtonEvents.slice(0, 29)];
+    this.buttonEventsDirty = true;
   }
   
   private startMonitoring(): void {
@@ -324,22 +376,18 @@ export struct GameControllerTestView {
     } else {
       this.addLog(`设备断开: ${deviceId}`);
       this.connectedDevices = this.connectedDevices.filter(d => d.deviceId !== deviceId);
-      this.internalInputStates.delete(deviceId);
-      this.inputStatesDirty = true;
+      // 重置状态
+      this.internalState = new ControllerInputState();
+      this.stateDirty = true;
     }
   }
   
   private onButtonEvent(deviceId: string, buttonCode: number, isPressed: boolean): void {
-    // 记录原始事件
+    // 记录原始事件（写入缓冲区，由 timer 同步）
     this.addButtonEventLog(deviceId, buttonCode, isPressed);
-    this.addLog(`按键事件: device=${deviceId}, code=${buttonCode}, pressed=${isPressed}`);
     
     // 更新内部缓冲区状态
-    let state = this.internalInputStates.get(deviceId);
-    if (!state) {
-      state = new ControllerInputState();
-      this.internalInputStates.set(deviceId, state);
-    }
+    const state = this.internalState;
     
     const flag = this.buttonCodeToFlag(buttonCode);
     if (flag !== 0) {
@@ -349,7 +397,7 @@ export struct GameControllerTestView {
         state.buttons &= ~flag;
       }
       // 标记脏数据，由定时器同步到 @State
-      this.inputStatesDirty = true;
+      this.stateDirty = true;
     }
   }
   
@@ -376,11 +424,7 @@ export struct GameControllerTestView {
   }
   
   private handleAxisEvent(deviceId: string, axisType: number, x: number, y: number): void {
-    let state = this.internalInputStates.get(deviceId);
-    if (!state) {
-      state = new ControllerInputState();
-      this.internalInputStates.set(deviceId, state);
-    }
+    const state = this.internalState;
     
     // AxisType: 0=左摇杆, 1=右摇杆, 2=D-Pad, 3=左扳机, 4=右扳机
     switch (axisType) {
@@ -400,8 +444,7 @@ export struct GameControllerTestView {
         break;
     }
     
-    // 标记脏数据，由定时器同步到 @State
-    this.inputStatesDirty = true;
+    this.stateDirty = true;
   }
 
   private formatStickValue(value: number): string {
@@ -550,7 +593,7 @@ export struct GameControllerTestView {
         .borderRadius(12)
 
         // 按键状态可视化
-        if (this.connectedDevices.length > 0) {
+        if (this.hasInput) {
           this.buildButtonsDisplay()
         }
 
@@ -583,13 +626,7 @@ export struct GameControllerTestView {
     .backgroundColor(AppColors.Background)
   }
   
-  // 获取第一个设备的状态
-  private getFirstDeviceState(): ControllerInputState | null {
-    if (this.connectedDevices.length > 0) {
-      return this.inputStates.get(this.connectedDevices[0].deviceId) ?? null;
-    }
-    return null;
-  }
+  // 获取第一个设备的状态（现在使用纯原始类型 @State 变量）
   
   @Builder
   buildButtonsDisplay() {
@@ -600,73 +637,67 @@ export struct GameControllerTestView {
         .fontColor(AppColors.TextPrimary)
         .width('100%')
 
-      if (this.getFirstDeviceState() === null) {
-        Text('等待输入...')
-          .fontSize(13)
-          .fontColor(AppColors.TextSecondary)
-      } else {
-        // 按键网格
-        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
-          this.buildButtonIndicator('A', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x1000))
-          this.buildButtonIndicator('B', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x2000))
-          this.buildButtonIndicator('X', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x4000))
-          this.buildButtonIndicator('Y', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x8000))
-          this.buildButtonIndicator('LB', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0100))
-          this.buildButtonIndicator('RB', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0200))
-          this.buildButtonIndicator('LS', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0040))
-          this.buildButtonIndicator('RS', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0080))
-          this.buildButtonIndicator('Start', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0010))
-          this.buildButtonIndicator('Back', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0020))
-          this.buildButtonIndicator('Home', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0400))
-          this.buildButtonIndicator('↑', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0001))
-          this.buildButtonIndicator('↓', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0002))
-          this.buildButtonIndicator('←', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0004))
-          this.buildButtonIndicator('→', this.isButtonPressed(this.getFirstDeviceState()!.buttons, 0x0008))
-        }
-        .width('100%')
-
-        // 摇杆和扳机
-        Row({ space: 16 }) {
-          Column({ space: 4 }) {
-            Text('左摇杆')
-              .fontSize(11)
-              .fontColor(AppColors.TextSecondary)
-            Text(`X: ${this.formatStickValue(this.getFirstDeviceState()!.leftStickX)}`)
-              .fontSize(12)
-              .fontColor(AppColors.TextPrimary)
-            Text(`Y: ${this.formatStickValue(this.getFirstDeviceState()!.leftStickY)}`)
-              .fontSize(12)
-              .fontColor(AppColors.TextPrimary)
-          }
-          
-          Column({ space: 4 }) {
-            Text('右摇杆')
-              .fontSize(11)
-              .fontColor(AppColors.TextSecondary)
-            Text(`X: ${this.formatStickValue(this.getFirstDeviceState()!.rightStickX)}`)
-              .fontSize(12)
-              .fontColor(AppColors.TextPrimary)
-            Text(`Y: ${this.formatStickValue(this.getFirstDeviceState()!.rightStickY)}`)
-              .fontSize(12)
-              .fontColor(AppColors.TextPrimary)
-          }
-          
-          Column({ space: 4 }) {
-            Text('扳机')
-              .fontSize(11)
-              .fontColor(AppColors.TextSecondary)
-            Text(`LT: ${this.getFirstDeviceState()!.leftTrigger}`)
-              .fontSize(12)
-              .fontColor(AppColors.TextPrimary)
-            Text(`RT: ${this.getFirstDeviceState()!.rightTrigger}`)
-              .fontSize(12)
-              .fontColor(AppColors.TextPrimary)
-          }
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.SpaceEvenly)
-        .margin({ top: 8 })
+      // 按键网格
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        this.buildButtonIndicator({ name: 'A', buttons: this.displayButtons, flag: 0x1000 })
+        this.buildButtonIndicator({ name: 'B', buttons: this.displayButtons, flag: 0x2000 })
+        this.buildButtonIndicator({ name: 'X', buttons: this.displayButtons, flag: 0x4000 })
+        this.buildButtonIndicator({ name: 'Y', buttons: this.displayButtons, flag: 0x8000 })
+        this.buildButtonIndicator({ name: 'LB', buttons: this.displayButtons, flag: 0x0100 })
+        this.buildButtonIndicator({ name: 'RB', buttons: this.displayButtons, flag: 0x0200 })
+        this.buildButtonIndicator({ name: 'LS', buttons: this.displayButtons, flag: 0x0040 })
+        this.buildButtonIndicator({ name: 'RS', buttons: this.displayButtons, flag: 0x0080 })
+        this.buildButtonIndicator({ name: 'Start', buttons: this.displayButtons, flag: 0x0010 })
+        this.buildButtonIndicator({ name: 'Back', buttons: this.displayButtons, flag: 0x0020 })
+        this.buildButtonIndicator({ name: 'Home', buttons: this.displayButtons, flag: 0x0400 })
+        this.buildButtonIndicator({ name: '↑', buttons: this.displayButtons, flag: 0x0001 })
+        this.buildButtonIndicator({ name: '↓', buttons: this.displayButtons, flag: 0x0002 })
+        this.buildButtonIndicator({ name: '←', buttons: this.displayButtons, flag: 0x0004 })
+        this.buildButtonIndicator({ name: '→', buttons: this.displayButtons, flag: 0x0008 })
       }
+      .width('100%')
+
+      // 摇杆和扳机
+      Row({ space: 16 }) {
+        Column({ space: 4 }) {
+          Text('左摇杆')
+            .fontSize(11)
+            .fontColor(AppColors.TextSecondary)
+          Text(`X: ${this.formatStickValue(this.displayLSX)}`)
+            .fontSize(12)
+            .fontColor(AppColors.TextPrimary)
+          Text(`Y: ${this.formatStickValue(this.displayLSY)}`)
+            .fontSize(12)
+            .fontColor(AppColors.TextPrimary)
+        }
+        
+        Column({ space: 4 }) {
+          Text('右摇杆')
+            .fontSize(11)
+            .fontColor(AppColors.TextSecondary)
+          Text(`X: ${this.formatStickValue(this.displayRSX)}`)
+            .fontSize(12)
+            .fontColor(AppColors.TextPrimary)
+          Text(`Y: ${this.formatStickValue(this.displayRSY)}`)
+            .fontSize(12)
+            .fontColor(AppColors.TextPrimary)
+        }
+        
+        Column({ space: 4 }) {
+          Text('扳机')
+            .fontSize(11)
+            .fontColor(AppColors.TextSecondary)
+          Text(`LT: ${this.displayLT}`)
+            .fontSize(12)
+            .fontColor(AppColors.TextPrimary)
+          Text(`RT: ${this.displayRT}`)
+            .fontSize(12)
+            .fontColor(AppColors.TextPrimary)
+        }
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceEvenly)
+      .margin({ top: 8 })
     }
     .width('100%')
     .padding(12)
@@ -675,11 +706,11 @@ export struct GameControllerTestView {
   }
   
   @Builder
-  buildButtonIndicator(name: string, isPressed: boolean) {
-    Text(name)
+  buildButtonIndicator($$: ButtonIndicatorParams) {
+    Text($$.name)
       .fontSize(12)
-      .fontColor(isPressed ? AppColors.TextOnPrimary : AppColors.TextSecondary)
-      .backgroundColor(isPressed ? AppColors.Success : AppColors.SurfaceDark)
+      .fontColor(($$.buttons & $$.flag) !== 0 ? AppColors.TextOnPrimary : AppColors.TextSecondary)
+      .backgroundColor(($$.buttons & $$.flag) !== 0 ? AppColors.Success : AppColors.SurfaceDark)
       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
       .borderRadius(4)
       .margin(4)
