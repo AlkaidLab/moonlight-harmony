@@ -264,6 +264,10 @@ private:
     // 更新解码帧统计
     void UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32_t flags);
     
+    // 延迟恢复：检查是否应丢弃输入帧并请求 IDR
+    // 返回 -1 表示应丢弃（需要 IDR），0 表示正常处理
+    int CheckLatencyRecovery(VideoFrameType frameType, int size, uint16_t hostProcessingLatency);
+    
     // 解码器实例
     OH_AVCodec* decoder_ = nullptr;
     
@@ -316,6 +320,10 @@ private:
     
     // 首帧标志
     std::atomic<bool> firstFrameReceived_{false};
+    
+    // 延迟恢复状态
+    std::atomic<int64_t> lastInstantDecodeTimeMs_{0};  // 最近一帧的实际解码耗时 (ms)
+    std::atomic<bool> latencyRecoveryActive_{false};    // 是否已请求 IDR 恢复
 };
 
 /**
