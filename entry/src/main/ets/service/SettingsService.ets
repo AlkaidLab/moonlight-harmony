@@ -63,6 +63,15 @@ export class SettingsKeys {
   static readonly GAMEPAD_MOTION_SENSORS: string = 'settings_gamepad_motion_sensors';
   static readonly GAMEPAD_MOTION_FALLBACK: string = 'settings_gamepad_motion_fallback';
   static readonly GAMEPAD_TOUCHPAD_MOUSE: string = 'settings_gamepad_touchpad_mouse';
+
+  // 输入 - 体感助手（陀螺仪映射右摇杆）
+  static readonly GYRO_ASSIST_ENABLED: string = 'settings_gyro_assist_enabled';
+  static readonly GYRO_SENSITIVITY: string = 'settings_gyro_sensitivity';
+  static readonly GYRO_INVERT_X: string = 'settings_gyro_invert_x';
+  static readonly GYRO_INVERT_Y: string = 'settings_gyro_invert_y';
+  static readonly GYRO_ACTIVATION_KEY: string = 'settings_gyro_activation_key';
+  static readonly SHOW_GYRO_CARD: string = 'settings_show_gyro_card';
+
   static readonly ENABLE_START_KEY_MENU: string = 'settings_enable_start_key_menu';
   static readonly IGNORE_DEVICE_DISCONNECT: string = 'settings_ignore_device_disconnect';  // 忽略手柄断开信号（用于电源管理问题的手柄）
   static readonly GC_BUTTON_HOME_MAPPING: string = 'settings_gc_button_home_mapping';  // Game Controller Kit 2313按键映射
@@ -148,6 +157,14 @@ export interface InputSettings {
   enableStartKeyMenu: boolean;
   ignoreDeviceDisconnect: boolean;  // 忽略手柄断开信号
   enableKeyInterceptor: boolean;  // 按键反劫持
+
+  // 体感助手
+  gyroAssistEnabled: boolean;
+  gyroSensitivity: number;
+  gyroInvertX: boolean;
+  gyroInvertY: boolean;
+  gyroActivationKey: number;
+  showGyroCard: boolean;
 
   // 屏幕控制器
   enableOnscreenControls: boolean;
@@ -643,6 +660,14 @@ export class SettingsService {
       enableStartKeyMenu: await this.getBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true),
       ignoreDeviceDisconnect: await this.getBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false),
       enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false),
+
+      // 体感助手
+      gyroAssistEnabled: await this.getBoolean(SettingsKeys.GYRO_ASSIST_ENABLED, false),
+      gyroSensitivity: await this.getNumber(SettingsKeys.GYRO_SENSITIVITY, 1.0),
+      gyroInvertX: await this.getBoolean(SettingsKeys.GYRO_INVERT_X, false),
+      gyroInvertY: await this.getBoolean(SettingsKeys.GYRO_INVERT_Y, false),
+      gyroActivationKey: await this.getNumber(SettingsKeys.GYRO_ACTIVATION_KEY, -1),
+      showGyroCard: await this.getBoolean(SettingsKeys.SHOW_GYRO_CARD, true),
 
       // 屏幕控制器
       enableOnscreenControls: await this.getBoolean(SettingsKeys.ENABLE_ONSCREEN_CONTROLS, false),

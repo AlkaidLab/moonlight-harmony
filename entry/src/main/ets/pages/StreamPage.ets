@@ -27,6 +27,7 @@ import { StreamWindowManager } from '../service/StreamWindowManager';
 import { ShortcutManager, Shortcut } from '../components/ShortcutManager';
 import { ShortcutEditorDialog, ShortcutEditorCallbacks, ShortcutEditData } from '../components/ShortcutEditorDialog';
 import { GamepadManager, GamepadInputListener, GamepadState, MoonlightControllerType } from '../service/GamepadManager';
+import { GyroAssistService } from '../service/GyroAssistService';
 import { AppStateService, AppState } from '../service/AppStateService';
 import { MoonBridge } from '../service/MoonBridge';
 import { SuperCmd } from '../service/NvHttp';
@@ -170,6 +171,27 @@ struct StreamPage {
   }
   
   /**
+   * 初始化体感助手
+   * 从设置加载配置，如果已启用则自动开始监听陀螺仪
+   */
+  private initializeGyroAssist(): void {
+    const settings = this.viewModel.inputSettings;
+    if (!settings) return;
+
+    const gyroAssist = GyroAssistService.getInstance();
+    gyroAssist.loadSettings({
+      sensitivity: settings.gyroSensitivity,
+      invertX: settings.gyroInvertX,
+      invertY: settings.gyroInvertY,
+      activationKey: settings.gyroActivationKey
+    });
+
+    if (settings.gyroAssistEnabled) {
+      gyroAssist.setEnabled(true);
+    }
+  }
+  
+  /**
    * 处理手柄输入
    */
   private handleGamepadInput(deviceId: number, state: GamepadState): void {
@@ -180,14 +202,25 @@ struct StreamPage {
     // 获取控制器类型（默认 Xbox）
     const controllerType = this.controllerTypes.get(deviceId) ?? MoonlightControllerType.XBOX;
     
+    // 体感助手：更新激活状态并融合右摇杆
+    const gyroAssist = GyroAssistService.getInstance();
+    let rsX = state.rightStickX;
+    let rsY = state.rightStickY;
+    if (gyroAssist.enabled) {
+      gyroAssist.updateActivation(state.leftTrigger, state.rightTrigger);
+      const fused = gyroAssist.fuseRightStick(state.rightStickX, state.rightStickY);
+      rsX = fused.x;
+      rsY = fused.y;
+    }
+    
     // 直接发送完整的手柄状态
     this.viewModel.sendGamepadState(
       deviceId,
       state.buttons,
       state.leftStickX,
       state.leftStickY,
-      state.rightStickX,
-      state.rightStickY,
+      rsX,
+      rsY,
       state.leftTrigger,
       state.rightTrigger,
       controllerType
@@ -228,6 +261,9 @@ struct StreamPage {
     
     // 停止按键拦截器
     InputInterceptorService.getInstance().stop();
+    
+    // 停止体感助手
+    GyroAssistService.getInstance().dispose();
     
     // 清理手柄监听并重置会话状态（防止内存泄漏和重复绑定）
     this.gamepadManager.setListener(null);
@@ -543,6 +579,9 @@ struct StreamPage {
       if (this.viewModel.inputSettings?.enableKeyInterceptor) {
         this.startKeyInterceptor();
       }
+
+      // 初始化体感助手
+      this.initializeGyroAssist();
 
       // 绝对鼠标模式下自动隐藏远端光标
       // 发送 Ctrl+Alt+Shift+N 切换 Sunshine display_cursor

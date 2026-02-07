@@ -24,6 +24,10 @@ import { VirtualKey } from './StreamMenuManager';
 import { ShortcutManager, Shortcut } from './ShortcutManager';
 import { ActionDialog, ActionDialogConfig, ConfirmDialog, ConfirmDialogConfig } from './ConfirmDialog';
 import { SuperCmd } from '../service/NvHttp';
+import { GyroAssistService, GYRO_ACTIVATION_ALWAYS, GYRO_ACTIVATION_LT, GYRO_ACTIVATION_RT } from '../service/GyroAssistService';
+import { SettingsKeys } from '../service/SettingsService';
+import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { DeviceSensorService } from '../service/DeviceSensorService';
 
 /**
  * 菜单回调接口
@@ -111,6 +115,14 @@ export struct GameMenuDialog {
   @State private isAdjustingBitrate: boolean = false;  // 是否正在调整中
   private bitrateDebounceTimer: number = -1;  // 防抖定时器
   
+  // 体感助手状态
+  @State private gyroEnabled: boolean = false;
+  @State private gyroSensitivity: number = 1.0;
+  @State private gyroInvertX: boolean = false;
+  @State private gyroInvertY: boolean = false;
+  @State private gyroActivationKey: number = GYRO_ACTIVATION_ALWAYS;
+  private hasGyroscope: boolean = false;
+  
   // 关闭动画状态
   private isClosing: boolean = false;
   
@@ -125,6 +137,8 @@ export struct GameMenuDialog {
     // 加载当前码率
     this.currentBitrate = this.viewModel.getCurrentBitrate();
     this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
+    // 加载体感助手状态
+    this.loadGyroSettings();
     // 依次弹出动画（交错启动，间隔更短）
     this.animateInStaggered();
   }
@@ -560,6 +574,11 @@ export struct GameMenuDialog {
           // 码率调整卡片
           this.BitrateCard()
           
+          // 体感助手卡片（有陀螺仪时显示）
+          if (this.hasGyroscope) {
+            this.GyroAssistCard()
+          }
+          
           // 超级指令卡片（单独）
           if (this.superCmds.length > 0) {
             this.SuperCmdCard()
@@ -675,6 +694,220 @@ export struct GameMenuDialog {
     .shadow({ radius: 20, color: '#20000000', offsetY: 4 })
   }
   
+  /**
+   * 加载体感助手设置
+   */
+  private async loadGyroSettings(): Promise<void> {
+    this.hasGyroscope = DeviceSensorService.getInstance().hasGyroscope();
+    const gyroAssist = GyroAssistService.getInstance();
+    this.gyroEnabled = gyroAssist.enabled;
+    this.gyroSensitivity = gyroAssist.sensitivityMultiplier;
+    this.gyroInvertX = gyroAssist.invertX;
+    this.gyroInvertY = gyroAssist.invertY;
+    this.gyroActivationKey = gyroAssist.activationKey;
+  }
+
+  /**
+   * 保存体感助手设置项
+   */
+  private async saveGyroSetting(key: string, value: string | boolean | number): Promise<void> {
+    try {
+      await PreferencesUtil.put(key, value);
+    } catch (error) {
+      console.error('[GyroAssist] 保存设置失败:', error);
+    }
+  }
+
+  /**
+   * 体感助手卡片 - 奶油风格
+   * 陀螺仪 → 右摇杆映射，支持灵敏度、轴反转、激活方式
+   */
+  @Builder
+  GyroAssistCard() {
+    Column() {
+      // ===== 标题栏 + 主开关 =====
+      Row() {
+        Text('🎮')
+          .fontSize(13)
+        Text(' 体感助手')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#E0FFFFFF')
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.gyroEnabled })
+          .selectedColor('#A8D8EA')  // 婴儿蓝
+          .switchPointColor('#FFFFFF')
+          .width(40)
+          .height(22)
+          .onChange((isOn: boolean) => {
+            this.gyroEnabled = isOn;
+            GyroAssistService.getInstance().setEnabled(isOn);
+            this.saveGyroSetting(SettingsKeys.GYRO_ASSIST_ENABLED, isOn);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 12, top: 14, bottom: 4 })
+
+      // 提示说明
+      Text(this.hasGyroscope ? '陀螺仪 → 右摇杆映射' : '⚠ 设备无陀螺仪')
+        .fontSize(10)
+        .fontColor(this.hasGyroscope ? '#60FFFFFF' : '#FFB7C5')
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 8 })
+
+      if (this.gyroEnabled) {
+        // ===== 分割线 =====
+        Row()
+          .width('85%')
+          .height(1)
+          .backgroundColor('#15FFFFFF')
+
+        // ===== 灵敏度滑块 =====
+        Column() {
+          Row() {
+            Text('灵敏度')
+              .fontSize(11)
+              .fontColor('#B0FFFFFF')
+            Blank()
+            Text(`${this.gyroSensitivity.toFixed(1)}x`)
+              .fontSize(11)
+              .fontColor('#A8D8EA')
+              .fontWeight(FontWeight.Medium)
+          }
+          .width('100%')
+          .padding({ bottom: 4 })
+
+          Slider({
+            value: this.gyroSensitivity,
+            min: 0.5,
+            max: 3.0,
+            step: 0.1,
+            style: SliderStyle.OutSet
+          })
+            .width('100%')
+            .blockColor('#A8D8EA')
+            .trackColor('#30FFFFFF')
+            .selectedColor('#A8D8EA')
+            .showSteps(false)
+            .showTips(false)
+            .onChange((value: number, mode: SliderChangeMode) => {
+              this.gyroSensitivity = Math.round(value * 10) / 10;  // 保留1位小数
+              GyroAssistService.getInstance().setSensitivity(this.gyroSensitivity);
+              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                this.saveGyroSetting(SettingsKeys.GYRO_SENSITIVITY, this.gyroSensitivity);
+              }
+            })
+
+          Row() {
+            Text('0.5x')
+              .fontSize(9)
+              .fontColor('#60FFFFFF')
+            Blank()
+            Text('3.0x')
+              .fontSize(9)
+              .fontColor('#60FFFFFF')
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ left: 14, right: 14, top: 10, bottom: 4 })
+
+        // ===== 轴反转开关 =====
+        Row() {
+          Text('X轴反转')
+            .fontSize(11)
+            .fontColor('#B0FFFFFF')
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.gyroInvertX })
+            .selectedColor('#A8D8EA')
+            .switchPointColor('#FFFFFF')
+            .width(36)
+            .height(20)
+            .onChange((isOn: boolean) => {
+              this.gyroInvertX = isOn;
+              GyroAssistService.getInstance().setInvertX(isOn);
+              this.saveGyroSetting(SettingsKeys.GYRO_INVERT_X, isOn);
+            })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 12, top: 6, bottom: 2 })
+
+        Row() {
+          Text('Y轴反转')
+            .fontSize(11)
+            .fontColor('#B0FFFFFF')
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.gyroInvertY })
+            .selectedColor('#A8D8EA')
+            .switchPointColor('#FFFFFF')
+            .width(36)
+            .height(20)
+            .onChange((isOn: boolean) => {
+              this.gyroInvertY = isOn;
+              GyroAssistService.getInstance().setInvertY(isOn);
+              this.saveGyroSetting(SettingsKeys.GYRO_INVERT_Y, isOn);
+            })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 12, top: 2, bottom: 6 })
+
+        // ===== 分割线 =====
+        Row()
+          .width('85%')
+          .height(1)
+          .backgroundColor('#15FFFFFF')
+
+        // ===== 激活方式选择 =====
+        Column() {
+          Text('激活方式')
+            .fontSize(11)
+            .fontColor('#B0FFFFFF')
+            .width('100%')
+            .padding({ bottom: 6 })
+
+          Row({ space: 8 }) {
+            this.ActivationButton('始终', GYRO_ACTIVATION_ALWAYS)
+            this.ActivationButton('LT', GYRO_ACTIVATION_LT)
+            this.ActivationButton('RT', GYRO_ACTIVATION_RT)
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 14 })
+      }
+    }
+    .width(280)
+    .backgroundColor('#25FFFFFF')
+    .backdropBlur(40)
+    .borderRadius(20)
+    .border({ width: 1, color: '#20FFFFFF' })
+    .shadow({ radius: 20, color: '#20000000', offsetY: 4 })
+  }
+
+  /**
+   * 激活方式按钮 (胶囊型)
+   */
+  @Builder
+  ActivationButton(label: string, key: number) {
+    Text(label)
+      .fontSize(11)
+      .fontWeight(this.gyroActivationKey === key ? FontWeight.Bold : FontWeight.Normal)
+      .fontColor(this.gyroActivationKey === key ? '#FFFFFF' : '#80FFFFFF')
+      .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+      .borderRadius(14)
+      .backgroundColor(this.gyroActivationKey === key ? '#50A8D8EA' : '#15FFFFFF')
+      .border({
+        width: 1,
+        color: this.gyroActivationKey === key ? '#A8D8EA' : '#20FFFFFF'
+      })
+      .onClick(() => {
+        this.gyroActivationKey = key;
+        GyroAssistService.getInstance().setActivationKey(key);
+        this.saveGyroSetting(SettingsKeys.GYRO_ACTIVATION_KEY, key);
+      })
+  }
+
   /**
    * 超级指令卡片 - 奶油风格（独立卡片）
    */
