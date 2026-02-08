@@ -9,7 +9,7 @@
  */
 
 import { router, promptAction } from '@kit.ArkUI';
-import { ComputerInfo, ComputerState, PairState } from '../model/ComputerInfo';
+import { ComputerInfo, ComputerState, PairState, selectBestAddress } from '../model/ComputerInfo';
 import { ComputerManager } from '../service/ComputerManager';
 import { ComputerCard } from '../components/ComputerCard';
 import { ComputerListViewModel, ObservableComputer, ComputerDataSource } from '../viewmodel/ComputerViewModel';
@@ -18,7 +18,7 @@ import { PairingManager, PairState as PMPairState } from '../service/PairingMana
 import { NvHttp } from '../service/NvHttp';
 import { common, bundleManager, Want } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
-import { BackgroundImageUtil } from '../utils/BackgroundImageUtil';
+import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { BackgroundImage } from '../components/BackgroundImage';
 import { sensor } from '@kit.SensorServiceKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/OptionPickerDialog';
@@ -131,6 +131,13 @@ struct PcListPageV2 {
   
   private async loadBackgroundImage(): Promise<void> {
     try {
+      // 先检查背景图类型，如果是 NONE 则不加载
+      const bgType = await this.backgroundUtil.getBackgroundImageType();
+      if (bgType === BackgroundImageType.NONE) {
+        this.backgroundImageUrl = '';
+        return;
+      }
+
       // 首次使用检查免责声明
       const disclaimerAccepted = await this.backgroundUtil.isDisclaimerAccepted();
       if (!disclaimerAccepted) {
@@ -152,6 +159,26 @@ struct PcListPageV2 {
     }
   }
   
+  /**
+   * 页面返回时重新加载背景图设置
+   * 用户可能在设置页面更改了背景图类型
+   */
+  private async reloadBackgroundImage(): Promise<void> {
+    try {
+      // 强制重新读取设置
+      const bgType = await this.backgroundUtil.reload();
+      const currentType = await this.backgroundUtil.getBackgroundImageType();
+      if (currentType === BackgroundImageType.NONE) {
+        this.backgroundImageUrl = '';
+      } else if (bgType) {
+        // 类型发生变化，重新加载
+        this.loadBackgroundImage();
+      }
+    } catch (err) {
+      // 忽略错误
+    }
+  }
+
   /**
    * 显示背景图免责声明弹窗
    */
@@ -298,6 +325,9 @@ struct PcListPageV2 {
       }).catch((err: Error) => {
         console.warn('[MOONLIGHT] PcListPage: 刷新失败', err);
       });
+      // 重新加载背景图设置（用户可能在设置中更改了背景图类型）
+      // 注意：首次加载时 aboutToAppear 已调用 loadBackgroundImage，不需要重复
+      this.reloadBackgroundImage();
     }
     // 重新启动摇一摇检测
     this.startShakeDetection();
@@ -1096,7 +1126,7 @@ struct PcListPageV2 {
 
       // 获取应用列表
       const context = getContext(this) as common.UIAbilityContext;
-      const nvHttp = new NvHttp(computerInfo.address, computerInfo.serverCert, context, computerInfo.httpPort);
+      const nvHttp = new NvHttp(selectBestAddress(computerInfo), computerInfo.serverCert, context, computerInfo.httpPort);
       const apps = await nvHttp.getAppList();
 
       if (apps.length === 0) {
@@ -1140,7 +1170,7 @@ struct PcListPageV2 {
 
       // 执行配对（使用保存的自定义端口）
       const context = getContext(this) as common.UIAbilityContext;
-      const pairingManager = new PairingManager(computer.address, computer.uuid, context, computer.httpPort);
+      const pairingManager = new PairingManager(selectBestAddress(computer), computer.uuid, context, computer.httpPort);
       const result = await pairingManager.pair(pin);
 
       console.info(`PcListPageV2: 配对结果 ${result.state}`);
@@ -1286,7 +1316,7 @@ struct PcListPageV2 {
             promptAction.showToast(toastOptions);
 
             const context = getContext(this) as common.UIAbilityContext;
-            const nvHttp = new NvHttp(computer.address, computer.serverCert || null, context, computer.httpPort);
+            const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, context, computer.httpPort);
             const success = await nvHttp.quitApp();
 
             if (success) {
@@ -1332,7 +1362,7 @@ struct PcListPageV2 {
             promptAction.showToast(toastOpts);
 
             const context = getContext(this) as common.UIAbilityContext;
-            const nvHttp = new NvHttp(computer.address, computer.serverCert || null, context, computer.httpPort);
+            const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, context, computer.httpPort);
             const success = await nvHttp.pcSleep();
 
             if (success) {

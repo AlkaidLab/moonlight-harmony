@@ -791,6 +791,14 @@ export class NvHttp {
       params.push('clientHdrCapDisplayData=0x0x0x0x0x0x0x0x0x0x0');
     }
 
+    // 客户端屏幕亮度范围（用于服务端 HDR tone mapping）
+    const minBrightness = config.minBrightness ?? 2;
+    const maxBrightness = config.maxBrightness ?? 500;
+    const maxAvgBrightness = config.maxAverageBrightness ?? 200;
+    params.push(`minBrightness=${minBrightness}`);
+    params.push(`maxBrightness=${maxBrightness}`);
+    params.push(`maxAverageBrightness=${maxAvgBrightness}`);
+
     console.info(`NvHttp: buildLaunchQuery: ${params.join('&')}`);
     return params.join('&');
   }
@@ -926,4 +934,7 @@ export interface LaunchConfig {
   enableHdr?: boolean;
   hdrMode?: number;  // 0=SDR, 1=HDR10(PQ), 2=HLG
   displayGuid?: string;  // Sunshine 显示器 GUID
+  minBrightness?: number;       // 客户端屏幕最小亮度 (nits)
+  maxBrightness?: number;       // 客户端屏幕最大亮度 (nits)
+  maxAverageBrightness?: number; // 客户端屏幕最大平均亮度 (nits)
 }

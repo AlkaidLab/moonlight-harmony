@@ -121,27 +121,13 @@ export struct ComputerCard {
    */
   @Builder
   private AvatarSection() {
-    Stack({ alignContent: Alignment.BottomEnd }) {
+    Stack() {
       // 头像内容
       if (this.shouldShowBoxArt()) {
         this.BoxArtWithFallback()
       } else {
         this.DefaultIcon()
       }
-
-      // 状态指示点
-      Circle()
-        .width(this.STATUS_DOT_SIZE)
-        .height(this.STATUS_DOT_SIZE)
-        .fill(this.getStatusDotColor())
-        .stroke(AppColors.CardBackground)
-        .strokeWidth(2)
-        .shadow({
-          radius: 4,
-          color: this.getStatusDotColor() + '80',
-          offsetX: 0,
-          offsetY: 0
-        })
     }
     .width(this.AVATAR_SIZE)
     .height(this.AVATAR_SIZE)
@@ -206,11 +192,18 @@ export struct ComputerCard {
         .fontFamily('monospace')
         .margin({ top: AppSpacing.XSmall })
 
-      // 第三行：状态文本（不再重复显示配对徽章）
-      Text(this.computer.statusText)
-        .fontSize(AppSizes.FontCaption)
-        .fontColor(this.getStatusTextColor())
-        .margin({ top: AppSpacing.Small })
+      // 第三行：状态圆点 + 状态文本
+      Row() {
+        Circle()
+          .width(8)
+          .height(8)
+          .fill(this.getStatusDotColor())
+          .margin({ right: 6 })
+        Text(this.computer.statusText)
+          .fontSize(AppSizes.FontCaption)
+          .fontColor(this.getStatusTextColor())
+      }
+      .margin({ top: AppSpacing.Small })
     }
     .alignItems(HorizontalAlign.Start)
     .layoutWeight(1)

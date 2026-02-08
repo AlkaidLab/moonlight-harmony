@@ -8,12 +8,13 @@
  * (at your option) any later version.
  */
 
-import { ComputerInfo, ComputerState, PairState, ComputerInfoBuilder } from '../model/ComputerInfo';
+import { ComputerInfo, ComputerState, PairState, ComputerInfoBuilder, selectBestAddress } from '../model/ComputerInfo';
 import { NvHttp, ServerInfo } from './NvHttp';
 import { MdnsDiscovery, DiscoveredComputer } from './MdnsDiscovery';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { WakeOnLan } from './WakeOnLan';
+import { connection } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 
 /**
@@ -25,7 +26,15 @@ class AddressParseResult {
 }
 
 /**
- * 轮询结果接口
+ * 地址端口提取结果
+ */
+interface ExtractedHostPort {
+  host: string;
+  port: number;
+}
+
+/**
+ * 轮询结果
  */
 interface PollResult {
   address: string;
@@ -33,9 +42,26 @@ interface PollResult {
 }
 
 /**
- * 轮询常量 - 参照 Android ComputerManagerService
+ * 持久化存储的电脑数据格式
  */
-const SERVERINFO_POLLING_PERIOD_MS = 5000; // 每5秒轮询一次服务器状态（从3秒增加到5秒以减少CPU负载）
+interface SavedComputerData {
+  uuid: string;
+  name: string;
+  address: string;
+  localAddress: string;
+  remoteAddress: string;
+  manualAddress?: string;
+  ipv6Address?: string;
+  macAddress: string;
+  serverCert: string;
+  pairState: string;
+  runningGameId: number;
+  boxArtUrl?: string;
+  httpPort?: number;
+}
+
+/** 轮询间隔（毫秒），参照 Android ComputerManagerService */
+const SERVERINFO_POLLING_PERIOD_MS = 5000;
 
 /**
  * 电脑管理器 - 管理所有已发现和手动添加的电脑
@@ -49,6 +75,11 @@ export class ComputerManager {
   private isInitialized: boolean = false;
   private pollingTimerId: number = -1;
   private isPollingActive: boolean = false;
+  private netConnection: connection.NetConnection | null = null;
+
+  // ═══════════════════════════════════════════════════════════
+  // 初始化 & 单例
+  // ═══════════════════════════════════════════════════════════
 
   private constructor() {
     // mdnsDiscovery 需要在 init 时使用 context 初始化
@@ -85,6 +116,9 @@ export class ComputerManager {
     // 加载已保存的电脑（等待完成）
     await this.loadComputers();
     
+    // 注册网络变化监听（类似 Android 的 registerDefaultNetworkCallback）
+    this.registerNetworkListener();
+    
     this.isInitialized = true;
     console.info('ComputerManager: 初始化完成');
 
@@ -98,54 +132,22 @@ export class ComputerManager {
     this.onComputerListChanged = callback;
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // mDNS 发现
+  // ═══════════════════════════════════════════════════════════
+
   /**
    * 处理 mDNS 发现的电脑
    */
   private async handleDiscoveredComputer(discovered: DiscoveredComputer): Promise<void> {
-    console.info(`ComputerManager: 处理发现的电脑 ${discovered.name} @ ${discovered.address}:${discovered.port}`);
+    console.info(`ComputerManager: mDNS 发现 ${discovered.name} @ ${discovered.address}:${discovered.port}`);
 
-    // 检查是否已存在（按任意地址匹配，包括 manualAddress）
-    const existing = Array.from(this.computers.values())
-      .find(c => 
-        c.address === discovered.address || 
-        c.localAddress === discovered.address ||
-        c.remoteAddress === discovered.address ||
-        c.manualAddress === discovered.address
-      );
+    const existing = this.findComputerByAddress(discovered.address);
 
     if (existing) {
-      // 已存在：只更新本地地址，不覆盖 address 和 manualAddress
-      // mDNS 发现的地址是本地地址
-      if (existing.localAddress !== discovered.address) {
-        existing.localAddress = discovered.address;
-        console.info(`ComputerManager: 更新 ${existing.name} 的本地地址为 ${discovered.address}`);
-      }
-      
-      // 更新端口（如果 mDNS 提供了非默认端口）
-      if (discovered.port && discovered.port !== 47989) {
-        existing.httpPort = discovered.port;
-        console.info(`ComputerManager: 更新 ${existing.name} 的端口为 ${discovered.port}`);
-      }
-
-      // 尝试通过新发现的地址连接
-      try {
-        const nvHttp = new NvHttp(discovered.address, existing.serverCert, this.context || undefined, existing.httpPort);
-        const serverInfo = await nvHttp.getServerInfo();
-        existing.state = ComputerState.ONLINE;
-        // 注意：不再覆盖 address，只更新 localAddress（已在上面更新）
-        // 如果原 address 为空，才设置为发现的地址
-        if (!existing.address) {
-          existing.address = discovered.address;
-        }
-        existing.runningGameId = serverInfo.currentGame;
-        console.info(`ComputerManager: 已验证电脑在线 ${existing.name}`);
-      } catch (err) {
-        // mDNS 发现但无法通过该地址连接，尝试其他已知地址
-        console.warn(`ComputerManager: mDNS 地址无法连接 ${existing.name}: ${err}，尝试其他地址`);
-        await this.pollComputer(existing);
-      }
+      this.mergeDiscoveredInfo(existing, discovered);
+      await this.verifyOrPollComputer(existing, discovered.address);
     } else {
-      // 尝试连接并添加新电脑，传入 mDNS 发现的端口
       try {
         await this.addComputerInternal(discovered.address, discovered.name, discovered.port);
       } catch (err) {
@@ -153,11 +155,98 @@ export class ComputerManager {
       }
     }
 
-    // 通知列表变化
+    this.notifyListChanged();
+  }
+
+  /**
+   * 按地址查找已存在的电脑（匹配所有地址字段）
+   */
+  private findComputerByAddress(address: string): ComputerInfo | undefined {
+    return Array.from(this.computers.values())
+      .find(c =>
+        c.address === address ||
+        c.localAddress === address ||
+        c.remoteAddress === address ||
+        c.manualAddress === address
+      );
+  }
+
+  /**
+   * 将 mDNS 发现的信息合并到已有电脑
+   */
+  private mergeDiscoveredInfo(existing: ComputerInfo, discovered: DiscoveredComputer): void {
+    if (existing.localAddress !== discovered.address) {
+      existing.localAddress = discovered.address;
+    }
+    if (discovered.ipv6Address && existing.ipv6Address !== discovered.ipv6Address) {
+      existing.ipv6Address = discovered.ipv6Address;
+    }
+    if (discovered.port && discovered.port !== 47989) {
+      existing.httpPort = discovered.port;
+    }
+  }
+
+  /**
+   * 尝试通过 mDNS 地址验证电脑在线，失败则回退到全地址轮询
+   */
+  private async verifyOrPollComputer(computer: ComputerInfo, address: string): Promise<void> {
+    try {
+      const nvHttp = new NvHttp(address, computer.serverCert, this.context || undefined, computer.httpPort);
+      const serverInfo = await nvHttp.getServerInfo();
+
+      // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
+      if (serverInfo.uniqueId && computer.uuid !== serverInfo.uniqueId) {
+        this.reconcileUuid(computer, serverInfo.uniqueId);
+      }
+
+      computer.state = ComputerState.ONLINE;
+      if (!computer.address) computer.address = address;
+      computer.runningGameId = serverInfo.currentGame;
+      if (serverInfo.hostname) computer.name = serverInfo.hostname;
+    } catch (err) {
+      console.warn(`ComputerManager: mDNS 地址无法连接 ${computer.name}，回退轮询`);
+      await this.pollComputer(computer);
+    }
+  }
+
+  /**
+   * UUID 归一：当轮询/验证返回的真实 UUID 与条目的临时 UUID 不同时
+   * 合并到已有真实条目，或重新映射 UUID
+   * @returns 应继续更新的目标条目（可能是合并后的已有条目）
+   */
+  private reconcileUuid(computer: ComputerInfo, realUuid: string): ComputerInfo {
+    const existingReal = this.computers.get(realUuid);
+
+    if (existingReal) {
+      // 真实 UUID 条目已存在 → 合并到已有条目，删除临时条目
+      console.info(`ComputerManager: 合并临时条目 ${computer.uuid} → 已有条目 ${realUuid}`);
+      this.computers.delete(computer.uuid);
+      if (computer.manualAddress && !existingReal.manualAddress) {
+        existingReal.manualAddress = computer.manualAddress;
+      }
+      return existingReal;
+    }
+
+    // 真实 UUID 不存在 → 重新映射
+    console.info(`ComputerManager: 临时条目 ${computer.uuid} 获得真实 UUID ${realUuid}`);
+    this.computers.delete(computer.uuid);
+    computer.uuid = realUuid;
+    this.computers.set(realUuid, computer);
+    return computer;
+  }
+
+  /**
+   * 通知电脑列表变化
+   */
+  private notifyListChanged(): void {
     if (this.onComputerListChanged) {
       this.onComputerListChanged();
     }
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // CRUD 操作
+  // ═══════════════════════════════════════════════════════════
 
   /**
    * 获取所有电脑列表
@@ -178,6 +267,7 @@ export class ComputerManager {
       localAddress: computer.localAddress,
       remoteAddress: computer.remoteAddress,
       manualAddress: computer.manualAddress,
+      ipv6Address: computer.ipv6Address,
       macAddress: computer.macAddress,
       state: computer.state,
       pairState: computer.pairState,
@@ -251,19 +341,15 @@ export class ComputerManager {
     const parsed = this.parseAddressInput(addressInput);
     const result = await this.addComputerInternal(parsed.host, undefined, parsed.port);
     
-    // 保存用户手动输入的地址（可能是域名或 IP）
-    // 这个地址永不会被自动发现覆盖
-    result.manualAddress = addressInput.trim();
+    // 保存用户手动输入的地址（仅主机部分，端口已存储在 httpPort 中）
+    // 这个地址永不会被自动发现覆盖，轮询时最优先尝试
+    result.manualAddress = parsed.host;
     
     // 保存更新后的电脑信息
     this.computers.set(result.uuid, result);
     await this.saveComputers();
     
-    // 通知列表变化
-    if (this.onComputerListChanged) {
-      this.onComputerListChanged();
-    }
-    
+    this.notifyListChanged();
     return result;
   }
 
@@ -300,19 +386,10 @@ export class ComputerManager {
           return result;
         }
       } else {
-        // 格式: ::1 或 ::1:47989（需要智能判断最后部分是否为端口）
-        const lastColonIndex = trimmed.lastIndexOf(':');
-        if (lastColonIndex > 0 && lastColonIndex < trimmed.length - 1) {
-          const possiblePort = trimmed.substring(lastColonIndex + 1);
-          const port = parseInt(possiblePort);
-          // 如果最后部分是有效端口号
-          if (!isNaN(port) && port > 0 && port <= 65535) {
-            result.host = trimmed.substring(0, lastColonIndex);
-            result.port = port;
-            return result;
-          }
-        }
-        // 纯 IPv6 地址
+        // 裸 IPv6 地址（无方括号），如 ::1 或 fe80::1
+        // 注意：裸 IPv6 地址无法无歧义地分离端口（地址本身就包含冒号）
+        // 只有 [addr]:port 格式才能指定 IPv6 + 端口
+        // 因此直接将整个字符串作为主机名
         result.host = trimmed;
         return result;
       }
@@ -339,6 +416,7 @@ export class ComputerManager {
 
   /**
    * 内部添加电脑方法
+   * 如果该 UUID 的电脑已存在，合并更新而非替换，保留 serverCert 等配对信息
    */
   private async addComputerInternal(address: string, discoveredName?: string, httpPort?: number): Promise<ComputerInfo> {
     const nvHttp = new NvHttp(address, null, this.context || undefined, httpPort);
@@ -350,13 +428,53 @@ export class ComputerManager {
       // 使用服务器返回的本地地址，如果没有则使用连接地址
       const localAddr = serverInfo.localAddress || address;
       const remoteAddr = serverInfo.externalAddress || '';
+      
+      // 检测连接地址是否为 IPv6（包含至少2个冒号）
+      const isIPv6 = address.includes(':') && address.split(':').length > 2;
 
+      // 检查是否已存在相同 UUID 的电脑
+      const existing = this.computers.get(serverInfo.uniqueId);
+      if (existing) {
+        // 合并更新：保留已有的配对信息，更新地址和状态
+        existing.name = serverInfo.hostname || existing.name;
+        existing.address = address;
+        existing.localAddress = localAddr;
+        if (remoteAddr) {
+          existing.remoteAddress = remoteAddr;
+        }
+        if (isIPv6) {
+          existing.ipv6Address = address;
+        }
+        if (serverInfo.macAddress) {
+          existing.macAddress = serverInfo.macAddress;
+        }
+        existing.state = ComputerState.ONLINE;
+        existing.runningGameId = serverInfo.currentGame || 0;
+        if (httpPort) {
+          existing.httpPort = httpPort;
+        }
+        // 关键：保留 serverCert 和 pairState（如已配对）
+        // 只有服务器明确返回 paired=true 时才更新配对状态
+        if (serverInfo.paired) {
+          existing.pairState = PairState.PAIRED;
+        }
+        // 如果 existing.serverCert 已有值，不覆盖
+        // serverCert 只能通过配对流程获取
+
+        console.info(`ComputerManager: 合并更新已有电脑 ${existing.name} (${existing.uuid}), 保留配对信息`);
+        this.computers.set(existing.uuid, existing);
+        await this.saveComputers();
+        return existing;
+      }
+
+      // 全新电脑，创建新条目
       const computer = new ComputerInfoBuilder()
         .setUuid(serverInfo.uniqueId)
         .setName(serverInfo.hostname || discoveredName || address)
         .setAddress(address) // 保持原始连接地址
         .setLocalAddress(localAddr) // 服务器返回的本地地址
         .setRemoteAddress(remoteAddr) // 服务器返回的外部地址
+        .setIpv6Address(isIPv6 ? address : undefined) // 如果连接地址是 IPv6，存储之
         .setMacAddress(serverInfo.macAddress || '')
         .setState(ComputerState.ONLINE)
         .setPairState(serverInfo.paired ? PairState.PAIRED : PairState.NOT_PAIRED)
@@ -397,44 +515,34 @@ export class ComputerManager {
     await this.saveComputers();
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 轮询 & 网络监听
+  // ═══════════════════════════════════════════════════════════
+
   /**
    * 刷新所有电脑状态
-   * 并行尝试多个地址（本地地址、远程地址等），任何一个成功即为在线
-   * 优化：每台电脑刷新完成后立即通知 UI，不需要等待所有电脑
+   * 并行轮询，每台完成后立即通知 UI
    */
   async refreshAllComputers(): Promise<void> {
     try {
-      const refreshPromises = Array.from(this.computers.values()).map(async (computer) => {
-        try {
-          const stateChanged = await this.pollComputer(computer);
-          // 每台电脑完成后立即通知 UI 更新
-          if (this.onComputerListChanged) {
-            this.onComputerListChanged();
+      await Promise.all(
+        Array.from(this.computers.values()).map(async (computer) => {
+          try {
+            await this.pollComputer(computer);
+          } catch {
+            computer.state = ComputerState.OFFLINE;
           }
-        } catch (err) {
-          // 刷新失败时设为离线状态
-          computer.state = ComputerState.OFFLINE;
-          // 也通知 UI 更新
-          if (this.onComputerListChanged) {
-            this.onComputerListChanged();
-          }
-        }
-      });
-
-      await Promise.all(refreshPromises);
+          this.notifyListChanged();
+        })
+      );
     } catch (err) {
       console.error('ComputerManager: refreshAllComputers 异常:', err);
-      // 如果整体刷新失败，将所有 UNKNOWN 状态设为 OFFLINE
       this.computers.forEach(computer => {
         if (computer.state === ComputerState.UNKNOWN) {
           computer.state = ComputerState.OFFLINE;
         }
       });
-      
-      // 即使失败也通知UI刷新
-      if (this.onComputerListChanged) {
-        this.onComputerListChanged();
-      }
+      this.notifyListChanged();
     }
   }
 
@@ -465,6 +573,68 @@ export class ComputerManager {
   }
   
   /**
+   * 注册网络变化监听（类似 Android 的 registerDefaultNetworkCallback）
+   * 当网络切换（WiFi ↔ 蜂窝、切换 WiFi 等）时自动触发重新轮询
+   */
+  private registerNetworkListener(): void {
+    try {
+      // 创建默认网络连接监听（不指定 netSpecifier 表示监控默认网络）
+      this.netConnection = connection.createNetConnection();
+
+      // 网络可用（WiFi 连接、蜂窝恢复等）→ 重置所有 PC 状态并立即重新轮询
+      this.netConnection.on('netAvailable', () => {
+        console.info('ComputerManager: 网络变为可用，重置并重新轮询');
+        this.computers.forEach(c => { c.state = ComputerState.UNKNOWN; });
+
+        if (this.isPollingActive) {
+          this.refreshAllComputers().catch((err: Error) => {
+            console.warn('ComputerManager: 网络恢复后刷新失败', err);
+          });
+        }
+        this.notifyListChanged();
+      });
+
+      // 网络丢失 → 标记所有 PC 为离线
+      this.netConnection.on('netLost', () => {
+        console.info('ComputerManager: 网络丢失，标记所有 PC 为离线');
+        this.computers.forEach(c => { c.state = ComputerState.OFFLINE; });
+        this.notifyListChanged();
+      });
+
+      // 注册监听（开始接收回调）
+      this.netConnection.register((err) => {
+        if (err) {
+          console.error(`ComputerManager: 注册网络监听失败: ${JSON.stringify(err)}`);
+        } else {
+          console.info('ComputerManager: 网络变化监听已注册');
+        }
+      });
+    } catch (err) {
+      console.error('ComputerManager: 注册网络监听异常', err);
+    }
+  }
+
+  /**
+   * 取消注册网络变化监听
+   */
+  private unregisterNetworkListener(): void {
+    if (this.netConnection) {
+      try {
+        this.netConnection.unregister((err) => {
+          if (err) {
+            console.error(`ComputerManager: 取消网络监听失败: ${JSON.stringify(err)}`);
+          } else {
+            console.info('ComputerManager: 网络变化监听已取消');
+          }
+        });
+      } catch (err) {
+        console.error('ComputerManager: 取消网络监听异常', err);
+      }
+      this.netConnection = null;
+    }
+  }
+
+  /**
    * 停止状态轮询定时器
    */
   stopPolling(): void {
@@ -478,134 +648,137 @@ export class ComputerManager {
 
   /**
    * 轮询单台电脑，并行尝试所有已知地址
-   * 使用"任一成功即返回"策略，不需要等待所有地址超时
+   * 任一地址成功即标记在线，无需等待所有地址超时
    */
   async pollComputer(computer: ComputerInfo): Promise<boolean> {
-    // 收集所有可能的地址（去重）
-    // 优先级：manualAddress > address > localAddress > remoteAddress
-    const addressSet = new Set<string>();
-    if (computer.manualAddress) addressSet.add(computer.manualAddress);  // 手动输入的地址优先
-    if (computer.address) addressSet.add(computer.address);
-    if (computer.localAddress) addressSet.add(computer.localAddress);
-    if (computer.remoteAddress) addressSet.add(computer.remoteAddress);
-
-    const addresses = Array.from(addressSet);
-    console.info(`ComputerManager: 正在轮询 ${computer.name}，地址列表: ${addresses.join(', ')}`);
-
+    const addresses = this.collectAddresses(computer);
     if (addresses.length === 0) {
-      console.warn(`ComputerManager: ${computer.name} 没有可用地址`);
       computer.state = ComputerState.OFFLINE;
       return false;
     }
 
-    // 辅助函数：尝试连接单个地址
-    const tryAddress = async (address: string): Promise<PollResult> => {
-      try {
-        const nvHttp = new NvHttp(address, computer.serverCert, this.context || undefined, computer.httpPort);
-        const serverInfo = await nvHttp.getServerInfo();
-        return { address, serverInfo };
-      } catch (err) {
-        console.info(`ComputerManager: ${computer.name} @ ${address} 无法连接: ${err}`);
-        return { address, serverInfo: null };
-      }
-    };
+    console.info(`ComputerManager: 轮询 ${computer.name}，地址: ${addresses.join(', ')}`);
 
-    // 并行尝试所有地址，使用 Promise.race 风格
-    // 将每个地址的尝试包装成一个 Promise
-    const addressPromises = addresses.map(address => tryAddress(address));
-    
-    // 创建一个"任一成功即 resolve"的 Promise
-    const firstSuccessPromise = new Promise<PollResult | null>((resolve) => {
+    // 并行尝试所有地址，取第一个成功的结果
+    const successResult = await this.raceForFirstSuccess(
+      addresses.map(addr => this.tryPollAddress(addr, computer))
+    );
+
+    if (successResult?.serverInfo) {
+      this.updateComputerFromPoll(computer, successResult);
+      return true;
+    }
+
+    computer.state = ComputerState.OFFLINE;
+    console.info(`ComputerManager: ${computer.name} 所有地址均无法连接`);
+    return false;
+  }
+
+  /**
+   * 收集电脑的所有可用地址（去重，按优先级排序）
+   */
+  private collectAddresses(computer: ComputerInfo): string[] {
+    const addressSet = new Set<string>();
+    if (computer.manualAddress) addressSet.add(computer.manualAddress);
+    if (computer.address) addressSet.add(computer.address);
+    if (computer.localAddress) addressSet.add(computer.localAddress);
+    if (computer.remoteAddress) addressSet.add(computer.remoteAddress);
+    if (computer.ipv6Address) addressSet.add(computer.ipv6Address);
+    return Array.from(addressSet);
+  }
+
+  /**
+   * 尝试通过单个地址轮询
+   */
+  private async tryPollAddress(address: string, computer: ComputerInfo): Promise<PollResult> {
+    try {
+      const nvHttp = new NvHttp(address, computer.serverCert, this.context || undefined, computer.httpPort);
+      const serverInfo = await nvHttp.getServerInfo();
+      return { address, serverInfo };
+    } catch (err) {
+      return { address, serverInfo: null };
+    }
+  }
+
+  /**
+   * 从多个 Promise 中返回第一个成功（serverInfo 非 null）的结果
+   * 所有都失败时返回 null
+   */
+  private raceForFirstSuccess(promises: Promise<PollResult>[]): Promise<PollResult | null> {
+    return new Promise<PollResult | null>((resolve) => {
       let completedCount = 0;
       let hasResolved = false;
       
-      for (const p of addressPromises) {
+      for (const p of promises) {
         p.then((result: PollResult) => {
           if (result.serverInfo !== null && !hasResolved) {
             hasResolved = true;
             resolve(result);
           }
           completedCount++;
-          // 所有地址都尝试完毕且没有成功
-          if (completedCount === addresses.length && !hasResolved) {
+          if (completedCount === promises.length && !hasResolved) {
             resolve(null);
           }
         }).catch(() => {
           completedCount++;
-          if (completedCount === addresses.length && !hasResolved) {
+          if (completedCount === promises.length && !hasResolved) {
             resolve(null);
           }
         });
       }
     });
+  }
 
-    const successResult = await firstSuccessPromise;
+  /**
+   * 根据轮询结果更新电脑信息
+   * 如果电脑的 UUID 是临时的 discovered-*，用服务器返回的真实 UUID 重新映射
+   */
+  private updateComputerFromPoll(computer: ComputerInfo, result: PollResult): void {
+    const info = result.serverInfo!;
 
-    if (successResult && successResult.serverInfo) {
-      computer.state = ComputerState.ONLINE;
-      // 更新 address 为可用的地址，但不覆盖 manualAddress
-      // 如果成功的地址是 manualAddress，则不改变 address
-      if (successResult.address !== computer.manualAddress) {
-        computer.address = successResult.address;
-      }
-      computer.runningGameId = successResult.serverInfo.currentGame;
-      
-      // 更新 MAC 地址（如果服务器返回了有效的 MAC 地址）
-      const serverMac = successResult.serverInfo.macAddress;
-      if (serverMac && serverMac !== '00:00:00:00:00:00' && serverMac !== '') {
-        computer.macAddress = serverMac;
-        console.info(`ComputerManager: ${computer.name} 更新 MAC 地址: ${serverMac}`);
-      }
-      
-      // 更新本地/远程地址（如果服务器返回了有效地址）
-      // 注意：这里只更新 localAddress 和 remoteAddress，不影响 manualAddress
-      if (successResult.serverInfo.localAddress) {
-        computer.localAddress = successResult.serverInfo.localAddress;
-      }
-      if (successResult.serverInfo.externalAddress) {
-        computer.remoteAddress = successResult.serverInfo.externalAddress;
-      }
-      
-      // 更新配对状态的逻辑（与 Android 一致）：
-      // 注意：HTTP 请求总是返回 paired=false（服务器无法通过 HTTP 验证客户端身份）
-      // 只有 HTTPS + 客户端证书 才能返回正确的配对状态
-      // 因此：如果本地有 serverCert，应该信任本地配对状态，而不是清除它
-      if (successResult.serverInfo.paired) {
-        computer.pairState = PairState.PAIRED;
-      } else {
-        // 服务器返回未配对状态
-        // 重要：不要因为服务器返回 paired=false 就清除 serverCert！
-        // HTTP 请求总是返回 paired=false，这不代表配对真的失效了
-        // 只有在用户主动取消配对时才应该清除 serverCert
-        if (computer.serverCert) {
-          // 本地有 serverCert，可能是 HTTP 响应（总是返回 paired=false）
-          // 保持 PAIRED 状态，让用户可以正常连接
-          // 如果配对真的失效了，连接时会失败并提示用户重新配对
-          console.info(`ComputerManager: ${computer.name} 服务器返回未配对（可能是 HTTP 响应），但本地有 serverCert，保持配对状态`);
-          computer.pairState = PairState.PAIRED;
-        } else {
-          computer.pairState = PairState.NOT_PAIRED;
-        }
-      }
-      
-      console.info(`ComputerManager: ${computer.name} 在线 (通过 ${successResult.address})，当前游戏: ${successResult.serverInfo.currentGame}，配对状态: ${computer.pairState}, serverCert: ${computer.serverCert ? '有' : '无'}, MAC: ${computer.macAddress || '(空)'}, boxArtUrl: ${computer.boxArtUrl || '(空)'}`);
+    // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
+    let target = computer;
+    if (info.uniqueId && computer.uuid !== info.uniqueId) {
+      target = this.reconcileUuid(computer, info.uniqueId);
+    }
 
-      // 保存更新后的电脑信息（包括 MAC 地址等）
-      this.saveComputers();
+    // 更新名称
+    if (info.hostname) {
+      target.name = info.hostname;
+    }
 
-      // 如果已配对且没有 boxArt（或 boxArt 是远程 URL 而非本地缓存），尝试获取第一个应用的缩略图作为主机头像
-      const needsBoxArt = computer.pairState === PairState.PAIRED && 
-        (!computer.boxArtUrl || computer.boxArtUrl.startsWith('http'));
-      if (needsBoxArt) {
-        console.info(`ComputerManager: ${computer.name} 需要加载 boxArt`);
-        this.loadFirstAppBoxArt(computer, successResult.address);
-      }
-
-      return true;
+    target.state = ComputerState.ONLINE;
+    target.address = result.address;
+    target.runningGameId = info.currentGame;
+    
+    // 更新 MAC 地址
+    if (info.macAddress && info.macAddress !== '00:00:00:00:00:00') {
+      target.macAddress = info.macAddress;
+    }
+    
+    // 更新本地/远程地址
+    if (info.localAddress) target.localAddress = info.localAddress;
+    if (info.externalAddress) target.remoteAddress = info.externalAddress;
+    
+    // 更新配对状态：
+    // HTTP 请求总是返回 paired=false，只有 HTTPS + 客户端证书 才返回正确状态
+    // 如果本地有 serverCert，信任本地配对状态
+    if (info.paired) {
+      target.pairState = PairState.PAIRED;
+    } else if (target.serverCert) {
+      // 可能是 HTTP 响应，保持已配对状态
+      target.pairState = PairState.PAIRED;
     } else {
-      computer.state = ComputerState.OFFLINE;
-      console.info(`ComputerManager: ${computer.name} 所有地址均无法连接，标记为离线`);
-      return false;
+      target.pairState = PairState.NOT_PAIRED;
+    }
+    
+    console.info(`ComputerManager: ${target.name} 在线 (${result.address}), game=${info.currentGame}, paired=${target.pairState}`);
+    this.saveComputers();
+
+    // 如果已配对且需要 boxArt，异步加载
+    if (target.pairState === PairState.PAIRED && 
+        (!target.boxArtUrl || target.boxArtUrl.startsWith('http'))) {
+      this.loadFirstAppBoxArt(target, result.address);
     }
   }
 
@@ -625,9 +798,7 @@ export class ComputerManager {
           console.info(`ComputerManager: ${computer.name} 已设置 boxArt 本地路径: ${cachedPath}`);
           // 保存更新并通知 UI
           await this.saveComputers();
-          if (this.onComputerListChanged) {
-            this.onComputerListChanged();
-          }
+          this.notifyListChanged();
         } else {
           console.warn(`ComputerManager: ${computer.name} 无法缓存 boxArt`);
         }
@@ -637,8 +808,12 @@ export class ComputerManager {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 扫描 & 配对
+  // ═══════════════════════════════════════════════════════════
+
   /**
-   * 扫描网络发现电脑
+   * 扫描网络发现电脑（mDNS 回调会自动处理发现的主机）
    */
   async scanNetwork(): Promise<void> {
     if (!this.mdnsDiscovery) {
@@ -646,16 +821,9 @@ export class ComputerManager {
       return;
     }
 
-    console.info('ComputerManager: 开始扫描网络...');
-
     try {
       const discovered = await this.mdnsDiscovery.discover(5000);
-      console.info(`ComputerManager: 发现 ${discovered.length} 台电脑`);
-
-      for (const computer of discovered) {
-        // handleDiscoveredComputer 会在 mDNS 回调中被调用
-        // 这里只是确保超时后也处理完毕
-      }
+      console.info(`ComputerManager: mDNS 扫描完成，发现 ${discovered.length} 台电脑`);
     } catch (err) {
       console.error('ComputerManager: 网络扫描失败', err);
     }
@@ -692,7 +860,7 @@ export class ComputerManager {
       throw new Error('电脑不存在');
     }
 
-    const nvHttp = new NvHttp(computer.address, null, this.context || undefined, computer.httpPort);
+    const nvHttp = new NvHttp(selectBestAddress(computer), null, this.context || undefined, computer.httpPort);
     const pin = this.generatePin();
     
     computer.pairState = PairState.NOT_PAIRED;
@@ -718,7 +886,7 @@ export class ComputerManager {
       throw new Error('电脑不存在');
     }
 
-    const nvHttp = new NvHttp(computer.address, computer.serverCert, this.context || undefined, computer.httpPort);
+    const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert, this.context || undefined, computer.httpPort);
     await nvHttp.unpair();
     
     computer.pairState = PairState.NOT_PAIRED;
@@ -735,27 +903,9 @@ export class ComputerManager {
       throw new Error('无法唤醒：缺少 MAC 地址');
     }
 
-    // 收集所有已知地址（去重）
-    const addressSet = new Set<string>();
-    if (computer.address) {
-      addressSet.add(computer.address);
-    }
-    if (computer.localAddress) {
-      addressSet.add(computer.localAddress);
-    }
-    if (computer.remoteAddress) {
-      addressSet.add(computer.remoteAddress);
-    }
-    if (computer.ipv6Address) {
-      addressSet.add(computer.ipv6Address);
-    }
-    
-    const addresses = Array.from(addressSet);
-    
-    // 使用批量发送 API
     await WakeOnLan.sendWolToAddresses(
       computer.macAddress,
-      addresses,
+      this.collectAddresses(computer),
       computer.httpPort || 47989
     );
   }
@@ -773,29 +923,17 @@ export class ComputerManager {
     return pin;
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 持久化
+  // ═══════════════════════════════════════════════════════════
+
   /**
    * 保存电脑列表到持久化存储
    */
   async saveComputers(): Promise<void> {
     try {
-      interface SavedComputerData {
-        uuid: string;
-        name: string;
-        address: string;
-        localAddress: string;
-        remoteAddress: string;
-        manualAddress?: string;  // 用户手动输入的地址
-        macAddress: string;
-        serverCert: string;
-        pairState: string;
-        runningGameId: number;
-        boxArtUrl?: string;
-        httpPort?: number;
-      }
-      
       const computerList: SavedComputerData[] = [];
       this.computers.forEach((computer) => {
-        // 将枚举值转为字符串名称
         let pairStateStr: string = 'NOT_PAIRED';
         if (computer.pairState === PairState.PAIRED) {
           pairStateStr = 'PAIRED';
@@ -811,7 +949,8 @@ export class ComputerManager {
           address: computer.address,
           localAddress: computer.localAddress,
           remoteAddress: computer.remoteAddress,
-          manualAddress: computer.manualAddress,  // 保存手动输入的地址
+          manualAddress: computer.manualAddress,
+          ipv6Address: computer.ipv6Address,
           macAddress: computer.macAddress,
           serverCert: computer.serverCert,
           pairState: pairStateStr,
@@ -823,7 +962,7 @@ export class ComputerManager {
       });
       
       await PreferencesUtil.put('saved_computers', JSON.stringify(computerList));
-      console.info(`ComputerManager: 保存 ${computerList.length} 台电脑, 详情: ${computerList.map(c => `${c.name}(pairState=${c.pairState}, serverCert长度=${c.serverCert?.length || 0})`).join(', ')}`);
+      console.info(`ComputerManager: 保存 ${computerList.length} 台电脑`);
     } catch (err) {
       console.error('ComputerManager: 保存电脑列表失败', err);
     }
@@ -834,62 +973,31 @@ export class ComputerManager {
    */
   private async loadComputers(): Promise<void> {
     try {
-      console.info('ComputerManager: 开始加载电脑列表...');
       const savedJson = await PreferencesUtil.get<string>('saved_computers', '');
-      console.info(`ComputerManager: 读取到的 JSON = ${savedJson ? savedJson.substring(0, 100) + '...' : '(空)'}`);
-      
       if (!savedJson) {
         console.info('ComputerManager: 没有保存的电脑');
         return;
       }
       
-      interface SavedComputer {
-        uuid: string;
-        name: string;
-        address: string;
-        localAddress: string;
-        remoteAddress: string;
-        manualAddress?: string;  // 用户手动输入的地址
-        macAddress: string;
-        serverCert: string;
-        pairState: string;
-        runningGameId: number;
-        boxArtUrl?: string;
-        httpPort?: number;
-      }
-      
-      const computerList = JSON.parse(savedJson) as SavedComputer[];
+      const computerList = JSON.parse(savedJson) as SavedComputerData[];
       console.info(`ComputerManager: 解析到 ${computerList.length} 台电脑`);
       
       for (const saved of computerList) {
-        // 兼容旧格式（数字字符串 "1"）和新格式（名称字符串 "PAIRED"）
-        let pairState: PairState = PairState.NOT_PAIRED;
-        if (saved.pairState === 'PAIRED' || saved.pairState === '1') {
-          pairState = PairState.PAIRED;
-        } else if (saved.pairState === 'FAILED' || saved.pairState === '3') {
-          pairState = PairState.FAILED;
-        } else if (saved.pairState === 'PIN_WRONG' || saved.pairState === '2') {
-          pairState = PairState.PIN_WRONG;
-        }
+        // 解析配对状态（兼容旧格式数字字符串 "1" 和新格式 "PAIRED"）
+        const pairState = this.parsePairState(saved.pairState);
         
-        // 兼容旧数据：如果 httpPort 为空但地址中包含端口，则提取端口
+        // 兼容旧数据：从地址中提取端口
         let httpPort = saved.httpPort;
         let addressHost = saved.address;
         if (!httpPort && saved.address) {
-          const colonIndex = saved.address.indexOf(':');
-          // 只有一个冒号，说明是端口分隔符（IPv6 有多个冒号）
-          if (colonIndex > 0 && saved.address.indexOf(':', colonIndex + 1) === -1) {
-            const portStr = saved.address.substring(colonIndex + 1);
-            const port = parseInt(portStr);
-            if (port > 0 && port <= 65535 && port !== 47989) {
-              httpPort = port;
-              addressHost = saved.address.substring(0, colonIndex);
-              console.info(`ComputerManager: 迁移旧数据 - 从地址中提取端口 ${saved.address} -> host=${addressHost}, port=${httpPort}`);
-            }
+          const extracted = this.extractPortFromAddress(saved.address);
+          if (extracted) {
+            httpPort = extracted.port;
+            addressHost = extracted.host;
           }
         }
         
-        console.info(`ComputerManager: 加载 ${saved.name} pairState=${saved.pairState} -> ${pairState}, httpPort=${httpPort}, serverCert长度=${saved.serverCert?.length || 0}, boxArtUrl="${saved.boxArtUrl || '(空)'}"`);
+        console.info(`ComputerManager: 加载 ${saved.name} (pairState=${pairState}, httpPort=${httpPort}, cert=${saved.serverCert ? '有' : '无'})`);
         
         const computer = new ComputerInfoBuilder()
           .setUuid(saved.uuid)
@@ -897,7 +1005,8 @@ export class ComputerManager {
           .setAddress(addressHost)
           .setLocalAddress(saved.localAddress || addressHost)
           .setRemoteAddress(saved.remoteAddress || '')
-          .setManualAddress(saved.manualAddress)  // 加载手动输入的地址
+          .setManualAddress(saved.manualAddress)
+          .setIpv6Address(saved.ipv6Address)
           .setMacAddress(saved.macAddress || '')
           .setServerCert(saved.serverCert || '')
           .setState(ComputerState.UNKNOWN)
@@ -908,14 +1017,37 @@ export class ComputerManager {
           .build();
         
         this.computers.set(computer.uuid, computer);
-        console.info(`ComputerManager: 加载电脑 ${computer.name} (${computer.uuid})`);
       }
       
       console.info(`ComputerManager: 加载完成，共 ${this.computers.size} 台电脑`);
-      
-      // 注意：状态刷新在 init() 方法中异步执行
     } catch (err) {
       console.error('ComputerManager: 加载电脑列表失败', err);
     }
+  }
+
+  /**
+   * 解析配对状态字符串
+   */
+  private parsePairState(stateStr: string): PairState {
+    if (stateStr === 'PAIRED' || stateStr === '1') return PairState.PAIRED;
+    if (stateStr === 'FAILED' || stateStr === '3') return PairState.FAILED;
+    if (stateStr === 'PIN_WRONG' || stateStr === '2') return PairState.PIN_WRONG;
+    return PairState.NOT_PAIRED;
+  }
+
+  /**
+   * 从旧格式地址中提取端口（兼容迁移）
+   */
+  private extractPortFromAddress(address: string): ExtractedHostPort | null {
+    const colonIndex = address.indexOf(':');
+    if (colonIndex > 0 && address.indexOf(':', colonIndex + 1) === -1) {
+      const portStr = address.substring(colonIndex + 1);
+      const port = parseInt(portStr);
+      if (port > 0 && port <= 65535 && port !== 47989) {
+        const result: ExtractedHostPort = { host: address.substring(0, colonIndex), port: port };
+        return result;
+      }
+    }
+    return null;
   }
 }

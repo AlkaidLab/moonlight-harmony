@@ -23,8 +23,9 @@ import { common } from '@kit.AbilityKit';
 const BACKGROUND_IMAGE_URL_KEY = 'settings_background_image_url';
 const BACKGROUND_IMAGE_TYPE_KEY = 'settings_background_image_type';
 const BACKGROUND_DISCLAIMER_ACCEPTED_KEY = 'settings_background_disclaimer_accepted';
-// 本地缓存文件名
-const CACHED_BACKGROUND_FILENAME = 'cached_background.jpg';
+// 本地缓存文件名（横屏/竖屏分别缓存）
+const CACHED_BACKGROUND_LANDSCAPE = 'cached_background_landscape.jpg';
+const CACHED_BACKGROUND_PORTRAIT = 'cached_background_portrait.jpg';
 // 背景图缓存过期时间：24小时（毫秒）
 const BACKGROUND_CACHE_EXPIRE_MS = 24 * 60 * 60 * 1000;
 
@@ -110,8 +111,14 @@ export class BackgroundImageUtil {
   private refreshTimestamp: number = 0;
   // 缓存当前显示的图片数据（用于下载）
   private cachedImageData: ArrayBuffer | null = null;
-  // 本地缓存文件路径
+  // 本地缓存文件路径（根据当前屏幕方向动态选择）
   private localCachePath: string = '';
+  // 横屏缓存路径
+  private landscapeCachePath: string = '';
+  // 竖屏缓存路径
+  private portraitCachePath: string = '';
+  // 当前缓存的方向
+  private cachedOrientation: string = '';
   // 应用上下文（用于获取沙盒路径）
   private context: common.Context | null = null;
 
@@ -129,7 +136,35 @@ export class BackgroundImageUtil {
    */
   setContext(context: common.Context): void {
     this.context = context;
-    this.localCachePath = `${context.cacheDir}/${CACHED_BACKGROUND_FILENAME}`;
+    this.landscapeCachePath = `${context.cacheDir}/${CACHED_BACKGROUND_LANDSCAPE}`;
+    this.portraitCachePath = `${context.cacheDir}/${CACHED_BACKGROUND_PORTRAIT}`;
+    // 根据当前方向设置默认缓存路径
+    this.updateCachePathForOrientation();
+  }
+
+  /**
+   * 根据当前屏幕方向更新缓存路径
+   */
+  private updateCachePathForOrientation(): void {
+    const orientation = this.getCurrentOrientation();
+    if (orientation === 'portrait') {
+      this.localCachePath = this.portraitCachePath;
+    } else {
+      this.localCachePath = this.landscapeCachePath;
+    }
+    this.cachedOrientation = orientation;
+  }
+
+  /**
+   * 获取当前屏幕方向
+   */
+  private getCurrentOrientation(): string {
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      return displayInfo.height > displayInfo.width ? 'portrait' : 'landscape';
+    } catch (err) {
+      return 'landscape'; // 默认横屏
+    }
   }
 
   /**
@@ -141,12 +176,16 @@ export class BackgroundImageUtil {
 
   /**
    * 下载图片到本地缓存，返回本地文件路径
+   * 根据当前屏幕方向使用对应的缓存文件
    * 如果已有缓存且不强制刷新，直接返回缓存路径
    */
   async downloadToLocalCache(forceRefresh: boolean = false): Promise<string> {
     if (!this.context) {
       return '';
     }
+    
+    // 检测方向变化，切换缓存路径
+    this.updateCachePathForOrientation();
     
     // 检查是否已有本地缓存
     if (!forceRefresh && this.localCachePath) {
@@ -165,17 +204,18 @@ export class BackgroundImageUtil {
             this.cachedImageData = new ArrayBuffer(stat.size);
             fileIo.readSync(file.fd, this.cachedImageData);
             fileIo.closeSync(file.fd);
+            console.info(`BackgroundImageUtil: 使用 ${this.cachedOrientation} 方向缓存`);
             return this.localCachePath;
           }
         }
       } catch (error) {
         // 文件不存在，继续下载
-        console.debug('BackgroundImageUtil: 缓存文件不存在，将下载新图片');
+        console.debug(`BackgroundImageUtil: ${this.cachedOrientation} 方向缓存不存在，将下载新图片`);
       }
     }
     
-    // 获取 API URL（使用 Pipw 作为默认）
-    const apiUrl = this.getPipwApiUrl();
+    // 根据当前类型和方向获取 API URL
+    const apiUrl = await this.getApiUrlForCurrentType();
     
     // 下载图片数据
     const imageData = await this.downloadImage(apiUrl);
@@ -248,6 +288,29 @@ export class BackgroundImageUtil {
     } catch (err) {
       console.error('BackgroundImageUtil: 加载背景图设置失败', err);
       return this.getPipwApiUrl();
+    }
+  }
+
+  /**
+   * 根据当前背景图类型获取对应的 API URL
+   */
+  private async getApiUrlForCurrentType(): Promise<string> {
+    const bgType = await PreferencesUtil.get<string>(
+      BACKGROUND_IMAGE_TYPE_KEY,
+      BackgroundImageType.DEFAULT
+    ) as BackgroundImageType;
+
+    switch (bgType) {
+      case BackgroundImageType.PICSUM:
+        return this.getPicsumApiUrl();
+      case BackgroundImageType.API:
+        return await PreferencesUtil.get<string>(BACKGROUND_IMAGE_URL_KEY, '');
+      case BackgroundImageType.NONE:
+        return '';
+      case BackgroundImageType.PIPW:
+      case BackgroundImageType.DEFAULT:
+      default:
+        return this.getPipwApiUrl();
     }
   }
 
@@ -376,11 +439,33 @@ export class BackgroundImageUtil {
 
   /**
    * 禁用背景图
+   * 同时清除本地缓存文件和内存缓存
    */
   async disableBackgroundImage(): Promise<void> {
     await this.setBackgroundImageType(BackgroundImageType.NONE);
     this.cachedUrl = '';
     this.isLoaded = true;
+    this.cachedImageData = null;
+    // 删除本地缓存文件，防止下次启动时仍然显示旧图片
+    await this.clearLocalCache();
+  }
+
+  /**
+   * 清除本地缓存的背景图文件（清除所有方向的缓存）
+   */
+  async clearLocalCache(): Promise<void> {
+    const paths: string[] = [this.landscapeCachePath, this.portraitCachePath];
+    for (const cachePath of paths) {
+      if (cachePath) {
+        try {
+          await fileIo.access(cachePath);
+          await fileIo.unlink(cachePath);
+          console.info(`BackgroundImageUtil: 已清除缓存文件 ${cachePath}`);
+        } catch (err) {
+          // 文件不存在或删除失败，忽略
+        }
+      }
+    }
   }
 
   /**

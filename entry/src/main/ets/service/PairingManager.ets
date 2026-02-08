@@ -385,17 +385,43 @@ export class PairingManager {
   }
 
   /**
+   * 获取服务器主版本号
+   * 通过 /serverinfo 接口获取 appversion 字段
+   */
+  private async fetchServerMajorVersion(): Promise<number> {
+    try {
+      const url = `${this.baseUrl}/serverinfo?uniqueid=${this.uniqueId}`;
+      const response = await this.doRequest(url, 10000);
+      const appVersion = XmlUtil.getValue(response, 'appversion');
+      if (appVersion) {
+        const parts = appVersion.split('.');
+        if (parts.length > 0) {
+          const major = parseInt(parts[0]);
+          if (!isNaN(major)) {
+            console.info(`PairingManager: 检测到服务器主版本号 = ${major}`);
+            return major;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`PairingManager: 获取服务器版本失败: ${err}, 使用默认值 7`);
+    }
+    return 7;
+  }
+
+  /**
    * 执行配对流程
    *
    * @param pin 用户输入的 4 位 PIN 码
-   * @param serverMajorVersion 服务器主版本号（7+ 使用 SHA-256）
    * @returns 配对结果
    */
-  async pair(pin: string, serverMajorVersion: number = 7): Promise<PairResult> {
+  async pair(pin: string): Promise<PairResult> {
     await this.initialize();
 
+    // 自动检测服务器版本号（Gen 7+ 使用 SHA-256，之前使用 SHA-1）
+    const serverMajorVersion = await this.fetchServerMajorVersion();
     const useSha256 = serverMajorVersion >= 7;
-    console.info(`PairingManager: 使用 ${useSha256 ? 'SHA-256' : 'SHA-1'} 哈希算法`);
+    console.info(`PairingManager: 服务器版本 ${serverMajorVersion}, 使用 ${useSha256 ? 'SHA-256' : 'SHA-1'} 哈希算法`);
 
     try {
       // ============ 步骤 1: 发送 salt 和客户端证书，获取服务器证书 ============
@@ -498,7 +524,14 @@ export class PairingManager {
       const serverSecret = serverSecretResp.slice(0, 16);
       const serverSignature = serverSecretResp.slice(16);
 
-      // TODO: 验证服务器签名（需要解析服务器证书的公钥）
+      // 验证服务器签名（防止 MITM 攻击）
+      const serverSignatureValid = await CryptoUtil.verifyWithCert(serverSecret, serverSignature, this.serverCertDer!);
+      if (!serverSignatureValid) {
+        console.error('PairingManager: 服务器签名验证失败，可能存在中间人攻击');
+        await this.unpair();
+        return { state: PairState.FAILED, pairName };
+      }
+      console.info('PairingManager: 服务器签名验证通过');
 
       // 验证 PIN 是否正确
       // 使用服务器证书签名（参考 Android 实现：serverCert.getSignature()）

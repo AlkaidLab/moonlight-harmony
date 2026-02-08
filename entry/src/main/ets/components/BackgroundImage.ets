@@ -36,6 +36,10 @@ export struct BackgroundImage {
   @Prop imageOpacity: number = 0.15;
   @Prop enableLongPressSave: boolean = true;
   @State showSaveDialog: boolean = false;
+  // 淡入过渡效果：图片加载完成前透明度为 0
+  @State currentOpacity: number = 0;
+  // 记录上一次的 URL，检测变化时重置淡入
+  private lastImageUrl: string = '';
   
   private backgroundUtil = BackgroundImageUtil.getInstance();
   
@@ -96,14 +100,27 @@ export struct BackgroundImage {
         .height('100%')
         .backgroundColor(AppColors.Background)
 
-      // 网络图片背景 - 移除 blur 效果以提升性能
+      // 网络图片背景 - 带淡入过渡效果
       if (this.imageUrl && this.imageUrl.length > 0) {
         Image(this.imageUrl)
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
-          .opacity(this.imageOpacity)
+          .opacity(this.currentOpacity)
+          .animation({
+            duration: 600,
+            curve: Curve.EaseOut
+          })
+          .onAppear(() => {
+            // URL 变化时重置透明度
+            if (this.lastImageUrl !== this.imageUrl) {
+              this.currentOpacity = 0;
+              this.lastImageUrl = this.imageUrl;
+            }
+          })
           .onComplete(() => {
+            // 图片加载完成，淡入到目标透明度
+            this.currentOpacity = this.imageOpacity;
             // 仅在支持长按保存时预缓存图片数据
             if (this.enableLongPressSave) {
               this.backgroundUtil.preloadAndCacheImage();

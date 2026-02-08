@@ -16,7 +16,7 @@ import { AppCard } from '../components/AppCard';
 import { AppListViewModel, ObservableApp } from '../viewmodel/AppViewModel';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { common } from '@kit.AbilityKit';
-import { PairState } from '../model/ComputerInfo';
+import { PairState, selectBestAddress } from '../model/ComputerInfo';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig } from '../components/ConfirmDialog';
 
@@ -199,7 +199,7 @@ struct AppListPageV2 {
       this.computerName = computer.name;
       
       const context = getContext(this) as common.UIAbilityContext;
-      this.nvHttp = new NvHttp(computer.address, computer.serverCert, context, computer.httpPort);
+      this.nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert, context, computer.httpPort);
       
       const apps = await this.nvHttp.getAppList();
 

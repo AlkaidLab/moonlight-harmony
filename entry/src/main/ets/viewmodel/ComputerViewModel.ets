@@ -8,7 +8,7 @@
  * (at your option) any later version.
  */
 
-import { ComputerInfo, ComputerState, PairState } from '../model/ComputerInfo';
+import { ComputerInfo, ComputerState, PairState, AddressHolder } from '../model/ComputerInfo';
 import { ComputerManager } from '../service/ComputerManager';
 
 /**
@@ -17,7 +17,7 @@ import { ComputerManager } from '../service/ComputerManager';
  * 注意：避免在 @Observed 类中使用 getter，会导致性能问题
  */
 @Observed
-export class ObservableComputer {
+export class ObservableComputer implements AddressHolder {
   uuid: string = '';
   name: string = '';
   address: string = '';
@@ -28,6 +28,8 @@ export class ObservableComputer {
   macAddress: string = '';
   localAddress: string = '';
   remoteAddress: string = '';
+  manualAddress: string = '';  // 用户手动输入的地址（如域名），轮询时最优先尝试
+  ipv6Address: string = '';     // IPv6 地址
   pairName: string = '';
   gpuType: string = '';
   isNvidiaSoftware: boolean = false;
@@ -59,6 +61,8 @@ export class ObservableComputer {
     this.macAddress = info.macAddress;
     this.localAddress = info.localAddress;
     this.remoteAddress = info.remoteAddress;
+    this.manualAddress = info.manualAddress || '';
+    this.ipv6Address = info.ipv6Address || '';
     this.pairName = info.pairName;
     this.gpuType = info.gpuType;
     this.isNvidiaSoftware = info.isNvidiaSoftware;
@@ -98,6 +102,8 @@ export class ObservableComputer {
       macAddress: this.macAddress,
       localAddress: this.localAddress,
       remoteAddress: this.remoteAddress,
+      manualAddress: this.manualAddress || undefined,
+      ipv6Address: this.ipv6Address || undefined,
       pairName: this.pairName,
       gpuType: this.gpuType,
       maxSupportedResolution: { width: 1920, height: 1080 },

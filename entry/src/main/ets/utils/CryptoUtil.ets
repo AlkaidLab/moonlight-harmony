@@ -12,6 +12,14 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
 
 /**
+ * ASN.1 元素信息
+ */
+interface Asn1ElementInfo {
+  length: number;
+  totalLength: number;
+}
+
+/**
  * 加密工具类
  *
  * 用于证书生成、加密通信等
@@ -193,7 +201,149 @@ export class CryptoUtil {
     const dataBlob = CryptoUtil.createDataBlob(data);
     await verifier.update(dataBlob);
     const sigBlob = CryptoUtil.createDataBlob(signature);
-    const result = await verifier.verify(dataBlob, sigBlob);
+    const result = await verifier.verify(null, sigBlob);
+    return result;
+  }
+
+  /**
+   * 使用 DER 编码的 X.509 证书验证签名
+   * 从证书中提取公钥，然后验证 data 的 RSA-SHA256 签名
+   */
+  static async verifyWithCert(data: Uint8Array, signature: Uint8Array, certDer: Uint8Array): Promise<boolean> {
+    try {
+      // 从 DER 证书中提取 SubjectPublicKeyInfo
+      const pubKeyDer = CryptoUtil.extractSubjectPublicKeyInfo(certDer);
+      if (!pubKeyDer) {
+        console.error('CryptoUtil: 无法从证书中提取公钥');
+        return false;
+      }
+
+      // 转换为 PubKey 对象
+      const generator = cryptoFramework.createAsyKeyGenerator('RSA2048');
+      const keyPair = await generator.convertKey({ data: pubKeyDer }, null);
+
+      // 验证签名
+      return await CryptoUtil.rsaVerify(data, signature, keyPair.pubKey);
+    } catch (err) {
+      console.error('CryptoUtil: verifyWithCert 失败', err);
+      return false;
+    }
+  }
+
+  /**
+   * 从 X.509 证书 DER 中提取 SubjectPublicKeyInfo
+   *
+   * TBSCertificate ::= SEQUENCE {
+   *   version [0] EXPLICIT INTEGER DEFAULT v1,
+   *   serialNumber INTEGER,
+   *   signature AlgorithmIdentifier,
+   *   issuer Name,
+   *   validity Validity,
+   *   subject Name,
+   *   subjectPublicKeyInfo SubjectPublicKeyInfo  <-- 我们要的
+   * }
+   */
+  private static extractSubjectPublicKeyInfo(certDer: Uint8Array): Uint8Array | null {
+    try {
+      let pos = 0;
+
+      // 外层 SEQUENCE (Certificate)
+      pos = CryptoUtil.skipAsn1Tag(certDer, pos, 0x30);
+      if (pos < 0) return null;
+      pos = CryptoUtil.skipAsn1Length(certDer, pos);
+      if (pos < 0) return null;
+
+      // TBSCertificate SEQUENCE
+      pos = CryptoUtil.skipAsn1Tag(certDer, pos, 0x30);
+      if (pos < 0) return null;
+      pos = CryptoUtil.skipAsn1Length(certDer, pos);
+      if (pos < 0) return null;
+
+      // version [0] EXPLICIT (可选，如果存在则 tag = 0xA0)
+      if (certDer[pos] === 0xA0) {
+        pos = CryptoUtil.skipAsn1Element(certDer, pos);
+        if (pos < 0) return null;
+      }
+
+      // serialNumber INTEGER
+      pos = CryptoUtil.skipAsn1Element(certDer, pos);
+      if (pos < 0) return null;
+
+      // signature AlgorithmIdentifier SEQUENCE
+      pos = CryptoUtil.skipAsn1Element(certDer, pos);
+      if (pos < 0) return null;
+
+      // issuer Name SEQUENCE
+      pos = CryptoUtil.skipAsn1Element(certDer, pos);
+      if (pos < 0) return null;
+
+      // validity Validity SEQUENCE
+      pos = CryptoUtil.skipAsn1Element(certDer, pos);
+      if (pos < 0) return null;
+
+      // subject Name SEQUENCE
+      pos = CryptoUtil.skipAsn1Element(certDer, pos);
+      if (pos < 0) return null;
+
+      // subjectPublicKeyInfo SEQUENCE — 这就是我们需要的
+      const spkiResult = CryptoUtil.readAsn1Element(certDer, pos);
+      if (!spkiResult) return null;
+
+      console.info(`CryptoUtil: 提取 SubjectPublicKeyInfo 成功，长度 = ${spkiResult.length}`);
+      return certDer.slice(pos, pos + spkiResult.totalLength);
+    } catch (err) {
+      console.error('CryptoUtil: extractSubjectPublicKeyInfo 失败', err);
+      return null;
+    }
+  }
+
+  /** 检查 ASN.1 tag 并跳过 */
+  private static skipAsn1Tag(data: Uint8Array, pos: number, expectedTag: number): number {
+    if (pos >= data.length || data[pos] !== expectedTag) return -1;
+    return pos + 1;
+  }
+
+  /** 解析 ASN.1 长度字段并返回长度值后的位置 */
+  private static skipAsn1Length(data: Uint8Array, pos: number): number {
+    if (pos >= data.length) return -1;
+    if ((data[pos] & 0x80) === 0) {
+      return pos + 1;
+    }
+    const lenBytes = data[pos] & 0x7F;
+    return pos + 1 + lenBytes;
+  }
+
+  /** 跳过一个完整的 ASN.1 元素 (tag + length + value) */
+  private static skipAsn1Element(data: Uint8Array, pos: number): number {
+    const result = CryptoUtil.readAsn1Element(data, pos);
+    if (!result) return -1;
+    return pos + result.totalLength;
+  }
+
+  /** 读取一个 ASN.1 元素的信息 */
+  private static readAsn1Element(data: Uint8Array, pos: number): Asn1ElementInfo | null {
+    if (pos >= data.length) return null;
+    let offset = pos + 1; // 跳过 tag
+
+    if (offset >= data.length) return null;
+
+    let contentLength: number;
+    if ((data[offset] & 0x80) === 0) {
+      contentLength = data[offset];
+      offset++;
+    } else {
+      const lenBytes = data[offset] & 0x7F;
+      offset++;
+      contentLength = 0;
+      for (let i = 0; i < lenBytes; i++) {
+        if (offset + i >= data.length) return null;
+        contentLength = (contentLength << 8) | data[offset + i];
+      }
+      offset += lenBytes;
+    }
+
+    const totalLength = offset - pos + contentLength;
+    const result: Asn1ElementInfo = { length: contentLength, totalLength: totalLength };
     return result;
   }
 

@@ -11,10 +11,11 @@
 import { StreamConfig, HdrMode, getSurroundAudioInfo } from '../model/StreamConfig';
 import { InputEvent, InputType, ControllerButtonEvent, ControllerAxisEvent, ControllerButton } from '../model/InputEvent';
 import { ComputerManager } from './ComputerManager';
-import { ComputerInfo } from '../model/ComputerInfo';
+import { ComputerInfo, selectBestAddress } from '../model/ComputerInfo';
 import { NvHttp, LaunchConfig } from './NvHttp';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { common } from '@kit.AbilityKit';
+import { display } from '@kit.ArkUI';
 import { GamepadManager } from './GamepadManager';
 import { MicrophoneStream } from './microphone/MicrophoneStream';
 import { MoonBridge } from './MoonBridge';
@@ -274,7 +275,7 @@ export class StreamingSession {
       this.computer = computerResult;
       
       // 2. 创建 NvHttp 实例（传递 context 以支持客户端证书，传递 httpPort 支持自定义端口）
-      this.nvHttp = new NvHttp(this.computer.address, this.computer.serverCert, context, this.computer.httpPort);
+      this.nvHttp = new NvHttp(selectBestAddress(this.computer), this.computer.serverCert, context, this.computer.httpPort);
       
       // 3. 获取服务器信息（包括 appVersion、gfeVersion）
       const serverInfo = await this.nvHttp.getServerInfo();
@@ -860,6 +861,48 @@ export class StreamingSession {
   }
 
   /**
+   * 获取设备屏幕亮度范围（最小值、最大值、最大平均亮度，单位 nits）
+   * 用于服务端 HDR tone mapping
+   *
+   * HarmonyOS 没有直接暴露 HDR luminance 的 API，
+   * 所以使用与 Android 相同的默认值，
+   * 并根据屏幕 HDR 支持情况适当调整。
+   *
+   * @returns [minBrightness, maxBrightness, maxAverageBrightness]
+   */
+  private static getBrightnessRange(): number[] {
+    let minBrightness = 2;         // 大多数设备最低亮度约 2 nits
+    let maxBrightness = 500;       // 默认 SDR 最大亮度约 500 nits
+    let maxAverageBrightness = 200; // 默认最大平均亮度
+
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      if (displayInfo) {
+        // 通过 JSON 序列化检测 hdrFormats 属性（避免 ArkTS 类型限制）
+        try {
+          const displayJson: string = JSON.stringify(displayInfo);
+          const displayObj: Record<string, Object> = JSON.parse(displayJson) as Record<string, Object>;
+          const hdrFormats = displayObj['hdrFormats'] as number[];
+          if (hdrFormats && hdrFormats.length > 0) {
+            // 设备支持 HDR，使用更高的默认亮度值
+            maxBrightness = Math.max(maxBrightness, 1000);
+            maxAverageBrightness = Math.max(maxAverageBrightness, 400);
+            console.info(`StreamingSession: 设备支持 HDR, formats=${JSON.stringify(hdrFormats)}, ` +
+              `maxBrightness=${maxBrightness}, maxAverageBrightness=${maxAverageBrightness}`);
+          }
+        } catch (innerErr) {
+          // hdrFormats 属性不存在或解析失败，使用默认值
+        }
+      }
+    } catch (err) {
+      console.warn(`StreamingSession: 获取屏幕信息失败: ${err}`);
+    }
+
+    console.info(`StreamingSession: 亮度范围: min=${minBrightness}, max=${maxBrightness}, avg=${maxAverageBrightness} nits`);
+    return [minBrightness, maxBrightness, maxAverageBrightness];
+  }
+
+  /**
    * 启动应用
    */
   private async launchApp(): Promise<void> {
@@ -897,6 +940,9 @@ export class StreamingSession {
       this.config.hdr = effectiveHdr;
     }
     
+    // 获取设备屏幕亮度范围（用于服务端 HDR tone mapping）
+    const brightnessRange = StreamingSession.getBrightnessRange();
+
     const launchConfig: LaunchConfig = {
       appId: this.appId,
       width: this.config.width,
@@ -910,7 +956,10 @@ export class StreamingSession {
       audioConfig: getSurroundAudioInfo(this.config.audioConfig).toString(),  // 转换为 surroundAudioInfo 格式
       enableHdr: effectiveHdr,
       hdrMode: effectiveHdr ? this.config.hdrMode : HdrMode.SDR,  // 0=SDR, 1=HDR10, 2=HLG
-      displayGuid: this.displayGuid  // Sunshine 显示器选择
+      displayGuid: this.displayGuid,  // Sunshine 显示器选择
+      minBrightness: brightnessRange[0],
+      maxBrightness: brightnessRange[1],
+      maxAverageBrightness: brightnessRange[2]
     };
     
     try {

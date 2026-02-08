@@ -18,6 +18,7 @@ import { PerfIcons, PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem as DialogOptionItem } from '../components/OptionPickerDialog';
 import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem as DialogMultiOptionItem } from '../components/MultiOptionPickerDialog';
+import { BackgroundImageUtil } from '../utils/BackgroundImageUtil';
 
 /**
  * 选择器选项接口
@@ -2651,6 +2652,11 @@ struct SettingsPageV2 {
       onSelect: (option: PickerOption) => {
         this.backgroundImageType = option.value as string;
         this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_TYPE, option.value as string);
+        // 选择关闭时，清除本地缓存文件
+        if (option.value === 'none') {
+          const bgUtil = BackgroundImageUtil.getInstance();
+          bgUtil.disableBackgroundImage();
+        }
         this.showToast(`背景图片设置为: ${option.title}`);
       }
     };

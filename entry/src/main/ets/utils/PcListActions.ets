@@ -21,7 +21,7 @@ import { ObservableComputer } from '../viewmodel/ComputerViewModel';
 import { ComputerManager } from '../service/ComputerManager';
 import { PairingManager, PairState as PMPairState } from '../service/PairingManager';
 import { NvHttp } from '../service/NvHttp';
-import { PairState, ComputerState } from '../model/ComputerInfo';
+import { PairState, ComputerState, selectBestAddress } from '../model/ComputerInfo';
 import { ConfirmDialogConfig, InfoDialogConfig } from '../components/ConfirmDialog';
 import { AppColors } from '../common/Theme';
 
@@ -141,7 +141,7 @@ export class PcListActions {
     try {
       console.info(`PcListActions: 开始配对 ${computer.name}, PIN: ${pin}`);
       
-      const pairingManager = new PairingManager(computer.address, computer.uuid, this.context, computer.httpPort);
+      const pairingManager = new PairingManager(selectBestAddress(computer), computer.uuid, this.context, computer.httpPort);
       const result = await pairingManager.pair(pin);
       
       console.info(`PcListActions: 配对结果 ${result.state}`);
@@ -195,7 +195,7 @@ export class PcListActions {
     try {
       promptAction.showToast({ message: '正在退出游戏...' });
       
-      const nvHttp = new NvHttp(computer.address, computer.serverCert || null, this.context, computer.httpPort);
+      const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, this.context, computer.httpPort);
       const success = await nvHttp.quitApp();
       
       if (success) {
@@ -225,7 +225,7 @@ export class PcListActions {
     try {
       promptAction.showToast({ message: '正在发送休眠命令...' });
       
-      const nvHttp = new NvHttp(computer.address, computer.serverCert || null, this.context, computer.httpPort);
+      const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, this.context, computer.httpPort);
       const success = await nvHttp.pcSleep();
       
       if (success) {
@@ -349,7 +349,7 @@ export class PcListActions {
       }
       
       // 获取应用列表
-      const nvHttp = new NvHttp(computerInfo.address, computerInfo.serverCert, this.context, computerInfo.httpPort);
+      const nvHttp = new NvHttp(selectBestAddress(computerInfo), computerInfo.serverCert, this.context, computerInfo.httpPort);
       const apps = await nvHttp.getAppList();
       
       if (apps.length === 0) {

@@ -8,6 +8,8 @@
  * (at your option) any later version.
  */
 
+import { isLanIPv4Address, isLanAddress, isIPv6Address, isPublicAddress, detectAddressType, AddressType, getAddressTypeLabel } from '../utils/NetHelper';
+
 /**
  * 电脑信息模型
  */
@@ -18,14 +20,33 @@ export enum ComputerState {
   PAIRING = 3
 }
 
-export interface ComputerInfo {
-  uuid: string;
-  name: string;
+export enum PairState {
+  NOT_PAIRED = 0,
+  PAIRED = 1,
+  PIN_WRONG = 2,
+  FAILED = 3
+}
+
+export interface Resolution {
+  width: number;
+  height: number;
+}
+
+/**
+ * selectBestAddress 所需的最小地址字段集
+ * ComputerInfo 和 ObservableComputer 均满足此接口
+ */
+export interface AddressHolder {
   address: string;
   localAddress: string;
   remoteAddress: string;
-  manualAddress?: string;  // 用户手动输入的地址（如域名），永不被自动覆盖
-  ipv6Address?: string;  // IPv6 地址（可选）
+  manualAddress?: string;
+  ipv6Address?: string;
+}
+
+export interface ComputerInfo extends AddressHolder {
+  uuid: string;
+  name: string;
   macAddress: string;
   state: ComputerState;
   pairState: PairState;
@@ -41,16 +62,68 @@ export interface ComputerInfo {
   httpPort?: number;
 }
 
-export enum PairState {
-  NOT_PAIRED = 0,
-  PAIRED = 1,
-  PIN_WRONG = 2,
-  FAILED = 3
+/**
+ * 选择最佳连接地址
+ * 优先级: LAN IPv4 > LAN IPv6/ULA > 活跃地址 > Manual > WAN
+ *
+ * 移植自 Android ComputerDetails.selectBestAddress()，
+ * 即使轮询胜出的是 WAN 地址，只要有可用 LAN 地址就优先使用 LAN。
+ */
+export function selectBestAddress(computer: AddressHolder): string {
+  // 1. 如果活跃地址是 LAN，最优选择（已验证可达 + 低延迟）
+  if (computer.address && isLanAddress(computer.address)) {
+    return computer.address;
+  }
+
+  // 2. LAN IPv4 地址
+  if (computer.localAddress && isLanIPv4Address(computer.localAddress)) {
+    return computer.localAddress;
+  }
+
+  // 3. 手动地址如果也是 LAN 地址，优先使用
+  if (computer.manualAddress && isLanAddress(computer.manualAddress)) {
+    return computer.manualAddress;
+  }
+
+  // 4. IPv6 LAN 地址（link-local / ULA）
+  if (computer.ipv6Address && isLanAddress(computer.ipv6Address)) {
+    return computer.ipv6Address;
+  }
+
+  // — 以下为非 LAN 回退 —
+
+  // 5. 活跃地址（WAN 但已验证可达）
+  if (computer.address) return computer.address;
+
+  // 6. localAddress（可能不确定类型但仍是服务器报告的本地地址）
+  if (computer.localAddress) return computer.localAddress;
+
+  // 7. 手动地址（VPN / 域名）
+  if (computer.manualAddress) return computer.manualAddress;
+
+  // 8. IPv6 全局单播
+  if (computer.ipv6Address) return computer.ipv6Address;
+
+  // 9. WAN 外网地址
+  if (computer.remoteAddress) return computer.remoteAddress;
+
+  return '';
 }
 
-export interface Resolution {
-  width: number;
-  height: number;
+/**
+ * 获取地址的网络类型描述
+ */
+export function getAddressNetworkLabel(address: string | undefined): string {
+  return getAddressTypeLabel(address);
+}
+
+/**
+ * 判断计算机是否有可用的 LAN 地址
+ */
+export function hasLanAddress(computer: ComputerInfo): boolean {
+  return isLanAddress(computer.localAddress) ||
+    isLanAddress(computer.address) ||
+    isLanAddress(computer.manualAddress);
 }
 
 export class ComputerInfoBuilder {
