@@ -76,6 +76,7 @@ export class SettingsKeys {
   static readonly IGNORE_DEVICE_DISCONNECT: string = 'settings_ignore_device_disconnect';  // 忽略手柄断开信号（用于电源管理问题的手柄）
   static readonly GC_BUTTON_HOME_MAPPING: string = 'settings_gc_button_home_mapping';  // Game Controller Kit 2313按键映射
   static readonly ENABLE_KEY_INTERCEPTOR: string = 'settings_enable_key_interceptor';  // 按键反劫持（拦截系统劫持的手柄按键）
+  static readonly USB_DRIVER_ENABLED: string = 'settings_usb_driver_enabled';  // 默认启用 USB 手柄驱动
 
   // 输入 - 屏幕控制器
   static readonly ENABLE_ONSCREEN_CONTROLS: string = 'settings_enable_onscreen_controls';
@@ -157,6 +158,7 @@ export interface InputSettings {
   enableStartKeyMenu: boolean;
   ignoreDeviceDisconnect: boolean;  // 忽略手柄断开信号
   enableKeyInterceptor: boolean;  // 按键反劫持
+  usbDriverEnabled: boolean;  // 默认启用 USB 手柄驱动
 
   // 体感助手
   gyroAssistEnabled: boolean;
@@ -659,7 +661,8 @@ export class SettingsService {
       gamepadTouchpadMouse: await this.getBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false),
       enableStartKeyMenu: await this.getBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true),
       ignoreDeviceDisconnect: await this.getBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false),
-      enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false),
+      enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, true),
+      usbDriverEnabled: await this.getBoolean(SettingsKeys.USB_DRIVER_ENABLED, false),
 
       // 体感助手
       gyroAssistEnabled: await this.getBoolean(SettingsKeys.GYRO_ASSIST_ENABLED, false),

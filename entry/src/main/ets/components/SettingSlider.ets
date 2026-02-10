@@ -114,7 +114,12 @@ export interface SettingSliderConfig {
  */
 @Component
 export struct SettingSlider {
-  @Prop config: SettingSliderConfig;
+  config: SettingSliderConfig = {
+    value: 0,
+    min: 0,
+    max: 100,
+    onChange: (_v: number) => {}
+  };
   // 拖动时的临时显示值（用于气泡和右侧Text）
   @State private draggingValue: number = 0;
   @State private isDragging: boolean = false;

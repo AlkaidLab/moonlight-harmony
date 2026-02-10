@@ -4,9 +4,9 @@
   
   <img src="entry/src/main/resources/base/media/app_icon.png" width="128" height="128" alt="Logo">
   
-  # 🌙 Moonlight V+
+  # 🌙 Moonlight V+ for HarmonyOS
   
-  **HarmonyOS 游戏串流客户端**
+  **专为鸿蒙打造的 PC 游戏串流客户端**
   
   [![GitHub License](https://img.shields.io/github/license/AlkaidLab/moonlight-harmony)](LICENSE)
   [![HarmonyOS](https://img.shields.io/badge/HarmonyOS-5.0%2B-blue)](https://www.harmonyos.com/)
@@ -21,6 +21,24 @@
 ---
 
 ## ✨ 功能特性
+
+### 🏆 比原版 Moonlight 强在哪？
+
+> 原版 Moonlight 只能 HDR10？**我们直接 HLG 拉满。** 华为设备原生 HDR Vivid 支持 + HLG (ARIB STD-B67) 传输，画面色彩准确到让你怀疑自己以前串流的是黑白电视。搭配 Foundation Sunshine 使用，你的 PC 游戏画面终于配得上你那块好屏幕了。
+
+| 特性 | 原版 Moonlight | 🌙 Moonlight V+ |
+|------|:-:|:-:|
+| HDR10 | ✅ | ✅ 亮度映射同步 |
+| **HLG (HDR Vivid)** | ❌ | ✅ 独家 |
+| **虚拟显示器** | ❌ | ✅ 无缝连接，不抢主屏 |
+| **服务端指令** | ❌ | ✅ 串流中直接执行 |
+| **动态码率调节** | ❌ | ✅ 串流中任意尝试大小 |
+| 空间音频 | ❌ | ✅ HarmonyOS 5.0+ |
+| **体感助手 (Gyro Aim)** | ❌ | ✅ 陀螺仪→右摇杆辅助瞄准 |
+| Game Controller Kit | ❌ | ✅ 鸿蒙原生手柄 API |
+| VRR 可变刷新率 | ❌ | ✅ 告别撕裂 |
+| 性能覆盖层 | 基础 | ✅ 可拖拽/自定义项目 |
+| 麦克风重定向 | ❌ | ✅ 语音开黑 |
 
 ### 视频串流
 - 🎮 支持 H.264/HEVC 硬件解码
@@ -74,7 +92,7 @@
 
 ### 配对连接
 
-1. 打开 Moonlight V+ 应用
+1. 打开 Moonlight V+ for HarmonyOS 应用
 2. 应用会自动发现局域网内的主机
 3. 点击主机进行配对（首次需要在 PC 端确认）
 4. 配对成功后即可选择游戏开始串流

@@ -134,11 +134,17 @@ struct VideoDecoderStats {
     uint64_t lastDecodedFrameCount;
     int64_t lastRenderedFpsCalculationTime;
     double renderedFps;          // 渲染帧率 (Rd)
+    // 会话平均帧率（用于串流结束后的 toast）
+    int64_t sessionStartTime;           // 会话开始时间（毫秒）
+    double globalAvgFps;                // 全局平均渲染帧率
     // 用于码率计算
     uint64_t totalBytesReceived;
     uint64_t lastBytesCount;
     int64_t lastBitrateCalculationTime;
     double currentBitrate;  // bps
+    // 累积解码延迟（用于串流结束后的平均值计算）
+    double totalDecodeTimeMs;            // 累计解码延迟（ms）
+    uint64_t validDecodeFrames;          // 有效解码延迟的帧数
     // 主机处理延迟统计（来自服务器）
     uint64_t framesWithHostLatency;      // 有主机延迟数据的帧数
     double totalHostProcessingLatency;   // 累计主机处理延迟（ms）

@@ -17,8 +17,7 @@ import { StreamConfig, getDefaultStreamConfig } from '../model/StreamConfig';
 import { SettingsService, InputSettings, DisplaySettings, SettingsKeys } from '../service/SettingsService';
 import { StreamingSession, StreamStats } from '../service/StreamingSession';
 import { InputEvent } from '../model/InputEvent';
-import { OverlayConfig, PerformanceData, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/GamepadManager';
-import { batteryInfo } from '@kit.BasicServicesKit';
+import { OverlayConfig, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/GamepadManager';
 import { common } from '@kit.AbilityKit';
 
 /**
@@ -55,6 +54,9 @@ export class PerformanceStats {
   droppedFrames: number = 0;
   networkLatency: number = 0;
   hostLatency: number = 0;
+  globalAvgDecodeLatency: number = 0;
+  globalAvgHostLatency: number = 0;
+  globalAvgFps: number = 0;
   batteryLevel: number = 100;
   isCharging: boolean = false;
 }
@@ -102,6 +104,10 @@ export class StreamViewModel {
   connectionState: StreamConnectionState = StreamConnectionState.IDLE;
   errorMessage: string = '';
   
+  // 连接进度（0.0 - 1.0）
+  connectionProgress: number = 0;
+  connectionStageText: string = '';
+  
   // 性能统计
   performanceStats: PerformanceStats = new PerformanceStats();
   
@@ -132,8 +138,11 @@ export class StreamViewModel {
   // 私有服务
   private settingsService: SettingsService = SettingsService.getInstance();
   private streamingSession: StreamingSession | null = null;
-  private statsTimer: number = -1;
-  private batteryTimer: number = -1;
+  
+  // 连接终止回调（由 StreamPage 设置）
+  private connectionTerminatedCallback: ((errorCode: number) => void) | null = null;
+  // 分辨率变化回调（服务端分辨率/旋转变化时通知 StreamPage 更新布局）
+  private resolutionChangedCallback: ((width: number, height: number) => void) | null = null;
   
   // 便捷属性
   get isConnecting(): boolean {
@@ -148,6 +157,22 @@ export class StreamViewModel {
     return this.connectionState === StreamConnectionState.ERROR;
   }
   
+  /**
+   * 设置连接终止回调
+   * errorCode: 0 = 服务器正常关闭, <0 = 连接错误
+   */
+  setConnectionTerminatedCallback(callback: ((errorCode: number) => void) | null): void {
+    this.connectionTerminatedCallback = callback;
+  }
+
+  /**
+   * 设置分辨率变化回调
+   * 当服务端分辨率变化时（如屏幕旋转），通知 StreamPage 更新布局
+   */
+  setResolutionChangedCallback(callback: ((width: number, height: number) => void) | null): void {
+    this.resolutionChangedCallback = callback;
+  }
+
   /**
    * 加载设置
    */
@@ -219,6 +244,8 @@ export class StreamViewModel {
     useVdd?: boolean
   ): Promise<void> {
     this.connectionState = StreamConnectionState.CONNECTING;
+    this.connectionProgress = 0;
+    this.connectionStageText = '';
     this.errorMessage = '';
     
     try {
@@ -236,6 +263,41 @@ export class StreamViewModel {
         this.actualHdr = isHdr;
       });
       
+      // 设置连接终止回调
+      this.streamingSession.setConnectionTerminatedCallback((errorCode: number) => {
+        console.info(`StreamViewModel: 连接终止回调 errorCode=${errorCode}`);
+        this.connectionState = StreamConnectionState.DISCONNECTED;
+        if (this.connectionTerminatedCallback) {
+          this.connectionTerminatedCallback(errorCode);
+        }
+      });
+      
+      // 设置分辨率变化回调（服务端分辨率/旋转同步）
+      this.streamingSession.setResolutionChangedCallback((width: number, height: number) => {
+        console.info(`StreamViewModel: 服务端分辨率变化 ${width}x${height}`);
+        // 更新串流分辨率
+        this.displayInfo.streamWidth = width;
+        this.displayInfo.streamHeight = height;
+        // 标记为服务器触发的旋转，避免循环通知
+        this.setServerInitiatedRotation(true);
+        // 通知 StreamPage 更新布局
+        if (this.resolutionChangedCallback) {
+          this.resolutionChangedCallback(width, height);
+        }
+      });
+      
+      // 设置连接阶段进度回调
+      this.streamingSession.setStageProgressCallback((stage: number, stageName: string) => {
+        // Native 阶段 1-11 映射到 35%-100%
+        const nativeProgress = 0.35 + (stage / 12) * 0.65;
+        this.connectionProgress = Math.min(nativeProgress, 1.0);
+        this.connectionStageText = stageName;
+      });
+      
+      // 更新进度：获取服务器信息
+      this.connectionProgress = 0.05;
+      this.connectionStageText = '正在获取服务器信息...';
+      
       await this.streamingSession.start(computerId, appId, this.streamConfig!, surfaceId, context, displayGuid, useVdd);
       
       // 同步实际使用的配置（可能与初始配置不同，例如 HDR 因设备不支持被禁用）
@@ -252,10 +314,9 @@ export class StreamViewModel {
         }
       }
       
+      this.connectionProgress = 1.0;
+      this.connectionStageText = '已连接';
       this.connectionState = StreamConnectionState.CONNECTED;
-      
-      // 性能监控现在由 StreamPage 组件直接处理，避免创建新对象的开销
-      // this.startPerformanceMonitoring();
       
     } catch (err) {
       this.connectionState = StreamConnectionState.ERROR;
@@ -269,9 +330,6 @@ export class StreamViewModel {
    * 停止串流
    */
   async stopStreaming(): Promise<void> {
-    // 停止监控定时器
-    this.stopPerformanceMonitoring();
-    
     // 重置旋转状态
     this.resetRotationState();
     
@@ -323,95 +381,6 @@ export class StreamViewModel {
    */
   getSession(): StreamingSession | null {
     return this.streamingSession;
-  }
-  
-  /**
-   * 开始性能监控
-   */
-  private startPerformanceMonitoring(): void {
-    // 停止之前的定时器
-    this.stopPerformanceMonitoring();
-    
-    console.info('StreamViewModel: 开始性能监控');
-    
-    // 性能统计每秒更新
-    this.statsTimer = setInterval(() => {
-      this.updatePerformanceStats();
-    }, 1000);
-    
-    // 电池信息每15秒更新
-    this.updateBatteryInfo();
-    this.batteryTimer = setInterval(() => {
-      this.updateBatteryInfo();
-    }, 15000);
-  }
-  
-  /**
-   * 停止性能监控
-   */
-  private stopPerformanceMonitoring(): void {
-    if (this.statsTimer !== -1) {
-      clearInterval(this.statsTimer);
-      this.statsTimer = -1;
-    }
-    
-    if (this.batteryTimer !== -1) {
-      clearInterval(this.batteryTimer);
-      this.batteryTimer = -1;
-    }
-  }
-  
-  /**
-   * 更新性能统计
-   */
-  private updatePerformanceStats(): void {
-    if (this.streamingSession) {
-      const stats = this.streamingSession.getStats();
-      
-      // 创建新的 PerformanceStats 对象来触发 UI 更新
-      const newStats = new PerformanceStats();
-      newStats.fps = stats.fps;
-      newStats.renderedFps = stats.renderedFps;
-      newStats.bitrate = stats.bitrate;
-      newStats.latency = stats.latency;
-      newStats.hostLatency = stats.hostLatency;
-      newStats.networkLatency = stats.networkLatency;
-      newStats.packetLoss = stats.packetLoss;
-      newStats.decodedFrames = stats.decodedFrames;
-      newStats.droppedFrames = stats.droppedFrames;
-      // 保留电池信息
-      newStats.batteryLevel = this.performanceStats.batteryLevel;
-      newStats.isCharging = this.performanceStats.isCharging;
-      
-      this.performanceStats = newStats;
-    }
-  }
-  
-  /**
-   * 更新电池信息
-   */
-  private updateBatteryInfo(): void {
-    try {
-      // 创建新对象来触发 UI 更新
-      const newStats = new PerformanceStats();
-      newStats.fps = this.performanceStats.fps;
-      newStats.renderedFps = this.performanceStats.renderedFps;
-      newStats.bitrate = this.performanceStats.bitrate;
-      newStats.latency = this.performanceStats.latency;
-      newStats.hostLatency = this.performanceStats.hostLatency;
-      newStats.networkLatency = this.performanceStats.networkLatency;
-      newStats.packetLoss = this.performanceStats.packetLoss;
-      newStats.decodedFrames = this.performanceStats.decodedFrames;
-      newStats.droppedFrames = this.performanceStats.droppedFrames;
-      newStats.batteryLevel = batteryInfo.batterySOC;
-      newStats.isCharging = 
-        batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE ||
-        batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.FULL;
-      
-      this.performanceStats = newStats;
-    } catch (err) {
-      console.warn('获取电池信息失败:', err);
-    }
   }
   
   /**
@@ -493,9 +462,6 @@ export class StreamViewModel {
    * 调用服务器 API 退出当前运行的游戏并停止串流
    */
   async quitGame(): Promise<void> {
-    // 停止监控定时器
-    this.stopPerformanceMonitoring();
-    
     // 调用 StreamingSession 的 quitApp 方法退出远程游戏
     try {
       if (this.streamingSession) {
@@ -684,28 +650,6 @@ export class StreamViewModel {
   }
   
   /**
-   * 获取当前性能数据（用于详情弹窗）
-   */
-  getPerformanceData(): PerformanceData {
-    const data = new PerformanceData();
-    data.streamWidth = this.displayInfo.streamWidth;
-    data.streamHeight = this.displayInfo.streamHeight;
-    data.targetFps = this.streamConfig?.fps || 60;
-    data.receivedFps = this.performanceStats.fps;
-    data.renderedFps = this.performanceStats.renderedFps;
-    data.codec = this.streamConfig?.codec || 'HEVC';
-    data.isHdr = this.streamConfig?.hdr || false;
-    data.packetLoss = this.performanceStats.packetLoss;
-    data.bitrate = this.performanceStats.bitrate;
-    data.decodeLatency = this.performanceStats.latency;
-    data.networkLatency = this.performanceStats.networkLatency;
-    data.hostLatency = this.performanceStats.hostLatency;
-    data.batteryLevel = this.performanceStats.batteryLevel;
-    data.isCharging = this.performanceStats.isCharging;
-    return data;
-  }
-  
-  /**
    * 从后台恢复串流
    * 当应用从后台切回前台时调用此方法
    */
@@ -730,7 +674,6 @@ export class StreamViewModel {
    * 清理资源
    */
   dispose(): void {
-    this.stopPerformanceMonitoring();
     this.resetRotationState();
     if (this.streamingSession) {
       this.streamingSession.stop();

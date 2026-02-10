@@ -16,10 +16,12 @@
  */
 
 #include "sdl_gamecontrollerdb.h"
+#include "sdl_gamecontrollerdb_data.h"
 #include "gamepad_napi.h"  // 使用其中定义的 BTN_FLAG_* 常量
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <vector>
 
 // ==================== 辅助宏：快速创建映射 ====================
 #define BTN(idx) { MAPPING_BUTTON, idx, 0, false, 0, 255 }
@@ -442,21 +444,124 @@ static const VendorDefaultEntry g_vendorDefaults[] = {
     { 0x2C22, &g_psDefaultMapping },        // Qanba
     { 0x3820, &g_nintendoDefaultMapping },  // GuliKit
     { 0x3575, &g_xboxDefaultMapping },      // GameSir
+    { 0x3537, &g_xboxDefaultMapping },      // GameSir (新 VID: G7 Pro/Cyclone 2/Kaleid Flux)
+    { 0x8555, &g_xboxDefaultMapping },      // GameSir (G4 Pro VID)
+    { 0x046D, &g_xboxDefaultMapping },      // Logitech
+    { 0x044F, &g_xboxDefaultMapping },      // Thrustmaster
+    { 0x20BC, &g_xboxDefaultMapping },      // 北通 Betop / GameSir T4w/G3w
+    { 0x20D6, &g_xboxDefaultMapping },      // PowerA / BDA / Moga
+    { 0x1949, &g_xboxDefaultMapping },      // Amazon / Ipega
+    { 0x0955, &g_xboxDefaultMapping },      // NVIDIA
+    { 0x18D1, &g_xboxDefaultMapping },      // Google Stadia
+    { 0x2717, &g_xboxDefaultMapping },      // 小米 XiaoMi
+    { 0x0B05, &g_xboxDefaultMapping },      // ASUS ROG
+    { 0x1689, &g_xboxDefaultMapping },      // Razer (旧 VID)
+    { 0x0111, &g_xboxDefaultMapping },      // SteelSeries (旧 VID)
+    { 0x358A, &g_xboxDefaultMapping },      // Backbone One
+    { 0x10F5, &g_xboxDefaultMapping },      // Turtle Beach
+    { 0x294B, &g_xboxDefaultMapping },      // Snakebyte
+    { 0x3285, &g_psDefaultMapping },        // Nacon (新 VID)
+    { 0x06A3, &g_genericDefaultMapping },   // Saitek / Cyborg
     { 0x0079, &g_genericDefaultMapping },   // DragonRise
     { 0x0810, &g_genericDefaultMapping },   // Generic
     { 0x413D, &g_genericDefaultMapping },   // Generic (用户的手柄)
     { 0, NULL }
 };
 
+// ==================== SDL GameControllerDB 社区数据库 ====================
+
+static std::vector<GamepadMapping> g_sdlParsedMappings;
+static bool g_sdlDBInitialized = false;
+
+/**
+ * 从 SDL GUID 字符串中提取 VID/PID (Linux 格式)
+ * 
+ * Linux GUID 布局 (16 bytes, 32 hex chars):
+ *   Bytes 0-1:  Bus type (LE)
+ *   Bytes 2-3:  CRC16
+ *   Bytes 4-5:  Vendor ID (LE)  → hex chars 8-11
+ *   Bytes 6-7:  Padding
+ *   Bytes 8-9:  Product ID (LE) → hex chars 16-19
+ *   Bytes 10-15: Version + padding
+ */
+static bool extractVidPidFromGUID(const char* guid, uint16_t* outVid, uint16_t* outPid) {
+    if (!guid || strlen(guid) < 20) return false;
+    
+    auto hexDigit = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    
+    auto hexByte = [&hexDigit](const char* s) -> int {
+        int hi = hexDigit(s[0]);
+        int lo = hexDigit(s[1]);
+        if (hi < 0 || lo < 0) return -1;
+        return (hi << 4) | lo;
+    };
+    
+    // VID: bytes 4-5 at hex offset 8-11, little-endian
+    int vidLo = hexByte(guid + 8);
+    int vidHi = hexByte(guid + 10);
+    if (vidLo < 0 || vidHi < 0) return false;
+    *outVid = (uint16_t)(vidLo | (vidHi << 8));
+    
+    // PID: bytes 8-9 at hex offset 16-19, little-endian
+    int pidLo = hexByte(guid + 16);
+    int pidHi = hexByte(guid + 18);
+    if (pidLo < 0 || pidHi < 0) return false;
+    *outPid = (uint16_t)(pidLo | (pidHi << 8));
+    
+    return (*outVid != 0 || *outPid != 0);
+}
+
+/**
+ * 懒加载 SDL GameControllerDB 社区数据库
+ * 解析所有条目并提取 VID/PID 存入动态数组
+ */
+static void initSDLGameControllerDB() {
+    if (g_sdlDBInitialized) return;
+    g_sdlDBInitialized = true;
+    
+    g_sdlParsedMappings.reserve(g_sdlGameControllerDBCount);
+    
+    for (int i = 0; i < g_sdlGameControllerDBCount; i++) {
+        const char* entry = g_sdlGameControllerDB[i];
+        if (!entry) break;
+        
+        GamepadMapping mapping;
+        if (parseSDLMappingString(entry, &mapping)) {
+            uint16_t vid = 0, pid = 0;
+            if (extractVidPidFromGUID(entry, &vid, &pid)) {
+                mapping.vendorId = vid;
+                mapping.productId = pid;
+                g_sdlParsedMappings.push_back(mapping);
+            }
+        }
+    }
+}
+
 // ==================== API 实现 ====================
 
 const GamepadMapping* findGamepadMapping(uint16_t vendorId, uint16_t productId) {
+    // 1. 先搜索静态预定义数据库 (手工调优映射，优先级最高)
     for (int i = 0; g_mappingDatabase[i].name != NULL; i++) {
         if (g_mappingDatabase[i].vendorId == vendorId && 
             g_mappingDatabase[i].productId == productId) {
             return &g_mappingDatabase[i];
         }
     }
+    
+    // 2. 搜索 SDL GameControllerDB 社区数据库 (707 个 Linux 平台映射)
+    initSDLGameControllerDB();
+    for (size_t i = 0; i < g_sdlParsedMappings.size(); i++) {
+        if (g_sdlParsedMappings[i].vendorId == vendorId &&
+            g_sdlParsedMappings[i].productId == productId) {
+            return &g_sdlParsedMappings[i];
+        }
+    }
+    
     return NULL;
 }
 

@@ -1211,6 +1211,7 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     
     napi_value framesDecoded, framesDropped, avgDecodeTime;
     napi_value fps, renderedFps, bitrate, hostLatency;
+    napi_value totalDecodeTime, validDecodeFrames, totalHostLatency, framesWithHostLat;
     
     napi_create_uint32(env, static_cast<uint32_t>(stats.decodedFrames), &framesDecoded);
     napi_create_uint32(env, static_cast<uint32_t>(stats.droppedFrames), &framesDropped);
@@ -1220,6 +1221,14 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     napi_create_double(env, stats.currentBitrate, &bitrate);
     napi_create_double(env, stats.avgHostProcessingLatency, &hostLatency);  // 主机处理延迟
     
+    // 累积值（用于串流结束后计算全局平均）
+    napi_value globalAvgFps;
+    napi_create_double(env, stats.totalDecodeTimeMs, &totalDecodeTime);
+    napi_create_uint32(env, static_cast<uint32_t>(stats.validDecodeFrames), &validDecodeFrames);
+    napi_create_double(env, stats.totalHostProcessingLatency, &totalHostLatency);
+    napi_create_uint32(env, static_cast<uint32_t>(stats.framesWithHostLatency), &framesWithHostLat);
+    napi_create_double(env, stats.globalAvgFps, &globalAvgFps);
+    
     napi_set_named_property(env, result, "framesDecoded", framesDecoded);
     napi_set_named_property(env, result, "framesDropped", framesDropped);
     napi_set_named_property(env, result, "avgDecodeTimeMs", avgDecodeTime);
@@ -1227,6 +1236,13 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     napi_set_named_property(env, result, "renderedFps", renderedFps); // 渲染帧率 (Rd)
     napi_set_named_property(env, result, "bitrate", bitrate);
     napi_set_named_property(env, result, "hostLatency", hostLatency);  // 主机处理延迟（编码时间）
+    
+    // 累积值
+    napi_set_named_property(env, result, "totalDecodeTimeMs", totalDecodeTime);
+    napi_set_named_property(env, result, "validDecodeFrames", validDecodeFrames);
+    napi_set_named_property(env, result, "totalHostLatencyMs", totalHostLatency);
+    napi_set_named_property(env, result, "framesWithHostLatency", framesWithHostLat);
+    napi_set_named_property(env, result, "globalAvgFps", globalAvgFps);
     
     return result;
 }

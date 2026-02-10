@@ -36,12 +36,26 @@ static bool g_useAsyncRender = true;
 typedef OH_AVErrCode (*PFN_OH_VideoDecoder_QueryInputBuffer)(OH_AVCodec*, uint32_t*, int64_t);
 typedef OH_AVErrCode (*PFN_OH_VideoDecoder_QueryOutputBuffer)(OH_AVCodec*, uint32_t*, int64_t);
 typedef OH_AVErrCode (*PFN_OH_VideoDecoder_RenderOutputBufferAtTime)(OH_AVCodec*, uint32_t, int64_t);
+typedef OH_AVBuffer* (*PFN_OH_VideoDecoder_GetInputBuffer)(OH_AVCodec*, uint32_t);
+typedef OH_AVBuffer* (*PFN_OH_VideoDecoder_GetOutputBuffer)(OH_AVCodec*, uint32_t);
 
 static PFN_OH_VideoDecoder_QueryInputBuffer  pfn_QueryInputBuffer = nullptr;
 static PFN_OH_VideoDecoder_QueryOutputBuffer pfn_QueryOutputBuffer = nullptr;
 static PFN_OH_VideoDecoder_RenderOutputBufferAtTime pfn_RenderOutputBufferAtTime = nullptr;
+static PFN_OH_VideoDecoder_GetInputBuffer pfn_GetInputBuffer = nullptr;
+static PFN_OH_VideoDecoder_GetOutputBuffer pfn_GetOutputBuffer = nullptr;
 static bool g_syncApiLoaded = false;
 static bool g_syncApiAvailable = false;
+
+// =============================================================================
+// AVFormat 键名动态加载（extern const char* 全局变量）
+// OH_MD_KEY_ENABLE_SYNC_MODE (API 20+), OH_MD_KEY_VIDEO_DECODER_OUTPUT_ENABLE_VRR (API 15+)
+// 这些是 extern const char* 变量，直接引用会在 .so 加载时触发符号解析失败
+// 必须通过 dlsym 在运行时查找，避免链接器硬依赖
+// =============================================================================
+static const char* key_enable_sync_mode = nullptr;
+static const char* key_vrr_enable = nullptr;
+static bool g_mediaKeysLoaded = false;
 
 /**
  * 尝试在运行时加载同步模式 API 函数
@@ -58,14 +72,22 @@ static bool TryLoadSyncModeApis() {
         dlsym(RTLD_DEFAULT, "OH_VideoDecoder_QueryOutputBuffer");
     pfn_RenderOutputBufferAtTime = (PFN_OH_VideoDecoder_RenderOutputBufferAtTime)
         dlsym(RTLD_DEFAULT, "OH_VideoDecoder_RenderOutputBufferAtTime");
+    pfn_GetInputBuffer = (PFN_OH_VideoDecoder_GetInputBuffer)
+        dlsym(RTLD_DEFAULT, "OH_VideoDecoder_GetInputBuffer");
+    pfn_GetOutputBuffer = (PFN_OH_VideoDecoder_GetOutputBuffer)
+        dlsym(RTLD_DEFAULT, "OH_VideoDecoder_GetOutputBuffer");
     
-    g_syncApiAvailable = (pfn_QueryInputBuffer != nullptr && pfn_QueryOutputBuffer != nullptr);
+    g_syncApiAvailable = (pfn_QueryInputBuffer != nullptr && pfn_QueryOutputBuffer != nullptr
+                          && pfn_GetInputBuffer != nullptr);
     
     OH_LOG_INFO(LOG_APP, "Sync mode API availability: QueryInputBuffer=%{public}s, "
-                "QueryOutputBuffer=%{public}s, RenderOutputBufferAtTime=%{public}s",
+                "QueryOutputBuffer=%{public}s, RenderOutputBufferAtTime=%{public}s, "
+                "GetInputBuffer=%{public}s, GetOutputBuffer=%{public}s",
                 pfn_QueryInputBuffer ? "YES" : "NO",
                 pfn_QueryOutputBuffer ? "YES" : "NO",
-                pfn_RenderOutputBufferAtTime ? "YES" : "NO");
+                pfn_RenderOutputBufferAtTime ? "YES" : "NO",
+                pfn_GetInputBuffer ? "YES" : "NO",
+                pfn_GetOutputBuffer ? "YES" : "NO");
     
     if (!g_syncApiAvailable) {
         OH_LOG_WARN(LOG_APP, "Sync mode APIs not available on this device, "
@@ -73,6 +95,28 @@ static bool TryLoadSyncModeApis() {
     }
     
     return g_syncApiAvailable;
+}
+
+/**
+ * 尝试加载 API 15+/20+ 的 AVFormat 键名符号
+ * 这些是 extern const char* 全局变量，在低版本设备上不存在
+ * dlsym 返回变量地址（const char**），需要解引用一次获取实际字符串
+ */
+static void TryLoadMediaKeys() {
+    if (g_mediaKeysLoaded) return;
+    g_mediaKeysLoaded = true;
+    
+    // OH_MD_KEY_VIDEO_DECODER_OUTPUT_ENABLE_VRR (API 15+)
+    const char** pVrr = (const char**)dlsym(RTLD_DEFAULT, "OH_MD_KEY_VIDEO_DECODER_OUTPUT_ENABLE_VRR");
+    if (pVrr) key_vrr_enable = *pVrr;
+    
+    // OH_MD_KEY_ENABLE_SYNC_MODE (API 20+)
+    const char** pSync = (const char**)dlsym(RTLD_DEFAULT, "OH_MD_KEY_ENABLE_SYNC_MODE");
+    if (pSync) key_enable_sync_mode = *pSync;
+    
+    OH_LOG_INFO(LOG_APP, "Media keys availability: VRR_ENABLE=%{public}s, SYNC_MODE=%{public}s",
+                key_vrr_enable ? key_vrr_enable : "N/A",
+                key_enable_sync_mode ? key_enable_sync_mode : "N/A");
 }
 
 // 视频格式掩码（来自 moonlight-common-c/Limelight.h）
@@ -271,9 +315,11 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     // 3. 当刷新率小于视频帧率时，会丢弃部分视频帧以节省功耗
     // 4. 游戏串流场景下可能不适合（丢帧会影响体验）
     // OH_MD_KEY_VIDEO_DECODER_OUTPUT_ENABLE_VRR: 使能视频解码器输出适配VRR显示
+    // 通过 dlsym 动态加载，避免 extern const char* 符号在低版本设备上链接失败
+    TryLoadMediaKeys();
     if (config_.enableVrr) {
-        if (OH_MD_KEY_VIDEO_DECODER_OUTPUT_ENABLE_VRR != nullptr) {
-            OH_AVFormat_SetIntValue(format, OH_MD_KEY_VIDEO_DECODER_OUTPUT_ENABLE_VRR, 1);
+        if (key_vrr_enable != nullptr) {
+            OH_AVFormat_SetIntValue(format, key_vrr_enable, 1);
             OH_LOG_INFO(LOG_APP, "{Init} VRR (Variable Refresh Rate) mode enabled for decoder output");
         } else {
             OH_LOG_INFO(LOG_APP, "{Init} VRR requested but OH_MD_KEY_VIDEO_DECODER_OUTPUT_ENABLE_VRR not available (API < 15)");
@@ -287,8 +333,8 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     // 注意：同步模式在调用 Configure 接口前不能调用 RegisterCallback 接口
     // 重要：如果同步模式配置失败，必须回退到异步模式并重新注册回调
     // 
-    // OH_MD_KEY_ENABLE_SYNC_MODE 是 extern const char* 而不是宏，
-    // 需要在运行时检查而不是编译时 #ifdef
+    // OH_MD_KEY_ENABLE_SYNC_MODE 通过 dlsym 动态加载（key_enable_sync_mode），
+    // 避免 extern const char* 符号在低版本设备上引发链接失败
     bool syncModeConfigured = false;
     bool needAsyncFallback = false;
     
@@ -300,13 +346,13 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
             needAsyncFallback = true;
         }
         // 尝试启用同步模式 - OH_MD_KEY_ENABLE_SYNC_MODE 在 API 20+ 可用
-        // 由于 availability 属性，如果 API < 20，符号地址为 nullptr
-        else if (OH_MD_KEY_ENABLE_SYNC_MODE != nullptr) {
-            OH_AVFormat_SetIntValue(format, OH_MD_KEY_ENABLE_SYNC_MODE, 1);
+        // 通过 dlsym 动态加载，避免 extern const char* 符号在低版本设备上链接失败
+        else if (key_enable_sync_mode != nullptr) {
+            OH_AVFormat_SetIntValue(format, key_enable_sync_mode, 1);
             syncModeConfigured = true;
             OH_LOG_INFO(LOG_APP, "{Init} Sync decode mode configured via OH_MD_KEY_ENABLE_SYNC_MODE");
         } else {
-            OH_LOG_WARN(LOG_APP, "{Init} OH_MD_KEY_ENABLE_SYNC_MODE is nullptr (API < 20), falling back to async mode");
+            OH_LOG_WARN(LOG_APP, "{Init} OH_MD_KEY_ENABLE_SYNC_MODE not available (API < 20), falling back to async mode");
             needAsyncFallback = true;
         }
     }
@@ -708,7 +754,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
             OH_AVErrCode ret = pfn_QueryInputBuffer(decoder_, &inputIndex, kSyncInputTimeoutUs);
             
             if (ret == AV_ERR_OK) {
-                OH_AVBuffer* inputBuffer = OH_VideoDecoder_GetInputBuffer(decoder_, inputIndex);
+                OH_AVBuffer* inputBuffer = pfn_GetInputBuffer(decoder_, inputIndex);
                 if (inputBuffer == nullptr) { retryCount++; continue; }
                 
                 uint8_t* bufferAddr = OH_AVBuffer_GetAddr(inputBuffer);
@@ -905,7 +951,7 @@ int VideoDecoder::SubmitDecodeUnit(const uint8_t* data, int size,
             
             if (ret == AV_ERR_OK) {
                 // 获得了输入 buffer，直接填充并提交
-                OH_AVBuffer* inputBuffer = OH_VideoDecoder_GetInputBuffer(decoder_, inputIndex);
+                OH_AVBuffer* inputBuffer = pfn_GetInputBuffer(decoder_, inputIndex);
                 if (inputBuffer == nullptr) {
                     OH_LOG_ERROR(LOG_APP, "Sync direct: GetInputBuffer failed");
                     retryCount++;
@@ -1125,6 +1171,7 @@ void VideoDecoder::UpdateReceivedStats(int size, uint16_t hostProcessingLatency)
         stats_.lastRenderedFpsCalculationTime = currentTimeMs;
         stats_.lastBytesCount = stats_.totalBytesReceived;
         stats_.lastBitrateCalculationTime = currentTimeMs;
+        stats_.sessionStartTime = currentTimeMs;  // 记录会话开始时间
     } else if (currentTimeMs - stats_.lastFpsCalculationTime >= kStatsUpdateIntervalMs) {
         int64_t elapsedMs = currentTimeMs - stats_.lastFpsCalculationTime;
         
@@ -1143,6 +1190,14 @@ void VideoDecoder::UpdateReceivedStats(int size, uint16_t hostProcessingLatency)
         // 更新公共时间基线
         stats_.lastFpsCalculationTime = currentTimeMs;
         stats_.lastRenderedFpsCalculationTime = currentTimeMs;
+        
+        // 计算全局平均渲染帧率（会话级别）
+        if (stats_.sessionStartTime > 0) {
+            int64_t sessionMs = currentTimeMs - stats_.sessionStartTime;
+            if (sessionMs > 0) {
+                stats_.globalAvgFps = static_cast<double>(stats_.decodedFrames) * 1000.0 / static_cast<double>(sessionMs);
+            }
+        }
         
         // 计算比特率
         uint64_t bytesDelta = stats_.totalBytesReceived - stats_.lastBytesCount;
@@ -1296,6 +1351,10 @@ void VideoDecoder::UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32
             
             // 更新瞬时解码耗时（用于延迟恢复判断，原子变量无需额外锁）
             lastInstantDecodeTimeMs_.store(decodeTimeMs);
+            
+            // 累积解码时间（用于串流结束后计算全局平均值）
+            stats_.totalDecodeTimeMs += static_cast<double>(decodeTimeMs);
+            stats_.validDecodeFrames++;
             
             if (stats_.decodedFrames == 1) {
                 stats_.averageDecodeTimeMs = static_cast<double>(decodeTimeMs);
@@ -1512,7 +1571,7 @@ int VideoDecoder::SyncProcessInput(int64_t timeoutUs) {
     }
     
     // 获取输入 buffer（使用已获得的 index）
-    OH_AVBuffer* inputBuffer = OH_VideoDecoder_GetInputBuffer(decoder_, inputIndex);
+    OH_AVBuffer* inputBuffer = pfn_GetInputBuffer(decoder_, inputIndex);
     if (inputBuffer == nullptr) {
         OH_LOG_ERROR(LOG_APP, "Sync GetInputBuffer failed");
         return -1;  // API 错误
@@ -1594,7 +1653,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     }
     
     // 获取输出 buffer
-    OH_AVBuffer* outputBuffer = OH_VideoDecoder_GetOutputBuffer(decoder_, outputIndex);
+    OH_AVBuffer* outputBuffer = pfn_GetOutputBuffer(decoder_, outputIndex);
     if (outputBuffer == nullptr) {
         OH_LOG_ERROR(LOG_APP, "Sync GetOutputBuffer failed");
         return -1;  // API 错误
@@ -1627,7 +1686,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
             break;  // 没有更多可用帧
         }
         
-        OH_AVBuffer* nextBuffer = OH_VideoDecoder_GetOutputBuffer(decoder_, nextOutputIndex);
+        OH_AVBuffer* nextBuffer = pfn_GetOutputBuffer(decoder_, nextOutputIndex);
         if (nextBuffer == nullptr) {
             break;
         }

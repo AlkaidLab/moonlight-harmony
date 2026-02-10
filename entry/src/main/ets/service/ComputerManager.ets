@@ -14,6 +14,7 @@ import { MdnsDiscovery, DiscoveredComputer } from './MdnsDiscovery';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { WakeOnLan } from './WakeOnLan';
+import { isLanAddress } from '../utils/NetHelper';
 import { connection } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 
@@ -701,29 +702,69 @@ export class ComputerManager {
   }
 
   /**
-   * 从多个 Promise 中返回第一个成功（serverInfo 非 null）的结果
-   * 所有都失败时返回 null
+   * 从多个 Promise 中返回最佳成功结果，优先选择 LAN 地址
+   *
+   * 策略（对齐 Android parallelPollPc 的 availableAddresses + COLLECTION_TIMEOUT_MS）：
+   *   - 第一个成功结果如果是 LAN 地址 → 立即返回（最优）
+   *   - 第一个成功结果是非 LAN（域名/公网IP）→ 继续等待最多 LAN_WAIT_MS，
+   *     期间如果有 LAN 地址也成功 → 返回 LAN 地址
+   *   - 等待超时或所有 Promise 完成 → 返回第一个成功结果
+   *   - 全部失败 → 返回 null
    */
   private raceForFirstSuccess(promises: Promise<PollResult>[]): Promise<PollResult | null> {
+    const LAN_WAIT_MS = 300;
+
     return new Promise<PollResult | null>((resolve) => {
       let completedCount = 0;
       let hasResolved = false;
-      
+      let firstSuccessResult: PollResult | null = null;
+      let lanWaitTimerId: number = -1;
+
+      const tryResolve = (result: PollResult) => {
+        if (hasResolved) return;
+        hasResolved = true;
+        if (lanWaitTimerId !== -1) {
+          clearTimeout(lanWaitTimerId);
+          lanWaitTimerId = -1;
+        }
+        resolve(result);
+      };
+
+      const checkAllDone = () => {
+        if (completedCount === promises.length && !hasResolved) {
+          hasResolved = true;
+          if (lanWaitTimerId !== -1) {
+            clearTimeout(lanWaitTimerId);
+            lanWaitTimerId = -1;
+          }
+          resolve(firstSuccessResult); // 可能为 null（全部失败）
+        }
+      };
+
       for (const p of promises) {
         p.then((result: PollResult) => {
           if (result.serverInfo !== null && !hasResolved) {
-            hasResolved = true;
-            resolve(result);
+            if (isLanAddress(result.address)) {
+              // LAN 地址成功 → 最优，立即返回
+              tryResolve(result);
+              return;
+            }
+            if (!firstSuccessResult) {
+              // 第一个非 LAN 成功 → 暂存，等待 LAN 地址
+              firstSuccessResult = result;
+              lanWaitTimerId = setTimeout(() => {
+                // 等待超时，使用第一个非 LAN 结果
+                if (!hasResolved && firstSuccessResult) {
+                  tryResolve(firstSuccessResult);
+                }
+              }, LAN_WAIT_MS);
+            }
           }
           completedCount++;
-          if (completedCount === promises.length && !hasResolved) {
-            resolve(null);
-          }
+          checkAllDone();
         }).catch(() => {
           completedCount++;
-          if (completedCount === promises.length && !hasResolved) {
-            resolve(null);
-          }
+          checkAllDone();
         });
       }
     });

@@ -11,14 +11,19 @@
 /**
  * @file audio_renderer.cpp
  * @brief HarmonyOS OHAudio 音频渲染器实现
+ * 
+ * 性能优化：
+ * - 无锁环形缓冲区（SPSC）替代 std::queue + new/delete
+ * - 音频工作组集成，保障回调线程调度
+ * - 始终设置 QoS USER_INTERACTIVE
  */
 
 #include "audio_renderer.h"
-#include "moonlight_bridge.h"
 #include <hilog/log.h>
 #include <cstring>
 #include <dlfcn.h>
 #include <qos/qos.h>
+#include <algorithm>
 
 #define LOG_TAG "AudioRenderer"
 
@@ -65,7 +70,7 @@ static bool CheckAndLoadSpatialAudioApi() {
 // =============================================================================
 
 AudioRenderer::AudioRenderer() {
-    memset(&stats_, 0, sizeof(stats_));
+    memset(ringBuffer_, 0, sizeof(ringBuffer_));
 }
 
 AudioRenderer::~AudioRenderer() {
@@ -274,15 +279,9 @@ int AudioRenderer::Stop() {
         OH_AudioRenderer_Stop(renderer_);
     }
     
-    // 清空队列
-    {
-        std::lock_guard<std::mutex> lock(queueMutex_);
-        while (!pcmQueue_.empty()) {
-            auto& item = pcmQueue_.front();
-            delete[] item.first;
-            pcmQueue_.pop();
-        }
-    }
+    // 清空环形缓冲区
+    ringHead_.store(0, std::memory_order_relaxed);
+    ringTail_.store(0, std::memory_order_relaxed);
     
     OH_LOG_INFO(LOG_APP, "Audio renderer stopped");
     return 0;
@@ -312,7 +311,7 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
     }
     
     // 如果需要重启，尝试恢复
-    if (needRestart_.load()) {
+    if (needRestart_.load(std::memory_order_relaxed)) {
         TryRestart();
     }
     
@@ -320,31 +319,36 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
         return -1;
     }
     
-    // 复制数据到队列
+    // 写入环形缓冲区（无锁 SPSC）
     int dataSize = sampleCount * config_.channelCount;
-    int16_t* buffer = new int16_t[dataSize];
-    memcpy(buffer, pcmData, dataSize * sizeof(int16_t));
+    int tail = ringTail_.load(std::memory_order_relaxed);
+    int head = ringHead_.load(std::memory_order_acquire);
     
-    {
-        std::lock_guard<std::mutex> lock(queueMutex_);
-        
-        // 如果队列满了，丢弃最旧的数据
-        while (pcmQueue_.size() >= MAX_QUEUE_SIZE) {
-            auto& item = pcmQueue_.front();
-            delete[] item.first;
-            pcmQueue_.pop();
-            
-            std::lock_guard<std::mutex> statsLock(statsMutex_);
-            stats_.droppedSamples += item.second;
-        }
-        
-        pcmQueue_.push({buffer, sampleCount});
+    // 计算可用空间（保留1个元素的间隔以区分满/空）
+    int available;
+    if (tail >= head) {
+        available = RING_BUFFER_CAPACITY - (tail - head) - 1;
+    } else {
+        available = head - tail - 1;
     }
     
-    {
-        std::lock_guard<std::mutex> lock(statsMutex_);
-        stats_.totalSamples += sampleCount;
+    if (available < dataSize) {
+        // 缓冲区空间不足，丢弃旧数据以腾出空间
+        int needToFree = dataSize - available;
+        int newHead = (head + needToFree) % RING_BUFFER_CAPACITY;
+        ringHead_.store(newHead, std::memory_order_release);
+        droppedSamples_.fetch_add(needToFree / config_.channelCount, std::memory_order_relaxed);
     }
+    
+    // 写入数据到环形缓冲区
+    int firstPart = std::min(dataSize, RING_BUFFER_CAPACITY - tail);
+    memcpy(ringBuffer_ + tail, pcmData, firstPart * sizeof(int16_t));
+    if (firstPart < dataSize) {
+        memcpy(ringBuffer_, pcmData + firstPart, (dataSize - firstPart) * sizeof(int16_t));
+    }
+    ringTail_.store((tail + dataSize) % RING_BUFFER_CAPACITY, std::memory_order_release);
+    
+    totalSamples_.fetch_add(sampleCount, std::memory_order_relaxed);
     
     return 0;
 }
@@ -360,15 +364,9 @@ int AudioRenderer::TryRestart() {
     // 先停止当前渲染器
     OH_AudioRenderer_Stop(renderer_);
     
-    // 清空队列，避免播放过时数据
-    {
-        std::lock_guard<std::mutex> lock(queueMutex_);
-        while (!pcmQueue_.empty()) {
-            auto& item = pcmQueue_.front();
-            delete[] item.first;
-            pcmQueue_.pop();
-        }
-    }
+    // 清空环形缓冲区，避免播放过时数据
+    ringHead_.store(0, std::memory_order_relaxed);
+    ringTail_.store(0, std::memory_order_relaxed);
     
     // 尝试重新启动
     OH_AudioStream_Result result = OH_AudioRenderer_Start(renderer_);
@@ -410,8 +408,27 @@ int AudioRenderer::TryRestart() {
 }
 
 AudioRendererStats AudioRenderer::GetStats() const {
-    std::lock_guard<std::mutex> lock(statsMutex_);
-    return stats_;
+    AudioRendererStats stats;
+    stats.totalSamples = totalSamples_.load(std::memory_order_relaxed);
+    stats.playedSamples = playedSamples_.load(std::memory_order_relaxed);
+    stats.droppedSamples = droppedSamples_.load(std::memory_order_relaxed);
+    stats.underruns = underruns_.load(std::memory_order_relaxed);
+    
+    // 计算当前缓冲区延迟
+    int head = ringHead_.load(std::memory_order_relaxed);
+    int tail = ringTail_.load(std::memory_order_relaxed);
+    int buffered;
+    if (tail >= head) {
+        buffered = tail - head;
+    } else {
+        buffered = RING_BUFFER_CAPACITY - head + tail;
+    }
+    int bufferedSamples = buffered / std::max(config_.channelCount, 1);
+    stats.latencyMs = (config_.sampleRate > 0) 
+        ? (bufferedSamples * 1000.0 / config_.sampleRate) 
+        : 0.0;
+    
+    return stats;
 }
 
 // =============================================================================
@@ -427,65 +444,52 @@ int32_t AudioRenderer::OnWriteData(OH_AudioRenderer* renderer, void* userData,
         return bufferLen;
     }
     
-    // 性能模式下设置音频线程 QoS
+    // 始终设置音频回调线程 QoS 为最高优先级
     static thread_local bool qosSet = false;
-    if (!qosSet && MoonBridge_IsPerformanceModeEnabled()) {
+    if (!qosSet) {
         int ret = OH_QoS_SetThreadQoS(QOS_USER_INTERACTIVE);
         if (ret == 0) {
-            OH_LOG_INFO(LOG_APP, "Audio thread QoS set to USER_INTERACTIVE (performance mode)");
+            OH_LOG_INFO(LOG_APP, "Audio callback thread QoS set to USER_INTERACTIVE");
         }
         qosSet = true;
     }
     
+    // 从环形缓冲区读取数据（无锁 SPSC 消费者端）
     int16_t* outBuffer = static_cast<int16_t*>(buffer);
-    int bytesWritten = 0;
-    int bytesRemaining = bufferLen;
+    int samplesNeeded = bufferLen / sizeof(int16_t);
     
-    std::lock_guard<std::mutex> lock(self->queueMutex_);
+    int head = self->ringHead_.load(std::memory_order_relaxed);
+    int tail = self->ringTail_.load(std::memory_order_acquire);
     
-    while (bytesRemaining > 0 && !self->pcmQueue_.empty()) {
-        auto& item = self->pcmQueue_.front();
-        int16_t* pcmData = item.first;
-        int sampleCount = item.second;
-        int dataBytes = sampleCount * self->config_.channelCount * sizeof(int16_t);
-        
-        int bytesToCopy = std::min(dataBytes, bytesRemaining);
-        memcpy(outBuffer + bytesWritten / sizeof(int16_t), pcmData, bytesToCopy);
-        bytesWritten += bytesToCopy;
-        bytesRemaining -= bytesToCopy;
-        
-        if (bytesToCopy >= dataBytes) {
-            // 整个缓冲区已复制完成
-            delete[] pcmData;
-            self->pcmQueue_.pop();
-        } else {
-            // 部分复制，保留剩余数据
-            int remainingBytes = dataBytes - bytesToCopy;
-            int remainingSamples = remainingBytes / (self->config_.channelCount * sizeof(int16_t));
-            
-            // 移动数据到缓冲区开头
-            memmove(pcmData, reinterpret_cast<uint8_t*>(pcmData) + bytesToCopy, remainingBytes);
-            
-            // 更新样本数
-            item.second = remainingSamples;
-            
-            // 跳出循环，因为输出缓冲区已满
-            break;
+    // 计算可读数据量
+    int available;
+    if (tail >= head) {
+        available = tail - head;
+    } else {
+        available = RING_BUFFER_CAPACITY - head + tail;
+    }
+    
+    int toCopy = std::min(available, samplesNeeded);
+    
+    if (toCopy > 0) {
+        // 从环形缓冲区读取
+        int firstPart = std::min(toCopy, RING_BUFFER_CAPACITY - head);
+        memcpy(outBuffer, self->ringBuffer_ + head, firstPart * sizeof(int16_t));
+        if (firstPart < toCopy) {
+            memcpy(outBuffer + firstPart, self->ringBuffer_, (toCopy - firstPart) * sizeof(int16_t));
         }
+        self->ringHead_.store((head + toCopy) % RING_BUFFER_CAPACITY, std::memory_order_release);
     }
     
-    // 如果还有剩余空间，填充静音
-    if (bytesRemaining > 0) {
-        memset(reinterpret_cast<uint8_t*>(buffer) + bytesWritten, 0, bytesRemaining);
-        
-        std::lock_guard<std::mutex> statsLock(self->statsMutex_);
-        self->stats_.underruns++;
+    // 如果数据不足，填充静音
+    if (toCopy < samplesNeeded) {
+        memset(outBuffer + toCopy, 0, (samplesNeeded - toCopy) * sizeof(int16_t));
+        self->underruns_.fetch_add(1, std::memory_order_relaxed);
     }
     
-    {
-        std::lock_guard<std::mutex> statsLock(self->statsMutex_);
-        self->stats_.playedSamples += bytesWritten / (self->config_.channelCount * sizeof(int16_t));
-    }
+    // 更新已播放样本数（按通道换算）
+    int channelCount = std::max(self->config_.channelCount, 1);
+    self->playedSamples_.fetch_add(toCopy / channelCount, std::memory_order_relaxed);
     
     return bufferLen;
 }
@@ -557,7 +561,9 @@ int32_t AudioRenderer::OnError(OH_AudioRenderer* renderer, void* userData,
 // =============================================================================
 
 namespace {
-    static AudioRenderer* g_audioRenderer = nullptr;
+    // 使用原子指针保证 PlaySamples 等高频调用的线程安全
+    // Cleanup 通过 mutex 保证与 Init 的互斥
+    static std::atomic<AudioRenderer*> g_audioRenderer{nullptr};
     static std::mutex g_audioRendererMutex;
 }
 
@@ -578,63 +584,75 @@ bool IsSpatialAudioEnabled() {
 int Init(int sampleRate, int channelCount, int samplesPerFrame) {
     std::lock_guard<std::mutex> lock(g_audioRendererMutex);
     
-    if (g_audioRenderer != nullptr) {
-        delete g_audioRenderer;
+    AudioRenderer* old = g_audioRenderer.exchange(nullptr, std::memory_order_acq_rel);
+    if (old != nullptr) {
+        delete old;
     }
     
-    g_audioRenderer = new AudioRenderer();
+    AudioRenderer* renderer = new AudioRenderer();
     
     AudioRendererConfig config;
     config.sampleRate = sampleRate;
     config.channelCount = channelCount;
     config.samplesPerFrame = samplesPerFrame;
     config.bitsPerSample = 16;
-    config.volume = 1.0f;  // 最大音量
-    config.enableSpatialAudio = g_enableSpatialAudio;  // 使用配置的空间音频设置
+    config.volume = 1.0f;
+    config.enableSpatialAudio = g_enableSpatialAudio;
     
-    return g_audioRenderer->Init(config);
+    int ret = renderer->Init(config);
+    if (ret == 0) {
+        g_audioRenderer.store(renderer, std::memory_order_release);
+    } else {
+        delete renderer;
+    }
+    return ret;
 }
 
 int SetVolume(float volume) {
-    if (g_audioRenderer == nullptr) {
+    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    if (renderer == nullptr) {
         return -1;
     }
-    return g_audioRenderer->SetVolume(volume);
+    return renderer->SetVolume(volume);
 }
 
 int PlaySamples(const int16_t* pcmData, int sampleCount) {
-    if (g_audioRenderer == nullptr) {
+    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    if (renderer == nullptr) {
         return -1;
     }
-    return g_audioRenderer->PlaySamples(pcmData, sampleCount);
+    return renderer->PlaySamples(pcmData, sampleCount);
 }
 
 int Start() {
-    if (g_audioRenderer == nullptr) {
+    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    if (renderer == nullptr) {
         return -1;
     }
-    return g_audioRenderer->Start();
+    return renderer->Start();
 }
 
 int Stop() {
-    if (g_audioRenderer == nullptr) {
+    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    if (renderer == nullptr) {
         return -1;
     }
-    return g_audioRenderer->Stop();
+    return renderer->Stop();
 }
 
 void Cleanup() {
     std::lock_guard<std::mutex> lock(g_audioRendererMutex);
     
-    if (g_audioRenderer != nullptr) {
-        delete g_audioRenderer;
-        g_audioRenderer = nullptr;
+    AudioRenderer* old = g_audioRenderer.exchange(nullptr, std::memory_order_acq_rel);
+    if (old != nullptr) {
+        delete old;
     }
 }
 
 AudioRendererStats GetStats() {
-    if (g_audioRenderer != nullptr) {
-        return g_audioRenderer->GetStats();
+    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    if (renderer != nullptr) {
+        return renderer->GetStats();
     }
     return AudioRendererStats{};
 }

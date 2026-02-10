@@ -53,6 +53,23 @@ export const TOUCH_EVENT_BUTTON_ONLY = 0x05;
 export const TOUCH_EVENT_HOVER_LEAVE = 0x06;
 export const TOUCH_EVENT_CANCEL_ALL = 0x07;
 
+// 触控笔工具类型
+export const LI_TOOL_TYPE_UNKNOWN = 0x00;
+export const LI_TOOL_TYPE_PEN = 0x01;
+export const LI_TOOL_TYPE_ERASER = 0x02;
+
+// 触控笔按钮
+export const LI_PEN_BUTTON_PRIMARY = 0x01;
+export const LI_PEN_BUTTON_SECONDARY = 0x02;
+export const LI_PEN_BUTTON_TERTIARY = 0x04;
+
+// 触控笔特殊值
+export const LI_TILT_UNKNOWN = 0xFF;
+export const LI_ROT_UNKNOWN = 0xFFFF;
+
+// 主机功能标志
+export const LI_FF_PEN_TOUCH_EVENTS = 0x01;
+
 // 手柄按钮
 export const A_FLAG = 0x1000;
 export const B_FLAG = 0x2000;

@@ -41,6 +41,7 @@ export struct AppCard {
             .height(CARD_ICON_HEIGHT)
             .objectFit(ImageFit.Cover)
             .borderRadius({ topLeft: AppSizes.RadiusMedium, topRight: AppSizes.RadiusMedium })
+            .draggable(false)
             .onError(() => {
               this.imageLoadFailed = true;
             })

@@ -9,7 +9,6 @@
  */
 
 import { inputDevice } from '@kit.InputKit';
-import { vibrator } from '@kit.SensorServiceKit';
 import { UsbDriverService, UsbDriverListener, AbstractController, ButtonFlags } from './usbdriver/index';
 import { 
   gameControllerService, 
@@ -20,234 +19,23 @@ import { SettingsService, SettingsKeys } from './SettingsService';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
 import { MoonBridge } from './MoonBridge';
+import { MouseEmulationService, MouseEmulationCallback } from './MouseEmulationService';
+import { GamepadVibrationService } from './GamepadVibrationService';
+import {
+  GamepadState, GamepadInfo, GamepadInputListener, DeviceBusType,
+  MoonlightButton, GCButton2313Action, GCButton2313ActionCallback,
+  MoonlightControllerType, VendorId, ProductId,
+  AXIS_MAX, TRIGGER_MAX, SPECIAL_KEYCODE_MIN, SPECIAL_KEYCODE_MAX,
+  buttonMap, gcButtonMap, GAMEPAD_NAME_KEYWORDS, NON_GAMEPAD_KEYWORDS
+} from './GamepadTypes';
 
-// ==================== 类型定义 ====================
-
-/**
- * 手柄状态数据结构
- */
-export interface GamepadState {
-  buttons: number;
-  leftStickX: number;
-  leftStickY: number;
-  rightStickX: number;
-  rightStickY: number;
-  leftTrigger: number;
-  rightTrigger: number;
-}
-
-/**
- * 手柄设备信息
- */
-export interface GamepadInfo {
-  id: number;
-  name: string;
-  bus?: number;
-  vendor?: number;
-  product?: number;
-  isUsb?: boolean;
-  isBluetooth?: boolean;
-}
-
-/**
- * 手柄输入事件监听器接口
- */
-export interface GamepadInputListener {
-  /**
-   * 手柄连接
-   * @param deviceId 槽位 ID
-   * @param name 设备名称
-   * @param controllerType 控制器类型 (0=Unknown, 1=Xbox, 2=PS, 3=Nintendo)
-   */
-  onGamepadConnected: (deviceId: number, name: string, controllerType: number) => void;
-  onGamepadDisconnected: (deviceId: number) => void;
-  onGamepadInput: (deviceId: number, state: GamepadState) => void;
-}
-
-// ==================== 常量定义 ====================
-
-/** 设备总线类型（Linux input.h BUS_* 定义） */
-export class DeviceBusType {
-  static readonly BUS_USB = 0x03;
-  static readonly BUS_BLUETOOTH = 0x05;
-}
-
-/** Moonlight 按键标志位 */
-class MoonlightButton {
-  static readonly UP = 0x0001;
-  static readonly DOWN = 0x0002;
-  static readonly LEFT = 0x0004;
-  static readonly RIGHT = 0x0008;
-  static readonly START = 0x0010;
-  static readonly BACK = 0x0020;
-  static readonly LS = 0x0040;
-  static readonly RS = 0x0080;
-  static readonly LB = 0x0100;
-  static readonly RB = 0x0200;
-  static readonly SPECIAL = 0x0400;
-  static readonly A = 0x1000;
-  static readonly B = 0x2000;
-  static readonly X = 0x4000;
-  static readonly Y = 0x8000;
-  static readonly DPAD_MASK = MoonlightButton.UP | MoonlightButton.DOWN | MoonlightButton.LEFT | MoonlightButton.RIGHT;
-}
-
-/**
- * 2313 按键动作类型
- * 'guide' - 发送 Guide/Home 键
- * 'select' - 发送 Select/Back 键
- * 'toggle_mouse' - 切换鼠标模式
- * 'toggle_perf' - 切换性能图层
- * 'show_menu' - 显示 ESC 菜单
- * 'none' - 不做任何操作
- */
-export type GCButton2313Action = 'guide' | 'select' | 'toggle_mouse' | 'toggle_perf' | 'show_menu' | 'none';
-
-/**
- * 2313 自定义动作回调接口
- */
-export interface GCButton2313ActionCallback {
-  onToggleMouse?: () => void;
-  onTogglePerf?: () => void;
-  onShowMenu?: () => void;
-}
-
-/** 摇杆轴值范围 */
-const AXIS_MAX = 32767;
-const TRIGGER_MAX = 255;
-
-/** 特殊按键码范围（2311-2315）- 仅用于传统 InputKit 路径的设备路由判断 */
-const SPECIAL_KEYCODE_MIN = 2311;
-const SPECIAL_KEYCODE_MAX = 2315;
-
-/** 已知厂商 ID */
-class VendorId {
-  static readonly MICROSOFT = 0x045e;
-  static readonly SONY = 0x054c;
-  static readonly NINTENDO = 0x057e;
-}
-
-/** 已知产品 ID */
-class ProductId {
-  // Sony
-  static readonly DUALSENSE = 0x0ce6;
-  static readonly DUALSENSE_EDGE = 0x0df2;
-  // Nintendo
-  static readonly SWITCH_PRO = 0x2009;
-}
-
-/** 
- * 控制器类型常量（与 Moonlight 协议 LI_CTYPE_* 一致）
- * 0=Unknown, 1=Xbox, 2=PS, 3=Nintendo
- */
-export class MoonlightControllerType {
-  static readonly UNKNOWN = 0;
-  static readonly XBOX = 1;
-  static readonly PS = 2;
-  static readonly NINTENDO = 3;
-  
-  /**
-   * 根据 VID/PID 推断控制器类型
-   */
-  static fromVendorProduct(vendorId: number, _productId: number): number {
-    switch (vendorId) {
-      case VendorId.MICROSOFT:
-        return MoonlightControllerType.XBOX;
-      case VendorId.SONY:
-        return MoonlightControllerType.PS;
-      case VendorId.NINTENDO:
-        return MoonlightControllerType.NINTENDO;
-      default:
-        return MoonlightControllerType.XBOX;  // 未知设备默认模拟 Xbox
-    }
-  }
-  
-  /**
-   * 根据设备名称推断控制器类型（用于 GCK 模式，无 VID/PID 信息时）
-   */
-  static fromDeviceName(name: string): number {
-    const lower = name.toLowerCase();
-    if (lower.includes('dualsense') || lower.includes('dualshock') || 
-        lower.includes('playstation') || lower.includes('ps5') || lower.includes('ps4')) {
-      return MoonlightControllerType.PS;
-    }
-    if (lower.includes('switch') || lower.includes('nintendo') || 
-        lower.includes('joy-con') || lower.includes('joycon') || lower.includes('pro controller')) {
-      return MoonlightControllerType.NINTENDO;
-    }
-    // Xbox / 未知设备默认 Xbox
-    return MoonlightControllerType.XBOX;
-  }
-}
-
-// ==================== 按键映射表 ====================
-
-/** InputKit 按键码到 Moonlight 按钮的映射 */
-const buttonMap = new Map<number, number>([
-  // D-Pad
-  [19, MoonlightButton.UP],     // KEYCODE_DPAD_UP
-  [20, MoonlightButton.DOWN],   // KEYCODE_DPAD_DOWN
-  [21, MoonlightButton.LEFT],   // KEYCODE_DPAD_LEFT
-  [22, MoonlightButton.RIGHT],  // KEYCODE_DPAD_RIGHT
-  // Face buttons
-  [96, MoonlightButton.A],      // KEYCODE_BUTTON_A
-  [97, MoonlightButton.B],      // KEYCODE_BUTTON_B
-  [99, MoonlightButton.X],      // KEYCODE_BUTTON_X
-  [100, MoonlightButton.Y],     // KEYCODE_BUTTON_Y
-  // Shoulder buttons
-  [102, MoonlightButton.LB],    // KEYCODE_BUTTON_L1
-  [103, MoonlightButton.RB],    // KEYCODE_BUTTON_R1
-  // Stick buttons
-  [106, MoonlightButton.LS],    // KEYCODE_BUTTON_THUMBL
-  [107, MoonlightButton.RS],    // KEYCODE_BUTTON_THUMBR
-  // Start/Back
-  [108, MoonlightButton.START], // KEYCODE_BUTTON_START
-  [109, MoonlightButton.BACK],  // KEYCODE_BUTTON_SELECT
-  // Special
-  [110, MoonlightButton.SPECIAL], // KEYCODE_BUTTON_MODE
-  // GC Kit 按键码（某些蓝牙手柄可能通过 KeyEvent 发送这些码）
-  [2311, MoonlightButton.BACK],   // KEYCODE_BUTTON_SELECT - Select 键
-  [2312, MoonlightButton.START],  // KEYCODE_BUTTON_START - Start 键
-  [2313, MoonlightButton.SPECIAL], // KEYCODE_BUTTON_MODE - Home 键（可自定义）
-  [2314, MoonlightButton.LS],     // KEYCODE_BUTTON_THUMBL - 左摇杆按下
-  [2315, MoonlightButton.RS],     // KEYCODE_BUTTON_THUMBR - 右摇杆按下
-]);
-
-/** Game Controller Kit 按键码到 Moonlight 按钮的映射 */
-const gcButtonMap = new Map<number, number>([
-  // Face buttons
-  [2301, MoonlightButton.A],      // BUTTON_A
-  [2302, MoonlightButton.B],      // BUTTON_B
-  [2303, MoonlightButton.BACK],   // BUTTON_C - 映射为 Select/Back（鸿蒙不支持原生 Select 按键）
-  [2304, MoonlightButton.X],      // BUTTON_X
-  [2305, MoonlightButton.Y],      // BUTTON_Y
-  // Shoulder buttons
-  [2307, MoonlightButton.LB],     // LEFT_SHOULDER
-  [2308, MoonlightButton.RB],     // RIGHT_SHOULDER
-  // Thumbstick buttons
-  [2314, MoonlightButton.LS],     // LEFT_THUMBSTICK
-  [2315, MoonlightButton.RS],     // RIGHT_THUMBSTICK
-  // Menu buttons - 根据测试调整
-  [2311, MoonlightButton.BACK],   // 实测为 Select/Back 键
-  [2312, MoonlightButton.START],  // BUTTON_MENU (Start)
-  [2313, MoonlightButton.SPECIAL],// 默认为 Guide/Home，可用户自定义
-  // D-Pad
-  [2012, MoonlightButton.UP],     // DPAD_UP
-  [2013, MoonlightButton.DOWN],   // DPAD_DOWN
-  [2014, MoonlightButton.LEFT],   // DPAD_LEFT
-  [2015, MoonlightButton.RIGHT],  // DPAD_RIGHT
-]);
-
-/** 手柄设备名称关键词（用于识别手柄） */
-const GAMEPAD_NAME_KEYWORDS = [
-  'controller', 'gamepad', 'joystick', 'xbox', 'playstation',
-  'dualshock', 'dualsense', 'switch', 'pro controller', 'joycon', 'joy-con'
-];
-
-/** 非手柄设备关键词（用于排除） */
-const NON_GAMEPAD_KEYWORDS = [
-  'keyboard', '键盘', 'mouse', '鼠标', 'touchpad', 'trackpad', '触摸板'
-];
+// 重新导出公共类型，保持向后兼容
+export {
+  GamepadState, GamepadInfo, GamepadInputListener, DeviceBusType,
+  MoonlightButton, GCButton2313Action, GCButton2313ActionCallback,
+  MoonlightControllerType
+} from './GamepadTypes';
+export { MouseEmulationCallback } from './MouseEmulationService';
 
 // ==================== 手柄输入管理器 ====================
 
@@ -287,11 +75,6 @@ export class GamepadManager implements UsbDriverListener {
   private controllerIdToDeviceKey = new Map<number, string>();
   private usbDeviceKeyToId = new Map<string, number>();
   
-  // 震动设置
-  private deviceVibrateEnabled = false;
-  private deviceVibrateStrength = 100;
-  private vibrationMode = '自动';
-
   // 设备传感器回退
   private deviceSensorService: DeviceSensorService;
   private sensorFallbackEnabled = false;  // 用户设置：是否启用设备传感器回退
@@ -305,12 +88,67 @@ export class GamepadManager implements UsbDriverListener {
   private gcButton2313Action: GCButton2313Action = 'guide';
   private gcButton2313ActionCallback: GCButton2313ActionCallback | null = null;
   
+  // ==================== 解耦的子服务 ====================
+  /** 鼠标模拟服务（从本类解耦） */
+  private mouseEmulationService: MouseEmulationService;
+  /** 震动处理服务（从本类解耦） */
+  private vibrationService: GamepadVibrationService;
+  
+  // ==================== 长按 Start → 返回菜单 ====================
+  /** Start 按键按下的时间戳 (ms)，0 表示未按下 */
+  private startKeyDownTime: number = 0;
+  /** 长按 Start 的阈值 (ms)，对齐 Android START_DOWN_TIME_MOUSE_MODE_MS */
+  private static readonly START_LONG_PRESS_MS = 750;
+  /** 是否启用长按 Start 显示返回菜单（由设置控制） */
+  private enableStartKeyMenu = true;
+  /** 长按 Start 显示菜单的回调 */
+  private showGameMenuCallback: (() => void) | null = null;
+  
   private constructor() {
     this.usbDriverService = UsbDriverService.getInstance();
     this.deviceSensorService = DeviceSensorService.getInstance();
+    this.mouseEmulationService = new MouseEmulationService();
+    this.vibrationService = new GamepadVibrationService(this.usbDriverService, this.deviceKeyToSlot);
     this.loadGCButtonMappingSettings();
     this.loadSensorSettings();
-    this.initializeGameControllerKit();
+    this.loadUsbDriverSetting();
+    this.loadStartKeyMenuSetting();
+  }
+
+  /**
+   * 加载 USB 驱动设置并决定输入模式
+   * 如果用户启用了 USB 驱动，则直接使用 USB 驱动模式（跳过 GCK）
+   */
+  private loadUsbDriverSetting(): void {
+    PreferencesUtil.get<boolean>(SettingsKeys.USB_DRIVER_ENABLED, false).then(usbEnabled => {
+      if (usbEnabled) {
+        console.info('[GAMEPAD] USB 驱动模式已启用（用户设置），跳过 Game Controller Kit');
+        this.fallbackToLegacyInput();
+      } else {
+        this.initializeGameControllerKit();
+      }
+    }).catch(() => {
+      // 读取设置失败，使用默认行为（尝试 GCK）
+      this.initializeGameControllerKit();
+    });
+  }
+
+  /**
+   * 加载长按 Start 键显示返回菜单的设置
+   */
+  private async loadStartKeyMenuSetting(): Promise<void> {
+    try {
+      this.enableStartKeyMenu = await PreferencesUtil.get<boolean>(SettingsKeys.ENABLE_START_KEY_MENU, true);
+    } catch (e) {
+      this.enableStartKeyMenu = true;
+    }
+  }
+
+  /**
+   * 设置长按 Start 键显示返回菜单的回调
+   */
+  setShowGameMenuCallback(callback: (() => void) | null): void {
+    this.showGameMenuCallback = callback;
   }
   
   static getInstance(): GamepadManager {
@@ -324,10 +162,13 @@ export class GamepadManager implements UsbDriverListener {
    * 加载 Game Controller Kit 按键映射设置
    * 根据用户设置动态调整 2313 按键的动作
    */
-  private loadGCButtonMappingSettings(): void {
-    PreferencesUtil.get<string>(SettingsKeys.GC_BUTTON_HOME_MAPPING, 'guide').then(action => {
+  private async loadGCButtonMappingSettings(): Promise<void> {
+    try {
+      const action = await PreferencesUtil.get<string>(SettingsKeys.GC_BUTTON_HOME_MAPPING, 'guide');
       this.updateGCButton2313Action(action as GCButton2313Action);
-    });
+    } catch (e) {
+      this.updateGCButton2313Action('guide');
+    }
   }
 
   /**
@@ -367,6 +208,7 @@ export class GamepadManager implements UsbDriverListener {
   private handleGCButton2313Action(): boolean {
     switch (this.gcButton2313Action) {
       case 'toggle_mouse':
+        this.toggleMouseEmulation();
         this.gcButton2313ActionCallback?.onToggleMouse?.();
         return true;
       case 'toggle_perf':
@@ -484,6 +326,56 @@ export class GamepadManager implements UsbDriverListener {
     return this.useGameControllerKit;
   }
 
+  // ==================== 鼠标模拟（委托 MouseEmulationService） ====================
+
+  /** 设置鼠标模拟回调（由 StreamPage 调用） */
+  setMouseEmulationCallback(callback: MouseEmulationCallback | null): void {
+    this.mouseEmulationService.setCallback(callback);
+  }
+
+  /** 切换鼠标模拟模式 */
+  toggleMouseEmulation(): void {
+    this.mouseEmulationService.toggle();
+  }
+
+  /** 当前是否处于鼠标模拟模式 */
+  isMouseEmulationActive(): boolean {
+    return this.mouseEmulationService.isActive();
+  }
+
+  /** 设置里的「手柄模拟鼠标」是否启用 */
+  isMouseEmulationEnabled(): boolean {
+    return this.mouseEmulationService.isEnabled();
+  }
+
+  /**
+   * 重新加载所有设置（串流开始时调用）
+   * 
+   * GamepadManager 是单例，构造函数里的设置加载仅执行一次。
+   * 用户在设置页修改后需要手动同步，否则设置不会生效。
+   */
+  async reloadSettings(): Promise<void> {
+    await Promise.all([
+      this.mouseEmulationService.reloadSetting(),
+      this.loadStartKeyMenuSetting(),
+      this.loadGCButtonMappingSettings(),
+      this.loadSensorSettings()
+    ]);
+    // 注意：USB_DRIVER_ENABLED 不在这里重新加载，因为切换需要完全重初始化手柄驱动
+  }
+
+  /**
+   * 手柄状态拦截：鼠标模拟时委托给 MouseEmulationService
+   * @returns true 表示已拦截（鼠标模拟模式），false 表示正常手柄处理
+   */
+  private interceptForMouseEmulation(slot: number, state: GamepadState): boolean {
+    return this.mouseEmulationService.intercept(state, () => {
+      if (this.listener) {
+        this.listener.onGamepadInput(slot, this.createEmptyState());
+      }
+    });
+  }
+
   /**
    * 重新挂载输入回调
    * 
@@ -539,10 +431,7 @@ export class GamepadManager implements UsbDriverListener {
    * @param mode 震动模式：自动/仅手柄/仅设备/同时
    */
   setDeviceVibrate(enabled: boolean, strength: number, mode: string): void {
-    this.deviceVibrateEnabled = enabled;
-    this.deviceVibrateStrength = Math.max(0, Math.min(100, strength));
-    this.vibrationMode = mode;
-    console.info(`[GAMEPAD] 震动设置: enabled=${enabled}, strength=${this.deviceVibrateStrength}, mode=${mode}`);
+    this.vibrationService.setSettings(enabled, strength, mode);
   }
 
   /**
@@ -588,6 +477,12 @@ export class GamepadManager implements UsbDriverListener {
         const devices = gameControllerService.getAllDevices();
         const notifiedSlots = new Set<number>();
         for (const device of devices) {
+          // 过滤非手柄设备（如手表、手环等）
+          const deviceNameLower = (device.name || '').toLowerCase();
+          if (NON_GAMEPAD_KEYWORDS.some(kw => deviceNameLower.includes(kw))) {
+            console.info(`GamepadManager: 跳过非手柄设备: ${device.name}`);
+            continue;
+          }
           const slot = this.getSlotForGCDevice(device.deviceId);
           if (notifiedSlots.has(slot)) {
             console.info(`GamepadManager: 跳过重复槽位手柄: ${device.name} (Slot: ${slot})`);
@@ -1048,6 +943,13 @@ export class GamepadManager implements UsbDriverListener {
     console.info(`[GAMEPAD-GC] 设备状态变化: deviceId=${deviceId}, isConnected=${isConnected}, name=${info?.name}, physAddr=${info?.physicalAddress || 'N/A'}`);
     
     if (isConnected) {
+      // 过滤非手柄设备（如手表、手环等）
+      const deviceNameLower = (info?.name || '').toLowerCase();
+      if (NON_GAMEPAD_KEYWORDS.some(kw => deviceNameLower.includes(kw))) {
+        console.info(`[GAMEPAD-GC] 跳过非手柄设备: "${info?.name}"`);
+        return;
+      }
+
       // 去重检查：同一物理地址的设备只注册一次
       const physAddr = info?.physicalAddress || '';
       if (physAddr && physAddr.length > 0) {
@@ -1168,6 +1070,21 @@ export class GamepadManager implements UsbDriverListener {
     if (buttonCode === 2313 && isPressed && this.handleGCButton2313Action()) {
       return;  // 自定义动作已处理
     }
+
+    // 长按 Start 检测 (2312 = BUTTON_MENU/Start)
+    if (buttonCode === 2312) {
+      if (isPressed) {
+        this.startKeyDownTime = Date.now();
+      } else if (this.startKeyDownTime > 0) {
+        const pressDuration = Date.now() - this.startKeyDownTime;
+        this.startKeyDownTime = 0;
+        if (pressDuration > GamepadManager.START_LONG_PRESS_MS && this.enableStartKeyMenu) {
+          // 长按 Start → 显示返回菜单，吞掉此次按键释放（不发送 Start Up）
+          this.showGameMenuCallback?.();
+          return;
+        }
+      }
+    }
     
     // 映射按键码到按钮标志
     const buttonFlag = gcButtonMap.get(buttonCode);
@@ -1225,6 +1142,10 @@ export class GamepadManager implements UsbDriverListener {
    * 通知 Game Controller Kit 状态变化
    */
   private notifyGCStateChange(slot: number, state: GamepadState): void {
+    // 鼠标模拟拦截
+    if (this.interceptForMouseEmulation(slot, this.copyState(state))) {
+      return;
+    }
     if (this.listener) {
       this.listener.onGamepadInput(slot, this.copyState(state));
     }
@@ -1249,6 +1170,22 @@ export class GamepadManager implements UsbDriverListener {
     // 特殊处理 2313 按键（可自定义动作）- 无论是否使用 GC Kit 都处理
     if (keyCode === 2313 && isPressed && this.handleGCButton2313Action()) {
       return;  // 自定义动作已处理
+    }
+
+    // 长按 Start 检测 (108 = KEYCODE_BUTTON_START, 2312 = GCK Start)
+    // 此处统一处理两种 keyCode，因为 GCK 路径的 Start 也可能经过 InputInterceptor
+    if (keyCode === 108 || keyCode === 2312) {
+      if (isPressed) {
+        this.startKeyDownTime = Date.now();
+      } else if (this.startKeyDownTime > 0) {
+        const pressDuration = Date.now() - this.startKeyDownTime;
+        this.startKeyDownTime = 0;
+        if (pressDuration > GamepadManager.START_LONG_PRESS_MS && this.enableStartKeyMenu) {
+          // 长按 Start → 显示返回菜单，吞掉此次按键释放
+          this.showGameMenuCallback?.();
+          return;
+        }
+      }
     }
     
     // GCK 模式：尝试将按键路由到 GCK 设备状态
@@ -1413,6 +1350,10 @@ export class GamepadManager implements UsbDriverListener {
    */
   private notifyStateChange(deviceId: number, state: GamepadState): void {
     const slot = this.getControllerSlot(deviceId);
+    // 鼠标模拟拦截
+    if (this.interceptForMouseEmulation(slot, this.copyState(state))) {
+      return;
+    }
     this.listener?.onGamepadInput(slot, this.copyState(state));
   }
 
@@ -1451,6 +1392,10 @@ export class GamepadManager implements UsbDriverListener {
   resetSession(): void {
     console.info('[GAMEPAD] 重置会话状态');
     
+    // 停止鼠标模拟 & 震动
+    this.mouseEmulationService.cleanup();
+    this.vibrationService.stopAll();
+
     // 重置槽位管理状态
     this.slotOccupied = [false, false, false, false];
     this.deviceKeyToSlot.clear();
@@ -1489,6 +1434,10 @@ export class GamepadManager implements UsbDriverListener {
    * 清理
    */
   cleanup(): void {
+    // 停止鼠标模拟 & 震动
+    this.mouseEmulationService.cleanup();
+    this.vibrationService.stopAll();
+
     // 清理 Game Controller Kit
     if (this.useGameControllerKit) {
       gameControllerService.stopMonitor();
@@ -1579,14 +1528,19 @@ export class GamepadManager implements UsbDriverListener {
   /**
    * 加载传感器相关设置
    */
-  private loadSensorSettings(): void {
-    PreferencesUtil.get<boolean>(SettingsKeys.GAMEPAD_MOTION_SENSORS, true).then(enabled => {
-      this.gamepadMotionSensorsEnabled = enabled;
-    });
-    PreferencesUtil.get<boolean>(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false).then(enabled => {
-      this.sensorFallbackEnabled = enabled;
-      console.info(`[GAMEPAD] 设备传感器回退设置: ${enabled}`);
-    });
+  private async loadSensorSettings(): Promise<void> {
+    try {
+      const results = await Promise.all([
+        PreferencesUtil.get<boolean>(SettingsKeys.GAMEPAD_MOTION_SENSORS, true),
+        PreferencesUtil.get<boolean>(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false)
+      ]);
+      this.gamepadMotionSensorsEnabled = results[0];
+      this.sensorFallbackEnabled = results[1];
+      console.info(`[GAMEPAD] 设备传感器回退设置: ${results[1]}`);
+    } catch (e) {
+      this.gamepadMotionSensorsEnabled = true;
+      this.sensorFallbackEnabled = false;
+    }
   }
 
   /**
@@ -1846,253 +1800,15 @@ export class GamepadManager implements UsbDriverListener {
     await this.usbDriverService.refreshDevices();
   }
 
-  // ==================== 震动处理 ====================
+  // ==================== 震动处理（委托 GamepadVibrationService） ====================
 
-  /**
-   * 处理震动反馈
-   */
+  /** 处理震动反馈 */
   handleRumble(controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
-    GamepadManager.DEBUG && console.info(`[GAMEPAD] 震动: ctrl=${controllerNumber}, low=${lowFreqMotor}, high=${highFreqMotor}`);
-
-    const controllers = this.usbDriverService.getControllers();
-    const hasUsbController = controllers.length > 0;
-    
-    switch (this.vibrationMode) {
-      case '仅手柄':
-        if (hasUsbController) {
-          this.rumbleUsbControllers(controllers, controllerNumber, lowFreqMotor, highFreqMotor);
-        }
-        break;
-        
-      case '仅设备':
-        this.triggerDeviceVibrate(lowFreqMotor, highFreqMotor);
-        break;
-        
-      case '同时':
-        if (hasUsbController) {
-          this.rumbleUsbControllers(controllers, controllerNumber, lowFreqMotor, highFreqMotor);
-        }
-        this.triggerDeviceVibrate(lowFreqMotor, highFreqMotor);
-        break;
-        
-      case '自动':
-      default:
-        if (hasUsbController) {
-          this.rumbleUsbControllers(controllers, controllerNumber, lowFreqMotor, highFreqMotor);
-        } else {
-          this.triggerDeviceVibrate(lowFreqMotor, highFreqMotor);
-        }
-        break;
-    }
+    this.vibrationService.handleRumble(controllerNumber, lowFreqMotor, highFreqMotor);
   }
 
-  /**
-   * 根据槽位号查找控制器（带多级后备）
-   */
-  private findControllerBySlot(controllers: AbstractController[], slotNumber: number): AbstractController | null {
-    if (controllers.length === 0) return null;
-    
-    // 优先：槽位精确匹配
-    for (const controller of controllers) {
-      if (this.deviceKeyToSlot.get(controller.getDeviceKey()) === slotNumber) {
-        return controller;
-      }
-    }
-    
-    // 后备：使用索引或第一个
-    if (controllers.length === 1) return controllers[0];
-    if (slotNumber < controllers.length) return controllers[slotNumber];
-    return controllers[0];
-  }
-  
-  /**
-   * 向 USB 控制器发送震动
-   */
-  private rumbleUsbControllers(controllers: AbstractController[], controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
-    const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumble(lowFreqMotor, highFreqMotor);
-  }
-
-  /**
-   * 处理扳机震动
-   */
+  /** 处理扳机震动 */
   handleRumbleTriggers(controllerNumber: number, leftTrigger: number, rightTrigger: number): void {
-    GamepadManager.DEBUG && console.info(`[GAMEPAD] 扳机震动: ctrl=${controllerNumber}, L=${leftTrigger}, R=${rightTrigger}`);
-
-    const controllers = this.usbDriverService.getControllers();
-    const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumbleTriggers(leftTrigger, rightTrigger);
-  }
-  
-  // 高清振动支持缓存
-  private hdHapticSupported: boolean | null = null;
-  // 上次震动参数缓存（用于检测变化）
-  private lastLowFreq: number = 0;
-  private lastHighFreq: number = 0;
-  // 震动活跃标志
-  private isVibrating: boolean = false;
-  
-  /**
-   * 触发设备震动（后备方案）
-   * 
-   * 关键改进：
-   * 1. 使用 continuous 长振（而非 transient 瞬态）实现持续震动
-   * 2. 强度变化时立即停止旧震动再启动新震动
-   * 3. 使用 stopVibrationSync 同步停止确保即时性
-   */
-  private triggerDeviceVibrate(lowFreqMotor: number, highFreqMotor: number): void {
-    if (!this.deviceVibrateEnabled) return;
-    
-    // 停止震动
-    if (lowFreqMotor === 0 && highFreqMotor === 0) {
-      if (this.isVibrating) {
-        this.stopVibrationImmediate();
-        this.lastLowFreq = 0;
-        this.lastHighFreq = 0;
-      }
-      return;
-    }
-    
-    // 检查是否需要更新震动（强度变化超过阈值才更新，避免过于频繁）
-    const lowDelta = Math.abs(lowFreqMotor - this.lastLowFreq);
-    const highDelta = Math.abs(highFreqMotor - this.lastHighFreq);
-    const threshold = 3000;  // 约 5% 的变化阈值
-    
-    if (this.isVibrating && lowDelta < threshold && highDelta < threshold) {
-      return;  // 变化太小，不更新
-    }
-    
-    this.lastLowFreq = lowFreqMotor;
-    this.lastHighFreq = highFreqMotor;
-    
-    // 计算用户强度系数
-    const userStrength = this.deviceVibrateStrength / 100;
-    
-    // 计算低频和高频马达的强度 (0-100)
-    const lowIntensity = Math.floor((lowFreqMotor / 65535) * userStrength * 100);
-    const highIntensity = Math.floor((highFreqMotor / 65535) * userStrength * 100);
-    
-    // 检查是否支持高清振动（首次检查后缓存）
-    if (this.hdHapticSupported === null) {
-      try {
-        this.hdHapticSupported = vibrator.isHdHapticSupported();
-        console.info(`[GAMEPAD] 高清振动支持: ${this.hdHapticSupported}`);
-      } catch (_) {
-        this.hdHapticSupported = false;
-      }
-    }
-    
-    // 先停止当前震动（确保即时切换）
-    if (this.isVibrating) {
-      this.stopVibrationImmediate();
-    }
-    
-    try {
-      if (this.hdHapticSupported) {
-        // 使用持续震动模式
-        this.triggerContinuousVibration(lowIntensity, highIntensity);
-      } else {
-        // 不支持高清振动，使用时长模式
-        this.triggerTimeVibration(lowIntensity, highIntensity);
-      }
-      this.isVibrating = true;
-    } catch (err) {
-      console.warn(`[GAMEPAD] 设备震动异常: ${err}`);
-      this.fallbackTimeVibration(Math.max(lowIntensity, highIntensity));
-    }
-  }
-  
-  /**
-   * 立即停止震动（同步方式）
-   */
-  private stopVibrationImmediate(): void {
-    try {
-      // 优先使用同步停止 API (API 12+)
-      vibrator.stopVibrationSync();
-    } catch (_) {
-      // 回退到异步停止
-      try {
-        vibrator.stopVibration();
-      } catch (_) { /* ignore */ }
-    }
-    this.isVibrating = false;
-  }
-  
-  /**
-   * 使用 continuous 长振实现持续震动 (API 18+)
-   * 
-   * 关键：使用较长的 duration 让震动持续，
-   * 当游戏发送新的震动命令时会被停止并替换
-   */
-  private triggerContinuousVibration(lowIntensity: number, highIntensity: number): void {
-    try {
-      const builder = new vibrator.VibratorPatternBuilder();
-      
-      // 计算混合强度
-      const combinedIntensity = Math.min(100, Math.max(lowIntensity, highIntensity));
-      if (combinedIntensity < 5) return;  // 强度太低不震动
-      
-      // 根据低频/高频比例计算频率
-      let frequency: number;
-      if (lowIntensity > 0 && highIntensity > 0) {
-        const ratio = highIntensity / (lowIntensity + highIntensity);
-        frequency = Math.floor(30 + ratio * 50);  // 30-80
-      } else if (lowIntensity > 0) {
-        frequency = 35;  // 低频：沉闷
-      } else {
-        frequency = 70;  // 高频：尖锐
-      }
-      
-      // 使用 continuous 长振事件，持续 500ms
-      // 游戏通常每 50-100ms 发送一次震动命令，所以会被持续刷新
-      builder.addContinuousEvent(0, 500, {
-        intensity: combinedIntensity,
-        frequency: frequency,
-        index: 0
-      });
-      
-      vibrator.startVibration({
-        type: 'pattern',
-        pattern: builder.build()
-      }, {
-        id: 0,
-        usage: 'physicalFeedback'
-      }).catch((err: Error) => {
-        this.triggerTimeVibration(lowIntensity, highIntensity);
-      });
-    } catch (err) {
-      this.triggerTimeVibration(lowIntensity, highIntensity);
-    }
-  }
-  
-  /**
-   * 使用时长模式实现持续震动
-   */
-  private triggerTimeVibration(lowIntensity: number, highIntensity: number): void {
-    const combinedIntensity = Math.max(lowIntensity, highIntensity);
-    if (combinedIntensity < 5) return;
-    
-    // 持续 500ms 的震动，会被后续命令刷新
-    vibrator.startVibration({
-      type: 'time',
-      duration: 500
-    }, {
-      id: 0,
-      usage: 'physicalFeedback'
-    }).catch((err: Error) => {
-      console.warn(`[GAMEPAD] 时长震动失败: ${err.message}`);
-    });
-  }
-  
-  /**
-   * 回退的简单时长模式震动
-   */
-  private fallbackTimeVibration(intensity: number): void {
-    if (intensity < 5) return;
-    const duration = Math.floor(50 + intensity * 4.5);  // 50-500ms
-    
-    vibrator.startVibration({ type: 'time', duration }, { id: 0, usage: 'physicalFeedback' })
-      .catch((err: Error) => console.warn(`[GAMEPAD] 设备震动失败: ${err.message}`));
-    this.isVibrating = true;
+    this.vibrationService.handleRumbleTriggers(controllerNumber, leftTrigger, rightTrigger);
   }
 }

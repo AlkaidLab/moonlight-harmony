@@ -185,8 +185,8 @@ export struct ComputerCard {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
-      // 第二行：IP 地址
-      Text(this.computer.address)
+      // 第二行：IP 地址（优先显示手动地址，保持稳定；否则显示轮询活跃地址）
+      Text(this.computer.manualAddress || this.computer.address)
         .fontSize(AppSizes.FontBody)
         .fontColor(AppColors.TextSecondary)
         .fontFamily('monospace')

@@ -34,12 +34,16 @@ export interface StreamStats {
   fps: number;             // 接收帧率 (Rx)
   renderedFps: number;     // 渲染帧率 (Rd)
   bitrate: number;         // Kbps
-  latency: number;         // 解码延迟 ms
+  latency: number;         // 解码延迟 ms (EMA 瞬时值)
   hostLatency: number;     // 主机处理延迟（编码时间）ms
   networkLatency: number;  // 网络延迟（RTT）ms
   packetLoss: number;      // %
   decodedFrames: number;
   droppedFrames: number;
+  // 累积值（用于串流结束后计算全局平均值）
+  globalAvgDecodeLatency: number;  // 全局平均解码延迟 ms
+  globalAvgHostLatency: number;    // 全局平均主机延迟 ms
+  globalAvgFps: number;            // 全局平均帧率
 }
 
 // Native 模块类型声明
@@ -97,6 +101,7 @@ interface NativeModule {
   sendMouseMove(deltaX: number, deltaY: number): void;
   sendMouseButton(buttonEvent: number, mouseButton: number): void;
   sendKeyboardInput(keyCode: number, keyAction: number, modifiers: number, flags: number): void;
+  sendUtf8Text(text: string): void;
   sendMultiControllerInput(controllerNumber: number, activeGamepadMask: number,
     buttonFlags: number, leftTrigger: number, rightTrigger: number,
     leftStickX: number, leftStickY: number, rightStickX: number, rightStickY: number): void;
@@ -128,6 +133,7 @@ interface StreamCallbacks {
   rumbleTriggers?: (controllerNumber: number, leftTrigger: number, rightTrigger: number) => void;
   setMotionEventState?: (controllerNumber: number, motionType: number, reportRateHz: number) => void;
   setControllerLED?: (controllerNumber: number, r: number, g: number, b: number) => void;
+  resolutionChanged?: (width: number, height: number) => void;
 }
 
 interface VideoStats {
@@ -138,6 +144,12 @@ interface VideoStats {
   renderedFps: number;   // 渲染帧率 (Rd)
   bitrate: number;
   hostLatency: number;   // 主机处理延迟（编码时间）ms
+  // 累积值（用于串流结束后计算全局平均）
+  totalDecodeTimeMs: number;
+  validDecodeFrames: number;
+  totalHostLatencyMs: number;
+  framesWithHostLatency: number;
+  globalAvgFps: number;  // 会话平均帧率
 }
 
 export interface DecoderCapabilities {
@@ -167,6 +179,11 @@ const nativeModuleRef = nativeLib as NativeModule;
  */
 export type HdrStateCallback = (isHdr: boolean) => void;
 
+/**
+ * 分辨率变化回调类型
+ */
+export type ResolutionChangedCallback = (width: number, height: number) => void;
+
 export class StreamingSession {
   private computerId: string = '';
   private appId: number = 0;
@@ -179,6 +196,9 @@ export class StreamingSession {
   private riKey: ArrayBuffer | null = null;
   private riKeyId: number = 0;
   private hdrStateCallback: HdrStateCallback | null = null;
+  private connectionTerminatedCallback: ((errorCode: number) => void) | null = null;
+  private resolutionChangedCallback: ResolutionChangedCallback | null = null;
+  private stageProgressCallback: ((stage: number, stageName: string) => void) | null = null;
   private displayGuid: string = '';  // 选择的显示器 GUID
   private useVdd: boolean = false;   // 是否使用虚拟显示器
   
@@ -198,8 +218,14 @@ export class StreamingSession {
     networkLatency: 0,
     packetLoss: 0,
     decodedFrames: 0,
-    droppedFrames: 0
+    droppedFrames: 0,
+    globalAvgDecodeLatency: 0,
+    globalAvgHostLatency: 0,
+    globalAvgFps: 0
   };
+
+  // 最后一次有效的性能统计快照（fps > 0 时缓存，用于串流结束后的 toast）
+  private lastValidStats: StreamStats | null = null;
 
   // 麦克风
   private microphoneStream: MicrophoneStream | null = null;
@@ -217,11 +243,56 @@ export class StreamingSession {
   }
 
   /**
+   * 设置连接终止回调
+   * 当服务器主动断开或连接异常终止时调用
+   * errorCode: 0 = 正常关闭, <0 = 错误
+   */
+  setConnectionTerminatedCallback(callback: ((errorCode: number) => void) | null): void {
+    this.connectionTerminatedCallback = callback;
+  }
+
+  /**
+   * 设置分辨率变化回调
+   * 当服务器端分辨率变化时（如旋转屏幕）调用
+   */
+  setResolutionChangedCallback(callback: ResolutionChangedCallback | null): void {
+    this.resolutionChangedCallback = callback;
+  }
+
+  /**
+   * 设置连接阶段进度回调
+   * 当 Native 层连接阶段开始时调用，用于 UI 进度显示
+   */
+  setStageProgressCallback(callback: ((stage: number, stageName: string) => void) | null): void {
+    this.stageProgressCallback = callback;
+  }
+
+  /**
    * 获取当前实际使用的串流配置
    * 这个配置可能与初始配置不同（例如 HDR 可能因设备不支持而被禁用）
    */
   getEffectiveConfig(): StreamConfig | null {
     return this.config;
+  }
+
+  /**
+   * 获取连接阶段的显示名称
+   */
+  private getStageDisplayName(stage: number): string {
+    const stageNames: Record<number, string> = {
+      1: '正在初始化平台...',
+      2: '正在解析服务器地址...',
+      3: '正在建立 RTSP 连接...',
+      4: '正在初始化控制通道...',
+      5: '正在初始化视频通道...',
+      6: '正在初始化音频通道...',
+      7: '正在初始化输入通道...',
+      8: '正在启动控制流...',
+      9: '正在启动视频流...',
+      10: '正在启动音频流...',
+      11: '正在启动输入流...'
+    };
+    return stageNames[stage] || `阶段 ${stage}`;
   }
 
   /**
@@ -277,12 +348,18 @@ export class StreamingSession {
       // 2. 创建 NvHttp 实例（传递 context 以支持客户端证书，传递 httpPort 支持自定义端口）
       this.nvHttp = new NvHttp(selectBestAddress(this.computer), this.computer.serverCert, context, this.computer.httpPort);
       
-      // 3. 获取服务器信息（包括 appVersion、gfeVersion）
+      // 3. 获取服务器信息（包括 appVersion、gfeVersion、currentGame）
       const serverInfo = await this.nvHttp.getServerInfo();
       this.serverAppVersion = serverInfo.appVersion || '';
       this.serverGfeVersion = serverInfo.gfeVersion || '';
       this.serverCodecModeSupport = serverInfo.serverCodecModeSupport || 0;
-      console.info(`服务器版本: app=${this.serverAppVersion}, gfe=${this.serverGfeVersion}, codecSupport=${this.serverCodecModeSupport}`);
+      const cachedCurrentGame = serverInfo.currentGame || 0;
+      console.info(`服务器版本: app=${this.serverAppVersion}, gfe=${this.serverGfeVersion}, codecSupport=${this.serverCodecModeSupport}, currentGame=${cachedCurrentGame}`);
+      
+      // 更新进度
+      if (this.stageProgressCallback) {
+        this.stageProgressCallback(0, '正在初始化...');
+      }
       
       // 4. 生成随机输入密钥（使用加密安全的随机数）
       this.riKey = CryptoUtil.generateAesKey();
@@ -306,8 +383,11 @@ export class StreamingSession {
       // 6. 设置视频 Surface
       await this.setupVideoSurface();
       
-      // 7. 启动应用（获取 RTSP Session URL）
-      await this.launchApp();
+      // 7. 启动应用（获取 RTSP Session URL，复用步骤3的 currentGame 避免重复网络请求）
+      if (this.stageProgressCallback) {
+        this.stageProgressCallback(0, '正在启动应用...');
+      }
+      await this.launchApp(cachedCurrentGame);
       
       // 8. 连接到服务器
       await this.connectToServer();
@@ -638,6 +718,20 @@ export class StreamingSession {
       this.stats.latency = videoStats.avgDecodeTimeMs || 0;
       this.stats.hostLatency = videoStats.hostLatency || 0;   // 主机处理延迟（编码时间）
       
+      // 计算全局平均值（累积值 / 帧数，用于串流结束后的 toast）
+      const validFrames = videoStats.validDecodeFrames || 0;
+      if (validFrames > 0) {
+        this.stats.globalAvgDecodeLatency = (videoStats.totalDecodeTimeMs || 0) / validFrames;
+      }
+      const hostFrames = videoStats.framesWithHostLatency || 0;
+      if (hostFrames > 0) {
+        this.stats.globalAvgHostLatency = (videoStats.totalHostLatencyMs || 0) / hostFrames;
+      }
+      // 会话平均帧率（C++ 层已计算: decodedFrames * 1000 / sessionDuration）
+      if (videoStats.globalAvgFps > 0) {
+        this.stats.globalAvgFps = videoStats.globalAvgFps;
+      }
+      
       // 获取网络延迟 (RTT)
       const rttInfo = this.nativeModule.getEstimatedRttInfo();
       if (rttInfo >= 0) {
@@ -659,9 +753,37 @@ export class StreamingSession {
       networkLatency: this.stats.networkLatency,  // 网络延迟（RTT）
       packetLoss: this.stats.packetLoss,
       decodedFrames: this.stats.decodedFrames,
-      droppedFrames: this.stats.droppedFrames
+      droppedFrames: this.stats.droppedFrames,
+      globalAvgDecodeLatency: this.stats.globalAvgDecodeLatency,
+      globalAvgHostLatency: this.stats.globalAvgHostLatency,
+      globalAvgFps: this.stats.globalAvgFps
     };
+    
+    // 缓存有效统计快照（有帧率数据时才更新，用于串流结束后的 toast）
+    if (statsCopy.renderedFps > 0 || statsCopy.latency > 0) {
+      this.lastValidStats = statsCopy;
+    }
+    
     return statsCopy;
+  }
+
+  /**
+   * 获取最后有效的性能统计（用于串流结束后显示）
+   * 串流断开后 native 层数据可能已清零，此方法返回最后一次非零的快照
+   */
+  getSummaryStats(): StreamStats {
+    // 先尝试获取当前实时数据
+    const current = this.getStats();
+    // 如果当前数据有效（帧率或延迟 > 0），直接使用
+    if (current.renderedFps > 0 || current.latency > 0) {
+      return current;
+    }
+    // 否则返回最后缓存的有效数据
+    if (this.lastValidStats) {
+      return this.lastValidStats;
+    }
+    // 都没有则返回当前（零值）
+    return current;
   }
 
   /**
@@ -780,13 +902,18 @@ export class StreamingSession {
         console.info('音频渲染器清理');
       },
       clStageStarting: (stage: number): void => {
-        console.info(`连接阶段开始: ${stage}`);
+        const stageName = this.getStageDisplayName(stage);
+        console.info(`连接阶段开始: ${stage} (${stageName})`);
+        if (this.stageProgressCallback) {
+          this.stageProgressCallback(stage, stageName);
+        }
       },
       clStageComplete: (stage: number): void => {
         console.info(`连接阶段完成: ${stage}`);
       },
       clStageFailed: (stage: number, errorCode: number): void => {
-        console.error(`连接阶段失败: stage=${stage}, error=${errorCode}`);
+        const stageName = this.getStageDisplayName(stage);
+        console.error(`连接阶段失败: stage=${stage} (${stageName}), error=${errorCode}`);
       },
       clConnectionStarted: (): void => {
         console.info('连接已建立');
@@ -801,6 +928,10 @@ export class StreamingSession {
         GamepadManager.getInstance().stopAllSensors();
         // 停止麦克风
         this.stopMicrophone();
+        // 通知上层连接已终止
+        if (this.connectionTerminatedCallback) {
+          this.connectionTerminatedCallback(errorCode);
+        }
       },
       clConnectionStatusUpdate: (connectionStatus: number): void => {
         console.info(`连接状态更新: ${connectionStatus}`);
@@ -833,6 +964,12 @@ export class StreamingSession {
       setControllerLED: (controllerNumber: number, r: number, g: number, b: number): void => {
         console.info(`收到 LED 回调: controller=${controllerNumber}, rgb=(${r},${g},${b})`);
         // TODO: 实现 LED 控制
+      },
+      resolutionChanged: (width: number, height: number): void => {
+        console.info(`收到分辨率变化: ${width}x${height}`);
+        if (this.resolutionChangedCallback) {
+          this.resolutionChangedCallback(width, height);
+        }
       }
     };
     
@@ -905,7 +1042,7 @@ export class StreamingSession {
   /**
    * 启动应用
    */
-  private async launchApp(): Promise<void> {
+  private async launchApp(cachedCurrentGame: number = 0): Promise<void> {
     if (!this.nvHttp || !this.config || !this.riKey) {
       throw new Error('启动应用前提条件不满足');
     }
@@ -963,9 +1100,8 @@ export class StreamingSession {
     };
     
     try {
-      // 首先检查是否有游戏正在运行
-      const serverInfo = await this.nvHttp.getServerInfo();
-      const currentGame = serverInfo.currentGame;
+      // 使用缓存的 currentGame（来自 start() 中的 getServerInfo），避免重复网络请求
+      const currentGame = cachedCurrentGame;
       
       console.info(`当前运行的游戏 ID: ${currentGame}, 目标应用 ID: ${this.appId}`);
       
@@ -1118,6 +1254,15 @@ export class StreamingSession {
   }
 
   /**
+   * 设置音频音量
+   * @param volume 音量 0.0 ~ 1.0
+   * @returns 是否成功
+   */
+  setAudioVolume(volume: number): boolean {
+    return this.nativeModule.setAudioVolume(volume);
+  }
+
+  /**
    * 发送按键序列（按下所有键，然后释放）
    * @param keyCodes Windows 虚拟键码数组
    */
@@ -1167,6 +1312,21 @@ export class StreamingSession {
         this.nativeModule.sendKeyboardInput(key, KEY_UP, modifier, 0);
       }
     }, 25);
+  }
+
+  // ==========================================================================
+  // UTF-8 文本输入
+  // ==========================================================================
+
+  /**
+   * 发送 UTF-8 文本到主机（用于 IME 输入）
+   * @param text 要发送的文本
+   */
+  sendUtf8Text(text: string): void {
+    if (!this.isRunning || text.length === 0) {
+      return;
+    }
+    this.nativeModule.sendUtf8Text(text);
   }
 
   // ==========================================================================

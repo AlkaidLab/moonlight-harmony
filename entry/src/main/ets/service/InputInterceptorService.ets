@@ -40,6 +40,7 @@ interface InputInterceptorNative {
   addKeyInterceptor(callback: (event: InterceptedKeyEvent) => void): number;
   removeKeyInterceptor(): number;
   isKeyInterceptorActive(): boolean;
+  isInjectApiAvailable(): boolean;
 }
 
 /**
@@ -105,6 +106,17 @@ export class InputInterceptorService {
   isActive(): boolean {
     if (this.native) {
       return this.native.isKeyInterceptorActive();
+    }
+    return false;
+  }
+
+  /**
+   * 查询按键注入 API 是否可用（API 13+ 设备）
+   * 返回 false 时不应启用反劫持功能（音量键会被吃掉且无法回注）
+   */
+  isInjectApiAvailable(): boolean {
+    if (this.native) {
+      return this.native.isInjectApiAvailable();
     }
     return false;
   }

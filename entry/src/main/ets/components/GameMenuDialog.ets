@@ -42,6 +42,8 @@ export interface GameMenuCallbacks {
   onDeleteShortcut?: (shortcut: Shortcut) => void;   // 删除快捷键
   onSendSuperCmd?: (cmdId: string) => void;  // 发送超级指令
   onForceUsbDriver?: () => void;  // 强制 USB 驱动接管
+  onToggleKeyboard?: () => void;  // 弹出系统键盘
+  onToggleMouseEmulation?: () => void;  // 切换手柄鼠标模拟
   onClose?: () => void; // 用于关闭对话框
 }
 
@@ -66,21 +68,25 @@ export struct GameMenuDialog {
     onTouchModeChanged: () => {}
   };
   superCmds: SuperCmd[] = [];  // 超级指令列表 (Sunshine 功能)
+  isUsbDriverMode: boolean = false;  // 当前是否处于 USB 驱动模式
+  isMouseEmulationActive: boolean = false;  // 当前是否处于手柄鼠标模拟模式
+  isMouseEmulationEnabled: boolean = true;  // 设置里「手柄模拟鼠标」是否启用
   
   // 菜单项配置（马卡龙色系 - 优化配色和图标）
   private readonly menuItems: MenuItem[] = [
     { icon: '⊞', label: 'Win', bgColor: '#C7E5F7', borderColor: '#5BA3D0' },       // Windows 键
-    { icon: '◎', label: 'USB驱动', bgColor: '#F7D1D1', borderColor: '#D87070' },   // USB 驱动接管
     { icon: '✦', label: 'HDR', bgColor: '#F7EBC7', borderColor: '#D0A850' },       // HDR
+    { icon: '◎', label: 'USB驱动', bgColor: '#F7D1D1', borderColor: '#D87070' },   // USB 驱动接管
     { icon: '⌨', label: '键盘', bgColor: '#C7F7E0', borderColor: '#50C080' },      // 键盘
     { icon: '☝', label: '触控', bgColor: '#E0D4F7', borderColor: '#9080C0' },      // 触控
     { icon: '🎮', label: '手柄', bgColor: '#D4E8F7', borderColor: '#6098C0' },      // 虚拟手柄
+    { icon: '🖱', label: '鼠标', bgColor: '#F7E0C7', borderColor: '#C08050' },      // 手柄鼠标模拟
     { icon: '◐', label: '休眠', bgColor: '#E8E8E8', borderColor: '#909090' },      // 休眠
     { icon: '✕', label: '退出', bgColor: '#F7CFCF', borderColor: '#D06060' }       // 退出
   ];
   
   // 菜单项水平偏移（不规则排列）
-  private readonly offsets: number[] = [15, 55, 25, 70, 35, 45, 10, 50];
+  private readonly offsets: number[] = [15, 25, 55, 70, 35, 45, 30, 10, 50];
   
   // 动画状态：translateX 位置（正值向右，负值向左）
   @State private pos0: number = 200;  // 初始在屏幕右边外面
@@ -91,6 +97,7 @@ export struct GameMenuDialog {
   @State private pos5: number = 200;
   @State private pos6: number = 200;
   @State private pos7: number = 200;
+  @State private pos8: number = 200;
   
   // 动画状态：缩放（初始为 1.0，不缩小）
   @State private scale0: number = 1.0;
@@ -101,6 +108,7 @@ export struct GameMenuDialog {
   @State private scale5: number = 1.0;
   @State private scale6: number = 1.0;
   @State private scale7: number = 1.0;
+  @State private scale8: number = 1.0;
   
   // 二级菜单状态
   @State private expandedMenu: string = '';
@@ -149,7 +157,7 @@ export struct GameMenuDialog {
   private animateInStaggered(): void {
     const staggerDelay = 50;  // 每个按钮启动间隔 50ms
     
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 9; i++) {
       setTimeout(() => {
         animateTo({ 
           duration: 200,  // 单个动画时长
@@ -165,14 +173,14 @@ export struct GameMenuDialog {
    * 递归执行进入动画（备用方案）
    */
   private animateInSequence(index: number): void {
-    if (index >= 8) return;
+    if (index >= 9) return;
     
     animateTo({ 
       duration: 280,  // 稍快的动画
       curve: Curve.FastOutSlowIn,  // 更流畅的曲线
       onFinish: () => {
         // 动画完成后触发下一个
-        if (index < 7) {
+        if (index < 8) {
           this.animateInSequence(index + 1);
         }
       }
@@ -199,7 +207,7 @@ export struct GameMenuDialog {
       duration: 200, 
       curve: Curve.FastOutLinearIn 
     }, () => {
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 9; i++) {
         this.setPos(i, 200);
       }
     });
@@ -223,6 +231,7 @@ export struct GameMenuDialog {
     else if (i === 5) this.pos5 = v;
     else if (i === 6) this.pos6 = v;
     else if (i === 7) this.pos7 = v;
+    else if (i === 8) this.pos8 = v;
   }
   
   private getPos(i: number): number {
@@ -234,6 +243,7 @@ export struct GameMenuDialog {
     if (i === 5) return this.pos5;
     if (i === 6) return this.pos6;
     if (i === 7) return this.pos7;
+    if (i === 8) return this.pos8;
     return 0;
   }
   
@@ -246,6 +256,7 @@ export struct GameMenuDialog {
     else if (i === 5) this.scale5 = v;
     else if (i === 6) this.scale6 = v;
     else if (i === 7) this.scale7 = v;
+    else if (i === 8) this.scale8 = v;
   }
   
   private getScale(i: number): number {
@@ -257,6 +268,7 @@ export struct GameMenuDialog {
     if (i === 5) return this.scale5;
     if (i === 6) return this.scale6;
     if (i === 7) return this.scale7;
+    if (i === 8) return this.scale8;
     return 1;
   }
   
@@ -507,15 +519,19 @@ export struct GameMenuDialog {
         this.sendKeys([VirtualKey.VK_LWIN]);
         this.animateOut();
         break;
-      case 1: // USB 驱动接管
-        this.showUsbDriverDialog();
-        break;
-      case 2: // HDR
+      case 1: // HDR
         this.sendKeys([VirtualKey.VK_LWIN, VirtualKey.VK_MENU, VirtualKey.VK_B]);
         this.animateOut();
         break;
-      case 3: // 键盘
-        this.sendKeys([VirtualKey.VK_LWIN, VirtualKey.VK_CONTROL, VirtualKey.VK_O]);
+      case 2: // USB 驱动接管
+        if (this.isUsbDriverMode) {
+          promptAction.showToast({ message: '当前已是 USB 驱动模式', duration: 2000 });
+        } else {
+          this.showUsbDriverDialog();
+        }
+        break;
+      case 3: // 键盘 - 直接弹出系统 IME
+        this.callbacks.onToggleKeyboard?.();
         this.animateOut();
         break;
       case 4: // 触控
@@ -525,10 +541,14 @@ export struct GameMenuDialog {
         this.viewModel.toggleController();
         this.animateOut();
         break;
-      case 6: // 休眠
+      case 6: // 手柄鼠标模拟
+        this.callbacks.onToggleMouseEmulation?.();
+        this.animateOut();
+        break;
+      case 7: // 休眠
         this.showSleepDialog();
         break;
-      case 7: // 退出
+      case 8: // 退出
         this.showExitDialog();
         break;
     }
@@ -559,8 +579,12 @@ export struct GameMenuDialog {
         if (this.viewModel.inputSettings?.enableOnscreenControls) {
           this.SockButton(5)
         }
-        this.SockButton(6)
+        // 鼠标模拟按钮仅在设置启用时显示
+        if (this.isMouseEmulationEnabled) {
+          this.SockButton(6)
+        }
         this.SockButton(7)
+        this.SockButton(8)
       }
       .alignItems(HorizontalAlign.End)
       .justifyContent(FlexAlign.Center)
@@ -780,7 +804,7 @@ export struct GameMenuDialog {
           Slider({
             value: this.gyroSensitivity,
             min: 0.5,
-            max: 3.0,
+            max: 10.0,
             step: 0.1,
             style: SliderStyle.OutSet
           })
@@ -1102,6 +1126,39 @@ export struct GameMenuDialog {
   /**
    * 长筒袜按钮
    */
+  // 获取菜单项的显示标签（USB 驱动 / 鼠标模拟项根据状态动态显示）
+  private getMenuLabel(index: number): string {
+    if (index === 2 && this.isUsbDriverMode) {
+      return 'USB驱动 ✓';
+    }
+    if (index === 6 && this.isMouseEmulationActive) {
+      return '鼠标 ✓';
+    }
+    return this.menuItems[index].label;
+  }
+
+  // 获取菜单项的背景色（USB 驱动 / 鼠标模拟已激活时使用绿色系）
+  private getMenuBgColor(index: number): string {
+    if (index === 2 && this.isUsbDriverMode) {
+      return '#C7F7D4';  // 浅绿 - 已激活
+    }
+    if (index === 6 && this.isMouseEmulationActive) {
+      return '#C7F7D4';
+    }
+    return this.menuItems[index].bgColor;
+  }
+
+  // 获取菜单项的边框色（USB 驱动 / 鼠标模拟已激活时使用绿色系）
+  private getMenuBorderColor(index: number): string {
+    if (index === 2 && this.isUsbDriverMode) {
+      return '#50A860';  // 深绿 - 已激活
+    }
+    if (index === 6 && this.isMouseEmulationActive) {
+      return '#50A860';
+    }
+    return this.menuItems[index].borderColor;
+  }
+
   @Builder
   SockButton(index: number) {
     Row() {
@@ -1109,57 +1166,57 @@ export struct GameMenuDialog {
       Column()
         .width(22)
         .height(36)
-        .backgroundColor(this.menuItems[index].borderColor)
+        .backgroundColor(this.getMenuBorderColor(index))
         .borderRadius({ topLeft: 18, bottomLeft: 18 })
       
       // 袜筒（浅色主体）
       Row() {
-        Text(this.menuItems[index].label)
+        Text(this.getMenuLabel(index))
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.menuItems[index].borderColor)  // 使用边框色作为文字色
+          .fontColor(this.getMenuBorderColor(index))  // 使用边框色作为文字色
       }
       .width(75)
       .height(36)
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
-      .backgroundColor(this.menuItems[index].bgColor)
+      .backgroundColor(this.getMenuBgColor(index))
       
       // 蕾丝边（波浪装饰）
       Column() {
         Row()
           .width(10)
           .height(5)
-          .backgroundColor(this.menuItems[index].borderColor)
+          .backgroundColor(this.getMenuBorderColor(index))
           .borderRadius({ topLeft: 5, topRight: 5 })
         Row()
           .width(10)
           .height(5)
-          .backgroundColor(this.menuItems[index].borderColor)
+          .backgroundColor(this.getMenuBorderColor(index))
           .borderRadius({ bottomLeft: 5, bottomRight: 5 })
           .margin({ top: 2 })
         Row()
           .width(10)
           .height(5)
-          .backgroundColor(this.menuItems[index].borderColor)
+          .backgroundColor(this.getMenuBorderColor(index))
           .borderRadius({ topLeft: 5, topRight: 5 })
           .margin({ top: 2 })
         Row()
           .width(10)
           .height(5)
-          .backgroundColor(this.menuItems[index].borderColor)
+          .backgroundColor(this.getMenuBorderColor(index))
           .borderRadius({ bottomLeft: 5, bottomRight: 5 })
           .margin({ top: 2 })
         Row()
           .width(10)
           .height(5)
-          .backgroundColor(this.menuItems[index].borderColor)
+          .backgroundColor(this.getMenuBorderColor(index))
           .borderRadius({ topLeft: 5, topRight: 5 })
           .margin({ top: 2 })
       }
       .height(36)
       .justifyContent(FlexAlign.Center)
-      .backgroundColor(this.menuItems[index].bgColor)
+      .backgroundColor(this.getMenuBgColor(index))
     }
     .height(40)
     .padding(2)

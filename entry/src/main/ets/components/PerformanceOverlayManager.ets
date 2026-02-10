@@ -136,7 +136,8 @@ export function getDefaultOverlayConfig(): OverlayConfig {
     PerformanceItem.PACKET_LOSS,
     PerformanceItem.BITRATE,
     PerformanceItem.NETWORK_LATENCY,
-    PerformanceItem.DECODE_LATENCY
+    PerformanceItem.DECODE_LATENCY,
+    PerformanceItem.HOST_LATENCY
   ]);
   return config;
 }

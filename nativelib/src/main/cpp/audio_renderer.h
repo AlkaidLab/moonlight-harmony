@@ -13,6 +13,11 @@
  * @brief HarmonyOS OHAudio 音频渲染器
  * 
  * 使用 HarmonyOS OHAudio API 播放解码后的 PCM 音频数据
+ * 
+ * 性能优化：
+ * - 无锁环形缓冲区替代 std::queue + new/delete，消除每帧堆分配
+ * - 音频工作组 (AudioWorkgroup) 集成，保障音频线程调度优先级
+ * - 始终设置 QoS_USER_INTERACTIVE，降低回调延迟
  */
 
 #ifndef AUDIO_RENDERER_H
@@ -20,7 +25,6 @@
 
 #include <cstdint>
 #include <mutex>
-#include <queue>
 #include <atomic>
 #include <ohaudio/native_audiostream_base.h>
 #include <ohaudio/native_audiostreambuilder.h>
@@ -46,7 +50,7 @@ struct AudioRendererStats {
     uint64_t playedSamples;
     uint64_t droppedSamples;
     uint32_t underruns;
-    double latencyMs;
+    double latencyMs;         // 当前环形缓冲区中的音频延迟（毫秒）
 };
 
 /**
@@ -128,23 +132,36 @@ private:
     // 配置
     AudioRendererConfig config_;
     
-    // PCM 数据队列
-    mutable std::mutex queueMutex_;
-    std::queue<std::pair<int16_t*, int>> pcmQueue_;  // 数据和采样数
-    static constexpr int MAX_QUEUE_SIZE = 16;
+    // =========================================================================
+    // 无锁环形缓冲区（SPSC: 单生产者单消费者）
+    // 生产者: PlaySamples() (解码线程)
+    // 消费者: OnWriteData() (OHAudio 音频回调线程)
+    // =========================================================================
+    // 缓冲区容量：6帧 × 最大8声道 × 240采样/帧 = 11520 采样 ≈ 30ms @48kHz
+    // 对于低延迟游戏串流，30ms 是合理的缓冲深度
+    static constexpr int MAX_BUFFER_FRAMES = 6;
+    static constexpr int MAX_CHANNELS = 8;
+    static constexpr int MAX_SAMPLES_PER_FRAME = 240;
+    static constexpr int RING_BUFFER_CAPACITY = MAX_BUFFER_FRAMES * MAX_CHANNELS * MAX_SAMPLES_PER_FRAME;
     
-    // 统计信息
-    mutable std::mutex statsMutex_;
-    AudioRendererStats stats_;
+    int16_t ringBuffer_[RING_BUFFER_CAPACITY];
+    std::atomic<int> ringHead_{0};  // 消费者读位置（OnWriteData 更新）
+    std::atomic<int> ringTail_{0};  // 生产者写位置（PlaySamples 更新）
+    
+    // 统计信息（原子操作避免锁）
+    std::atomic<uint64_t> totalSamples_{0};
+    std::atomic<uint64_t> playedSamples_{0};
+    std::atomic<uint64_t> droppedSamples_{0};
+    std::atomic<uint32_t> underruns_{0};
     
     // 运行状态
     std::atomic<bool> running_{false};
     std::atomic<bool> configured_{false};
     
     // 错误恢复
-    std::atomic<bool> needRestart_{false};     // 标记需要重启
-    std::atomic<int> consecutiveErrors_{0};     // 连续错误计数
-    static constexpr int MAX_ERRORS_BEFORE_RESTART = 3;  // 触发重启的错误阈值
+    std::atomic<bool> needRestart_{false};
+    std::atomic<int> consecutiveErrors_{0};
+    static constexpr int MAX_ERRORS_BEFORE_RESTART = 3;
     
     /**
      * 尝试重启音频渲染器（内部使用）

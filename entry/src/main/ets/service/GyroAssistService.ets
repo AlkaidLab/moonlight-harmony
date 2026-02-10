@@ -44,10 +44,33 @@ export const GYRO_ACTIVATION_RT: number = 1;
 const TRIGGER_ACTIVATE_THRESHOLD: number = 51; // 255 * 0.2
 
 /** 默认灵敏度倍率 */
-const DEFAULT_SENSITIVITY: number = 1.0;
+const DEFAULT_SENSITIVITY: number = 2.0;
 
 /** 默认报告频率 */
 const GYRO_REPORT_RATE_HZ: number = 120;
+
+/**
+ * 物理摇杆去噪阈值 (对齐 Android ControllerHandler.PHYS_EPSILON)
+ * ~1.6% of full scale，消除微小抖动，避免陀螺仪融合时引入噪声
+ */
+const PHYS_EPSILON: number = 512;
+
+/**
+ * 即时发送回调类型
+ * 当陀螺仪数据更新时，GyroAssist 会通过此回调立即发送融合后的手柄状态
+ * 参数含义与 sendGamepadState 一致
+ */
+export type GyroSendCallback = (
+  deviceId: number,
+  buttons: number,
+  leftStickX: number,
+  leftStickY: number,
+  rightStickX: number,
+  rightStickY: number,
+  leftTrigger: number,
+  rightTrigger: number,
+  controllerType: number
+) => void;
 
 // ==================== 服务 ====================
 
@@ -67,6 +90,19 @@ export class GyroAssistService {
   private holdActive: boolean = false;
   private sensorListening: boolean = false;
   private controllerNumber: number = 0;
+
+  // —— 即时发送状态（对齐 Android updateContextWithGyroData） ——
+  // 存储最近一次手柄完整状态，以便陀螺仪更新时能立即构造并发送融合后的数据包
+  private lastDeviceId: number = 0;
+  private lastButtons: number = 0;
+  private lastLeftStickX: number = 0;
+  private lastLeftStickY: number = 0;
+  private lastPhysRightStickX: number = 0;
+  private lastPhysRightStickY: number = 0;
+  private lastLeftTrigger: number = 0;
+  private lastRightTrigger: number = 0;
+  private lastControllerType: number = 1; // Xbox
+  private sendCallback: GyroSendCallback | null = null;
 
   // —— 依赖 ——
   private sensorService: DeviceSensorService;
@@ -128,7 +164,7 @@ export class GyroAssistService {
    * 倍率越高，越小的旋转幅度即可让摇杆满偏
    */
   setSensitivity(multiplier: number): void {
-    this._sensitivityMultiplier = Math.max(0.5, Math.min(3.0, multiplier));
+    this._sensitivityMultiplier = Math.max(0.5, Math.min(10.0, multiplier));
   }
 
   /**
@@ -200,8 +236,9 @@ export class GyroAssistService {
     const effectiveSensitivity = 180.0 / this._sensitivityMultiplier;
 
     // 轴映射: Z(yaw) → 水平, X(pitch) → 垂直
-    let scaledX = -this.clampFloat(gz / effectiveSensitivity, -1.0, 1.0);
-    let scaledY = this.clampFloat(gx / effectiveSensitivity, -1.0, 1.0);
+    // 鸿蒙传感器符号约定与 Android 相反，需翻转两个轴
+    let scaledX = this.clampFloat(gz / effectiveSensitivity, -1.0, 1.0);
+    let scaledY = -this.clampFloat(gx / effectiveSensitivity, -1.0, 1.0);
 
     // 轴反转
     if (this._invertX) scaledX = -scaledX;
@@ -210,6 +247,26 @@ export class GyroAssistService {
     // 映射到摇杆值范围
     this.gyroStickX = Math.round(scaledX * STICK_MAX);
     this.gyroStickY = Math.round(scaledY * STICK_MAX);
+
+    // 即时发送（对齐 Android updateContextWithGyroData → sendControllerInputPacket）
+    // 每次陀螺仪数据更新时立即构造融合后的手柄状态并发送，以实现 120Hz 的响应率
+    if (this.sendCallback !== null) {
+      const px = this.denoisePhys(this.lastPhysRightStickX);
+      const py = this.denoisePhys(this.lastPhysRightStickY);
+      const fusedX = this.clampShort(px + this.gyroStickX);
+      const fusedY = this.clampShort(py + this.gyroStickY);
+      this.sendCallback(
+        this.lastDeviceId,
+        this.lastButtons,
+        this.lastLeftStickX,
+        this.lastLeftStickY,
+        fusedX,
+        fusedY,
+        this.lastLeftTrigger,
+        this.lastRightTrigger,
+        this.lastControllerType
+      );
+    }
   }
 
   /**
@@ -251,9 +308,44 @@ export class GyroAssistService {
       return result;
     }
 
-    result.x = this.clampShort(physRsX + this.gyroStickX);
-    result.y = this.clampShort(physRsY + this.gyroStickY);
+    result.x = this.clampShort(this.denoisePhys(physRsX) + this.gyroStickX);
+    result.y = this.clampShort(this.denoisePhys(physRsY) + this.gyroStickY);
     return result;
+  }
+
+  /**
+   * 更新最近一次手柄完整状态（每次手柄事件时由 StreamPage 调用）
+   * 陀螺仪即时发送时使用此状态来构造完整的数据包
+   */
+  updateGamepadState(
+    deviceId: number,
+    buttons: number,
+    leftStickX: number,
+    leftStickY: number,
+    physRightStickX: number,
+    physRightStickY: number,
+    leftTrigger: number,
+    rightTrigger: number,
+    controllerType: number
+  ): void {
+    this.lastDeviceId = deviceId;
+    this.lastButtons = buttons;
+    this.lastLeftStickX = leftStickX;
+    this.lastLeftStickY = leftStickY;
+    this.lastPhysRightStickX = physRightStickX;
+    this.lastPhysRightStickY = physRightStickY;
+    this.lastLeftTrigger = leftTrigger;
+    this.lastRightTrigger = rightTrigger;
+    this.lastControllerType = controllerType;
+  }
+
+  /**
+   * 设置即时发送回调
+   * 当陀螺仪数据更新时会通过此回调立即发送融合后的手柄状态
+   * 对齐 Android 的 updateContextWithGyroData → sendControllerInputPacket 流程
+   */
+  setSendCallback(callback: GyroSendCallback | null): void {
+    this.sendCallback = callback;
   }
 
   /**
@@ -345,6 +437,7 @@ export class GyroAssistService {
   dispose(): void {
     this.stopListening();
     this.originalSensorCallback = null;
+    this.sendCallback = null;
   }
 
   // ==================== 工具方法 ====================
@@ -356,12 +449,20 @@ export class GyroAssistService {
   private clampShort(value: number): number {
     return Math.max(-32767, Math.min(32767, Math.round(value)));
   }
+
+  /**
+   * 物理摇杆去噪（对齐 Android ControllerHandler.denoisePhys）
+   * 消除微小抖动，避免物理摇杆的细微噪声干扰陀螺仪瞄准
+   */
+  private denoisePhys(v: number): number {
+    return Math.abs(v) <= PHYS_EPSILON ? 0 : v;
+  }
 }
 
 // ==================== 配置接口 ====================
 
 export interface GyroAssistSettings {
-  sensitivity: number;     // 灵敏度倍率 (0.5 ~ 3.0)
+  sensitivity: number;     // 灵敏度倍率 (0.5 ~ 10.0)
   invertX: boolean;        // X轴反转
   invertY: boolean;        // Y轴反转
   activationKey: number;   // 激活键 (-1=始终, 0=LT, 1=RT)

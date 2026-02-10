@@ -362,12 +362,24 @@ export class BackgroundImageUtil {
 
   /**
    * 设置背景图类型
+   * 类型变化时自动清除本地缓存，确保下次加载使用新类型的图片
    */
   async setBackgroundImageType(type: BackgroundImageType): Promise<void> {
     try {
+      const previousType = this.cachedType;
       await PreferencesUtil.put(BACKGROUND_IMAGE_TYPE_KEY, type);
       this.cachedType = type;
       this.isLoaded = false;
+      // 类型变化时清除缓存，确保切换后能获取正确的图片
+      if (previousType !== type) {
+        this.cachedUrl = '';
+        this.cachedImageData = null;
+        this.refreshTimestamp = Date.now();
+        // 非关闭类型时清除本地缓存文件（关闭时由 disableBackgroundImage 处理）
+        if (type !== BackgroundImageType.NONE) {
+          await this.clearLocalCache();
+        }
+      }
     } catch (err) {
       console.error('BackgroundImageUtil: 保存背景图类型失败', err);
     }
@@ -479,10 +491,13 @@ export class BackgroundImageUtil {
 
   /**
    * 重新加载背景图设置
+   * @returns 如果类型发生变化返回 true，否则返回 false
    */
-  async reload(): Promise<string> {
+  async reload(): Promise<boolean> {
+    const previousType = this.cachedType;
     this.isLoaded = false;
-    return await this.getBackgroundImageUrl();
+    await this.getBackgroundImageUrl();
+    return this.cachedType !== previousType;
   }
 
   /**

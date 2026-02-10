@@ -67,8 +67,8 @@ export interface TouchInputConfig {
   sensitivity?: number;
   /** 点击移动阈值（低于此值视为点击） */
   clickThreshold?: number;
-  /** 长按时间阈值（毫秒） */
-  longPressThreshold?: number;
+  /** 点击最大时长阈值（毫秒，超过此值不视为点击） */
+  clickTimeThreshold?: number;
   /** 是否启用绝对鼠标模式 */
   absoluteMouseMode?: boolean;
   /** 视图宽度（用于绝对定位） */
@@ -89,18 +89,25 @@ export class TouchInputHandler {
   private absoluteMouseManager: AbsoluteMouseManager | null = null;
   /** 是否启用绝对鼠标模式 */
   private absoluteMouseMode: boolean = false;
+  /** 每个触摸点的最后已知压力值（从历史点追踪） */
+  private lastForce: Map<number, number> = new Map();
+  /** 每个触摸点的最后已知接触面积（从历史点追踪） */
+  private lastSize: Map<number, number> = new Map();
+  
+  /** HarmonyOS HistoricalPoint.force 最大值，用于归一化 */
+  private static readonly FORCE_MAX = 65535.0;
   
   // 默认配置
   private static readonly DEFAULT_SENSITIVITY = 1.5;
   private static readonly DEFAULT_CLICK_THRESHOLD = 20;  // 提高阈值，减少误触发
-  private static readonly DEFAULT_LONG_PRESS_THRESHOLD = 500;
+  private static readonly DEFAULT_CLICK_TIME_THRESHOLD = 300;  // 点击最大时长
   
   constructor(config?: TouchInputConfig) {
     this.nativeInput = nativeLib as NativeInputModule;
     this.config = {
       sensitivity: config?.sensitivity ?? TouchInputHandler.DEFAULT_SENSITIVITY,
       clickThreshold: config?.clickThreshold ?? TouchInputHandler.DEFAULT_CLICK_THRESHOLD,
-      longPressThreshold: config?.longPressThreshold ?? TouchInputHandler.DEFAULT_LONG_PRESS_THRESHOLD,
+      clickTimeThreshold: config?.clickTimeThreshold ?? TouchInputHandler.DEFAULT_CLICK_TIME_THRESHOLD,
       absoluteMouseMode: config?.absoluteMouseMode ?? false,
       viewWidth: config?.viewWidth ?? 1920,
       viewHeight: config?.viewHeight ?? 1080
@@ -145,6 +152,40 @@ export class TouchInputHandler {
     if (this.absoluteMouseManager) {
       this.absoluteMouseManager.updateViewSize(width, height);
     }
+  }
+  
+  /**
+   * 归一化压力值到 [0, 1.0] 范围
+   * HarmonyOS HistoricalPoint.force 范围为 [0, 65535)
+   * 若 force > 1.0 则视为原始传感器值，进行归一化
+   * 若 force 在 [0, 1.0] 范围内则直接使用
+   */
+  private normalizeForce(force: number): number {
+    if (force <= 0) {
+      return 0;
+    }
+    if (force > 1.0) {
+      // 原始传感器值，归一化到 [0, 1.0]
+      return Math.min(1.0, force / TouchInputHandler.FORCE_MAX);
+    }
+    return force;
+  }
+  
+  /**
+   * 获取触摸点的当前压力值
+   * 优先使用历史点追踪的 force，不可用时返回默认值
+   */
+  private getTrackedForce(pointerId: number, defaultForce: number = 1.0): number {
+    const force = this.lastForce.get(pointerId);
+    return force !== undefined ? force : defaultForce;
+  }
+  
+  /**
+   * 获取触摸点的当前接触面积
+   */
+  private getTrackedSize(pointerId: number, defaultSize: number = 0.05): number {
+    const size = this.lastSize.get(pointerId);
+    return size !== undefined ? size : defaultSize;
   }
   
   /**
@@ -230,12 +271,15 @@ export class TouchInputHandler {
             lastY: touch.y,
             startTime: Date.now()
           });
+          // DOWN 时尚无历史压力数据，使用默认值 1.0
+          this.lastForce.set(touch.id, 1.0);
+          this.lastSize.set(touch.id, 0.05);
           this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event);
         }
         break;
         
       case TouchType.Move:
-        // 首先处理历史触摸点（更高的采样率）
+        // 首先处理历史触摸点（更高的采样率，且包含真实压力数据）
         try {
           const historicalPoints = event.getHistoricalPoints();
           if (historicalPoints && historicalPoints.length > 0) {
@@ -254,6 +298,15 @@ export class TouchInputHandler {
               const histTouch = histPoint.touchObject;
               const state = this.touchStates.get(histTouch.id);
               if (state) {
+                // 归一化历史点的压力和接触面积
+                const normalizedForce = histPoint.force > 0
+                  ? this.normalizeForce(histPoint.force) : this.getTrackedForce(histTouch.id);
+                const contactSize = histPoint.size || this.getTrackedSize(histTouch.id);
+                
+                // 追踪每个触摸点的最新压力和面积
+                this.lastForce.set(histTouch.id, normalizedForce);
+                this.lastSize.set(histTouch.id, contactSize);
+                
                 this.sendNormalizedTouchDirect(
                   TOUCH_EVENT_MOVE,
                   histTouch.id,
@@ -261,8 +314,8 @@ export class TouchInputHandler {
                   histTouch.y,
                   areaWidth,
                   areaHeight,
-                  histPoint.force || 1.0,
-                  histPoint.size || 0.05
+                  normalizedForce,
+                  contactSize
                 );
               }
             }
@@ -271,7 +324,7 @@ export class TouchInputHandler {
           // 某些设备可能不支持 getHistoricalPoints，忽略错误
         }
         
-        // 然后处理当前触摸点
+        // 然后处理当前触摸点（使用历史点追踪的压力值）
         for (let i = 0; i < touches.length; i++) {
           const touch = touches[i];
           const state = this.touchStates.get(touch.id);
@@ -290,6 +343,8 @@ export class TouchInputHandler {
           const touch = changedTouches[i];
           this.sendNormalizedTouch(TOUCH_EVENT_UP, touch, event);
           this.touchStates.delete(touch.id);
+          this.lastForce.delete(touch.id);
+          this.lastSize.delete(touch.id);
         }
         break;
     }
@@ -379,6 +434,7 @@ export class TouchInputHandler {
   
   /**
    * 发送归一化的触摸事件
+   * 支持压感：使用历史点追踪的压力值，或 touch.force（如果可用）
    */
   private sendNormalizedTouch(eventType: number, touch: TouchObject, event: TouchEvent): void {
     const areaWidth = event.target.area.width as number;
@@ -388,8 +444,20 @@ export class TouchInputHandler {
     const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
     const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
     
-    const pressure = eventType === TOUCH_EVENT_UP ? 0 : 1.0;
-    const contactArea = eventType === TOUCH_EVENT_UP ? 0 : 0.05;
+    // 压感处理：
+    // 1. UP 事件 → 0
+    // 2. TouchObject.force（某些 API 版本可能提供）
+    // 3. 从历史点追踪的最后已知压力值
+    // 4. 默认值 1.0
+    let pressure: number;
+    let contactArea: number;
+    if (eventType === TOUCH_EVENT_UP) {
+      pressure = 0;
+      contactArea = 0;
+    } else {
+      pressure = this.getTrackedForce(touch.id);
+      contactArea = this.getTrackedSize(touch.id);
+    }
     
     this.nativeInput.sendTouchEvent(
       eventType,
@@ -430,6 +498,7 @@ export class TouchInputHandler {
       0
     );
   }
+
   
   /**
    * 检测并处理点击（仅在移动距离很小时触发）
@@ -444,7 +513,7 @@ export class TouchInputHandler {
     
     // 只有当移动距离很小且触摸时间较短时才视为点击
     // 长时间触摸+小移动可能是用户在等待/思考，不应视为点击
-    if (moveDistance < this.config.clickThreshold! && touchDuration < 300) {
+    if (moveDistance < this.config.clickThreshold! && touchDuration < this.config.clickTimeThreshold!) {
       this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
       setTimeout(() => {
         this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
@@ -477,6 +546,8 @@ export class TouchInputHandler {
    */
   dispose(): void {
     this.touchStates.clear();
+    this.lastForce.clear();
+    this.lastSize.clear();
     if (this.absoluteMouseManager) {
       this.absoluteMouseManager.destroy();
       this.absoluteMouseManager = null;

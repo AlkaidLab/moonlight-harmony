@@ -18,7 +18,8 @@ import { PerfIcons, PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem as DialogOptionItem } from '../components/OptionPickerDialog';
 import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem as DialogMultiOptionItem } from '../components/MultiOptionPickerDialog';
-import { BackgroundImageUtil } from '../utils/BackgroundImageUtil';
+import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
+import { InputInterceptorService } from '../service/InputInterceptorService';
 
 /**
  * 选择器选项接口
@@ -95,6 +96,7 @@ class SettingsKeys {
   static readonly IGNORE_DEVICE_DISCONNECT: string = 'settings_ignore_device_disconnect';
   static readonly GC_BUTTON_HOME_MAPPING: string = 'settings_gc_button_home_mapping';
   static readonly ENABLE_KEY_INTERCEPTOR: string = 'settings_enable_key_interceptor';
+  static readonly USB_DRIVER_ENABLED: string = 'settings_usb_driver_enabled';
   
   // 输入 - 屏幕控制器
   static readonly ENABLE_ONSCREEN_CONTROLS: string = 'settings_enable_onscreen_controls';
@@ -168,6 +170,7 @@ interface SettingItem {
   action?: () => void;
   disabled?: boolean;  // 是否禁用
   isPro?: boolean;     // 是否为 Pro 功能（需要开发者模式）
+  visible?: boolean;   // 是否可见（用于条件显示子选项，默认 true）
   // Slider 专用属性
   min?: number;
   max?: number;
@@ -232,8 +235,10 @@ struct SettingsPageV2 {
   @State gamepadTouchpadMouse: boolean = false;
   @State enableStartKeyMenu: boolean = true;
   @State ignoreDeviceDisconnect: boolean = false;
-  @State enableKeyInterceptor: boolean = false;
+  @State enableKeyInterceptor: boolean = true;
+  @State keyInterceptorAvailable: boolean = false;  // 按键注入 API 是否可用（API 13+ 才支持反劫持）
   @State gcButtonHomeMapping: string = 'guide';  // 2313键（Home键）动作映射
+  @State usbDriverEnabled: boolean = false;  // 默认关闭 USB 手柄驱动
   
   // 输入 - 屏幕控制器
   @State enableOnscreenControls: boolean = false;
@@ -481,8 +486,15 @@ struct SettingsPageV2 {
       this.gamepadTouchpadMouse = await this.loadBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
       this.enableStartKeyMenu = await this.loadBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true);
       this.ignoreDeviceDisconnect = await this.loadBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false);
-      this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false);
+      this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, true);
+      // 检查按键注入 API 是否可用（API 13+），不可用则强制禁用反劫持
+      this.keyInterceptorAvailable = InputInterceptorService.getInstance().isInjectApiAvailable();
+      if (!this.keyInterceptorAvailable && this.enableKeyInterceptor) {
+        this.enableKeyInterceptor = false;
+        this.saveSetting(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false);
+      }
       this.gcButtonHomeMapping = await PreferencesUtil.get<string>(SettingsKeys.GC_BUTTON_HOME_MAPPING, 'guide');
+      this.usbDriverEnabled = await this.loadBoolean(SettingsKeys.USB_DRIVER_ENABLED, false);
       
       // 输入 - 屏幕控制器
       this.enableOnscreenControls = await this.loadBoolean(SettingsKeys.ENABLE_ONSCREEN_CONTROLS, false);
@@ -806,6 +818,7 @@ struct SettingsPageV2 {
                   ? '❌ 需要 HEVC/AV1' 
                   : (this.hdrMode === 'HLG' ? 'HLG (需要 Sunshine Foundation)' : 'HDR10 (PQ)'),
                 type: 'select',
+                visible: this.enableHdr,
                 disabled: this.videoFormat === 'H.264' || !this.enableHdr,
                 action: () => {
                   if (this.videoFormat === 'H.264') {
@@ -824,6 +837,7 @@ struct SettingsPageV2 {
                   ? '❌ 需要 HEVC/AV1' 
                   : '使用高亮度 HDR 模式',
                 type: 'toggle',
+                visible: this.enableHdr,
                 value: this.enableHdrHighBrightness,
                 disabled: this.videoFormat === 'H.264' || !this.enableHdr,
                 action: () => {
@@ -938,6 +952,7 @@ struct SettingsPageV2 {
                 title: '麦克风码率',
                 subtitle: this.developerMode ? '麦克风传输比特率' : '需要开发者模式',
                 type: 'slider',
+                visible: this.enableMic,
                 value: this.micBitrate,
                 min: 16,
                 max: 256,
@@ -975,6 +990,7 @@ struct SettingsPageV2 {
                 title: '震动模式',
                 subtitle: this.vibrationMode,
                 type: 'select',
+                visible: this.enableVibration,
                 action: () => {
                   this.showVibrationModePicker();
                 }
@@ -983,6 +999,7 @@ struct SettingsPageV2 {
                 title: '设备振动强度',
                 subtitle: '使用设备震动时的强度',
                 type: 'slider',
+                visible: this.enableVibration,
                 value: this.vibrateFallbackStrength,
                 min: 0,
                 max: 100,
@@ -1041,6 +1058,7 @@ struct SettingsPageV2 {
                 title: '设备运动传感器回退',
                 subtitle: '使用设备传感器替代手柄',
                 type: 'toggle',
+                visible: this.gamepadMotionSensors,
                 value: this.gamepadMotionFallback,
                 action: () => {
                   this.gamepadMotionFallback = !this.gamepadMotionFallback;
@@ -1079,9 +1097,10 @@ struct SettingsPageV2 {
               },
               {
                 title: '按键反劫持',
-                subtitle: '拦截被系统吃掉的手柄按键（如蓝牙手柄 Home 键），需要受限权限',
+                subtitle: '防止蓝牙手柄 Home 键退出 App（需系统级签名，否则可能无效）',
                 type: 'toggle',
                 value: this.enableKeyInterceptor,
+                visible: this.keyInterceptorAvailable,
                 action: () => {
                   this.enableKeyInterceptor = !this.enableKeyInterceptor;
                   this.saveSetting(SettingsKeys.ENABLE_KEY_INTERCEPTOR, this.enableKeyInterceptor);
@@ -1094,6 +1113,20 @@ struct SettingsPageV2 {
                 value: this.gcButtonHomeMapping,
                 action: () => {
                   this.showHomeButtonActionPicker();
+                }
+              },
+              {
+                title: 'USB 手柄驱动',
+                subtitle: '为缺少原生手柄支持的设备启用内置 USB 驱动',
+                type: 'toggle',
+                value: this.usbDriverEnabled,
+                action: () => {
+                  this.usbDriverEnabled = !this.usbDriverEnabled;
+                  this.saveSetting(SettingsKeys.USB_DRIVER_ENABLED, this.usbDriverEnabled);
+                  promptAction.showToast({
+                    message: '重启应用后生效',
+                    duration: 2500
+                  });
                 }
               },
               {
@@ -1137,6 +1170,7 @@ struct SettingsPageV2 {
                 title: '仅 L3/R3 按钮',
                 subtitle: '只显示 L3 和 R3 按钮',
                 type: 'toggle',
+                visible: this.enableOnscreenControls,
                 value: this.onlyL3R3,
                 action: () => {
                   this.onlyL3R3 = !this.onlyL3R3;
@@ -1147,6 +1181,7 @@ struct SettingsPageV2 {
                 title: '显示 Guide 按钮',
                 subtitle: '显示主页/Guide 按钮',
                 type: 'toggle',
+                visible: this.enableOnscreenControls,
                 value: this.showGuideButton,
                 action: () => {
                   this.showGuideButton = !this.showGuideButton;
@@ -1157,6 +1192,7 @@ struct SettingsPageV2 {
                 title: '竖屏半高模式',
                 subtitle: '竖屏时控制器显示在下半屏',
                 type: 'toggle',
+                visible: this.enableOnscreenControls,
                 value: this.halfHeightOscPortrait,
                 action: () => {
                   this.halfHeightOscPortrait = !this.halfHeightOscPortrait;
@@ -1167,6 +1203,7 @@ struct SettingsPageV2 {
                 title: '控制器透明度',
                 subtitle: '虚拟控制器不透明度',
                 type: 'slider',
+                visible: this.enableOnscreenControls,
                 value: this.oscOpacity,
                 min: 10,
                 max: 100,
@@ -1181,6 +1218,7 @@ struct SettingsPageV2 {
                 title: '屏幕控制器振动',
                 subtitle: '按下按钮时振动',
                 type: 'toggle',
+                visible: this.enableOnscreenControls,
                 value: this.vibrateOsc,
                 action: () => {
                   this.vibrateOsc = !this.vibrateOsc;
@@ -1240,6 +1278,7 @@ struct SettingsPageV2 {
                 title: '双击时间阈值',
                 subtitle: '双击判定时间间隔',
                 type: 'slider',
+                visible: this.enableDoubleClickDrag,
                 value: this.doubleTapTimeThreshold,
                 min: 100,
                 max: 500,
@@ -1299,6 +1338,7 @@ struct SettingsPageV2 {
                 title: '触控区域在右侧',
                 subtitle: '将增强触控区域放在右侧',
                 type: 'toggle',
+                visible: this.enableEnhancedTouch,
                 value: this.enhancedTouchOnRight,
                 action: () => {
                   this.enhancedTouchOnRight = !this.enhancedTouchOnRight;
@@ -1309,6 +1349,7 @@ struct SettingsPageV2 {
                 title: '触控区域分割',
                 subtitle: '触控区域占比',
                 type: 'slider',
+                visible: this.enableEnhancedTouch,
                 value: this.enhancedTouchZoneDivider,
                 min: 10,
                 max: 90,
@@ -1323,6 +1364,7 @@ struct SettingsPageV2 {
                 title: '指针速度因子',
                 subtitle: '指针移动速度倍数',
                 type: 'slider',
+                visible: this.enableEnhancedTouch,
                 value: this.pointerVelocityFactor,
                 min: 10,
                 max: 200,
@@ -1337,6 +1379,7 @@ struct SettingsPageV2 {
                 title: '长按平坦区域',
                 subtitle: '长按触发范围',
                 type: 'slider',
+                visible: this.enableEnhancedTouch,
                 value: this.longPressFlatRegion,
                 min: 0,
                 max: 50,
@@ -1473,18 +1516,21 @@ struct SettingsPageV2 {
                 title: '性能覆盖层方向',
                 subtitle: this.perfOverlayOrientation,
                 type: 'select',
+                visible: this.enablePerfOverlay,
                 action: () => this.showPerfOverlayOrientationPicker()
               },
               {
                 title: '性能覆盖层位置',
                 subtitle: this.perfOverlayPosition,
                 type: 'select',
+                visible: this.enablePerfOverlay,
                 action: () => this.showPerfOverlayPositionPicker()
               },
               {
                 title: '锁定覆盖层',
                 subtitle: '锁定后不可拖动，触摸穿透',
                 type: 'toggle',
+                visible: this.enablePerfOverlay,
                 value: this.perfOverlayLocked,
                 action: () => {
                   this.perfOverlayLocked = !this.perfOverlayLocked;
@@ -1495,6 +1541,7 @@ struct SettingsPageV2 {
                 title: '覆盖层显示项目',
                 subtitle: `已选 ${this.perfOverlayItems.length} 项`,
                 type: 'select',
+                visible: this.enablePerfOverlay,
                 action: () => this.showPerfOverlayItemsPicker()
               },
               {
@@ -1551,6 +1598,7 @@ struct SettingsPageV2 {
                 title: 'ESC 菜单按键',
                 subtitle: this.escMenuKey,
                 type: 'select',
+                visible: this.enableEscMenu,
                 action: () => this.showEscMenuKeyPicker()
               }
             ]
@@ -1624,7 +1672,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '版本',
-                subtitle: '1.0.0',
+                subtitle: '1.0.0.576',
                 type: 'action',
                 action: () => {}
               },
@@ -1794,11 +1842,12 @@ struct SettingsPageV2 {
       // 设置项容器 - 深色卡片（可折叠）
       if (this.expandedGroup === group.id) {
         Column() {
-          ForEach(group.items, (item: SettingItem, index: number) => {
+          // 过滤掉 visible === false 的项（用于条件显示子选项）
+          ForEach(group.items.filter((item: SettingItem) => item.visible !== false), (item: SettingItem, index: number) => {
             this.SettingItemView(item)
 
             // 分割线
-            if (index < group.items.length - 1) {
+            if (index < group.items.filter((i: SettingItem) => i.visible !== false).length - 1) {
               Divider()
                 .color(AppColors.CardBorder)
                 .margin({ left: AppSpacing.Medium, right: AppSpacing.Medium })
@@ -1999,8 +2048,8 @@ struct SettingsPageV2 {
       title: '自定义分辨率管理',
       message: `已添加的自定义分辨率:\n${existingList}`,
       buttons: [
-        { text: '清空全部', color: '#FF5252' },
-        { text: '取消', color: AppColors.TextSecondary.toString() }
+        { text: '清空全部', color: AppColors.Error },
+        { text: '取消', color: AppColors.TextSecondary }
       ]
     }).then((result) => {
       if (result.index === 0) {
@@ -2118,8 +2167,8 @@ struct SettingsPageV2 {
       title: '确认清空',
       message: `确定要清空所有 ${this.customResolutions.length} 个自定义分辨率吗？`,
       buttons: [
-        { text: '确定', color: '#FF5252' },
-        { text: '取消', color: AppColors.TextSecondary.toString() }
+        { text: '确定', color: AppColors.Error },
+        { text: '取消', color: AppColors.TextSecondary }
       ]
     }).then((result) => {
       if (result.index === 0) {
@@ -2649,12 +2698,13 @@ struct SettingsPageV2 {
       subtitle: '选择背景图片来源',
       selectedValue: this.backgroundImageType,
       options: options,
-      onSelect: (option: PickerOption) => {
+      onSelect: async (option: PickerOption) => {
         this.backgroundImageType = option.value as string;
-        this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_TYPE, option.value as string);
-        // 选择关闭时，清除本地缓存文件
+        const bgUtil = BackgroundImageUtil.getInstance();
+        // 通过 BackgroundImageUtil 设置类型（会自动清除缓存、重置状态）
+        await bgUtil.setBackgroundImageType(option.value as BackgroundImageType);
+        // 选择关闭时，额外清除本地缓存文件
         if (option.value === 'none') {
-          const bgUtil = BackgroundImageUtil.getInstance();
           bgUtil.disableBackgroundImage();
         }
         this.showToast(`背景图片设置为: ${option.title}`);
@@ -2761,7 +2811,7 @@ struct OpenSourceLicensesDialog {
                   .fontSize(12)
                   .fontColor(AppColors.Primary)
                   .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-                  .backgroundColor(AppColors.Primary + '20')
+                  .backgroundColor(AppColors.PrimaryGlow)
                   .borderRadius(4)
               }
               .width('100%')

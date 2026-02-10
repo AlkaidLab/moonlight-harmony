@@ -165,13 +165,13 @@ struct PcListPageV2 {
    */
   private async reloadBackgroundImage(): Promise<void> {
     try {
-      // 强制重新读取设置
-      const bgType = await this.backgroundUtil.reload();
+      // 检查类型是否发生变化
+      const typeChanged = await this.backgroundUtil.reload();
       const currentType = await this.backgroundUtil.getBackgroundImageType();
       if (currentType === BackgroundImageType.NONE) {
         this.backgroundImageUrl = '';
-      } else if (bgType) {
-        // 类型发生变化，重新加载
+      } else if (typeChanged) {
+        // 类型变化，重新加载（缓存已在 setBackgroundImageType 中清除）
         this.loadBackgroundImage();
       }
     } catch (err) {

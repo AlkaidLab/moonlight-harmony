@@ -64,47 +64,49 @@ export interface ComputerInfo extends AddressHolder {
 
 /**
  * 选择最佳连接地址
- * 优先级: LAN IPv4 > LAN IPv6/ULA > 活跃地址 > Manual > WAN
  *
- * 移植自 Android ComputerDetails.selectBestAddress()，
- * 即使轮询胜出的是 WAN 地址，只要有可用 LAN 地址就优先使用 LAN。
+ * 核心原则：**已验证可达的地址 > 未验证的地址**
+ *
+ * `address` 字段由轮询竞速胜出者设置（raceForFirstSuccess），
+ * 代表最近一次成功连接的地址，因此是已验证可达的。
+ *
+ * 旧逻辑无条件优先返回 localAddress（服务器自报的 LAN IP），即使用户
+ * 在外网也会返回不可达的内网地址 → 导致 WAN 配对/连接失败。
+ *
+ * 修正后的优先级:
+ *   1. 活跃地址（轮询胜出，已验证可达）
+ *   2. 回退链（无活跃地址时，如首次添加/离线）
  */
 export function selectBestAddress(computer: AddressHolder): string {
-  // 1. 如果活跃地址是 LAN，最优选择（已验证可达 + 低延迟）
-  if (computer.address && isLanAddress(computer.address)) {
+  // 1. 活跃地址存在 → 直接返回（已被最近一次轮询验证为可达）
+  //    - LAN IP 胜出：低延迟 + 可达 ✓
+  //    - 域名/WAN IP 胜出：可达 ✓（不假设 localAddress 也可达）
+  if (computer.address) {
     return computer.address;
   }
 
-  // 2. LAN IPv4 地址
+  // — 以下为无活跃地址时的回退（首次添加后未轮询、离线恢复等） —
+
+  // 2. 用户手动输入的地址（域名/IP，用户意图明确）
+  if (computer.manualAddress) return computer.manualAddress;
+
+  // 3. LAN IPv4（服务器自报，可能可达可能不可达）
   if (computer.localAddress && isLanIPv4Address(computer.localAddress)) {
     return computer.localAddress;
   }
 
-  // 3. 手动地址如果也是 LAN 地址，优先使用
-  if (computer.manualAddress && isLanAddress(computer.manualAddress)) {
-    return computer.manualAddress;
-  }
-
-  // 4. IPv6 LAN 地址（link-local / ULA）
+  // 4. IPv6 LAN 地址
   if (computer.ipv6Address && isLanAddress(computer.ipv6Address)) {
     return computer.ipv6Address;
   }
 
-  // — 以下为非 LAN 回退 —
-
-  // 5. 活跃地址（WAN 但已验证可达）
-  if (computer.address) return computer.address;
-
-  // 6. localAddress（可能不确定类型但仍是服务器报告的本地地址）
+  // 5. localAddress（非 LAN 类型）
   if (computer.localAddress) return computer.localAddress;
 
-  // 7. 手动地址（VPN / 域名）
-  if (computer.manualAddress) return computer.manualAddress;
-
-  // 8. IPv6 全局单播
+  // 6. IPv6 全局单播
   if (computer.ipv6Address) return computer.ipv6Address;
 
-  // 9. WAN 外网地址
+  // 7. WAN 外网地址
   if (computer.remoteAddress) return computer.remoteAddress;
 
   return '';

@@ -80,9 +80,9 @@ class TestViewDriverListener implements UsbDriverListener {
     const state = new ControllerInputState();
     state.buttons = buttonFlags;
     state.leftStickX = Math.max(-32767, Math.min(32767, Math.round(leftStickX * 32767)));
-    state.leftStickY = Math.max(-32767, Math.min(32767, Math.round(leftStickY * 32767)));
+    state.leftStickY = Math.max(-32767, Math.min(32767, Math.round(-leftStickY * 32767)));  // Y轴取负与串流一致
     state.rightStickX = Math.max(-32767, Math.min(32767, Math.round(rightStickX * 32767)));
-    state.rightStickY = Math.max(-32767, Math.min(32767, Math.round(rightStickY * 32767)));
+    state.rightStickY = Math.max(-32767, Math.min(32767, Math.round(-rightStickY * 32767)));  // Y轴取负与串流一致
     state.leftTrigger = leftTrigger;
     state.rightTrigger = rightTrigger;
     
