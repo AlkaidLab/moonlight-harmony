@@ -17,8 +17,18 @@ import { CryptoUtil } from '../utils/CryptoUtil';
 import { common } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
 import { GamepadManager } from './GamepadManager';
+import { MoonlightButton } from './GamepadTypes';
 import { MicrophoneStream } from './microphone/MicrophoneStream';
-import { MoonBridge } from './MoonBridge';
+import {
+  MoonBridge,
+  CONTROLLER_TYPE_UNKNOWN,
+  CONTROLLER_TYPE_XBOX,
+  CONTROLLER_TYPE_PS,
+  LI_CCAP_ANALOG_TRIGGERS,
+  LI_CCAP_RUMBLE,
+  LI_CCAP_ACCEL,
+  LI_CCAP_GYRO
+} from './MoonBridge';
 import nativeLib from 'libmoonlight_nativelib.so';
 
 /**
@@ -565,24 +575,19 @@ export class StreamingSession {
    */
   private ensureVirtualControllerArrival(controllerIndex: number): void {
     if (!this.virtualControllerArrived) {
-      // LI_CTYPE_XBOX = 0x01
-      const LI_CTYPE_XBOX = 0x01;
-      // LI_CCAP_ANALOG_TRIGGERS = 0x01, LI_CCAP_RUMBLE = 0x02
-      const LI_CCAP_ANALOG_TRIGGERS = 0x01;
-      const LI_CCAP_RUMBLE = 0x02;
       // 所有标准 Xbox 按钮
-      const supportedButtons = 0x1000 | 0x2000 | 0x4000 | 0x8000 // A B X Y
-        | 0x0001 | 0x0002 | 0x0004 | 0x0008 // UP DOWN LEFT RIGHT
-        | 0x0100 | 0x0200 // LB RB
-        | 0x0040 | 0x0080 // LS RS
-        | 0x0010 | 0x0020 | 0x0400; // START BACK SPECIAL
+      const supportedButtons = MoonlightButton.A | MoonlightButton.B | MoonlightButton.X | MoonlightButton.Y
+        | MoonlightButton.UP | MoonlightButton.DOWN | MoonlightButton.LEFT | MoonlightButton.RIGHT
+        | MoonlightButton.LB | MoonlightButton.RB
+        | MoonlightButton.LS | MoonlightButton.RS
+        | MoonlightButton.START | MoonlightButton.BACK | MoonlightButton.SPECIAL;
       const capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
       // 更新全局手柄掩码
       this.activeGamepadMask |= (1 << controllerIndex);
       const ret = this.nativeModule.sendControllerArrivalEvent(
         controllerIndex,
         this.activeGamepadMask,
-        LI_CTYPE_XBOX,
+        CONTROLLER_TYPE_XBOX,
         supportedButtons,
         capabilities
       );
@@ -633,7 +638,7 @@ export class StreamingSession {
     rightStickY: number,
     leftTrigger: number,
     rightTrigger: number,
-    controllerType: number = 1  // 默认 Xbox
+    controllerType: number = CONTROLLER_TYPE_XBOX
   ): void {
     if (!this.isRunning) {
       return;
@@ -659,20 +664,18 @@ export class StreamingSession {
    * 确保物理手柄的 arrival 事件已发送
    * 与 Android ControllerHandler.assignControllerNumberIfNeeded() + sendControllerArrival() 对应
    * @param controllerIndex 控制器索引
-   * @param controllerType 控制器类型 (0=Unknown, 1=Xbox, 2=PS, 3=Nintendo)，对应 LI_CTYPE_*
+   * @param controllerType 控制器类型 (0=Unknown, 1=Xbox, 2=PS, 3=Nintendo)，对应 CONTROLLER_TYPE_*
    */
-  private ensurePhysicalControllerArrival(controllerIndex: number, controllerType: number = 1): void {
+  private ensurePhysicalControllerArrival(controllerIndex: number, controllerType: number = CONTROLLER_TYPE_XBOX): void {
     if (this.physicalControllerArrived.has(controllerIndex)) {
       return;
     }
 
-    const LI_CCAP_ANALOG_TRIGGERS = 0x01;
-    const LI_CCAP_RUMBLE = 0x02;
-    const supportedButtons = 0x1000 | 0x2000 | 0x4000 | 0x8000 // A B X Y
-      | 0x0001 | 0x0002 | 0x0004 | 0x0008 // UP DOWN LEFT RIGHT
-      | 0x0100 | 0x0200 // LB RB
-      | 0x0040 | 0x0080 // LS RS
-      | 0x0010 | 0x0020 | 0x0400; // START BACK SPECIAL
+    const supportedButtons = MoonlightButton.A | MoonlightButton.B | MoonlightButton.X | MoonlightButton.Y
+      | MoonlightButton.UP | MoonlightButton.DOWN | MoonlightButton.LEFT | MoonlightButton.RIGHT
+      | MoonlightButton.LB | MoonlightButton.RB
+      | MoonlightButton.LS | MoonlightButton.RS
+      | MoonlightButton.START | MoonlightButton.BACK | MoonlightButton.SPECIAL;
     let capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
 
     // 添加传感器能力（设备传感器回退或手柄自带传感器）
@@ -682,8 +685,8 @@ export class StreamingSession {
     // 需要将控制器类型改为 Unknown（和 Android 一致），
     // 否则主机可能不会请求运动事件
     let reportedType = controllerType;
-    if (capabilities & 0x30 && controllerType !== 0x02) {  // 0x30 = ACCEL|GYRO, 0x02 = PS
-      reportedType = 0x00;  // LI_CTYPE_UNKNOWN
+    if (capabilities & (LI_CCAP_ACCEL | LI_CCAP_GYRO) && controllerType !== CONTROLLER_TYPE_PS) {
+      reportedType = CONTROLLER_TYPE_UNKNOWN;
     }
 
     // 更新全局手柄掩码

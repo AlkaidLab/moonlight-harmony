@@ -15,6 +15,7 @@
 
 import { gameControllerService, GameControllerService, ButtonCode } from '../service/GameControllerService';
 import { GamepadManager } from '../service/GamepadManager';
+import { gcButtonMap, AXIS_MAX, TRIGGER_MAX } from '../service/GamepadTypes';
 import { AppColors } from '../common/Theme';
 
 // @Builder 按引用传参接口
@@ -402,25 +403,7 @@ export struct GameControllerTestView {
   }
   
   private buttonCodeToFlag(code: number): number {
-    switch (code) {
-      case 2301: return 0x1000;  // A
-      case 2302: return 0x2000;  // B
-      case 2303: return 0x0020;  // C -> BACK/Select
-      case 2304: return 0x4000;  // X
-      case 2305: return 0x8000;  // Y
-      case 2306: return 0x0100;  // L1
-      case 2307: return 0x0200;  // R1
-      case 2310: return 0x0040;  // L3
-      case 2311: return 0x0080;  // R3
-      case 2312: return 0x0010;  // Menu -> START
-      case 2313: return 0x0020;  // View -> BACK (官方不支持)
-      case 2314: return 0x0400;  // Home -> SPECIAL
-      case 2315: return 0x0001;  // D-Up
-      case 2316: return 0x0002;  // D-Down
-      case 2317: return 0x0004;  // D-Left
-      case 2318: return 0x0008;  // D-Right
-      default: return 0;
-    }
+    return gcButtonMap.get(code) ?? 0;
   }
   
   private handleAxisEvent(deviceId: string, axisType: number, x: number, y: number): void {
@@ -429,18 +412,18 @@ export struct GameControllerTestView {
     // AxisType: 0=左摇杆, 1=右摇杆, 2=D-Pad, 3=左扳机, 4=右扳机
     switch (axisType) {
       case 0: // 左摇杆
-        state.leftStickX = Math.round(x * 32767);
-        state.leftStickY = Math.round(-y * 32767);
+        state.leftStickX = Math.floor(x * AXIS_MAX);
+        state.leftStickY = Math.floor(-y * AXIS_MAX);
         break;
       case 1: // 右摇杆
-        state.rightStickX = Math.round(x * 32767);
-        state.rightStickY = Math.round(-y * 32767);
+        state.rightStickX = Math.floor(x * AXIS_MAX);
+        state.rightStickY = Math.floor(-y * AXIS_MAX);
         break;
       case 3: // 左扳机
-        state.leftTrigger = Math.round(x * 255);
+        state.leftTrigger = Math.floor(x * TRIGGER_MAX);
         break;
       case 4: // 右扳机
-        state.rightTrigger = Math.round(x * 255);
+        state.rightTrigger = Math.floor(x * TRIGGER_MAX);
         break;
     }
     
@@ -448,7 +431,7 @@ export struct GameControllerTestView {
   }
 
   private formatStickValue(value: number): string {
-    const percent = Math.round((value / 32767) * 100);
+    const percent = Math.round((value / AXIS_MAX) * 100);
     if (percent > 0) {
       return `+${percent}%`;
     }

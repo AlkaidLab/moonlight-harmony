@@ -16,6 +16,7 @@
 import { usbManager } from '@kit.BasicServicesKit';
 import { UsbDriverService, UsbDriverListener, ControllerType, AbstractController, ButtonFlags } from '../service/usbdriver';
 import { GamepadManager } from '../service/GamepadManager';
+import { AXIS_MAX } from '../service/GamepadTypes';
 import { AppColors } from '../common/Theme';
 
 // 手柄状态类
@@ -79,10 +80,10 @@ class TestViewDriverListener implements UsbDriverListener {
     
     const state = new ControllerInputState();
     state.buttons = buttonFlags;
-    state.leftStickX = Math.max(-32767, Math.min(32767, Math.round(leftStickX * 32767)));
-    state.leftStickY = Math.max(-32767, Math.min(32767, Math.round(-leftStickY * 32767)));  // Y轴取负与串流一致
-    state.rightStickX = Math.max(-32767, Math.min(32767, Math.round(rightStickX * 32767)));
-    state.rightStickY = Math.max(-32767, Math.min(32767, Math.round(-rightStickY * 32767)));  // Y轴取负与串流一致
+    state.leftStickX = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(leftStickX * AXIS_MAX)));
+    state.leftStickY = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(-leftStickY * AXIS_MAX)));  // Y轴取负与串流一致
+    state.rightStickX = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(rightStickX * AXIS_MAX)));
+    state.rightStickY = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(-rightStickY * AXIS_MAX)));  // Y轴取负与串流一致
     state.leftTrigger = leftTrigger;
     state.rightTrigger = rightTrigger;
     
@@ -352,7 +353,7 @@ export struct UsbControllerTestView {
   }
 
   private formatStickValue(value: number): string {
-    const percent = Math.round((value / 32767) * 100);
+    const percent = Math.round((value / AXIS_MAX) * 100);
     if (percent > 0) {
       return `+${percent}%`;
     }

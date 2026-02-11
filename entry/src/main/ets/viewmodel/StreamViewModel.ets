@@ -18,6 +18,7 @@ import { SettingsService, InputSettings, DisplaySettings, SettingsKeys } from '.
 import { StreamingSession, StreamStats } from '../service/StreamingSession';
 import { InputEvent } from '../model/InputEvent';
 import { OverlayConfig, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/GamepadManager';
+import { CONTROLLER_TYPE_XBOX } from '../service/MoonBridge';
 import { common } from '@kit.AbilityKit';
 
 /**
@@ -361,7 +362,7 @@ export class StreamViewModel {
     rightStickY: number,
     leftTrigger: number,
     rightTrigger: number,
-    controllerType: number = 1  // 默认 Xbox (LI_CTYPE_XBOX = 0x01)
+    controllerType: number = CONTROLLER_TYPE_XBOX
   ): void {
     this.streamingSession?.sendGamepadState(
       controllerIndex,

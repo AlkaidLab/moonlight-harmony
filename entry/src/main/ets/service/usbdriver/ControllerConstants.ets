@@ -31,8 +31,13 @@ export class ButtonFlags {
   static readonly B_FLAG: number = 0x2000;
   static readonly X_FLAG: number = 0x4000;
   static readonly Y_FLAG: number = 0x8000;
-  static readonly TOUCHPAD_FLAG: number = 0x040000;  // 触摸板按钮 (DualShock4/DualSense)
-  static readonly MISC_FLAG: number = 0x080000;      // 杂项按钮 (Capture 等)
+  // 扩展按钮（值必须与 moonlight-common-c/Limelight.h 一致）
+  static readonly PADDLE1_FLAG: number = 0x010000;
+  static readonly PADDLE2_FLAG: number = 0x020000;
+  static readonly PADDLE3_FLAG: number = 0x040000;
+  static readonly PADDLE4_FLAG: number = 0x080000;
+  static readonly TOUCHPAD_FLAG: number = 0x100000;  // 触摸板按钮 (DualShock4/DualSense)
+  static readonly MISC_FLAG: number = 0x200000;      // 杂项按钮 (Capture/Mute 等)
 }
 
 // 控制器类型
