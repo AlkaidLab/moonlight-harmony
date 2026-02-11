@@ -68,6 +68,7 @@ typedef struct {
     napi_threadsafe_function tsfn_stop;
     napi_threadsafe_function tsfn_cleanup;
     napi_threadsafe_function tsfn_playSample;
+    napi_threadsafe_function tsfn_bassEnergy;  // 低频能量回调（音频振动）
 } AudioRendererCallbacks;
 
 /**

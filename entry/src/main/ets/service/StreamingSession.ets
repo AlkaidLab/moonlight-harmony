@@ -19,6 +19,7 @@ import { display } from '@kit.ArkUI';
 import { GamepadManager } from './GamepadManager';
 import { MoonlightButton } from './GamepadTypes';
 import { MicrophoneStream } from './microphone/MicrophoneStream';
+import { AudioVibrationService } from './AudioVibrationService';
 import {
   MoonBridge,
   CONTROLLER_TYPE_UNKNOWN,
@@ -107,6 +108,8 @@ interface NativeModule {
   // 性能模式设置
   setPerformanceModeEnabled(enabled: boolean): void;
   getPerformanceModeEnabled(): boolean;
+  // 音频振动设置
+  setBassVibrationConfig(enabled: boolean, sensitivity: number): void;
   getEstimatedRttInfo(): number;  // 返回组合值 (rtt << 32) | variance，-1 表示无效
   sendMouseMove(deltaX: number, deltaY: number): void;
   sendMouseButton(buttonEvent: number, mouseButton: number): void;
@@ -144,6 +147,7 @@ interface StreamCallbacks {
   setMotionEventState?: (controllerNumber: number, motionType: number, reportRateHz: number) => void;
   setControllerLED?: (controllerNumber: number, r: number, g: number, b: number) => void;
   resolutionChanged?: (width: number, height: number) => void;
+  bassEnergy?: (intensity: number) => void;
 }
 
 interface VideoStats {
@@ -211,6 +215,9 @@ export class StreamingSession {
   private stageProgressCallback: ((stage: number, stageName: string) => void) | null = null;
   private displayGuid: string = '';  // 选择的显示器 GUID
   private useVdd: boolean = false;   // 是否使用虚拟显示器
+  
+  // 音频振动
+  private audioVibrationService: AudioVibrationService = new AudioVibrationService();
   
   // 服务器信息（用于连接）
   private serverAppVersion: string = '';
@@ -390,6 +397,17 @@ export class StreamingSession {
         console.info('性能模式已启用');
       }
       
+      // 5.3 应用音频振动设置
+      this.audioVibrationService.setSettings(
+        config.enableAudioVibration,
+        config.audioVibrationStrength,
+        config.vibrationMode
+      );
+      this.nativeModule.setBassVibrationConfig(config.enableAudioVibration, 1.0);
+      if (config.enableAudioVibration) {
+        console.info(`音频振动已启用, 强度=${config.audioVibrationStrength}, 模式=${config.vibrationMode}`);
+      }
+      
       // 6. 设置视频 Surface
       await this.setupVideoSurface();
       
@@ -421,6 +439,9 @@ export class StreamingSession {
     
     // 停止传感器
     GamepadManager.getInstance().stopAllSensors();
+    
+    // 停止音频振动
+    this.audioVibrationService.stop();
     
     await this.cleanup();
   }
@@ -973,6 +994,10 @@ export class StreamingSession {
         if (this.resolutionChangedCallback) {
           this.resolutionChangedCallback(width, height);
         }
+      },
+      bassEnergy: (intensity: number): void => {
+        // 低频能量驱动音频振动
+        this.audioVibrationService.handleBassEnergy(intensity);
       }
     };
     

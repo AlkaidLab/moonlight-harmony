@@ -1811,4 +1811,14 @@ export class GamepadManager implements UsbDriverListener {
   handleRumbleTriggers(controllerNumber: number, leftTrigger: number, rightTrigger: number): void {
     this.vibrationService.handleRumbleTriggers(controllerNumber, leftTrigger, rightTrigger);
   }
+
+  /** 仅向 USB 控制器发送振动（跳过设备马达和模式路由） */
+  rumbleUsbControllers(controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
+    this.vibrationService.rumbleUsbControllersOnly(controllerNumber, lowFreqMotor, highFreqMotor);
+  }
+
+  /** 检查是否有 USB 控制器连接 */
+  hasUsbControllers(): boolean {
+    return this.vibrationService.hasUsbControllers();
+  }
 }

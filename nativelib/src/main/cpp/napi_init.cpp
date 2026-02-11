@@ -127,6 +127,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         // 性能模式
         { "setPerformanceModeEnabled", nullptr, MoonBridge_SetPerformanceModeEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getPerformanceModeEnabled", nullptr, MoonBridge_GetPerformanceModeEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
+        
+        // 音频振动
+        { "setBassVibrationConfig", nullptr, MoonBridge_SetBassVibrationConfig, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
     
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);

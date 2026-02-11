@@ -29,6 +29,7 @@ bool isMicrophoneEncryptionEnabled(void);
 #include "callbacks.h"
 #include "video_decoder.h"
 #include "audio_renderer.h"
+#include "bass_energy_analyzer.h"
 #include "native_render.h"
 #include "opus_encoder.h"
 #include <hilog/log.h>
@@ -290,7 +291,7 @@ napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info) {
     g_streamConfig.audioConfiguration = audioConfiguration;
     g_streamConfig.supportedVideoFormats = supportedVideoFormats;
     g_streamConfig.clientRefreshRateX100 = clientRefreshRateX100;
-    g_streamConfig.encryptionFlags = ENCFLG_AUDIO;
+    g_streamConfig.encryptionFlags = ENCFLG_AUDIO | ENCFLG_MICROPHONE;
     g_streamConfig.colorSpace = colorSpace;
     g_streamConfig.colorRange = colorRange;
     g_streamConfig.enableMic = enableMic;
@@ -1452,4 +1453,35 @@ napi_value MoonBridge_GetPerformanceModeEnabled(napi_env env, napi_callback_info
     napi_value result;
     napi_get_boolean(env, g_performanceMode, &result);
     return result;
+}
+
+// =============================================================================
+// 音频振动
+// =============================================================================
+
+extern BassEnergyAnalyzer g_bassAnalyzer;
+
+napi_value MoonBridge_SetBassVibrationConfig(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value argv[2];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    if (argc < 2) {
+        OH_LOG_WARN(LOG_APP, "SetBassVibrationConfig: need 2 args (enabled, sensitivity)");
+        return GetUndefined(env);
+    }
+
+    bool enabled = false;
+    napi_get_value_bool(env, argv[0], &enabled);
+
+    double sensitivity = 1.0;
+    napi_get_value_double(env, argv[1], &sensitivity);
+
+    g_bassAnalyzer.SetEnabled(enabled);
+    g_bassAnalyzer.SetSensitivity(static_cast<float>(sensitivity));
+
+    OH_LOG_INFO(LOG_APP, "SetBassVibrationConfig: enabled=%{public}s, sensitivity=%.2f",
+                enabled ? "true" : "false", sensitivity);
+
+    return GetUndefined(env);
 }

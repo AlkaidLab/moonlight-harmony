@@ -86,6 +86,8 @@ class SettingsKeys {
   static readonly ENABLE_VIBRATION: string = 'settings_enable_vibration';
   static readonly VIBRATION_MODE: string = 'settings_vibration_mode';  // 震动模式：自动/仅手柄/仅设备/同时
   static readonly VIBRATE_FALLBACK_STRENGTH: string = 'settings_vibrate_fallback_strength';
+  static readonly ENABLE_AUDIO_VIBRATION: string = 'settings_enable_audio_vibration';
+  static readonly AUDIO_VIBRATION_STRENGTH: string = 'settings_audio_vibration_strength';
   static readonly MULTI_CONTROLLER: string = 'settings_multi_controller';
   static readonly FLIP_FACE_BUTTONS: string = 'settings_flip_face_buttons';
   static readonly DEADZONE: string = 'settings_deadzone';
@@ -227,6 +229,8 @@ struct SettingsPageV2 {
   @State enableVibration: boolean = true;
   @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/同时
   @State vibrateFallbackStrength: number = 100;
+  @State enableAudioVibration: boolean = false;
+  @State audioVibrationStrength: number = 60;
   @State multiController: boolean = true;
   @State flipFaceButtons: boolean = false;
   @State deadzone: number = 7;
@@ -478,6 +482,8 @@ struct SettingsPageV2 {
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
       this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
       this.vibrateFallbackStrength = await PreferencesUtil.get<number>(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100);
+      this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
+      this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
       this.multiController = await this.loadBoolean(SettingsKeys.MULTI_CONTROLLER, true);
       this.flipFaceButtons = await this.loadBoolean(SettingsKeys.FLIP_FACE_BUTTONS, false);
       this.deadzone = await PreferencesUtil.get<number>(SettingsKeys.DEADZONE, 7);
@@ -965,6 +971,31 @@ struct SettingsPageV2 {
                     this.micBitrate = value;
                     this.saveSetting(SettingsKeys.MIC_BITRATE, value);
                   }
+                }
+              },
+              {
+                title: '音频振动',
+                subtitle: '根据游戏音频低频内容驱动振动',
+                type: 'toggle',
+                value: this.enableAudioVibration,
+                action: () => {
+                  this.enableAudioVibration = !this.enableAudioVibration;
+                  this.saveSetting(SettingsKeys.ENABLE_AUDIO_VIBRATION, this.enableAudioVibration);
+                }
+              },
+              {
+                title: '音频振动强度',
+                subtitle: '低频触发振动的强度',
+                type: 'slider',
+                visible: this.enableAudioVibration,
+                value: this.audioVibrationStrength,
+                min: 10,
+                max: 100,
+                step: 5,
+                unit: '%',
+                onSliderChange: (value: number) => {
+                  this.audioVibrationStrength = value;
+                  this.saveSetting(SettingsKeys.AUDIO_VIBRATION_STRENGTH, value);
                 }
               }
             ]

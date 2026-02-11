@@ -259,6 +259,17 @@ napi_value MoonBridge_SetPerformanceModeEnabled(napi_env env, napi_callback_info
 napi_value MoonBridge_GetPerformanceModeEnabled(napi_env env, napi_callback_info info);
 
 // =============================================================================
+// 音频振动（低频能量 → 设备振动）
+// =============================================================================
+
+/**
+ * 配置音频振动（低频能量分析）
+ * @param enabled boolean 是否启用
+ * @param sensitivity number 灵敏度 (0.1 - 3.0, 默认 1.0)
+ */
+napi_value MoonBridge_SetBassVibrationConfig(napi_env env, napi_callback_info info);
+
+// =============================================================================
 // 常量定义
 // =============================================================================
 

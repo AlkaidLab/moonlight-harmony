@@ -20,6 +20,7 @@
 #include "opus_avcodec.h"
 #include "video_decoder.h"
 #include "audio_renderer.h"
+#include "bass_energy_analyzer.h"
 #include <hilog/log.h>
 #include <cstring>
 #include <cstdarg>
@@ -46,6 +47,9 @@ ConnectionListenerCallbacks g_connCallbacks = {0};
 // Opus 配置
 static OPUS_MULTISTREAM_CONFIGURATION g_opusConfig;
 static short* g_decodedAudioBuffer = nullptr;
+
+// 低频能量分析器（extern 供 moonlight_bridge.cpp 访问）
+BassEnergyAnalyzer g_bassAnalyzer;
 
 // =============================================================================
 // 辅助函数
@@ -336,6 +340,19 @@ static void CallJs_Void(napi_env env, napi_value js_callback, void* context, voi
     }
 }
 
+static void CallJs_BassEnergy(napi_env env, napi_value js_callback, void* context, void* data) {
+    CallbackData* cbData = (CallbackData*)data;
+    if (env != nullptr && js_callback != nullptr) {
+        napi_value argv[1];
+        napi_create_int32(env, cbData->intParams[0], &argv[0]); // intensity (0-100)
+
+        napi_value undefined;
+        napi_get_undefined(env, &undefined);
+        napi_call_function(env, undefined, js_callback, 1, argv, nullptr);
+    }
+    delete cbData;
+}
+
 // =============================================================================
 // 回调初始化
 // =============================================================================
@@ -378,6 +395,9 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     }
     if (napi_get_named_property(env, callbacks, "arPlaySample", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "arPlaySample", CallJs_ArPlaySample, &g_audioCallbacks.tsfn_playSample);
+    }
+    if (napi_get_named_property(env, callbacks, "bassEnergy", &callback) == napi_ok) {
+        CreateThreadsafeFunction(env, callback, "bassEnergy", CallJs_BassEnergy, &g_audioCallbacks.tsfn_bassEnergy);
     }
     
     // 连接监听器回调
@@ -436,6 +456,7 @@ void Callbacks_Cleanup(void) {
     if (g_audioCallbacks.tsfn_stop) napi_release_threadsafe_function(g_audioCallbacks.tsfn_stop, napi_tsfn_release);
     if (g_audioCallbacks.tsfn_cleanup) napi_release_threadsafe_function(g_audioCallbacks.tsfn_cleanup, napi_tsfn_release);
     if (g_audioCallbacks.tsfn_playSample) napi_release_threadsafe_function(g_audioCallbacks.tsfn_playSample, napi_tsfn_release);
+    if (g_audioCallbacks.tsfn_bassEnergy) napi_release_threadsafe_function(g_audioCallbacks.tsfn_bassEnergy, napi_tsfn_release);
     
     if (g_connCallbacks.tsfn_stageStarting) napi_release_threadsafe_function(g_connCallbacks.tsfn_stageStarting, napi_tsfn_release);
     if (g_connCallbacks.tsfn_stageComplete) napi_release_threadsafe_function(g_connCallbacks.tsfn_stageComplete, napi_tsfn_release);
@@ -642,6 +663,11 @@ int BridgeArInit(int audioConfiguration, void* opusConfigPtr, void* context, int
         // 继续执行，让 ArkTS 层处理音频
     }
     
+    // 初始化低频能量分析器
+    g_bassAnalyzer.Init(opusConfig->sampleRate, opusConfig->channelCount);
+    OH_LOG_INFO(LOG_APP, "Bass energy analyzer initialized: rate=%{public}d, ch=%{public}d",
+                opusConfig->sampleRate, opusConfig->channelCount);
+    
     if (g_audioCallbacks.tsfn_init) {
         CallbackData* data = new CallbackData();
         data->intParams[0] = audioConfiguration;
@@ -711,6 +737,16 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     if (decodeLen > 0) {
         // 直接播放到音频播放器
         AudioRendererInstance::PlaySamples(g_decodedAudioBuffer, decodeLen);
+        
+        // 低频能量分析（音频振动）
+        int bassIntensity = 0;
+        if (g_bassAnalyzer.ProcessFrame(g_decodedAudioBuffer, decodeLen, bassIntensity)) {
+            if (g_audioCallbacks.tsfn_bassEnergy) {
+                CallbackData* data = new CallbackData();
+                data->intParams[0] = bassIntensity;
+                napi_call_threadsafe_function(g_audioCallbacks.tsfn_bassEnergy, data, napi_tsfn_nonblocking);
+            }
+        }
     }
 }
 

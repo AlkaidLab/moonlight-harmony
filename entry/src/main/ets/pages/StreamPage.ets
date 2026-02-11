@@ -79,6 +79,7 @@ struct StreamPage {
   @State showKeyboardPanel: boolean = false;  // 系统键盘输入面板
   @State keyboardHeight: number = 0;  // IME 键盘高度 (vp)
   private imeController: inputMethod.InputMethodController | null = null;  // 输入法控制器
+  private imeReadyTime: number = 0;  // IME 就绪时间戳（防止弹出瞬间 onBackPress 误关）
   
   // 绝对鼠标管理器
   private absoluteMouseManager: AbsoluteMouseManager | null = null;
@@ -513,6 +514,12 @@ struct StreamPage {
     if (this.viewModel.isConnecting) {
       return false;
     }
+
+    // IME 键盘正在显示时，优先收起键盘（排除弹出瞬间的误触发）
+    if (this.showKeyboardPanel && Date.now() - this.imeReadyTime > 500) {
+      this.hideIMEKeyboard();
+      return true;
+    }
     
     // 已连接时，显示串流菜单
     if (this.viewModel.isConnected) {
@@ -792,6 +799,7 @@ struct StreamPage {
       });
 
       this.showKeyboardPanel = true;
+      this.imeReadyTime = Date.now();
     } catch (err) {
       console.error(`[StreamPage] Failed to show IME: ${JSON.stringify(err)}`);
     }
@@ -1277,51 +1285,112 @@ struct StreamPage {
 
   @Builder
   KeyboardInputPanel() {
-    // 紧贴 IME 上方、右对齐的浮动胶囊工具条
-    Row({ space: 10 }) {
-      // 键盘指示
-      Text('⌨')
-        .fontSize(17)
-        .fontColor('#D0FFFFFF')
+    // 紧贴 IME 上方的浮动工具条：快捷键 + 服务端指令 + 主机键盘
+    Column({ space: 0 }) {
+      // 横向滚动工具条
+      Scroll() {
+        Row({ space: 6 }) {
+          // ── 键盘指示 + 主机键盘 ──
+          Text('⌨')
+            .fontSize(17)
+            .fontColor('#D0FFFFFF')
 
-      Divider()
-        .vertical(true)
-        .height(16)
-        .color('#33FFFFFF')
-        .strokeWidth(1)
+          Button('主机键盘')
+            .fontSize(11)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#3B82F6')
+            .height(26)
+            .borderRadius(13)
+            .padding({ left: 10, right: 10 })
+            .onClick(() => {
+              this.viewModel.getSession()?.sendKeys([VirtualKey.VK_LWIN, VirtualKey.VK_CONTROL, VirtualKey.VK_O]);
+              this.hideIMEKeyboard();
+            })
 
-      // 主机键盘 — 唤起远程桌面键盘并收起 IME
-      Button('主机键盘')
-        .fontSize(12)
-        .fontColor('#FFFFFF')
-        .backgroundColor('#3B82F6')
-        .height(28)
-        .borderRadius(14)
-        .padding({ left: 12, right: 12 })
-        .onClick(() => {
-          this.viewModel.getSession()?.sendKeys([VirtualKey.VK_LWIN, VirtualKey.VK_CONTROL, VirtualKey.VK_O]);
-          this.hideIMEKeyboard();
-        })
+          Divider()
+            .vertical(true)
+            .height(16)
+            .color('#33FFFFFF')
+            .strokeWidth(1)
 
-      // 关闭
-      Text('✕')
-        .fontSize(15)
-        .fontColor('#99FFFFFF')
-        .width(28)
-        .height(28)
-        .textAlign(TextAlign.Center)
-        .borderRadius(14)
-        .backgroundColor('#1AFFFFFF')
-        .onClick(() => {
-          this.hideIMEKeyboard();
-        })
+          // ── 快捷键按钮（与菜单卡片中 ShortcutPill 一致的颜色方案）──
+          ForEach(this.shortcutManager.getShortcuts(), (shortcut: Shortcut) => {
+            Row() {
+              if (shortcut.icon) {
+                Text(shortcut.icon)
+                  .fontSize(11)
+                  .margin({ right: 3 })
+              }
+              Text(shortcut.name)
+                .fontSize(11)
+                .fontColor('#F0FFFFFF')
+            }
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .backgroundColor(`#50${(shortcut.color || '#9DABB2').replace('#', '')}`)
+            .border({ width: 1, color: `#80${(shortcut.color || '#9DABB2').replace('#', '')}` })
+            .borderRadius(13)
+            .onClick(() => {
+              this.viewModel.getSession()?.sendKeys(shortcut.keys);
+            })
+          }, (shortcut: Shortcut) => shortcut.id)
+
+          // ── 服务端指令按钮 ──
+          if (this.cmdList.length > 0) {
+            Divider()
+              .vertical(true)
+              .height(16)
+              .color('#33FFFFFF')
+              .strokeWidth(1)
+
+            ForEach(this.cmdList, (cmd: SuperCmd) => {
+              Row() {
+                Text('⚡')
+                  .fontSize(11)
+                  .margin({ right: 3 })
+                Text(cmd.name)
+                  .fontSize(11)
+                  .fontColor('#F0FFFFFF')
+              }
+              .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+              .backgroundColor('#50D97706')
+              .border({ width: 1, color: '#80D97706' })
+              .borderRadius(13)
+              .onClick(() => {
+                this.sendSuperCmd(cmd.id);
+              })
+            }, (cmd: SuperCmd) => cmd.id)
+          }
+        }
+        .padding({ left: 10, right: 6 })
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .layoutWeight(1)
+      .align(Alignment.Start)
     }
-    .padding({ left: 14, right: 8, top: 7, bottom: 7 })
+    .direction(Direction.Ltr)
+    .width('100%')
+    .height(40)
     .backgroundColor('#CC1A1A2E')
     .backdropBlur(40)
-    .borderRadius(20)
-    .shadow({ radius: 12, color: '#40000000', offsetY: 2 })
-    .position({ right: 12, bottom: this.keyboardHeight + 8 })
+    .borderRadius({ topLeft: 16, topRight: 16 })
+    .shadow({ radius: 12, color: '#40000000', offsetY: -2 })
+    .position({ left: 0, bottom: this.keyboardHeight })
+
+    // 右上角关闭按钮（悬浮在工具条上方）
+    Text('✕')
+      .fontSize(13)
+      .fontColor('#99FFFFFF')
+      .width(24)
+      .height(24)
+      .textAlign(TextAlign.Center)
+      .borderRadius(12)
+      .backgroundColor('#661A1A2E')
+      .backdropBlur(20)
+      .onClick(() => {
+        this.hideIMEKeyboard();
+      })
+      .position({ right: 8, bottom: this.keyboardHeight + 44 })
   }
 
   @Builder

@@ -45,6 +45,8 @@ export interface StreamConfig {
   enableVibration: boolean;
   vibrationMode: string;  // 震动模式：自动/仅手柄/仅设备/同时
   vibrateFallbackStrength: number;
+  enableAudioVibration: boolean;  // 音频振动（低频驱动）
+  audioVibrationStrength: number;  // 音频振动强度 (0-100)
   deadzone: number;
   flipFaceButtons: boolean;
 
@@ -211,6 +213,8 @@ export function getDefaultStreamConfig(): StreamConfig {
     enableVibration: true,
     vibrationMode: '自动',
     vibrateFallbackStrength: 100,
+    enableAudioVibration: false,
+    audioVibrationStrength: 60,
     deadzone: 7,
     flipFaceButtons: false,
 

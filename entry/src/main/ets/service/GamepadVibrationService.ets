@@ -105,6 +105,25 @@ export class GamepadVibrationService {
   }
 
   /**
+   * 仅向 USB 控制器发送振动（跳过设备马达路由）
+   * 供 AudioVibrationService 独立路由使用，避免经过设备振动的
+   * 防抖逻辑和参数变换，保证最高精度。
+   */
+  rumbleUsbControllersOnly(controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
+    const controllers = this.usbDriverService.getControllers();
+    if (controllers.length > 0) {
+      this.rumbleUsbControllers(controllers, controllerNumber, lowFreqMotor, highFreqMotor);
+    }
+  }
+
+  /**
+   * 检查是否有 USB 控制器连接
+   */
+  hasUsbControllers(): boolean {
+    return this.usbDriverService.getControllers().length > 0;
+  }
+
+  /**
    * 停止所有震动
    */
   stopAll(): void {

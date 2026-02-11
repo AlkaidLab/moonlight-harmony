@@ -57,6 +57,8 @@ export class SettingsKeys {
   static readonly ENABLE_VIBRATION: string = 'settings_enable_vibration';
   static readonly VIBRATION_MODE: string = 'settings_vibration_mode';  // 震动模式：自动/仅手柄/仅设备/同时
   static readonly VIBRATE_FALLBACK_STRENGTH: string = 'settings_vibrate_fallback_strength';
+  static readonly ENABLE_AUDIO_VIBRATION: string = 'settings_enable_audio_vibration';  // 音频振动（低频驱动）
+  static readonly AUDIO_VIBRATION_STRENGTH: string = 'settings_audio_vibration_strength';  // 音频振动强度 (0-100)
   static readonly MULTI_CONTROLLER: string = 'settings_multi_controller';
   static readonly FLIP_FACE_BUTTONS: string = 'settings_flip_face_buttons';
   static readonly DEADZONE: string = 'settings_deadzone';
@@ -149,6 +151,8 @@ export interface InputSettings {
   enableVibration: boolean;
   vibrationMode: string;  // 自动/仅手柄/仅设备/同时
   vibrateFallbackStrength: number;
+  enableAudioVibration: boolean;  // 音频振动（低频驱动）
+  audioVibrationStrength: number;  // 音频振动强度 (0-100)
   multiController: boolean;
   flipFaceButtons: boolean;
   deadzone: number;
@@ -532,6 +536,8 @@ export class SettingsService {
     const enableVibration = await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true);
     const vibrationMode = await this.getString(SettingsKeys.VIBRATION_MODE, '自动');
     const vibrateFallbackStrength = await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100);
+    const enableAudioVibration = await this.getBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
+    const audioVibrationStrength = await this.getNumber(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
     const deadzone = await this.getNumber(SettingsKeys.DEADZONE, 7);
     const flipFaceButtons = await this.getBoolean(SettingsKeys.FLIP_FACE_BUTTONS, false);
 
@@ -600,6 +606,8 @@ export class SettingsService {
       enableVibration: enableVibration,
       vibrationMode: vibrationMode,
       vibrateFallbackStrength: vibrateFallbackStrength,
+      enableAudioVibration: enableAudioVibration,
+      audioVibrationStrength: audioVibrationStrength,
       deadzone: deadzone,
       flipFaceButtons: flipFaceButtons,
 
@@ -653,6 +661,8 @@ export class SettingsService {
       enableVibration: await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true),
       vibrationMode: await this.getString(SettingsKeys.VIBRATION_MODE, '自动'),
       vibrateFallbackStrength: await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100),
+      enableAudioVibration: await this.getBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false),
+      audioVibrationStrength: await this.getNumber(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60),
       multiController: await this.getBoolean(SettingsKeys.MULTI_CONTROLLER, true),
       flipFaceButtons: await this.getBoolean(SettingsKeys.FLIP_FACE_BUTTONS, false),
       deadzone: await this.getNumber(SettingsKeys.DEADZONE, 7),
