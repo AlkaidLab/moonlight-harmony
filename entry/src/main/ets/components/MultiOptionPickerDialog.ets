@@ -14,6 +14,7 @@
  * 使用 CustomDialogController 实现的底部弹窗多选选择器
  */
 import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../common/Theme';
+import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 
 /**
  * 多选选项配置
@@ -156,6 +157,31 @@ export struct MultiOptionPickerDialog {
             .backgroundColor(this.isSelected(option.key) ? AppColors.Surface : Color.Transparent)
             .borderRadius(12)
             .margin({ top: index === 0 ? AppSpacing.Small : 4 })
+            .focusable(true)
+            .focusOnTouch(true)
+            .focusBox({
+              margin: LengthMetrics.vp(1),
+              strokeColor: ColorMetrics.rgba(74, 222, 128, 0.8),
+              strokeWidth: LengthMetrics.vp(1.5)
+            })
+            .onKeyEvent((event: KeyEvent) => {
+              if (event.type === KeyType.Down) {
+                // A键切换选中
+                if (event.keyCode === 2054 || event.keyCode === 2050) {
+                  this.toggleOption(option.key);
+                  return true;
+                }
+                // B键关闭
+                if (event.keyCode === 2070 || event.keyCode === 2012) {
+                  if (this.config.onCancel) {
+                    this.config.onCancel();
+                  }
+                  this.controller.close();
+                  return true;
+                }
+              }
+              return false;
+            })
             .onClick(() => {
               this.toggleOption(option.key);
             })

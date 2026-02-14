@@ -19,6 +19,7 @@
  * - 超级指令面板 (Sunshine 功能)
  */
 import { promptAction } from '@kit.ArkUI';
+import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { VirtualKey } from './StreamMenuManager';
 import { ShortcutManager, Shortcut } from './ShortcutManager';
@@ -70,23 +71,21 @@ export struct GameMenuDialog {
   superCmds: SuperCmd[] = [];  // 超级指令列表 (Sunshine 功能)
   isUsbDriverMode: boolean = false;  // 当前是否处于 USB 驱动模式
   isMouseEmulationActive: boolean = false;  // 当前是否处于手柄鼠标模拟模式
-  isMouseEmulationEnabled: boolean = true;  // 设置里「手柄模拟鼠标」是否启用
+  hasConnectedGamepad: boolean = false;  // 是否有手柄连接
   
   // 菜单项配置（马卡龙色系 - 优化配色和图标）
   private readonly menuItems: MenuItem[] = [
-    { icon: '⊞', label: 'Win', bgColor: '#C7E5F7', borderColor: '#5BA3D0' },       // Windows 键
     { icon: '✦', label: 'HDR', bgColor: '#F7EBC7', borderColor: '#D0A850' },       // HDR
     { icon: '◎', label: 'USB驱动', bgColor: '#F7D1D1', borderColor: '#D87070' },   // USB 驱动接管
     { icon: '⌨', label: '键盘', bgColor: '#C7F7E0', borderColor: '#50C080' },      // 键盘
     { icon: '☝', label: '触控', bgColor: '#E0D4F7', borderColor: '#9080C0' },      // 触控
     { icon: '🎮', label: '手柄', bgColor: '#D4E8F7', borderColor: '#6098C0' },      // 虚拟手柄
     { icon: '🖱', label: '鼠标', bgColor: '#F7E0C7', borderColor: '#C08050' },      // 手柄鼠标模拟
-    { icon: '◐', label: '休眠', bgColor: '#E8E8E8', borderColor: '#909090' },      // 休眠
     { icon: '✕', label: '退出', bgColor: '#F7CFCF', borderColor: '#D06060' }       // 退出
   ];
   
   // 菜单项水平偏移（不规则排列）
-  private readonly offsets: number[] = [15, 25, 55, 70, 35, 45, 30, 10, 50];
+  private readonly offsets: number[] = [25, 55, 70, 35, 45, 30, 50];
   
   // 动画状态：translateX 位置（正值向右，负值向左）
   @State private pos0: number = 200;  // 初始在屏幕右边外面
@@ -96,8 +95,6 @@ export struct GameMenuDialog {
   @State private pos4: number = 200;
   @State private pos5: number = 200;
   @State private pos6: number = 200;
-  @State private pos7: number = 200;
-  @State private pos8: number = 200;
   
   // 动画状态：缩放（初始为 1.0，不缩小）
   @State private scale0: number = 1.0;
@@ -107,8 +104,6 @@ export struct GameMenuDialog {
   @State private scale4: number = 1.0;
   @State private scale5: number = 1.0;
   @State private scale6: number = 1.0;
-  @State private scale7: number = 1.0;
-  @State private scale8: number = 1.0;
   
   // 二级菜单状态
   @State private expandedMenu: string = '';
@@ -137,7 +132,6 @@ export struct GameMenuDialog {
   // 弹窗控制器
   private exitDialogController?: CustomDialogController;
   private touchModeDialogController?: CustomDialogController;
-  private sleepDialogController?: CustomDialogController;
   private usbDriverDialogController?: CustomDialogController;
   
   aboutToAppear(): void {
@@ -157,7 +151,7 @@ export struct GameMenuDialog {
   private animateInStaggered(): void {
     const staggerDelay = 50;  // 每个按钮启动间隔 50ms
     
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < 7; i++) {
       setTimeout(() => {
         animateTo({ 
           duration: 200,  // 单个动画时长
@@ -173,14 +167,14 @@ export struct GameMenuDialog {
    * 递归执行进入动画（备用方案）
    */
   private animateInSequence(index: number): void {
-    if (index >= 9) return;
+    if (index >= 7) return;
     
     animateTo({ 
       duration: 280,  // 稍快的动画
       curve: Curve.FastOutSlowIn,  // 更流畅的曲线
       onFinish: () => {
         // 动画完成后触发下一个
-        if (index < 8) {
+        if (index < 6) {
           this.animateInSequence(index + 1);
         }
       }
@@ -207,7 +201,7 @@ export struct GameMenuDialog {
       duration: 200, 
       curve: Curve.FastOutLinearIn 
     }, () => {
-      for (let i = 0; i < 9; i++) {
+      for (let i = 0; i < 7; i++) {
         this.setPos(i, 200);
       }
     });
@@ -230,8 +224,6 @@ export struct GameMenuDialog {
     else if (i === 4) this.pos4 = v;
     else if (i === 5) this.pos5 = v;
     else if (i === 6) this.pos6 = v;
-    else if (i === 7) this.pos7 = v;
-    else if (i === 8) this.pos8 = v;
   }
   
   private getPos(i: number): number {
@@ -242,8 +234,6 @@ export struct GameMenuDialog {
     if (i === 4) return this.pos4;
     if (i === 5) return this.pos5;
     if (i === 6) return this.pos6;
-    if (i === 7) return this.pos7;
-    if (i === 8) return this.pos8;
     return 0;
   }
   
@@ -255,8 +245,6 @@ export struct GameMenuDialog {
     else if (i === 4) this.scale4 = v;
     else if (i === 5) this.scale5 = v;
     else if (i === 6) this.scale6 = v;
-    else if (i === 7) this.scale7 = v;
-    else if (i === 8) this.scale8 = v;
   }
   
   private getScale(i: number): number {
@@ -267,15 +255,28 @@ export struct GameMenuDialog {
     if (i === 4) return this.scale4;
     if (i === 5) return this.scale5;
     if (i === 6) return this.scale6;
-    if (i === 7) return this.scale7;
-    if (i === 8) return this.scale8;
     return 1;
   }
   
   private sendKeys(keys: number[]): void {
     this.viewModel.getSession()?.sendKeys(keys);
   }
-  
+
+  /**
+   * 执行快捷键（支持单次组合或多步序列）
+   */
+  private sendShortcut(shortcut: Shortcut): void {
+    if (shortcut.keySequence && shortcut.keySequence.length > 0) {
+      shortcut.keySequence.forEach((keys: number[], index: number) => {
+        setTimeout(() => {
+          this.sendKeys(keys);
+        }, index * 200);
+      });
+    } else if (shortcut.keys.length > 0) {
+      this.sendKeys(shortcut.keys);
+    }
+  }
+
   // ==================== 码率调整辅助方法 ====================
   
   /**
@@ -447,41 +448,6 @@ export struct GameMenuDialog {
   }
   
   /**
-   * 显示休眠确认弹窗
-   */
-  private showSleepDialog(): void {
-    const config: ConfirmDialogConfig = {
-      title: '休眠主机',
-      message: '远程主机将进入睡眠状态，需要手动或通过 Wake-on-LAN 唤醒。',
-      cancelButton: {
-        text: '取消',
-        onClick: () => {}
-      },
-      confirmButton: {
-        text: '休眠',
-        color: '#6B7280',
-        onClick: () => {
-          // Win+X -> U -> S 触发休眠
-          this.sendKeys([VirtualKey.VK_LWIN, VirtualKey.VK_X]);
-          setTimeout(() => {
-            this.sendKeys([VirtualKey.VK_U]);
-            setTimeout(() => { this.sendKeys([VirtualKey.VK_S]); }, 200);
-          }, 200);
-          this.animateOut();
-        }
-      }
-    };
-    
-    this.sleepDialogController = new CustomDialogController({
-      builder: ConfirmDialog({ config: config }),
-      alignment: DialogAlignment.Center,
-      customStyle: true,
-      backgroundColor: Color.Transparent
-    });
-    this.sleepDialogController.open();
-  }
-  
-  /**
    * 显示 USB 驱动接管确认弹窗
    */
   private showUsbDriverDialog(): void {
@@ -515,40 +481,33 @@ export struct GameMenuDialog {
   
   private handleMenuClick(index: number): void {
     switch (index) {
-      case 0: // Win
-        this.sendKeys([VirtualKey.VK_LWIN]);
-        this.animateOut();
-        break;
-      case 1: // HDR
+      case 0: // HDR
         this.sendKeys([VirtualKey.VK_LWIN, VirtualKey.VK_MENU, VirtualKey.VK_B]);
         this.animateOut();
         break;
-      case 2: // USB 驱动接管
+      case 1: // USB 驱动接管
         if (this.isUsbDriverMode) {
           promptAction.showToast({ message: '当前已是 USB 驱动模式', duration: 2000 });
         } else {
           this.showUsbDriverDialog();
         }
         break;
-      case 3: // 键盘 - 直接弹出系统 IME
+      case 2: // 键盘 - 直接弹出系统 IME
         this.callbacks.onToggleKeyboard?.();
         this.animateOut();
         break;
-      case 4: // 触控
+      case 3: // 触控
         this.showTouchModeDialog();
         break;
-      case 5: // 虚拟手柄
+      case 4: // 虚拟手柄
         this.viewModel.toggleController();
         this.animateOut();
         break;
-      case 6: // 手柄鼠标模拟
+      case 5: // 手柄鼠标模拟
         this.callbacks.onToggleMouseEmulation?.();
         this.animateOut();
         break;
-      case 7: // 休眠
-        this.showSleepDialog();
-        break;
-      case 8: // 退出
+      case 6: // 退出
         this.showExitDialog();
         break;
     }
@@ -574,17 +533,15 @@ export struct GameMenuDialog {
         this.SockButton(1)
         this.SockButton(2)
         this.SockButton(3)
-        this.SockButton(4)
         // 虚拟手柄按钮仅在设置启用时显示
         if (this.viewModel.inputSettings?.enableOnscreenControls) {
+          this.SockButton(4)
+        }
+        // 鼠标模拟按钮仅在有手柄连接时显示
+        if (this.hasConnectedGamepad) {
           this.SockButton(5)
         }
-        // 鼠标模拟按钮仅在设置启用时显示
-        if (this.isMouseEmulationEnabled) {
-          this.SockButton(6)
-        }
-        this.SockButton(7)
-        this.SockButton(8)
+        this.SockButton(6)
       }
       .alignItems(HorizontalAlign.End)
       .justifyContent(FlexAlign.Center)
@@ -603,14 +560,14 @@ export struct GameMenuDialog {
             this.GyroAssistCard()
           }
           
-          // 超级指令卡片（单独）
-          if (this.superCmds.length > 0) {
-            this.SuperCmdCard()
-          }
-          
-          // 快捷键卡片（单独）
+          // 快捷键卡片
           if (this.shortcuts.length > 0) {
             this.ShortcutCard()
+          }
+
+          // 超级指令卡片
+          if (this.superCmds.length > 0) {
+            this.SuperCmdCard()
           }
         }
         .alignItems(HorizontalAlign.Center)
@@ -1128,10 +1085,10 @@ export struct GameMenuDialog {
    */
   // 获取菜单项的显示标签（USB 驱动 / 鼠标模拟项根据状态动态显示）
   private getMenuLabel(index: number): string {
-    if (index === 2 && this.isUsbDriverMode) {
+    if (index === 1 && this.isUsbDriverMode) {
       return 'USB驱动 ✓';
     }
-    if (index === 6 && this.isMouseEmulationActive) {
+    if (index === 5 && this.isMouseEmulationActive) {
       return '鼠标 ✓';
     }
     return this.menuItems[index].label;
@@ -1139,10 +1096,10 @@ export struct GameMenuDialog {
 
   // 获取菜单项的背景色（USB 驱动 / 鼠标模拟已激活时使用绿色系）
   private getMenuBgColor(index: number): string {
-    if (index === 2 && this.isUsbDriverMode) {
+    if (index === 1 && this.isUsbDriverMode) {
       return '#C7F7D4';  // 浅绿 - 已激活
     }
-    if (index === 6 && this.isMouseEmulationActive) {
+    if (index === 5 && this.isMouseEmulationActive) {
       return '#C7F7D4';
     }
     return this.menuItems[index].bgColor;
@@ -1150,10 +1107,10 @@ export struct GameMenuDialog {
 
   // 获取菜单项的边框色（USB 驱动 / 鼠标模拟已激活时使用绿色系）
   private getMenuBorderColor(index: number): string {
-    if (index === 2 && this.isUsbDriverMode) {
+    if (index === 1 && this.isUsbDriverMode) {
       return '#50A860';  // 深绿 - 已激活
     }
-    if (index === 6 && this.isMouseEmulationActive) {
+    if (index === 5 && this.isMouseEmulationActive) {
       return '#50A860';
     }
     return this.menuItems[index].borderColor;
@@ -1223,6 +1180,28 @@ export struct GameMenuDialog {
     .scale({ x: this.getScale(index), y: this.getScale(index) })
     .translate({ x: this.getPos(index) })  // 使用 translateX 控制水平滑动
     .margin({ right: this.offsets[index], bottom: 4 })  // offsets 用于不规则排列
+    .focusable(true)
+    .focusOnTouch(true)
+    .focusBox({
+      margin: LengthMetrics.vp(2),
+      strokeColor: ColorMetrics.rgba(74, 222, 128, 1),
+      strokeWidth: LengthMetrics.vp(2)
+    })
+    .onKeyEvent((event: KeyEvent) => {
+      if (event.type === KeyType.Down) {
+        // A键确认
+        if (event.keyCode === 2054 || event.keyCode === 2050) {
+          this.handleMenuClick(index);
+          return true;
+        }
+        // B键/ESC关闭菜单
+        if (event.keyCode === 2070 || event.keyCode === 2012) {
+          this.animateOut();
+          return true;
+        }
+      }
+      return false;
+    })
     .onClick(() => this.handleMenuClick(index))
   }
   
@@ -1246,8 +1225,29 @@ export struct GameMenuDialog {
     .border({ width: 1, color: `#80${(shortcut.color || '#9DABB2').replace('#', '')}` })
     .borderRadius(14)
     .margin({ right: 6, bottom: 6 })
+    .focusable(true)
+    .focusOnTouch(true)
+    .focusBox({
+      margin: LengthMetrics.vp(1),
+      strokeColor: ColorMetrics.rgba(74, 222, 128, 0.8),
+      strokeWidth: LengthMetrics.vp(1.5)
+    })
+    .onKeyEvent((event: KeyEvent) => {
+      if (event.type === KeyType.Down) {
+        if (event.keyCode === 2054 || event.keyCode === 2050) {
+          this.sendShortcut(shortcut);
+          this.animateOut();
+          return true;
+        }
+        if (event.keyCode === 2051 && !shortcut.isBuiltin) {
+          this.showShortcutOptions(shortcut);
+          return true;
+        }
+      }
+      return false;
+    })
     .onClick(() => {
-      this.sendKeys(shortcut.keys);
+      this.sendShortcut(shortcut);
       this.animateOut();
     })
     .gesture(
@@ -1332,6 +1332,23 @@ export struct GameMenuDialog {
     .border({ width: 1, color: '#30FFFFFF' })
     .borderRadius(16)
     .margin({ right: 6, bottom: 6 })
+    .focusable(true)
+    .focusOnTouch(true)
+    .focusBox({
+      margin: LengthMetrics.vp(1),
+      strokeColor: ColorMetrics.rgba(96, 165, 250, 0.8),
+      strokeWidth: LengthMetrics.vp(1.5)
+    })
+    .onKeyEvent((event: KeyEvent) => {
+      if (event.type === KeyType.Down && (event.keyCode === 2054 || event.keyCode === 2050)) {
+        if (this.callbacks.onSendSuperCmd) {
+          this.callbacks.onSendSuperCmd(cmd.id);
+        }
+        this.animateOut();
+        return true;
+      }
+      return false;
+    })
     .onClick(() => {
       if (this.callbacks.onSendSuperCmd) {
         this.callbacks.onSendSuperCmd(cmd.id);

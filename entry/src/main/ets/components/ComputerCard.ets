@@ -292,6 +292,21 @@ export struct ComputerCard {
       strokeColor: ColorMetrics.rgba(0, 212, 255, 1),
       strokeWidth: LengthMetrics.vp(2)
     })
+    .onKeyEvent((event: KeyEvent) => {
+      if (event.type === KeyType.Down) {
+        // A键/回车 → 选择此电脑
+        if (event.keyCode === 2054 || event.keyCode === 2050) {
+          this.onTap();
+          return true;
+        }
+        // 菜单键 → 长按菜单
+        if (event.keyCode === 2051) {
+          this.onLongPress();
+          return true;
+        }
+      }
+      return false;
+    })
     // 触摸事件
     .onClick(() => {
       // 如果是快速串流按钮点击，不触发卡片点击
