@@ -20,6 +20,7 @@ import { InputEvent } from '../model/InputEvent';
 import { OverlayConfig, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/GamepadManager';
 import { CONTROLLER_TYPE_XBOX } from '../service/MoonBridge';
 import { common } from '@kit.AbilityKit';
+import { inputDevice } from '@kit.InputKit';
 
 /**
  * 串流连接状态
@@ -131,6 +132,9 @@ export class StreamViewModel {
   
   // 实际 HDR 状态（从 drSetup 回调获取，用于 UI 显示）
   actualHdr: boolean = false;
+
+  // 实际编解码器类型（从 drSetup 回调获取，可能与用户请求的不同）
+  actualCodec: string = '';
   
   // UI 显示控制
   showOverlay: boolean = false;
@@ -198,6 +202,11 @@ export class StreamViewModel {
     
     // 加载覆盖层位置
     this.overlayState.config.position = this.parseOverlayPosition(this.displaySettings.perfOverlayPosition);
+
+    // 加载覆盖层背景透明度
+    if (this.displaySettings.perfOverlayBgOpacity !== undefined) {
+      this.overlayState.config.bgOpacity = this.displaySettings.perfOverlayBgOpacity;
+    }
     
     // 更新串流尺寸
     this.displayInfo.streamWidth = this.streamConfig.width;
@@ -211,13 +220,11 @@ export class StreamViewModel {
     const lastTouchMode = await PreferencesUtil.get<string>(SettingsKeys.LAST_TOUCH_MODE, '');
     if (lastTouchMode && (lastTouchMode === 'trackpad' || lastTouchMode === 'direct' || lastTouchMode === 'mouse')) {
       this.touchMode = lastTouchMode as TouchMode;
-    } else if (this.inputSettings.touchscreenTrackpad) {
-      this.touchMode = TouchMode.TRACKPAD;
-    } else if (this.inputSettings.mouseEmulation) {
-      this.touchMode = TouchMode.MOUSE;
     } else {
-      // 默认使用触摸板模式
-      this.touchMode = TouchMode.TRACKPAD;
+      // 没有用户偏好时：检测是否有键盘/鼠标连接
+      // 有键鼠 → 触控板模式(trackpad)，无键鼠 → 多点触控模式(direct)
+      const hasKeyboardOrMouse = await this.detectKeyboardOrMouse();
+      this.touchMode = hasKeyboardOrMouse ? TouchMode.TRACKPAD : TouchMode.DIRECT;
     }
     
     console.info(`StreamViewModel: 配置加载完成 - ${this.streamConfig.width}x${this.streamConfig.height}@${this.streamConfig.fps}fps`);
@@ -254,6 +261,9 @@ export class StreamViewModel {
       
       // 初始化 actualHdr 状态为用户请求的 HDR 状态
       this.actualHdr = this.streamConfig?.hdr || false;
+
+      // 初始化 actualCodec 为用户请求的编解码器
+      this.actualCodec = this.streamConfig?.codec || 'HEVC';
       
       // 创建串流会话
       this.streamingSession = new StreamingSession();
@@ -262,6 +272,12 @@ export class StreamViewModel {
       this.streamingSession.setHdrStateCallback((isHdr: boolean) => {
         console.info(`StreamViewModel: HDR 状态回调 actualHdr=${isHdr}`);
         this.actualHdr = isHdr;
+      });
+
+      // 设置编解码器状态回调，当 drSetup 检测到实际编解码器时更新 UI
+      this.streamingSession.setCodecStateCallback((codec: string) => {
+        console.info(`StreamViewModel: 编解码器状态回调 actualCodec=${codec}`);
+        this.actualCodec = codec;
       });
       
       // 设置连接终止回调
@@ -433,6 +449,26 @@ export class StreamViewModel {
       console.warn(`StreamViewModel: 保存触摸模式失败: ${err.message}`);
     });
     console.info(`StreamViewModel: 触摸模式切换为 ${mode}`);
+  }
+
+  /**
+   * 检测是否有键盘或鼠标连接
+   */
+  private async detectKeyboardOrMouse(): Promise<boolean> {
+    try {
+      const deviceIds = await inputDevice.getDeviceIds();
+      for (const id of deviceIds) {
+        const info = await inputDevice.getDeviceInfo(id);
+        const sources: inputDevice.SourceType[] = info.sources;
+        if (sources.includes('keyboard' as inputDevice.SourceType) ||
+            sources.includes('mouse' as inputDevice.SourceType)) {
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn(`StreamViewModel: 检测输入设备失败: ${JSON.stringify(e)}`);
+    }
+    return false;
   }
   
   /**

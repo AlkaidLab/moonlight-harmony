@@ -163,9 +163,36 @@ export class StreamWindowManager {
       win.setWindowSystemBarEnable(['status', 'navigation']);
       // 恢复自动旋转
       await win.setPreferredOrientation(window.Orientation.UNSPECIFIED);
+      // 恢复屏幕亮度为系统默认
+      win.setWindowBrightness(-1);
       console.info('StreamWindowManager: 已恢复窗口设置');
     } catch (err) {
       console.error('恢复窗口设置失败:', err);
+    }
+  }
+
+  /**
+   * 设置 HDR 高亮度模式
+   * 当 HDR 开启且用户启用高亮度选项时，将屏幕亮度调至最大
+   * 参考 Android: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL
+   *
+   * @param enableHdr 是否启用 HDR
+   * @param hdrHighBrightness 是否启用 HDR 高亮度模式
+   */
+  async setHdrBrightness(enableHdr: boolean, hdrHighBrightness: boolean): Promise<void> {
+    try {
+      const win = await window.getLastWindow(this.context);
+      if (enableHdr && hdrHighBrightness) {
+        // HDR 高亮度模式：将屏幕亮度调至最大 (1.0)
+        win.setWindowBrightness(1.0);
+        console.info('StreamWindowManager: HDR 高亮度模式已启用 (brightness=1.0)');
+      } else {
+        // 使用系统默认亮度 (-1)
+        win.setWindowBrightness(-1);
+        console.info('StreamWindowManager: 使用系统默认屏幕亮度');
+      }
+    } catch (err) {
+      console.warn('StreamWindowManager: 设置 HDR 亮度失败:', JSON.stringify(err));
     }
   }
   

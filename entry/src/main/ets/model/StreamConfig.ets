@@ -51,7 +51,6 @@ export interface StreamConfig {
   flipFaceButtons: boolean;
 
   // 鼠标/触控设置
-  mouseEmulation: boolean;
   absoluteMouseMode: boolean;
   touchscreenTrackpad: boolean;
   enableDoubleClickDrag: boolean;
@@ -124,12 +123,12 @@ export enum ColorRange {
  * 与 Sunshine dynamicRange 参数对应:
  * - SDR = 0
  * - HDR10/PQ = 1 (SMPTE ST 2084)
- * - HLG = 2 (ARIB STD-B67, 用于 HDR Vivid)
+ * - HLG = 2 (ARIB STD-B67, Hybrid Log-Gamma)
  */
 export enum HdrMode {
   SDR = 0,              // 标准动态范围
   HDR10 = 1,            // HDR10 (PQ 传输函数)
-  HLG = 2               // HLG (Hybrid Log-Gamma, 用于 HDR Vivid)
+  HLG = 2               // HLG (Hybrid Log-Gamma, ARIB STD-B67)
 }
 
 /**
@@ -219,7 +218,6 @@ export function getDefaultStreamConfig(): StreamConfig {
     flipFaceButtons: false,
 
     // 鼠标/触控设置
-    mouseEmulation: true,
     absoluteMouseMode: false,
     touchscreenTrackpad: false,
     enableDoubleClickDrag: false,

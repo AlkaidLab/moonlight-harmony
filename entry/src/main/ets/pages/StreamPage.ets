@@ -28,16 +28,17 @@ import { ShortcutManager, Shortcut } from '../components/ShortcutManager';
 import { ShortcutEditorDialog, ShortcutEditorCallbacks, ShortcutEditData } from '../components/ShortcutEditorDialog';
 import { GamepadManager, GamepadInputListener, GamepadState, MoonlightControllerType, MouseEmulationCallback } from '../service/GamepadManager';
 import { GyroAssistService } from '../service/GyroAssistService';
-import { AppStateService, AppState } from '../service/AppStateService';
-import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE, BUTTON_LEFT, BUTTON_RIGHT } from '../service/MoonBridge';
+import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../service/MoonBridge';
 import { SuperCmd } from '../service/NvHttp';
 import { AbsoluteMouseManager } from '../service/LocalCursorManager';
 import { VirtualKey } from '../components/StreamMenuManager';
+import { pointer } from '@kit.InputKit';
 import { InputInterceptorService } from '../service/InputInterceptorService';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { SettingsKeys } from '../service/SettingsService';
-import { inputMethod } from '@kit.IMEKit';
-import { window } from '@kit.ArkUI';
+import { StreamInputHandler } from './StreamInputHandler';
+import { StreamLifecycleManager } from './StreamLifecycleManager';
+import { StreamIMEManager } from './StreamIMEManager';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -78,11 +79,14 @@ struct StreamPage {
   @State xComponentHeight: Length = '100%';
   @State showKeyboardPanel: boolean = false;  // 系统键盘输入面板
   @State keyboardHeight: number = 0;  // IME 键盘高度 (vp)
-  private imeController: inputMethod.InputMethodController | null = null;  // 输入法控制器
-  private imeReadyTime: number = 0;  // IME 就绪时间戳（防止弹出瞬间 onBackPress 误关）
   
   // 绝对鼠标管理器
   private absoluteMouseManager: AbsoluteMouseManager | null = null;
+  
+  // ── 解耦的处理器/管理器 ──
+  private inputHandler: StreamInputHandler = new StreamInputHandler();
+  private lifecycleManager: StreamLifecycleManager = new StreamLifecycleManager();
+  private imeManager: StreamIMEManager = new StreamIMEManager(getContext(this) as common.UIAbilityContext);
   
   // 对话框控制器
   private gameMenuDialogController: CustomDialogController | null = null;
@@ -103,21 +107,6 @@ struct StreamPage {
   private shortcutManager: ShortcutManager = ShortcutManager.getInstance();
   private gamepadManager: GamepadManager = GamepadManager.getInstance();
   private controllerTypes: Map<number, number> = new Map();  // slot → MoonlightControllerType
-  private latencyToastEnabled: boolean = false;  // 串流后延迟提示
-  private appStateService: AppStateService = AppStateService.getInstance();
-  
-  // 应用音频音量回退（当 C++ 层无法回注音量键到系统时，用 OH_AudioRenderer 应用级音量补偿）
-  private appVolume: number = 1.0;      // 当前音量 0.0 ~ 1.0
-  private preMuteVolume: number = 1.0;  // 静音前的音量（用于恢复）
-  private static readonly VOLUME_STEP: number = 0.1;   // 每次调节步长 10%
-  
-  // 应用状态相关
-  private appStateListener: ((state: AppState) => void) | null = null;
-  private wasInBackground: boolean = false;
-  
-  // 屏幕方向变化监听相关
-  private displayChangeCallback: ((displayId: number) => void) | null = null;
-  private lastDisplayOrientation: boolean | null = null;  // null=未初始化, true=横屏, false=竖屏
   
   // 页面参数
   private computerId: string = '';
@@ -173,14 +162,38 @@ struct StreamPage {
     // 初始化手柄管理器
     this.initializeGamepad();
     
+    // 初始化输入处理器
+    this.inputHandler.initialize(this.viewModel, this.gamepadManager);
+    
+    // 初始化生命周期管理器
+    this.lifecycleManager.initialize(this.viewModel, this.windowManager, {
+      updateXComponentSize: (width: Length, height: Length) => {
+        this.xComponentWidth = width;
+        this.xComponentHeight = height;
+      },
+      stopStreaming: () => {
+        this.stopStreaming();
+      }
+    });
+    
+    // 初始化 IME 管理器
+    this.imeManager.initialize(this.viewModel, {
+      onKeyboardVisibilityChanged: (visible: boolean) => {
+        this.showKeyboardPanel = visible;
+      },
+      onKeyboardHeightChanged: (height: number) => {
+        this.keyboardHeight = height;
+      }
+    });
+    
     // 获取屏幕尺寸
     this.initializeDisplay();
     
     // 注册应用状态监听
-    this.registerAppStateListener();
+    this.lifecycleManager.registerAppStateListener();
     
     // 注册屏幕方向变化监听
-    this.registerDisplayChangeListener();
+    this.lifecycleManager.registerDisplayChangeListener();
   }
     /**
    * 初始化手柄输入
@@ -322,11 +335,9 @@ struct StreamPage {
   aboutToDisappear(): void {
     console.info('StreamPage aboutToDisappear - cleaning up');
     
-    // 取消应用状态监听
-    this.unregisterAppStateListener();
-    
-    // 取消屏幕方向变化监听
-    this.unregisterDisplayChangeListener();
+    // 取消生命周期监听
+    this.lifecycleManager.unregisterAppStateListener();
+    this.lifecycleManager.unregisterDisplayChangeListener();
     
     // 清理 ViewModel
     this.viewModel.dispose();
@@ -336,7 +347,7 @@ struct StreamPage {
     
     // 停止按键拦截器
     InputInterceptorService.getInstance().stop();
-    
+
     // 停止体感助手
     GyroAssistService.getInstance().dispose();
     
@@ -345,164 +356,13 @@ struct StreamPage {
     this.gamepadManager.resetSession();
     
     // 恢复窗口设置
-    this.hideIMEKeyboard();
+    this.imeManager.hide();
     this.windowManager?.restoreWindow();
-  }
-  
-  /**
-   * 注册应用前后台状态监听
-   */
-  private registerAppStateListener(): void {
-    this.appStateListener = (state: AppState) => {
-      if (state === AppState.BACKGROUND) {
-        console.info('[StreamPage] 应用进入后台');
-        this.wasInBackground = true;
-      } else if (state === AppState.FOREGROUND && this.wasInBackground) {
-        console.info('[StreamPage] 应用从后台恢复');
-        this.wasInBackground = false;
-        this.handleAppResume();
-      }
-    };
-    this.appStateService.addListener(this.appStateListener);
-  }
-  
-  /**
-   * 取消应用状态监听
-   */
-  private unregisterAppStateListener(): void {
-    if (this.appStateListener) {
-      this.appStateService.removeListener(this.appStateListener);
-      this.appStateListener = null;
-    }
-  }
-  
-  /**
-   * 注册屏幕方向变化监听
-   * 使用 display.on('change') 监听屏幕变化
-   */
-  private registerDisplayChangeListener(): void {
+
+    // 恢复系统鼠标光标显示
     try {
-      this.displayChangeCallback = (displayId: number): void => {
-        this.handleDisplayChange(displayId);
-      };
-      display.on('change', this.displayChangeCallback);
-      console.info('[StreamPage] 已注册屏幕方向变化监听');
-    } catch (err) {
-      console.warn('[StreamPage] 注册屏幕方向监听失败:', err);
-    }
-  }
-  
-  /**
-   * 取消屏幕方向变化监听
-   */
-  private unregisterDisplayChangeListener(): void {
-    if (this.displayChangeCallback) {
-      try {
-        display.off('change', this.displayChangeCallback);
-        console.info('[StreamPage] 已取消屏幕方向变化监听');
-      } catch (err) {
-        console.warn('[StreamPage] 取消屏幕方向监听失败:', err);
-      }
-      this.displayChangeCallback = null;
-    }
-  }
-  
-  /**
-   * 处理屏幕变化事件
-   * @param displayId 发生变化的显示器 ID
-   */
-  private handleDisplayChange(displayId: number): void {
-    // 只处理连接状态
-    if (!this.viewModel.isConnected) {
-      return;
-    }
-    
-    try {
-      const displayInfo = display.getDefaultDisplaySync();
-      const isLandscape = displayInfo.width > displayInfo.height;
-      
-      // 只有方向真正变化时才处理
-      if (this.lastDisplayOrientation !== null && this.lastDisplayOrientation === isLandscape) {
-        return;
-      }
-      
-      console.info(`[StreamPage] 屏幕方向变化: ${isLandscape ? '横屏' : '竖屏'}, displayId=${displayId}`);
-      this.lastDisplayOrientation = isLandscape;
-      
-      // 通知 ViewModel 处理旋转
-      this.viewModel.handleRotationChange(isLandscape);
-      
-      // 更新屏幕尺寸
-      this.updateScreenSizeAfterRotation();
-    } catch (err) {
-      console.warn('[StreamPage] 处理屏幕变化失败:', err);
-    }
-  }
-  
-  /**
-   * 屏幕旋转后更新尺寸
-   */
-  private async updateScreenSizeAfterRotation(): Promise<void> {
-    try {
-      const screenSize = await this.windowManager?.updateScreenSize();
-      if (screenSize) {
-        this.viewModel.displayInfo.screenWidth = screenSize.width;
-        this.viewModel.displayInfo.screenHeight = screenSize.height;
-        
-        // 重新计算 XComponent 尺寸
-        const xComponentSize = this.windowManager?.calculateXComponentSize(this.viewModel.displayInfo.stretchVideo);
-        if (xComponentSize) {
-          this.xComponentWidth = xComponentSize.width;
-          this.xComponentHeight = xComponentSize.height;
-        }
-      }
-    } catch (err) {
-      console.warn('[StreamPage] 更新屏幕尺寸失败:', err);
-    }
-  }
-  
-  /**
-   * 处理服务端分辨率变化（屏幕旋转/分辨率改变）
-   * 更新窗口管理器的串流分辨率并重新计算 XComponent 尺寸
-   */
-  private async handleServerResolutionChanged(width: number, height: number): Promise<void> {
-    console.info(`[StreamPage] 服务端分辨率变化: ${width}x${height}`);
-    
-    // 更新窗口管理器的串流分辨率
-    this.windowManager?.setStreamResolution(width, height);
-    
-    // 重新配置窗口方向（可能会触发屏幕旋转）
-    await this.windowManager?.configureOrientation();
-    
-    // 更新屏幕尺寸（等待旋转完成后获取正确的屏幕尺寸）
-    const screenSize = await this.windowManager?.updateScreenSize();
-    if (screenSize) {
-      this.viewModel.displayInfo.screenWidth = screenSize.width;
-      this.viewModel.displayInfo.screenHeight = screenSize.height;
-    }
-    
-    // 重新计算 XComponent 尺寸以避免画面拉伸
-    const xComponentSize = this.windowManager?.calculateXComponentSize(this.viewModel.displayInfo.stretchVideo);
-    if (xComponentSize) {
-      this.xComponentWidth = xComponentSize.width;
-      this.xComponentHeight = xComponentSize.height;
-      console.info(`[StreamPage] XComponent 尺寸更新: ${JSON.stringify(xComponentSize)}`);
-    }
-  }
-  
-  /**
-   * 处理应用从后台恢复
-   * 当应用从后台切回前台时，需要检查串流状态并尝试恢复
-   */
-  private handleAppResume(): void {
-    console.info(`[StreamPage] 处理应用恢复, 连接状态: ${this.viewModel.connectionState}`);
-    
-    // 如果当前已连接，尝试恢复串流
-    if (this.viewModel.isConnected) {
-      console.info('[StreamPage] 尝试恢复串流...');
-      // 调用 ViewModel 的恢复方法
-      this.viewModel.resumeFromBackground();
-    }
+      pointer.setPointerVisibleSync(true);
+    } catch (_) {}
   }
   
   /**
@@ -516,8 +376,8 @@ struct StreamPage {
     }
 
     // IME 键盘正在显示时，优先收起键盘（排除弹出瞬间的误触发）
-    if (this.showKeyboardPanel && Date.now() - this.imeReadyTime > 500) {
-      this.hideIMEKeyboard();
+    if (this.showKeyboardPanel && Date.now() - this.imeManager.readyTime > 500) {
+      this.imeManager.hide();
       return true;
     }
     
@@ -545,7 +405,7 @@ struct StreamPage {
         superCmds: this.cmdList,  // 传递超级指令列表
         isUsbDriverMode: !this.gamepadManager.isUsingGameControllerKit(),
         isMouseEmulationActive: this.gamepadManager.isMouseEmulationActive(),
-        isMouseEmulationEnabled: this.gamepadManager.isMouseEmulationEnabled(),
+        hasConnectedGamepad: this.gamepadManager.getConnectedGamepads().length > 0,
         callbacks: {
           onDismiss: () => {},
           onDisconnect: () => {
@@ -585,7 +445,7 @@ struct StreamPage {
             this.forceUsbDriverMode();
           },
           onToggleKeyboard: () => {
-            this.showIMEKeyboard();
+            this.imeManager.show();
           },
           onToggleMouseEmulation: () => {
             this.gamepadManager.toggleMouseEmulation();
@@ -624,12 +484,13 @@ struct StreamPage {
                 data.name,
                 data.keys,
                 data.icon,
-                data.color
+                data.color,
+                data.keySequence
               );
               promptAction.showToast({ message: `快捷键 "${data.name}" 已更新` });
             } else {
               // 添加模式
-              await this.shortcutManager.addShortcut(data.name, data.keys, data.icon, data.color);
+              await this.shortcutManager.addShortcut(data.name, data.keys, data.icon, data.color, data.keySequence);
               promptAction.showToast({ message: `快捷键 "${data.name}" 已添加` });
             }
           },
@@ -665,7 +526,9 @@ struct StreamPage {
     try {
       // 加载设置
       await this.viewModel.loadSettings();
-      this.latencyToastEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false);
+      this.lifecycleManager.setLatencyToastEnabled(
+        await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false)
+      );
       await this.gamepadManager.reloadSettings();
       
       // 设置串流分辨率
@@ -676,6 +539,12 @@ struct StreamPage {
       
       // 配置屏幕方向
       await this.windowManager?.configureOrientation();
+
+      // 设置 HDR 高亮度（如果启用）
+      const streamConfig = this.viewModel.streamConfig;
+      if (streamConfig) {
+        await this.windowManager?.setHdrBrightness(streamConfig.hdr, streamConfig.hdrHighBrightness);
+      }
       
       // 更新屏幕尺寸
       const screenSize = await this.windowManager?.updateScreenSize();
@@ -700,12 +569,12 @@ struct StreamPage {
       
       // 设置连接终止回调
       this.viewModel.setConnectionTerminatedCallback((errorCode: number) => {
-        this.handleConnectionTerminated(errorCode);
+        this.lifecycleManager.handleConnectionTerminated(errorCode);
       });
 
       // 设置分辨率变化回调（服务端屏幕旋转/分辨率变化时同步客户端布局）
       this.viewModel.setResolutionChangedCallback((width: number, height: number) => {
-        this.handleServerResolutionChanged(width, height);
+        this.lifecycleManager.handleServerResolutionChanged(width, height);
       });
 
       // 获取 surfaceId 并开始串流
@@ -714,11 +583,19 @@ struct StreamPage {
 
       // 启动按键拦截器（拦截被系统劫持的手柄按键，如蓝牙手柄 Home 键）
       if (this.viewModel.inputSettings?.enableKeyInterceptor) {
-        this.startKeyInterceptor();
+        this.inputHandler.startKeyInterceptor();
       }
 
       // 初始化体感助手
       this.initializeGyroAssist();
+
+      // 隐藏本地系统鼠标光标（串流时由远端/本地光标管理器接管）
+      try {
+        pointer.setPointerVisibleSync(false);
+        console.info('StreamPage: 已隐藏本地系统鼠标光标');
+      } catch (e) {
+        console.warn('StreamPage: 隐藏鼠标光标失败:', JSON.stringify(e));
+      }
 
       // 绝对鼠标模式下自动隐藏远端光标
       // 发送 Ctrl+Alt+Shift+N 切换 Sunshine display_cursor
@@ -737,8 +614,16 @@ struct StreamPage {
   
   async stopStreaming(): Promise<void> {
     // 显示延迟统计 toast（在停止串流之前获取数据）
-    this.showLatencyToastIfEnabled();
-    
+    this.lifecycleManager.showLatencyToastIfEnabled();
+
+    // 重置输入状态
+    this.inputHandler.resetState();
+
+    // 恢复系统鼠标光标显示
+    try {
+      pointer.setPointerVisibleSync(true);
+    } catch (_) {}
+
     // 先恢复窗口设置并返回菜单（立即响应）
     await this.windowManager?.restoreWindow();
     router.back();
@@ -748,195 +633,13 @@ struct StreamPage {
   }
   
   /**
-   * 使用 InputMethod API 直接显示系统键盘（无需 TextInput 组件）
-   * 节省屏幕空间，串流画面完整可见
-   */
-  private async showIMEKeyboard(): Promise<void> {
-    const session = this.viewModel.getSession();
-    if (!session) return;
-
-    try {
-      // 监听键盘高度变化
-      const win = await window.getLastWindow(getContext(this));
-      win.on('keyboardHeightChange', (height: number) => {
-        this.keyboardHeight = px2vp(height);
-      });
-
-      const controller = inputMethod.getController();
-      this.imeController = controller;
-
-      // 先绑定输入法（必须先 attach 才能注册回调）
-      const textConfig: inputMethod.TextConfig = {
-        inputAttribute: {
-          textInputType: inputMethod.TextInputType.TEXT,
-          enterKeyType: inputMethod.EnterKeyType.SEND
-        }
-      };
-      await controller.attach(true, textConfig);
-
-      // attach 成功后注册输入回调
-      controller.on('insertText', (text: string) => {
-        session.sendUtf8Text(text);
-      });
-
-      controller.on('deleteLeft', (length: number) => {
-        for (let i = 0; i < length; i++) {
-          session.sendKeyboardInput(0x08, 0x03); // VK_BACK DOWN
-          session.sendKeyboardInput(0x08, 0x04); // VK_BACK UP
-        }
-      });
-
-      controller.on('sendFunctionKey', (key: inputMethod.FunctionKey) => {
-        // 回车键
-        session.sendKeyboardInput(0x0D, 0x03); // VK_RETURN DOWN
-        session.sendKeyboardInput(0x0D, 0x04); // VK_RETURN UP
-      });
-
-      controller.on('sendKeyboardStatus', (status: inputMethod.KeyboardStatus) => {
-        if (status === inputMethod.KeyboardStatus.HIDE) {
-          this.hideIMEKeyboard();
-        }
-      });
-
-      this.showKeyboardPanel = true;
-      this.imeReadyTime = Date.now();
-    } catch (err) {
-      console.error(`[StreamPage] Failed to show IME: ${JSON.stringify(err)}`);
-    }
-  }
-
-  /**
-   * 关闭系统键盘并清理回调
-   */
-  private hideIMEKeyboard(): void {
-    try {
-      if (this.imeController) {
-        this.imeController.off('insertText');
-        this.imeController.off('deleteLeft');
-        this.imeController.off('sendFunctionKey');
-        this.imeController.off('sendKeyboardStatus');
-        this.imeController.detach();
-        this.imeController = null;
-      }
-      // 取消键盘高度监听
-      window.getLastWindow(getContext(this)).then((win) => {
-        win.off('keyboardHeightChange');
-      });
-    } catch (err) {
-      console.error(`[StreamPage] Failed to hide IME: ${JSON.stringify(err)}`);
-    }
-    this.showKeyboardPanel = false;
-    this.keyboardHeight = 0;
-  }
-
-  /**
-   * 串流结束后显示延迟统计 Toast
-   * 对齐 Android: Game.connectionTerminated() 中 enableLatencyToast 逻辑
-   */
-  private showLatencyToastIfEnabled(): void {
-    console.info(`[StreamPage] showLatencyToast: enabled=${this.latencyToastEnabled}`);
-    if (!this.latencyToastEnabled) {
-      return;
-    }
-    
-    // 使用 getSummaryStats 获取有效数据（断连后 native 数据可能已清零）
-    const session = this.viewModel.getSession();
-    const stats = session ? session.getSummaryStats() : this.viewModel.performanceStats;
-    console.info(`[StreamPage] stats: net=${stats.networkLatency}, decode=${stats.latency}, host=${stats.hostLatency}, fps=${stats.renderedFps}`);
-    const parts: string[] = [];
-    
-    // 网络延迟 (RTT)
-    if (stats.networkLatency > 0) {
-      parts.push(`网络: ${stats.networkLatency}ms`);
-    }
-    // 解码延迟 - 使用全局累计平均值（真实平均，非 EMA）
-    const decodeLatency = stats.globalAvgDecodeLatency > 0 ? stats.globalAvgDecodeLatency : stats.latency;
-    if (decodeLatency > 0) {
-      parts.push(`解码: ${decodeLatency.toFixed(1)}ms`);
-    }
-    // 主机延迟 - 使用全局累计平均值
-    const hostLatency = stats.globalAvgHostLatency > 0 ? stats.globalAvgHostLatency : stats.hostLatency;
-    if (hostLatency > 0) {
-      parts.push(`主机: ${hostLatency.toFixed(1)}ms`);
-    }
-    // 帧率 - 使用全局平均帧率（真实平均，非瞬时窗口值）
-    const avgFps = stats.globalAvgFps > 0 ? Math.round(stats.globalAvgFps) : stats.renderedFps;
-    if (avgFps > 0) {
-      parts.push(`帧率: ${avgFps}fps`);
-    }
-    
-    const message = parts.length > 0 ? parts.join(' | ') : '串流已结束';
-    promptAction.showToast({
-      message: message,
-      duration: 3500
-    });
-  }
-  
-  /**
-   * 处理服务器断开连接
-   * errorCode: 0 = 正常关闭（如用户在服务器端退出游戏）
-   *           -100 = 无视频流量（端口问题）
-   *           -101 = 无完整帧（网络不稳定）
-   *           -102 = 意外提前终止
-   *           -103 = 受保护内容
-   *           -104 = 帧转换错误
-   */
-  private handleConnectionTerminated(errorCode: number): void {
-    console.info(`StreamPage: 连接终止, errorCode=${errorCode}`);
-    
-    const ML_ERROR_GRACEFUL_TERMINATION = 0;
-    const ML_ERROR_NO_VIDEO_TRAFFIC = -100;
-    const ML_ERROR_NO_VIDEO_FRAME = -101;
-    const ML_ERROR_UNEXPECTED_EARLY_TERMINATION = -102;
-    const ML_ERROR_PROTECTED_CONTENT = -103;
-    const ML_ERROR_FRAME_CONVERSION = -104;
-    
-    if (errorCode === ML_ERROR_GRACEFUL_TERMINATION) {
-      // 服务器正常关闭（用户在服务器端退出游戏），stopStreaming 内部会显示延迟统计
-      this.stopStreaming();
-    } else {
-      // 连接异常终止，显示错误信息
-      let message: string;
-      switch (errorCode) {
-        case ML_ERROR_NO_VIDEO_TRAFFIC:
-          message = '未收到视频数据。请检查防火墙或端口转发规则（UDP 47998）。';
-          break;
-        case ML_ERROR_NO_VIDEO_FRAME:
-          message = '未收到完整视频帧。网络可能不稳定或码率设置过高。';
-          break;
-        case ML_ERROR_UNEXPECTED_EARLY_TERMINATION:
-        case ML_ERROR_PROTECTED_CONTENT:
-          message = '串流意外终止。可能是受保护内容或编码器无法捕获视频。';
-          break;
-        case ML_ERROR_FRAME_CONVERSION:
-          message = '帧转换错误。请尝试调整分辨率或关闭 HDR。';
-          break;
-        default:
-          const errorHex = Math.abs(errorCode) > 1000 ? `0x${errorCode.toString(16)}` : errorCode.toString();
-          message = `连接已断开 (错误码: ${errorHex})`;
-          break;
-      }
-      
-      promptAction.showDialog({
-        title: '连接已断开',
-        message: message,
-        buttons: [{ text: '确定', color: '#3B82F6' }]
-      }).then(() => {
-        this.stopStreaming();
-      }).catch(() => {
-        this.stopStreaming();
-      });
-    }
-  }
-  
-  /**
    * 退出游戏并返回
    * 与断开连接不同，这会请求服务器退出当前游戏
    * 优化：先返回菜单立即响应用户，后台处理退出请求
    */
   async quitGameAndReturn(): Promise<void> {
     // 显示延迟统计 toast（在退出前获取数据）
-    this.showLatencyToastIfEnabled();
+    this.lifecycleManager.showLatencyToastIfEnabled();
     
     // 先恢复窗口设置并返回菜单（立即响应）
     await this.windowManager?.restoreWindow();
@@ -963,7 +666,26 @@ struct StreamPage {
       promptAction.showToast({ message: `指令发送失败: ${(err as Error).message}` });
     }
   }
-  
+
+  /**
+   * 执行快捷键（支持单次组合或多步序列）
+   */
+  sendShortcut(shortcut: Shortcut): void {
+    const session = this.viewModel.getSession();
+    if (!session) return;
+
+    if (shortcut.keySequence && shortcut.keySequence.length > 0) {
+      // 多步按键序列：依次发送每组键，间隔 200ms
+      shortcut.keySequence.forEach((keys: number[], index: number) => {
+        setTimeout(() => {
+          session.sendKeys(keys);
+        }, index * 200);
+      });
+    } else if (shortcut.keys.length > 0) {
+      session.sendKeys(shortcut.keys);
+    }
+  }
+
   /**
    * 获取触摸模式的中文名称
    */
@@ -993,7 +715,7 @@ struct StreamPage {
     }
     this.touchInputHandler.handleTouchEvent(event);
   }
-  
+
   /**
    * 初始化绝对鼠标模式
    */
@@ -1010,123 +732,15 @@ struct StreamPage {
       this.absoluteMouseManager.initialize(MoonBridge, viewWidth, viewHeight);
       this.absoluteMouseManager.setAbsoluteMouseMode(true);
       
-      // 同步到 TouchInputHandler
+      // 同步到 TouchInputHandler 和 InputHandler
       this.touchInputHandler.setAbsoluteMouseMode(true);
       this.touchInputHandler.updateViewSize(viewWidth, viewHeight);
+      this.inputHandler.setAbsoluteMouseManager(this.absoluteMouseManager);
       
       console.info(`StreamPage: 绝对鼠标模式已初始化 ${viewWidth}x${viewHeight}`);
     }
   }
 
-  /**
-   * 启动按键事件拦截器
-   * 拦截被系统劫持的手柄按键和特殊键盘按键，转发给 GamepadManager / StreamingSession 处理
-   */
-  private startKeyInterceptor(): void {
-    const result = InputInterceptorService.getInstance().start((event) => {
-      if (!this.viewModel.isConnected) {
-        return;
-      }
-      const keyCode = event.keyCode;
-      // action: 1=KEY_DOWN, 2=KEY_UP
-      const isPressed = event.action === 1;
-
-      // 1. 手柄按键范围 (2300-2320 GC Kit / 110 标准 Mode) - 转发给 GamepadManager
-      if ((keyCode >= 2300 && keyCode <= 2320) || keyCode === 110) {
-        this.gamepadManager.handleKeyEvent(0, keyCode, isPressed);
-        return;
-      }
-
-      // 2. 音量键 (16=VOLUME_UP, 17=VOLUME_DOWN, 22=VOLUME_MUTE)
-      //    C++ 层已优先尝试回注到系统；到达这里说明回注失败，用应用级音量补偿
-      if (keyCode === 16 || keyCode === 17 || keyCode === 22) {
-        if (isPressed) {
-          this.handleVolumeKey(keyCode);
-        }
-        return;
-      }
-
-      // 3. 容易被系统劫持的特殊键盘按键 - 转发到主机
-      //    Home(1), Back(2), 多任务(3),
-      //    媒体键: Play/Pause(10), Stop(11), Next(12), Previous(13)
-      const SYSTEM_HIJACKED_KEYS: Set<number> = new Set([
-        1, 2, 3,                   // Home, Back, Recent
-        10, 11, 12, 13             // Media keys
-      ]);
-
-      if (SYSTEM_HIJACKED_KEYS.has(keyCode)) {
-        const session = this.viewModel.getSession();
-        if (session) {
-          // HarmonyOS keyCode -> Windows VK 映射
-          const vkCode = this.mapSystemKeyToVK(keyCode);
-          if (vkCode > 0) {
-            const keyAction = isPressed ? 0x03 : 0x04; // KEY_DOWN : KEY_UP
-            session.sendKeyboardInput(vkCode, keyAction, 0);
-          }
-        }
-      }
-    });
-    if (result !== 0) {
-      console.warn(`StreamPage: 按键拦截器启动失败 (${result})，手柄 Home 键可能被系统劫持`);
-      promptAction.showToast({
-        message: '按键反劫持启动失败：蓝牙手柄 Home 键可能导致退出（需系统级签名）',
-        duration: 3500
-      });
-    }
-  }
-
-  /**
-   * 将 HarmonyOS 系统按键码映射到 Windows 虚拟键码
-   */
-  private mapSystemKeyToVK(keyCode: number): number {
-    switch (keyCode) {
-      case 1: return 0; // Home - 不转发（避免触发 Windows 开始菜单）
-      case 2: return 0x1B; // Back → VK_ESCAPE
-      case 3: return 0; // Recent/多任务 - 不转发
-      case 10: return 0xB3; // Media Play/Pause → VK_MEDIA_PLAY_PAUSE
-      case 11: return 0xB2; // Media Stop → VK_MEDIA_STOP
-      case 12: return 0xB0; // Media Next → VK_MEDIA_NEXT_TRACK
-      case 13: return 0xB1; // Media Previous → VK_MEDIA_PREV_TRACK
-      default: return 0;
-    }
-  }
-
-  /**
-   * 处理音量键事件（回退路径）
-   * C++ 层优先尝试 OH_Input_InjectKeyEvent 回注到系统；
-   * 如果回注失败（无权限/API 不可用），音量键事件到达这里，
-   * 用 OH_AudioRenderer 的应用级音量补偿。
-   */
-  private handleVolumeKey(keyCode: number): void {
-    const session = this.viewModel.getSession();
-    if (!session) {
-      return;
-    }
-
-    if (keyCode === 16) {
-      this.appVolume = Math.min(1.0, this.appVolume + StreamPage.VOLUME_STEP);
-    } else if (keyCode === 17) {
-      this.appVolume = Math.max(0.0, this.appVolume - StreamPage.VOLUME_STEP);
-    } else if (keyCode === 22) {
-      if (this.appVolume > 0) {
-        this.preMuteVolume = this.appVolume;
-        this.appVolume = 0.0;
-      } else {
-        this.appVolume = this.preMuteVolume > 0 ? this.preMuteVolume : 1.0;
-      }
-    }
-
-    this.appVolume = Math.round(this.appVolume * 10) / 10;
-    session.setAudioVolume(this.appVolume);
-
-    const percent = Math.round(this.appVolume * 100);
-    const icon = this.appVolume === 0 ? '🔇' : (this.appVolume < 0.5 ? '🔉' : '🔊');
-    promptAction.showToast({
-      message: `${icon} 音量 ${percent}%`,
-      duration: 1000
-    });
-  }
-  
   /**
    * 设置触摸模式
    */
@@ -1164,35 +778,6 @@ struct StreamPage {
     }
   }
 
-  /**
-   * 处理键盘/手柄按键事件
-   * @param event 按键事件
-   * @returns 是否已处理该事件
-   */
-  handleKeyEvent(event: KeyEvent): boolean {
-    // 手柄相关按键（2300-2320 范围）总是拦截，防止系统默认行为
-    const keyCode = event.keyCode;
-    const isGamepadKey = keyCode >= 2300 && keyCode <= 2320;
-    
-    if (!this.viewModel.isConnected) {
-      // 即使未连接，也要拦截手柄按键，防止触发系统导航
-      return isGamepadKey;
-    }
-    
-    // 获取设备ID，如果没有则使用默认值0
-    const deviceId = event.deviceId ?? 0;
-    
-    // 转发给 GamepadManager 处理
-    this.gamepadManager.handleKeyEvent(
-      deviceId, 
-      keyCode, 
-      event.type === KeyType.Down
-    );
-    
-    // 返回 true 表示事件已处理，防止默认行为
-    return true;
-  }
-
   build() {
     Stack() {
       // 视频渲染层
@@ -1212,7 +797,18 @@ struct StreamPage {
         .height(this.xComponentHeight)
         .hitTestBehavior(this.viewModel.showController ? HitTestMode.None : HitTestMode.Default)
         .onTouch((event: TouchEvent) => {
+          // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
+          // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
+          if (event.source === SourceType.Mouse) return;
           this.handleTouch(event);
+        })
+        .onMouse((event: MouseEvent) => {
+          // 物理鼠标事件处理 → 委托给输入处理器
+          this.inputHandler.handleMouseEvent(event);
+        })
+        .onAxisEvent((event: AxisEvent) => {
+          // 鼠标滚轮事件处理 → 委托给输入处理器
+          this.inputHandler.handleAxisEvent(event);
         })
 
       // 连接状态层
@@ -1270,14 +866,7 @@ struct StreamPage {
     .focusable(true)
     .defaultFocus(true)
     .onKeyEvent((event: KeyEvent) => {
-      return this.handleKeyEvent(event);
-    })
-    .onMouse((event: MouseEvent) => {
-      // 物理鼠标事件处理
-      if (this.viewModel.isConnected && this.absoluteMouseManager && event.action === MouseAction.Move) {
-        // 绝对鼠标模式：发送鼠标绝对位置
-        this.absoluteMouseManager.handleMouseEvent(event.x, event.y);
-      }
+      return this.inputHandler.handleKeyEvent(event);
     })
   }
 
@@ -1304,7 +893,7 @@ struct StreamPage {
             .padding({ left: 10, right: 10 })
             .onClick(() => {
               this.viewModel.getSession()?.sendKeys([VirtualKey.VK_LWIN, VirtualKey.VK_CONTROL, VirtualKey.VK_O]);
-              this.hideIMEKeyboard();
+              this.imeManager.hide();
             })
 
           Divider()
@@ -1330,7 +919,7 @@ struct StreamPage {
             .border({ width: 1, color: `#80${(shortcut.color || '#9DABB2').replace('#', '')}` })
             .borderRadius(13)
             .onClick(() => {
-              this.viewModel.getSession()?.sendKeys(shortcut.keys);
+              this.sendShortcut(shortcut);
             })
           }, (shortcut: Shortcut) => shortcut.id)
 
@@ -1388,7 +977,7 @@ struct StreamPage {
       .backgroundColor('#661A1A2E')
       .backdropBlur(20)
       .onClick(() => {
-        this.hideIMEKeyboard();
+        this.imeManager.hide();
       })
       .position({ right: 8, bottom: this.keyboardHeight + 44 })
   }
