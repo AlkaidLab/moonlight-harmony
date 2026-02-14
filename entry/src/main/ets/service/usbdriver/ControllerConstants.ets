@@ -121,6 +121,7 @@ export class Xbox360 {
     0x20d6, // PowerA
     0x24c6, // PowerA
     0x2f24, // GameSir
+    0x3537, // GameSir (G7 Pro/Cyclone 2/Kaleid Flux)
     0x2dc8, // 8BitDo
   ];
 }
@@ -139,6 +140,8 @@ export class XboxOne {
     0x24c6, // PowerA
     0x2e24, // Hyperkin
     0x2dc8, // 8BitDo
+    0x2f24, // GameSir
+    0x3537, // GameSir (G7 Pro/Cyclone 2/Kaleid Flux)
   ];
 }
 

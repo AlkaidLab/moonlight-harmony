@@ -60,10 +60,12 @@ export class GamepadManager implements UsbDriverListener {
   
   // USB 驱动服务
   private usbDriverService: UsbDriverService;
-  private usbDevices = new Set<number>();
   
   // Game Controller Kit 状态
   private useGameControllerKit = false;
+  /** 输入模式是否已确定（loadUsbDriverSetting 异步完成后置 true）。
+   *  在此之前 setListener 不应扫描/通知设备，避免传统路径与 GCK 竞争产生幽灵手柄。 */
+  private modeInitialized = false;
   private gcDeviceIdToSlot = new Map<string, number>();
   private gcDeviceStates = new Map<string, GamepadState>();
   private gcPhysicalAddressToDeviceId = new Map<string, string>();  // 物理地址→主设备ID，用于去重同一物理手柄的多个HID接口
@@ -94,6 +96,13 @@ export class GamepadManager implements UsbDriverListener {
   /** 震动处理服务（从本类解耦） */
   private vibrationService: GamepadVibrationService;
   
+  // ==================== 通道级D-pad去重 ====================
+  /** GCK设备中已通过 Axis(DPAD) 通道提供D-pad数据的设备集合。
+   *  当 Axis 通道活跃时，Button/KeyEvent 通道的 D-pad 事件被静默丢弃 */
+  private gcDpadAxisActive = new Set<string>();
+  /** 传统模式中已通过 ABS_HAT0X/Y 轴提供D-pad数据的设备集合 */
+  private dpadAxisActive = new Set<number>();
+  
   // ==================== 长按 Start → 返回菜单 ====================
   /** Start 按键按下的时间戳 (ms)，0 表示未按下 */
   private startKeyDownTime: number = 0;
@@ -103,6 +112,24 @@ export class GamepadManager implements UsbDriverListener {
   private enableStartKeyMenu = true;
   /** 长按 Start 显示菜单的回调 */
   private showGameMenuCallback: (() => void) | null = null;
+
+  /**
+   * Start 长按检测（handleGCButtonEvent 和 handleKeyEvent 共用）
+   * @returns true 表示长按已触发，调用方应吐掉此次按键释放
+   */
+  private handleStartLongPress(isPressed: boolean): boolean {
+    if (isPressed) {
+      this.startKeyDownTime = Date.now();
+    } else if (this.startKeyDownTime > 0) {
+      const pressDuration = Date.now() - this.startKeyDownTime;
+      this.startKeyDownTime = 0;
+      if (pressDuration > GamepadManager.START_LONG_PRESS_MS && this.enableStartKeyMenu) {
+        this.showGameMenuCallback?.();
+        return true;
+      }
+    }
+    return false;
+  }
   
   private constructor() {
     this.usbDriverService = UsbDriverService.getInstance();
@@ -127,9 +154,14 @@ export class GamepadManager implements UsbDriverListener {
       } else {
         this.initializeGameControllerKit();
       }
+      this.modeInitialized = true;
+      // 输入模式已确定，如果 listener 在此之前已设置，补发设备通知
+      this.notifyListenerOfExistingDevices();
     }).catch(() => {
       // 读取设置失败，使用默认行为（尝试 GCK）
       this.initializeGameControllerKit();
+      this.modeInitialized = true;
+      this.notifyListenerOfExistingDevices();
     });
   }
 
@@ -244,6 +276,21 @@ export class GamepadManager implements UsbDriverListener {
     }
     
     this.useGameControllerKit = true;
+    
+    // 清理初始化竞争窗口内可能残留的传统设备状态
+    // （setListener 在 modeInitialized 之前就被调用了，虽然我们阻止了扫描，
+    //   仍需防范 handleKeyEvent 动态注册的幽灵设备）
+    if (this.connectedDevices.size > 0) {
+      console.info(`[GAMEPAD] 清理 ${this.connectedDevices.size} 个竞争期间注册的传统设备`);
+      this.connectedDevices.forEach((name, deviceId) => {
+        this.listener?.onGamepadDisconnected(deviceId);
+      });
+      this.connectedDevices.clear();
+      this.deviceStates.clear();
+      this.deviceInfoMap.clear();
+      this.dpadAxisActive.clear();
+    }
+    
     this.setupGCCallbacks();
     gameControllerService.startMonitor();
     console.info('[GAMEPAD] Game Controller Kit 初始化成功');
@@ -305,6 +352,7 @@ export class GamepadManager implements UsbDriverListener {
       });
       this.gcDeviceIdToSlot.clear();
       this.gcDeviceStates.clear();
+      this.gcDpadAxisActive.clear();
       
       console.info('[GAMEPAD] Game Controller Kit 已停止');
     } catch (err) {
@@ -343,11 +391,6 @@ export class GamepadManager implements UsbDriverListener {
     return this.mouseEmulationService.isActive();
   }
 
-  /** 设置里的「手柄模拟鼠标」是否启用 */
-  isMouseEmulationEnabled(): boolean {
-    return this.mouseEmulationService.isEnabled();
-  }
-
   /**
    * 重新加载所有设置（串流开始时调用）
    * 
@@ -356,7 +399,6 @@ export class GamepadManager implements UsbDriverListener {
    */
   async reloadSettings(): Promise<void> {
     await Promise.all([
-      this.mouseEmulationService.reloadSetting(),
       this.loadStartKeyMenuSetting(),
       this.loadGCButtonMappingSettings(),
       this.loadSensorSettings()
@@ -435,24 +477,6 @@ export class GamepadManager implements UsbDriverListener {
   }
 
   /**
-   * 设置 USB 控制器的协议类型
-   * 用于手柄有多种模式（如 DS4 模拟模式）时强制使用特定协议
-   * @param controllerId 控制器 ID
-   * @param protocolType 协议类型 (0=自动, 1=Xbox, 2=DS4, 3=Switch, 4=Generic, 5=DualSense)
-   * @returns 是否设置成功
-   */
-  setControllerProtocolType(controllerId: number, protocolType: number): boolean {
-    return this.usbDriverService.setControllerProtocolType(controllerId, protocolType);
-  }
-  
-  /**
-   * 手动触发 USB 设备重新扫描
-   * 用于设备空闲断开后重新连接
-   */
-  async rescanUsbDevices(): Promise<void> {
-    await this.usbDriverService.rescanDevices();
-  }
-  
   /**
    * 设置输入监听器
    * 设置后会立即通知所有已连接的设备
@@ -463,7 +487,26 @@ export class GamepadManager implements UsbDriverListener {
     
     // 通知已连接的设备
     if (listener) {
-      if (this.useGameControllerKit) {
+      if (!this.modeInitialized) {
+        // 输入模式尚未确定（loadUsbDriverSetting 异步初始化中）
+        // 此时不扫描设备，避免传统路径与即将激活的 GCK 竞争产生幽灵手柄
+        // 模式确定后 notifyListenerOfExistingDevices() 会自动补发通知
+        console.info('GamepadManager: 设置监听器（输入模式初始化中，稍后通知已连接设备）');
+        return;
+      }
+      this.notifyListenerOfExistingDevices();
+    }
+  }
+  
+  /**
+   * 通知 listener 所有已连接的设备
+   * 在 setListener 和 loadUsbDriverSetting 完成时调用
+   */
+  private notifyListenerOfExistingDevices(): void {
+    const listener = this.listener;
+    if (!listener) return;
+    
+    if (this.useGameControllerKit) {
         // Game Controller Kit 模式
         console.info(`GamepadManager: 设置监听器 (Game Controller Kit 模式)`);
         
@@ -509,7 +552,6 @@ export class GamepadManager implements UsbDriverListener {
         // 刷新 USB 设备
         this.usbDriverService.refreshDevices();
       }
-    }
   }
   
   /**
@@ -549,59 +591,6 @@ export class GamepadManager implements UsbDriverListener {
         this.handleGCDeviceChange(device.deviceId, true, device);
       }
     }
-  }
-  
-  /**
-   * 获取指定设备的详细信息
-   * @param deviceId 设备 ID
-   * @returns 设备信息，如果设备未注册则返回 undefined
-   */
-  getGamepadInfo(deviceId: number): GamepadInfo | undefined {
-    return this.deviceInfoMap.get(deviceId);
-  }
-  
-  /**
-   * 获取所有已连接手柄的详细信息
-   * @returns 所有设备信息的数组
-   */
-  getAllGamepadInfo(): GamepadInfo[] {
-    return Array.from(this.deviceInfoMap.values());
-  }
-  
-  /**
-   * 检查指定设备是否是蓝牙设备
-   * @param deviceId 设备 ID
-   * @returns 是否是蓝牙设备
-   */
-  isBluetoothDevice(deviceId: number): boolean {
-    const info = this.deviceInfoMap.get(deviceId);
-    return info?.isBluetooth === true;
-  }
-  
-  /**
-   * 检查指定设备是否是 USB 设备
-   * @param deviceId 设备 ID
-   * @returns 是否是 USB 设备
-   */
-  isUsbDevice(deviceId: number): boolean {
-    const info = this.deviceInfoMap.get(deviceId);
-    return info?.isUsb === true;
-  }
-  
-  /**
-   * 获取所有蓝牙手柄
-   * @returns 蓝牙手柄信息数组
-   */
-  getBluetoothGamepads(): GamepadInfo[] {
-    return Array.from(this.deviceInfoMap.values()).filter(info => info.isBluetooth === true);
-  }
-  
-  /**
-   * 获取所有 USB 手柄
-   * @returns USB 手柄信息数组
-   */
-  getUsbGamepads(): GamepadInfo[] {
-    return Array.from(this.deviceInfoMap.values()).filter(info => info.isUsb === true);
   }
   
   /**
@@ -768,6 +757,7 @@ export class GamepadManager implements UsbDriverListener {
       this.connectedDevices.delete(deviceId);
       this.deviceStates.delete(deviceId);
       this.deviceInfoMap.delete(deviceId);
+      this.dpadAxisActive.delete(deviceId);
       
       console.info(`GamepadManager: 移除手柄 ${name} (ID: ${deviceId}, 连接类型: ${connectionType})`);
       
@@ -821,7 +811,7 @@ export class GamepadManager implements UsbDriverListener {
       rightTrigger: state.rightTrigger
     };
   }
-  
+
   // ==================== Game Controller Kit 事件处理 ====================
   
   /**
@@ -870,41 +860,6 @@ export class GamepadManager implements UsbDriverListener {
    */
   private isSpecialKeyCode(keyCode: number): boolean {
     return keyCode >= SPECIAL_KEYCODE_MIN && keyCode <= SPECIAL_KEYCODE_MAX;
-  }
-  
-  /**
-   * 将 KeyEvent 按键路由到 GC Kit 设备状态
-   * 
-   * GCK 原生监听器覆盖了除 2313(Mode/Guide) 外的所有按键。
-   * 此方法作为幂等安全补充：即使 GCK 回调已更新了相同按键状态，
-   * 重复更新也不会出错（press/release 状态是幂等的）。
-   * 
-   * @returns true 如果已处理，false 如果无法处理（无设备或未映射）
-   */
-  private routeKeyEventToGCDevice(keyCode: number, isPressed: boolean): boolean {
-    const gcDeviceId = Array.from(this.gcDeviceIdToSlot.keys())[0];
-    if (!gcDeviceId) {
-      GamepadManager.DEBUG && console.info(`[GAMEPAD-KEY] GC Kit 活跃但无设备，按键 ${keyCode} 回退到传统路径`);
-      return false;
-    }
-    
-    let state = this.gcDeviceStates.get(gcDeviceId);
-    if (!state) {
-      state = this.createEmptyState();
-      this.gcDeviceStates.set(gcDeviceId, state);
-    }
-    
-    const buttonFlag = gcButtonMap.get(keyCode);
-    if (buttonFlag === undefined) {
-      GamepadManager.DEBUG && console.info(`[GAMEPAD-KEY] GC Kit 按键未映射: keyCode=${keyCode}, 回退到传统路径`);
-      return false;
-    }
-    
-    this.updateButtonState(state, buttonFlag, isPressed);
-    
-    GamepadManager.DEBUG && console.info(`[GAMEPAD-KEY] GC Kit 按键路由: keyCode=${keyCode} -> 0x${buttonFlag.toString(16)}`);
-    this.notifyGCStateChange(this.getSlotForGCDevice(gcDeviceId), state);
-    return true;
   }
   
   /**
@@ -1037,6 +992,7 @@ export class GamepadManager implements UsbDriverListener {
       this.gcDeviceStates.delete(deviceId);
       this.gcDeviceInfoCache.delete(deviceId);
       this.gcDeviceIdToSlot.delete(deviceId);
+      this.gcDpadAxisActive.delete(deviceId);
       
       if (isSharedSlotDevice) {
         console.info(`[GAMEPAD-GC] 副本设备断开: deviceId=${deviceId}, 主设备仍在，不通知断开`);
@@ -1045,7 +1001,6 @@ export class GamepadManager implements UsbDriverListener {
       
       // 释放槽位
       this.releaseSlotForGCDevice(deviceId);
-      
       // 通知监听器
       if (this.listener) {
         this.listener.onGamepadDisconnected(slot);
@@ -1064,31 +1019,19 @@ export class GamepadManager implements UsbDriverListener {
       this.gcDeviceStates.set(deviceId, state);
     }
     
-    // 防御性处理 2313 按键（可自定义动作）
-    // 注：GCK 没有 ButtonMode 的注册 API，2313 不会通过此回调到达
-    // 实际由 InputInterceptor → handleKeyEvent() 路径处理
-    if (buttonCode === 2313 && isPressed && this.handleGCButton2313Action()) {
-      return;  // 自定义动作已处理
-    }
-
     // 长按 Start 检测 (2312 = BUTTON_MENU/Start)
-    if (buttonCode === 2312) {
-      if (isPressed) {
-        this.startKeyDownTime = Date.now();
-      } else if (this.startKeyDownTime > 0) {
-        const pressDuration = Date.now() - this.startKeyDownTime;
-        this.startKeyDownTime = 0;
-        if (pressDuration > GamepadManager.START_LONG_PRESS_MS && this.enableStartKeyMenu) {
-          // 长按 Start → 显示返回菜单，吞掉此次按键释放（不发送 Start Up）
-          this.showGameMenuCallback?.();
-          return;
-        }
-      }
+    if (buttonCode === 2312 && this.handleStartLongPress(isPressed)) {
+      return;
     }
     
     // 映射按键码到按钮标志
     const buttonFlag = gcButtonMap.get(buttonCode);
     if (buttonFlag !== undefined) {
+      // 通道级D-pad去重：如果Axis通道已提供D-pad，Button通道的D-pad事件静默丢弃
+      if ((buttonFlag & MoonlightButton.DPAD_MASK) !== 0 && this.gcDpadAxisActive.has(deviceId)) {
+        GamepadManager.DEBUG && console.info(`[GAMEPAD-GC] D-pad通道去重: buttonCode=${buttonCode} (Axis通道已处理)`);
+        return;
+      }
       this.updateButtonState(state, buttonFlag, isPressed);
       this.notifyGCStateChange(this.getSlotForGCDevice(deviceId), state);
     } else {
@@ -1118,6 +1061,8 @@ export class GamepadManager implements UsbDriverListener {
         break;
         
       case AxisType.DPAD:
+        // 标记此设备的D-pad由Axis通道提供，Button/KeyEvent通道将静默丢弃D-pad事件
+        this.gcDpadAxisActive.add(deviceId);
         state.buttons &= ~MoonlightButton.DPAD_MASK;
         if (y < -0.5) state.buttons |= MoonlightButton.UP;
         if (y > 0.5) state.buttons |= MoonlightButton.DOWN;
@@ -1142,12 +1087,13 @@ export class GamepadManager implements UsbDriverListener {
    * 通知 Game Controller Kit 状态变化
    */
   private notifyGCStateChange(slot: number, state: GamepadState): void {
+    const copy = this.copyState(state);
     // 鼠标模拟拦截
-    if (this.interceptForMouseEmulation(slot, this.copyState(state))) {
+    if (this.interceptForMouseEmulation(slot, copy)) {
       return;
     }
     if (this.listener) {
-      this.listener.onGamepadInput(slot, this.copyState(state));
+      this.listener.onGamepadInput(slot, copy);
     }
   }
   
@@ -1157,14 +1103,16 @@ export class GamepadManager implements UsbDriverListener {
    * 处理按键事件 (InputKit KeyEvent)
    * 
    * GCK 模式下：
-   *   GCK 原生监听器覆盖了除 2313(Mode/Guide) 外的所有手柄按键。
-   *   此处通过 routeKeyEventToGCDevice() 进行幂等补充路由，
-   *   确保某些仅通过 KeyEvent 发送的按键也能被处理。
+   *   GCK 原生回调已覆盖所有手柄按键（除 2313）。
+   *   此处仅处理 2313 和 Start 长按，其余静默丢弃。
    * 
    * 传统模式下：
    *   所有 KeyEvent 通过 buttonMap 映射并更新设备状态。
    */
   handleKeyEvent(deviceId: number, keyCode: number, isPressed: boolean): void {
+    // 输入模式尚未确定（异步初始化中），丢弃按键事件避免传统路径创建幽灵设备
+    if (!this.modeInitialized) return;
+    
     GamepadManager.DEBUG && console.info(`[GAMEPAD-KEY] handleKeyEvent: deviceId=${deviceId}, keyCode=${keyCode}, isPressed=${isPressed}`);
     
     // 特殊处理 2313 按键（可自定义动作）- 无论是否使用 GC Kit 都处理
@@ -1173,26 +1121,15 @@ export class GamepadManager implements UsbDriverListener {
     }
 
     // 长按 Start 检测 (108 = KEYCODE_BUTTON_START, 2312 = GCK Start)
-    // 此处统一处理两种 keyCode，因为 GCK 路径的 Start 也可能经过 InputInterceptor
-    if (keyCode === 108 || keyCode === 2312) {
-      if (isPressed) {
-        this.startKeyDownTime = Date.now();
-      } else if (this.startKeyDownTime > 0) {
-        const pressDuration = Date.now() - this.startKeyDownTime;
-        this.startKeyDownTime = 0;
-        if (pressDuration > GamepadManager.START_LONG_PRESS_MS && this.enableStartKeyMenu) {
-          // 长按 Start → 显示返回菜单，吞掉此次按键释放
-          this.showGameMenuCallback?.();
-          return;
-        }
-      }
+    if ((keyCode === 108 || keyCode === 2312) && this.handleStartLongPress(isPressed)) {
+      return;
     }
     
-    // GCK 模式：尝试将按键路由到 GCK 设备状态
-    // routeKeyEventToGCDevice 是幂等的，与 GCK 回调重复也不会出错
+    // GCK 模式：KeyEvent 通道完全冗余
+    // GCK 原生回调（Axis + Button）已覆盖所有手柄按键（除 2313，已在上方处理）。
+    // 所有 KeyEvent 在此静默丢弃，避免与 GCK 回调双通道竞争导致双按。
     if (this.useGameControllerKit) {
-      this.routeKeyEventToGCDevice(keyCode, isPressed);
-      return;  // GCK 模式下所有 KeyEvent 在此处终结
+      return;
     }
     
     // 传统 InputKit 路径
@@ -1208,6 +1145,11 @@ export class GamepadManager implements UsbDriverListener {
     
     const buttonFlag = buttonMap.get(keyCode);
     if (buttonFlag !== undefined) {
+      // 通道级D-pad去重：如果Axis通道已提供D-pad，KeyEvent通道静默丢弃
+      if ((buttonFlag & MoonlightButton.DPAD_MASK) !== 0 && this.dpadAxisActive.has(resolvedDeviceId)) {
+        GamepadManager.DEBUG && console.info(`[GAMEPAD-KEY] D-pad通道去重: keyCode=${keyCode} (Axis通道已处理)`);
+        return;
+      }
       GamepadManager.DEBUG && console.info(`[GAMEPAD-KEY] 映射按键: keyCode=${keyCode} -> 0x${buttonFlag.toString(16)}`);
       this.updateButtonState(state, buttonFlag, isPressed);
       this.notifyStateChange(resolvedDeviceId, state);
@@ -1271,9 +1213,11 @@ export class GamepadManager implements UsbDriverListener {
         state.rightStickY = intValue;
         break;
       case 17: // ABS_HAT0X - D-Pad X
+        this.dpadAxisActive.add(deviceId);
         this.updateDpadHorizontal(state, value);
         break;
       case 18: // ABS_HAT0Y - D-Pad Y
+        this.dpadAxisActive.add(deviceId);
         this.updateDpadVertical(state, value);
         break;
       case 9: // ABS_GAS - 右扳机
@@ -1350,11 +1294,12 @@ export class GamepadManager implements UsbDriverListener {
    */
   private notifyStateChange(deviceId: number, state: GamepadState): void {
     const slot = this.getControllerSlot(deviceId);
+    const copy = this.copyState(state);
     // 鼠标模拟拦截
-    if (this.interceptForMouseEmulation(slot, this.copyState(state))) {
+    if (this.interceptForMouseEmulation(slot, copy)) {
       return;
     }
-    this.listener?.onGamepadInput(slot, this.copyState(state));
+    this.listener?.onGamepadInput(slot, copy);
   }
 
   /**
@@ -1449,6 +1394,7 @@ export class GamepadManager implements UsbDriverListener {
       this.gcDeviceIdToSlot.clear();
       this.gcPhysicalAddressToDeviceId.clear();
       this.gcDeviceInfoCache.clear();
+      this.gcDpadAxisActive.clear();
     }
     
     // 清理传统输入
@@ -1463,8 +1409,8 @@ export class GamepadManager implements UsbDriverListener {
     
     this.connectedDevices.clear();
     this.deviceStates.clear();
-    this.usbDevices.clear();
     this.deviceInfoMap.clear();
+    this.dpadAxisActive.clear();
     this.usbDeviceKeyToId.clear();
     this.deviceKeyToSlot.clear();
     this.controllerIdToDeviceKey.clear();
@@ -1585,16 +1531,7 @@ export class GamepadManager implements UsbDriverListener {
       return;
     }
 
-    // 检查是否有 USB 手柄自带传感器
-    // TODO: 当 USB 驱动支持 IMU 时，优先使用手柄传感器
-    const hasGamepadSensor = false;  // 目前 USB 驱动还不支持 IMU 解析
-
-    if (hasGamepadSensor) {
-      // 使用手柄自带传感器
-      console.info('[GAMEPAD] 使用手柄自带传感器');
-      // TODO: 启用/禁用手柄 IMU
-      return;
-    }
+    // TODO: 当 USB 驱动支持 IMU 时，优先使用手柄自带传感器
 
     // 回退到设备传感器
     if (!this.sensorFallbackEnabled) {
@@ -1656,13 +1593,6 @@ export class GamepadManager implements UsbDriverListener {
   }
 
   /**
-   * 是否正在使用设备传感器回退
-   */
-  isUsingDeviceSensorFallback(): boolean {
-    return this.usingDeviceSensorFallback;
-  }
-
-  /**
    * 停止所有传感器（串流断开时调用）
    */
   stopAllSensors(): void {
@@ -1688,11 +1618,11 @@ export class GamepadManager implements UsbDriverListener {
     this.connectedDevices.delete(controllerId);
     this.deviceStates.delete(controllerId);
     this.deviceInfoMap.delete(controllerId);
-    this.usbDevices.delete(controllerId);
     this.usbDeviceKeyToId.delete(deviceKey);
     this.controllerIdToDeviceKey.delete(controllerId);
     this.releaseSlotForDevice(deviceKey);
-    
+    this.dpadAxisActive.delete(controllerId);
+
     this.listener?.onGamepadDisconnected(slot);
   }
   
@@ -1742,7 +1672,6 @@ export class GamepadManager implements UsbDriverListener {
       // 清理旧记录但保留槽位
       this.connectedDevices.delete(existingControllerId);
       this.deviceStates.delete(existingControllerId);
-      this.usbDevices.delete(existingControllerId);
       this.deviceInfoMap.delete(existingControllerId);
       this.controllerIdToDeviceKey.delete(existingControllerId);
     }
@@ -1782,7 +1711,6 @@ export class GamepadManager implements UsbDriverListener {
   ): void {
     this.connectedDevices.set(controllerId, name);
     this.deviceStates.set(controllerId, this.createEmptyState());
-    this.usbDevices.add(controllerId);
     this.usbDeviceKeyToId.set(deviceKey, controllerId);
     this.controllerIdToDeviceKey.set(controllerId, deviceKey);
     
@@ -1796,10 +1724,6 @@ export class GamepadManager implements UsbDriverListener {
   /**
    * 刷新 USB 设备
    */
-  async refreshUsbDevices(): Promise<void> {
-    await this.usbDriverService.refreshDevices();
-  }
-
   // ==================== 震动处理（委托 GamepadVibrationService） ====================
 
   /** 处理震动反馈 */

@@ -20,8 +20,6 @@
  */
 
 import { GamepadState, MoonlightButton } from './GamepadTypes';
-import { SettingsKeys } from './SettingsService';
-import { PreferencesUtil } from '../utils/PreferencesUtil';
 
 // ==================== 类型定义 ====================
 
@@ -67,8 +65,6 @@ class StickMovement {
 export class MouseEmulationService {
   /** 鼠标模拟是否激活 */
   private active = false;
-  /** 设置里的「手柄模拟鼠标」开关，只有开启才允许激活 */
-  private enabled = true;
   /** 鼠标事件回调 */
   private callback: MouseEmulationCallback | null = null;
   /** 定时器 ID */
@@ -83,31 +79,6 @@ export class MouseEmulationService {
   private rightStickY: number = 0;
 
   constructor() {
-    this.loadSetting();
-  }
-
-  // ==================== 设置 ====================
-
-  /**
-   * 加载「手柄模拟鼠标」开关设置
-   */
-  private async loadSetting(): Promise<void> {
-    try {
-      const enabled = await PreferencesUtil.get<boolean>(SettingsKeys.MOUSE_EMULATION, true);
-      this.enabled = enabled;
-      if (!enabled && this.active) {
-        this.stop();
-      }
-    } catch (e) {
-      this.enabled = true;
-    }
-  }
-
-  /**
-   * 重新加载设置（串流开始时调用，确保设置与用户选择同步）
-   */
-  async reloadSetting(): Promise<void> {
-    await this.loadSetting();
   }
 
   // ==================== 公开 API ====================
@@ -123,10 +94,6 @@ export class MouseEmulationService {
    * 切换鼠标模拟模式
    */
   toggle(): void {
-    if (!this.enabled) {
-      console.info('[MOUSE-EMU] 鼠标模拟已在设置中禁用，忽略切换');
-      return;
-    }
     if (this.active) {
       this.stop();
     } else {
@@ -139,13 +106,6 @@ export class MouseEmulationService {
    */
   isActive(): boolean {
     return this.active;
-  }
-
-  /**
-   * 设置里的「手柄模拟鼠标」是否启用
-   */
-  isEnabled(): boolean {
-    return this.enabled;
   }
 
   /**
