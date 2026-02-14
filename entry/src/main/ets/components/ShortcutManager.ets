@@ -24,7 +24,8 @@ import { VirtualKey } from './StreamMenuManager';
 export interface Shortcut {
   id: string;           // 唯一标识
   name: string;         // 显示名称
-  keys: number[];       // 虚拟键码数组
+  keys: number[];       // 虚拟键码数组（同时按下）
+  keySequence?: number[][];  // 多步按键序列（依次执行，每步间隔 200ms）
   icon?: string;        // 图标
   color?: string;       // 颜色
   isBuiltin?: boolean;  // 是否为内置快捷键
@@ -105,11 +106,12 @@ export class ShortcutManager {
   /**
    * 添加自定义快捷键
    */
-  async addShortcut(name: string, keys: number[], icon?: string, color?: string): Promise<Shortcut> {
+  async addShortcut(name: string, keys: number[], icon?: string, color?: string, keySequence?: number[][]): Promise<Shortcut> {
     const newShortcut: Shortcut = {
       id: `user_${Date.now()}`,
       name: name,
       keys: keys,
+      keySequence: keySequence,
       icon: icon,
       color: color,
       isBuiltin: false
@@ -123,7 +125,7 @@ export class ShortcutManager {
   /**
    * 更新快捷键
    */
-  async updateShortcut(id: string, name?: string, keys?: number[], icon?: string, color?: string): Promise<boolean> {
+  async updateShortcut(id: string, name?: string, keys?: number[], icon?: string, color?: string, keySequence?: number[][]): Promise<boolean> {
     const index = this.shortcuts.findIndex(s => s.id === id);
     if (index === -1) return false;
     
@@ -135,6 +137,7 @@ export class ShortcutManager {
       id: current.id,
       name: name !== undefined ? name : current.name,
       keys: keys !== undefined ? keys : current.keys,
+      keySequence: keySequence !== undefined ? keySequence : current.keySequence,
       icon: icon !== undefined ? icon : current.icon,
       color: color !== undefined ? color : current.color,
       isBuiltin: current.isBuiltin
@@ -354,6 +357,35 @@ export class ShortcutManager {
     // 内置快捷键使用莫兰迪色系
     return [
       {
+        id: 'builtin_win',
+        name: 'Win',
+        keys: [VirtualKey.VK_LWIN],
+        icon: '⊞',
+        color: '#5BA3D0',  // 蓝
+        isBuiltin: true
+      },
+      {
+        id: 'builtin_toggle_cursor',
+        name: '切换远端光标',
+        keys: [VirtualKey.VK_CONTROL, VirtualKey.VK_MENU, VirtualKey.VK_SHIFT, VirtualKey.VK_N],
+        icon: '🖱️',
+        color: '#A9C4D4',  // 莫兰迪天蓝
+        isBuiltin: true
+      },
+      {
+        id: 'builtin_sleep',
+        name: '休眠',
+        keys: [],  // 使用 keySequence
+        keySequence: [
+          [VirtualKey.VK_LWIN, 0x58],  // Win+X
+          [0x55],                       // U
+          [0x53]                        // S
+        ],
+        icon: '◐',
+        color: '#909090',  // 莫兰迪灰
+        isBuiltin: true
+      },
+      {
         id: 'builtin_ctrl_alt_del',
         name: 'Ctrl+Alt+Del',
         keys: [VirtualKey.VK_CONTROL, VirtualKey.VK_MENU, VirtualKey.VK_DELETE],
@@ -391,14 +423,6 @@ export class ShortcutManager {
         keys: [VirtualKey.VK_LWIN, 0x45],
         icon: '📁',
         color: '#D4C5A9',  // 莫兰迪暖棕
-        isBuiltin: true
-      },
-      {
-        id: 'builtin_toggle_cursor',
-        name: '切换远端光标',
-        keys: [VirtualKey.VK_CONTROL, VirtualKey.VK_MENU, VirtualKey.VK_SHIFT, VirtualKey.VK_N],
-        icon: '🖱️',
-        color: '#A9C4D4',  // 莫兰迪天蓝
         isBuiltin: true
       }
     ];

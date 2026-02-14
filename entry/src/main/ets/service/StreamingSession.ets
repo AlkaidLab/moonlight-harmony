@@ -173,6 +173,12 @@ export interface DecoderCapabilities {
   maxWidth: number;
   maxHeight: number;
   maxFps: number;
+  // 扩展能力信息（通过 OH_AVCapability API 从硬件查询）
+  supportsLowLatency: boolean;     // 硬件是否真正支持低延迟特性
+  supports4K60: boolean;           // 是否支持 4K@60fps
+  supports4K120: boolean;          // 是否支持 4K@120fps
+  supports1080p120: boolean;       // 是否支持 1080p@120fps
+  maxInstances: number;            // 最大解码器实例数
 }
 
 interface ControllerState {
@@ -194,6 +200,12 @@ const nativeModuleRef = nativeLib as NativeModule;
 export type HdrStateCallback = (isHdr: boolean) => void;
 
 /**
+ * 编解码器状态变化回调类型
+ * 当 drSetup 检测到实际使用的编解码器时调用
+ */
+export type CodecStateCallback = (codec: string) => void;
+
+/**
  * 分辨率变化回调类型
  */
 export type ResolutionChangedCallback = (width: number, height: number) => void;
@@ -210,6 +222,7 @@ export class StreamingSession {
   private riKey: ArrayBuffer | null = null;
   private riKeyId: number = 0;
   private hdrStateCallback: HdrStateCallback | null = null;
+  private codecStateCallback: CodecStateCallback | null = null;
   private connectionTerminatedCallback: ((errorCode: number) => void) | null = null;
   private resolutionChangedCallback: ResolutionChangedCallback | null = null;
   private stageProgressCallback: ((stage: number, stageName: string) => void) | null = null;
@@ -257,6 +270,14 @@ export class StreamingSession {
    */
   setHdrStateCallback(callback: HdrStateCallback | null): void {
     this.hdrStateCallback = callback;
+  }
+
+  /**
+   * 设置编解码器状态变化回调
+   * 当 drSetup 检测到实际使用的编解码器时调用
+   */
+  setCodecStateCallback(callback: CodecStateCallback | null): void {
+    this.codecStateCallback = callback;
   }
 
   /**
@@ -397,16 +418,12 @@ export class StreamingSession {
         console.info('性能模式已启用');
       }
       
-      // 5.3 应用音频振动设置
+      // 5.3 应用音频振动设置（ArkTS 端先配置，C++ 端需延迟到连接后设置，见下方步骤 9）
       this.audioVibrationService.setSettings(
         config.enableAudioVibration,
         config.audioVibrationStrength,
         config.vibrationMode
       );
-      this.nativeModule.setBassVibrationConfig(config.enableAudioVibration, 1.0);
-      if (config.enableAudioVibration) {
-        console.info(`音频振动已启用, 强度=${config.audioVibrationStrength}, 模式=${config.vibrationMode}`);
-      }
       
       // 6. 设置视频 Surface
       await this.setupVideoSurface();
@@ -419,6 +436,14 @@ export class StreamingSession {
       
       // 8. 连接到服务器
       await this.connectToServer();
+      
+      // 9. 连接建立后再启用 C++ 低频能量分析器
+      // 必须在 connectToServer() 之后，因为连接过程中 BridgeArInit() 会
+      // 调用 g_bassAnalyzer.Init() 重置 enabled_=false，如果提前设置会被覆盖
+      this.nativeModule.setBassVibrationConfig(config.enableAudioVibration, 1.0);
+      if (config.enableAudioVibration) {
+        console.info(`音频振动已启用, 强度=${config.audioVibrationStrength}, 模式=${config.vibrationMode}`);
+      }
       
       this.isRunning = true;
     } catch (err) {
@@ -880,6 +905,9 @@ export class StreamingSession {
 
   // VIDEO_FORMAT 常量定义
   private static readonly VIDEO_FORMAT_MASK_10BIT = 0xAA00;  // 10-bit 格式掩码（HDR需要10位）
+  private static readonly VIDEO_FORMAT_MASK_H264 = 0x000F;   // H.264/AVC 格式掩码
+  private static readonly VIDEO_FORMAT_MASK_H265 = 0x0F00;   // H.265/HEVC 格式掩码
+  private static readonly VIDEO_FORMAT_MASK_AV1 = 0xF000;    // AV1 格式掩码
 
   /**
    * 初始化 Native 模块
@@ -889,9 +917,19 @@ export class StreamingSession {
     
     const callbacks: StreamCallbacks = {
       drSetup: (videoFormat: number, width: number, height: number, redrawRate: number): void => {
+        // 检测实际的编解码器类型
+        let actualCodec = 'HEVC';  // 默认
+        if ((videoFormat & StreamingSession.VIDEO_FORMAT_MASK_AV1) !== 0) {
+          actualCodec = 'AV1';
+        } else if ((videoFormat & StreamingSession.VIDEO_FORMAT_MASK_H265) !== 0) {
+          actualCodec = 'HEVC';
+        } else if ((videoFormat & StreamingSession.VIDEO_FORMAT_MASK_H264) !== 0) {
+          actualCodec = 'H.264';
+        }
+
         // 检测实际的 HDR 状态（通过 10-bit 格式判断）
         const actualHdr = (videoFormat & StreamingSession.VIDEO_FORMAT_MASK_10BIT) !== 0;
-        console.info(`视频设置: format=0x${videoFormat.toString(16)}, ${width}x${height}@${redrawRate}, HDR=${actualHdr}`);
+        console.info(`视频设置: format=0x${videoFormat.toString(16)}, ${width}x${height}@${redrawRate}, codec=${actualCodec}, HDR=${actualHdr}`);
         
         // 如果实际 HDR 状态与配置不同，更新配置并通知回调
         if (this.config && this.config.hdr !== actualHdr) {
@@ -899,6 +937,11 @@ export class StreamingSession {
           this.config.hdr = actualHdr;
         }
         
+        // 通知编解码器状态回调
+        if (this.codecStateCallback) {
+          this.codecStateCallback(actualCodec);
+        }
+
         // 通知 HDR 状态回调（无论是否变化都通知，确保初始状态正确）
         if (this.hdrStateCallback) {
           this.hdrStateCallback(actualHdr);
@@ -1181,7 +1224,9 @@ export class StreamingSession {
     
     try {
       const capabilities = StreamingSession.getDecoderCapabilities();
-      console.info(`解码器能力: H264=${capabilities.supportsH264}, HEVC=${capabilities.supportsHEVC}, AV1=${capabilities.supportsAV1}`);
+      console.info(`解码器能力: H264=${capabilities.supportsH264}, HEVC=${capabilities.supportsHEVC}, AV1=${capabilities.supportsAV1}, ` +
+        `maxRes=${capabilities.maxWidth}x${capabilities.maxHeight}@${capabilities.maxFps}, ` +
+        `lowLatency=${capabilities.supportsLowLatency}, 4K60=${capabilities.supports4K60}, 4K120=${capabilities.supports4K120}, 1080p120=${capabilities.supports1080p120}`);
       
       // 构建 supportedVideoFormats 位掩码（包含所有支持的格式）
       if (capabilities.supportsHEVC) {

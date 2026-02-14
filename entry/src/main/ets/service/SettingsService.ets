@@ -90,7 +90,6 @@ export class SettingsKeys {
   static readonly VIBRATE_OSC: string = 'settings_vibrate_osc';
 
   // 输入 - 鼠标/触控
-  static readonly MOUSE_EMULATION: string = 'settings_mouse_emulation';
   static readonly ABSOLUTE_MOUSE_MODE: string = 'settings_absolute_mouse_mode';
   static readonly TOUCHSCREEN_TRACKPAD: string = 'settings_touchscreen_trackpad';
   static readonly ENABLE_DOUBLE_CLICK_DRAG: string = 'settings_enable_double_click_drag';
@@ -123,6 +122,7 @@ export class SettingsKeys {
   static readonly PERF_OVERLAY_POSITION: string = 'settings_perf_overlay_position';
   static readonly PERF_OVERLAY_LOCKED: string = 'settings_perf_overlay_locked';
   static readonly PERF_OVERLAY_ITEMS: string = 'settings_perf_overlay_items';
+  static readonly PERF_OVERLAY_BG_OPACITY: string = 'settings_perf_overlay_bg_opacity';
   static readonly LATENCY_TOAST: string = 'settings_latency_toast';
   static readonly DISABLE_WARNINGS: string = 'settings_disable_warnings';
   static readonly REDUCE_REFRESH_RATE: string = 'settings_reduce_refresh_rate';
@@ -182,7 +182,6 @@ export interface InputSettings {
   vibrateOsc: boolean;
 
   // 鼠标/触控
-  mouseEmulation: boolean;
   absoluteMouseMode: boolean;
   touchscreenTrackpad: boolean;
   enableDoubleClickDrag: boolean;
@@ -222,6 +221,7 @@ export interface DisplaySettings {
   perfOverlayPosition: string;
   perfOverlayLocked?: boolean;       // 是否锁定覆盖层
   perfOverlayItems?: string[];       // 启用的性能项目
+  perfOverlayBgOpacity?: number;     // 背景透明度 (0.0-1.0)
 }
 
 /**
@@ -542,7 +542,6 @@ export class SettingsService {
     const flipFaceButtons = await this.getBoolean(SettingsKeys.FLIP_FACE_BUTTONS, false);
 
     // 获取鼠标/触控设置
-    const mouseEmulation = await this.getBoolean(SettingsKeys.MOUSE_EMULATION, true);
     const absoluteMouseMode = await this.getBoolean(SettingsKeys.ABSOLUTE_MOUSE_MODE, true);  // 默认启用绝对触摸模式
     const touchscreenTrackpad = await this.getBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false);
     const enableDoubleClickDrag = await this.getBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false);
@@ -612,7 +611,6 @@ export class SettingsService {
       flipFaceButtons: flipFaceButtons,
 
       // 鼠标/触控设置
-      mouseEmulation: mouseEmulation,
       absoluteMouseMode: absoluteMouseMode,
       touchscreenTrackpad: touchscreenTrackpad,
       enableDoubleClickDrag: enableDoubleClickDrag,
@@ -671,7 +669,7 @@ export class SettingsService {
       gamepadTouchpadMouse: await this.getBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false),
       enableStartKeyMenu: await this.getBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true),
       ignoreDeviceDisconnect: await this.getBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false),
-      enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, true),
+      enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false),
       usbDriverEnabled: await this.getBoolean(SettingsKeys.USB_DRIVER_ENABLED, false),
 
       // 体感助手
@@ -692,7 +690,6 @@ export class SettingsService {
       vibrateOsc: await this.getBoolean(SettingsKeys.VIBRATE_OSC, true),
 
       // 鼠标/触控
-      mouseEmulation: await this.getBoolean(SettingsKeys.MOUSE_EMULATION, true),
       absoluteMouseMode: await this.getBoolean(SettingsKeys.ABSOLUTE_MOUSE_MODE, true),  // 默认启用绝对触摸模式
       touchscreenTrackpad: await this.getBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false),
       enableDoubleClickDrag: await this.getBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false),
@@ -738,7 +735,8 @@ export class SettingsService {
       perfOverlayOrientation: await this.getString(SettingsKeys.PERF_OVERLAY_ORIENTATION, '垂直'),
       perfOverlayPosition: await this.getString(SettingsKeys.PERF_OVERLAY_POSITION, '右上角'),
       perfOverlayLocked: await this.getBoolean(SettingsKeys.PERF_OVERLAY_LOCKED, false),
-      perfOverlayItems: items
+      perfOverlayItems: items,
+      perfOverlayBgOpacity: await this.getNumber(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53)
     };
   }
 

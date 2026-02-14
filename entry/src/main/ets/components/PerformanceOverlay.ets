@@ -16,15 +16,17 @@
  */
 import { promptAction } from '@kit.ArkUI';
 import { batteryInfo } from '@kit.BasicServicesKit';
-import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from './OptionPickerDialog';
+import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './OptionPickerDialog';
 import {
-  PerformanceItem, PerformanceData, PerfIcons,
+  PerformanceItem, PerformanceData, PerfIcons, PerfLabels,
   getMoonPhaseIcon, formatDataRate, getDecoderString,
   getPacketLossColor, getLatencyColor, getBatteryColor,
-  showItemInfoDialog, calculateSnapPosition, findNearestSnapPosition,
+  calculateSnapPosition, findNearestSnapPosition,
   getPerformanceItemInfo
 } from './PerformanceOverlayManager';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
+import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { SettingsKeys } from '../service/SettingsService';
 
 /**
  * 点击检测阈值常量
@@ -66,6 +68,10 @@ export struct PerformanceOverlay {
   @State overlayOpacity: number = 1.0;
   @State overlayScale: number = 1.0;
   @State isVertical: boolean = true;
+  @State overlayBgOpacity: number = 0.53;
+  
+  // 启用的性能项（@State 数组驱动 UI 响应式渲染，Set 变更不被追踪）
+  @State enabledItemsList: string[] = [];
   
   // 拖动状态
   private isDragging: boolean = false;
@@ -80,17 +86,18 @@ export struct PerformanceOverlay {
   // 定时器
   private updateTimer: number = -1;
   
-  // 弹窗
-  private optionPickerDialogConfig: OptionPickerDialogConfig = {
-    title: '',
-    options: [],
-    onSelect: () => {}
-  };
-  private optionPickerDialogController: CustomDialogController | null = null;
+  // 弹窗控制器
+  private settingsDialogController: CustomDialogController | null = null;
   
   aboutToAppear(): void {
     // 初始化位置和布局
     this.initPosition();
+    
+    // 初始化背景透明度
+    this.overlayBgOpacity = this.viewModel.overlayState.config.bgOpacity;
+    
+    // 同步启用项目列表（@State 数组驱动 UI）
+    this.enabledItemsList = Array.from(this.viewModel.overlayState.config.enabledItems);
     
     // 启动数据更新定时器
     this.startUpdateTimer();
@@ -169,7 +176,7 @@ export struct PerformanceOverlay {
       }
     }
     .padding(this.isVertical ? 12 : { left: 12, right: 12, top: 8, bottom: 8 })
-    .backgroundColor('#88161616')
+    .backgroundColor(`#${Math.round(this.overlayBgOpacity * 255).toString(16).padStart(2, '0')}161616`)
     .borderRadius(12)
     .opacity(this.overlayOpacity)
     .scale({ x: this.overlayScale, y: this.overlayScale })
@@ -214,7 +221,7 @@ export struct PerformanceOverlay {
   @Builder
   VerticalContent() {
     // 分辨率行
-    if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.RESOLUTION)) {
+    if (this.enabledItemsList.includes(PerformanceItem.RESOLUTION)) {
       Row() {
         Text(getMoonPhaseIcon())
           .fontSize(13)
@@ -228,9 +235,9 @@ export struct PerformanceOverlay {
     }
 
     // 解码器行
-    if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.DECODER)) {
+    if (this.enabledItemsList.includes(PerformanceItem.DECODER)) {
       Row() {
-        Text(getDecoderString(this.viewModel.streamConfig?.codec || 'HEVC', this.viewModel.actualHdr))
+        Text(getDecoderString(this.viewModel.actualCodec || 'HEVC', this.viewModel.actualHdr))
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
@@ -239,7 +246,7 @@ export struct PerformanceOverlay {
     }
 
     // FPS行
-    if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.RENDER_FPS)) {
+    if (this.enabledItemsList.includes(PerformanceItem.RENDER_FPS)) {
       Row() {
         Text(`Rx ${this.perfFps} / Rd ${this.perfRenderedFps}`)
           .fontSize(12)
@@ -253,7 +260,7 @@ export struct PerformanceOverlay {
     }
 
     // 丢包行
-    if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.PACKET_LOSS)) {
+    if (this.enabledItemsList.includes(PerformanceItem.PACKET_LOSS)) {
       Row() {
         Text(PerfIcons.PACKET_LOSS)
           .fontSize(13)
@@ -269,7 +276,7 @@ export struct PerformanceOverlay {
     }
 
     // 带宽行
-    if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.BITRATE)) {
+    if (this.enabledItemsList.includes(PerformanceItem.BITRATE)) {
       Row() {
         Text(PerfIcons.BITRATE)
           .fontSize(13)
@@ -282,7 +289,7 @@ export struct PerformanceOverlay {
     }
 
     // 网络延迟行
-    if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.NETWORK_LATENCY)) {
+    if (this.enabledItemsList.includes(PerformanceItem.NETWORK_LATENCY)) {
       Row() {
         Text(PerfIcons.NETWORK)
           .fontSize(13)
@@ -298,7 +305,7 @@ export struct PerformanceOverlay {
     }
 
     // 解码延迟行
-    if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.DECODE_LATENCY)) {
+    if (this.enabledItemsList.includes(PerformanceItem.DECODE_LATENCY)) {
       Row() {
         Text(this.perfLatency < 15 ? PerfIcons.DECODE_NORMAL : PerfIcons.DECODE_HOT)
           .fontSize(13)
@@ -314,7 +321,7 @@ export struct PerformanceOverlay {
     }
 
     // 主机延迟行
-    if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.HOST_LATENCY)) {
+    if (this.enabledItemsList.includes(PerformanceItem.HOST_LATENCY)) {
       Row() {
         Text(PerfIcons.HOST)
           .fontSize(13)
@@ -330,7 +337,7 @@ export struct PerformanceOverlay {
     }
 
     // 电池行
-    if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.BATTERY)) {
+    if (this.enabledItemsList.includes(PerformanceItem.BATTERY)) {
       Row() {
         Text(this.perfIsCharging ? PerfIcons.CHARGING : PerfIcons.BATTERY)
           .fontSize(13)
@@ -351,7 +358,7 @@ export struct PerformanceOverlay {
   HorizontalContent() {
     Row() {
       // 分辨率
-      if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.RESOLUTION)) {
+      if (this.enabledItemsList.includes(PerformanceItem.RESOLUTION)) {
         Text(getMoonPhaseIcon())
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
@@ -363,8 +370,8 @@ export struct PerformanceOverlay {
       }
       
       // 解码器
-      if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.DECODER)) {
-        Text(getDecoderString(this.viewModel.streamConfig?.codec || 'HEVC', this.viewModel.actualHdr))
+      if (this.enabledItemsList.includes(PerformanceItem.DECODER)) {
+        Text(getDecoderString(this.viewModel.actualCodec || 'HEVC', this.viewModel.actualHdr))
           .fontSize(11)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
@@ -372,7 +379,7 @@ export struct PerformanceOverlay {
       }
       
       // FPS
-      if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.RENDER_FPS)) {
+      if (this.enabledItemsList.includes(PerformanceItem.RENDER_FPS)) {
         Text(`${this.perfFps}/${this.perfRenderedFps}`)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
@@ -384,7 +391,7 @@ export struct PerformanceOverlay {
       }
       
       // 丢包
-      if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.PACKET_LOSS)) {
+      if (this.enabledItemsList.includes(PerformanceItem.PACKET_LOSS)) {
         Text(PerfIcons.PACKET_LOSS)
           .fontSize(12)
         Text(` ${this.perfPacketLoss.toFixed(1)}%`)
@@ -395,7 +402,7 @@ export struct PerformanceOverlay {
       }
       
       // 带宽
-      if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.BITRATE)) {
+      if (this.enabledItemsList.includes(PerformanceItem.BITRATE)) {
         Text(PerfIcons.BITRATE)
           .fontSize(12)
         Text(` ${formatDataRate(this.perfBitrate)}`)
@@ -406,7 +413,7 @@ export struct PerformanceOverlay {
       }
       
       // 网络延迟
-      if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.NETWORK_LATENCY)) {
+      if (this.enabledItemsList.includes(PerformanceItem.NETWORK_LATENCY)) {
         Text(PerfIcons.NETWORK)
           .fontSize(12)
         Text(this.perfNetworkLatency > 0 ? ` ${this.perfNetworkLatency} ms` : ' N/A')
@@ -417,7 +424,7 @@ export struct PerformanceOverlay {
       }
       
       // 解码延迟
-      if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.DECODE_LATENCY)) {
+      if (this.enabledItemsList.includes(PerformanceItem.DECODE_LATENCY)) {
         Text(this.perfLatency < 15 ? PerfIcons.DECODE_NORMAL : PerfIcons.DECODE_HOT)
           .fontSize(12)
         Text(` ${this.perfLatency.toFixed(1)} ms`)
@@ -428,7 +435,7 @@ export struct PerformanceOverlay {
       }
       
       // 主机延迟
-      if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.HOST_LATENCY)) {
+      if (this.enabledItemsList.includes(PerformanceItem.HOST_LATENCY)) {
         Text(PerfIcons.HOST)
           .fontSize(12)
         Text(this.perfHostLatency > 0 ? ` ${this.perfHostLatency.toFixed(1)} ms` : ' N/A')
@@ -439,7 +446,7 @@ export struct PerformanceOverlay {
       }
       
       // 电池
-      if (this.viewModel.overlayState.config.enabledItems.has(PerformanceItem.BATTERY)) {
+      if (this.enabledItemsList.includes(PerformanceItem.BATTERY)) {
         Text(this.perfIsCharging ? PerfIcons.CHARGING : PerfIcons.BATTERY)
           .fontSize(12)
         Text(` ${this.perfBatteryLevel}%`)
@@ -474,7 +481,7 @@ export struct PerformanceOverlay {
     
     const currentIndex = orderedItems.indexOf(currentItem);
     for (let i = currentIndex + 1; i < orderedItems.length; i++) {
-      if (this.viewModel.overlayState.config.enabledItems.has(orderedItems[i])) {
+      if (this.enabledItemsList.includes(orderedItems[i])) {
         return true;
       }
     }
@@ -608,7 +615,7 @@ export struct PerformanceOverlay {
   
   private showInfo(): void {
     const perfData = this.getPerformanceData();
-    this.showItemsMenu(perfData);
+    this.showSettingsDialog(perfData);
   }
   
   private getPerformanceData(): PerformanceData {
@@ -616,7 +623,7 @@ export struct PerformanceOverlay {
     data.streamWidth = this.viewModel.displayInfo.streamWidth;
     data.streamHeight = this.viewModel.displayInfo.streamHeight;
     data.targetFps = this.viewModel.streamConfig?.fps || 60;
-    data.codec = this.viewModel.streamConfig?.codec || 'HEVC';
+    data.codec = this.viewModel.actualCodec || 'HEVC';
     data.isHdr = this.viewModel.actualHdr;
     data.receivedFps = this.perfFps;
     data.renderedFps = this.perfRenderedFps;
@@ -629,50 +636,116 @@ export struct PerformanceOverlay {
     data.isCharging = this.perfIsCharging;
     return data;
   }
-  
-  private showItemsMenu(perfData: PerformanceData): void {
-    const items: PerformanceItem[] = [
-      PerformanceItem.RESOLUTION,
-      PerformanceItem.DECODER,
-      PerformanceItem.RENDER_FPS,
-      PerformanceItem.PACKET_LOSS,
-      PerformanceItem.BITRATE,
-      PerformanceItem.NETWORK_LATENCY,
-      PerformanceItem.DECODE_LATENCY,
-      PerformanceItem.HOST_LATENCY,
-      PerformanceItem.BATTERY
-    ];
-    
+
+  /**
+   * 所有性能项目列表
+   */
+  private static readonly ALL_ITEMS: PerformanceItem[] = [
+    PerformanceItem.RESOLUTION,
+    PerformanceItem.DECODER,
+    PerformanceItem.RENDER_FPS,
+    PerformanceItem.PACKET_LOSS,
+    PerformanceItem.BITRATE,
+    PerformanceItem.NETWORK_LATENCY,
+    PerformanceItem.DECODE_LATENCY,
+    PerformanceItem.HOST_LATENCY,
+    PerformanceItem.BATTERY
+  ];
+
+  /**
+   * 构建设置弹窗的选项列表（可重复调用以刷新）
+   */
+  private buildSettingsOptions(): OptionItem[] {
+    const enabledItems = this.viewModel.overlayState.config.enabledItems;
     const options: OptionItem[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
+
+    for (let i = 0; i < PerformanceOverlay.ALL_ITEMS.length; i++) {
+      const item = PerformanceOverlay.ALL_ITEMS[i];
       const info = getPerformanceItemInfo(item);
-      const isEnabled = this.viewModel.overlayState.config.enabledItems.has(item);
-      options.push({
-        title: `${isEnabled ? '✓ ' : '   '}${info.title}`,
+      const isEnabled = enabledItems.has(item);
+      const opt: OptionItem = {
+        title: info.title,
         subtitle: info.description,
-        value: item
-      });
+        value: `item_${i}`,
+        checked: isEnabled
+      };
+      options.push(opt);
     }
-    
-    this.optionPickerDialogConfig = {
-      title: '性能覆盖层',
-      subtitle: '单击查看详情，双击切换布局',
-      options: options,
-      selectedValue: '',
-      onSelect: (option: OptionItem) => {
-        showItemInfoDialog(option.value as PerformanceItem, perfData);
+
+    return options;
+  }
+
+  /**
+   * 显示设置弹窗 — 保持打开模式
+   * 切换项目后弹窗不关闭, 实时刷新选项列表和覆盖层
+   */
+  private showSettingsDialog(perfData: PerformanceData): void {
+    const allItems = PerformanceOverlay.ALL_ITEMS;
+    const currentPercent = Math.round(this.overlayBgOpacity * 100);
+
+    const sliderCfg: SliderConfig = {
+      title: '🎨 背景透明度',
+      value: currentPercent,
+      min: 0,
+      max: 100,
+      step: 5,
+      onChange: (value: number) => {
+        this.updateBgOpacity(value / 100);
       }
     };
-    
-    this.optionPickerDialogController = new CustomDialogController({
-      builder: OptionPickerDialog({
-        config: this.optionPickerDialogConfig
-      }),
+
+    const config: OptionPickerDialogConfig = {
+      title: '性能覆盖层',
+      subtitle: '单击设置显示/隐藏项目，拖动调整位置，双击切换布局',
+      options: this.buildSettingsOptions(),
+      selectedValue: '',
+      sliderConfig: sliderCfg,
+      closeOnSelect: false,
+      refreshOptions: (): OptionItem[] => {
+        return this.buildSettingsOptions();
+      },
+      onSelect: (option: OptionItem) => {
+        const val = option.value as string;
+        if (val.startsWith('item_')) {
+          const itemIndex = parseInt(val.replace('item_', ''));
+          if (itemIndex >= 0 && itemIndex < allItems.length) {
+            this.toggleItem(allItems[itemIndex]);
+          }
+        }
+      }
+    };
+
+    this.settingsDialogController = new CustomDialogController({
+      builder: OptionPickerDialog({ config: config }),
       alignment: DialogAlignment.Bottom,
       customStyle: true,
       backgroundColor: Color.Transparent
     });
-    this.optionPickerDialogController.open();
+    this.settingsDialogController.open();
+  }
+
+  /**
+   * 切换某个性能项目的显示/隐藏
+   */
+  private toggleItem(item: PerformanceItem): void {
+    const config = this.viewModel.overlayState.config;
+    if (config.enabledItems.has(item)) {
+      config.enabledItems.delete(item);
+    } else {
+      config.enabledItems.add(item);
+    }
+    // 同步 @State 数组，触发 UI 重新渲染
+    this.enabledItemsList = Array.from(config.enabledItems);
+    // 持久化
+    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_ITEMS, this.enabledItemsList.join(','));
+  }
+
+  /**
+   * 更新背景透明度
+   */
+  private updateBgOpacity(value: number): void {
+    this.overlayBgOpacity = value;
+    this.viewModel.overlayState.config.bgOpacity = value;
+    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_BG_OPACITY, value);
   }
 }

@@ -21,6 +21,7 @@ import { ShortcutManager, Shortcut, KeyOption } from './ShortcutManager';
 export interface ShortcutEditData {
   name: string;
   keys: number[];
+  keySequence?: number[][];
   icon?: string;
   color?: string;
 }
@@ -42,8 +43,12 @@ export struct ShortcutEditorDialog {
   // 编辑状态
   @State private name: string = '';
   @State private selectedKeys: number[] = [];
-  @State private selectedIcon: string = '⌨️';
+  @State private selectedIcon: string = '';
   @State private selectedColor: string = '#9DABB2';  // 莫兰迪蓝灰
+  
+  // 序列模式状态
+  @State private isSequenceMode: boolean = false;
+  @State private sequenceSteps: number[][] = [];
   
   // UI 状态
   @State private showKeyPicker: boolean = false;
@@ -51,8 +56,8 @@ export struct ShortcutEditorDialog {
   private shortcutManager = ShortcutManager.getInstance();
   private availableKeys: KeyOption[] = [];
   
-  // 可选图标
-  private iconOptions: string[] = ['⌨️', '🎮', '🖥️', '📁', '🔧', '⚡', '🎯', '💡', '🔒', '🔓'];
+  // 可选图标（空字符串表示不使用图标）
+  private iconOptions: string[] = ['', '⌨️', '🎮', '🖥️', '📁', '🔧', '⚡', '🎯', '💡', '🔒', '🔓'];
   
   // 可选颜色 - 莫兰迪色系（低饱和度、温和柔和）
   private colorOptions: string[] = [
@@ -73,8 +78,14 @@ export struct ShortcutEditorDialog {
    */
   private saveShortcut(): void {
     this.editData.name = this.name;
-    this.editData.keys = this.selectedKeys;
-    this.editData.icon = this.selectedIcon;
+    if (this.isSequenceMode) {
+      this.editData.keys = [];
+      this.editData.keySequence = this.sequenceSteps.map(step => [...step]);
+    } else {
+      this.editData.keys = this.selectedKeys;
+      this.editData.keySequence = undefined;
+    }
+    this.editData.icon = this.selectedIcon || undefined;
     this.editData.color = this.selectedColor;
     this.callbacks.onSave(this.editData);
     this.controller.close();
@@ -87,8 +98,13 @@ export struct ShortcutEditorDialog {
     if (this.editingShortcut) {
       this.name = this.editingShortcut.name;
       this.selectedKeys = [...this.editingShortcut.keys];
-      this.selectedIcon = this.editingShortcut.icon || '⌨️';
+      this.selectedIcon = this.editingShortcut.icon || '';
       this.selectedColor = this.editingShortcut.color || '#9DABB2';  // 莫兰迪蓝灰
+      // 加载序列模式数据
+      if (this.editingShortcut.keySequence && this.editingShortcut.keySequence.length > 0) {
+        this.isSequenceMode = true;
+        this.sequenceSteps = this.editingShortcut.keySequence.map(step => [...step]);
+      }
     }
   }
   
@@ -112,6 +128,9 @@ export struct ShortcutEditorDialog {
       .width('100%')
       .margin({ bottom: 12 })
       
+      // 可滚动内容区
+      Scroll() {
+        Column() {
       // 名称和图标颜色在一行
       Row() {
         // 名称输入
@@ -138,9 +157,10 @@ export struct ShortcutEditorDialog {
             .fontColor('#666')
             .margin({ bottom: 4 })
           Row() {
-            ForEach(this.iconOptions.slice(0, 5), (icon: string) => {
-              Text(icon)
-                .fontSize(16)
+            ForEach(this.iconOptions.slice(0, 6), (icon: string) => {
+              Text(icon || '∅')
+                .fontSize(icon ? 16 : 12)
+                .fontColor(icon ? undefined : '#888')
                 .width(28)
                 .height(28)
                 .textAlign(TextAlign.Center)
@@ -178,17 +198,122 @@ export struct ShortcutEditorDialog {
       .width('100%')
       .margin({ bottom: 10 })
       
-      // 按键组合
+      // 模式切换
+      Row() {
+        Text('模式')
+          .fontSize(11)
+          .fontColor('#666')
+        Blank()
+        Row() {
+          Text('组合键')
+            .fontSize(10)
+            .fontColor(this.isSequenceMode ? '#888' : '#FFF')
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .backgroundColor(this.isSequenceMode ? 'transparent' : '#444')
+            .borderRadius(4)
+            .onClick(() => { this.isSequenceMode = false; })
+          Text('按键序列')
+            .fontSize(10)
+            .fontColor(this.isSequenceMode ? '#FFF' : '#888')
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .backgroundColor(this.isSequenceMode ? '#444' : 'transparent')
+            .borderRadius(4)
+            .margin({ left: 2 })
+            .onClick(() => { this.isSequenceMode = true; })
+        }
+        .backgroundColor('#2A2A2A')
+        .borderRadius(6)
+        .padding(2)
+      }
+      .width('100%')
+      .margin({ bottom: 10 })
+
+      // 按键序列步骤列表（序列模式）
+      if (this.isSequenceMode) {
+        Column() {
+          Row() {
+            Text('步骤列表')
+              .fontSize(11)
+              .fontColor('#666')
+            Text(`  ${this.sequenceSteps.length} 步`)
+              .fontSize(10)
+              .fontColor('#888')
+            Blank()
+            if (this.sequenceSteps.length > 0) {
+              Text('清空')
+                .fontSize(10)
+                .fontColor('#FF6B6B')
+                .onClick(() => { this.sequenceSteps = []; })
+            }
+          }
+          .width('100%')
+          .margin({ bottom: 4 })
+
+          // 已有步骤
+          if (this.sequenceSteps.length > 0) {
+            Scroll() {
+              Row() {
+                ForEach(this.sequenceSteps, (step: number[], index) => {
+                  Row() {
+                    if (index > 0) {
+                      Text('→')
+                        .fontSize(11)
+                        .fontColor('#555')
+                        .margin({ left: 4, right: 4 })
+                    }
+                    Row() {
+                      Text(this.shortcutManager.keysToDisplayText(step))
+                        .fontSize(10)
+                        .fontColor('#FFF')
+                      Text('×')
+                        .fontSize(9)
+                        .fontColor('#888')
+                        .margin({ left: 4 })
+                        .onClick(() => {
+                          this.sequenceSteps = this.sequenceSteps.filter((_, i) => i !== index);
+                        })
+                    }
+                    .padding({ left: 6, right: 4, top: 3, bottom: 3 })
+                    .backgroundColor('#444')
+                    .borderRadius(4)
+                  }
+                })
+              }
+            }
+            .width('100%')
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .height(28)
+            .margin({ bottom: 6 })
+          }
+        }
+        .width('100%')
+        .margin({ bottom: 4 })
+      }
+
+      // 按键选择区
       Column() {
         Row() {
-          Text('按键组合')
+          Text(this.isSequenceMode ? '选择当前步骤按键' : '按键组合')
             .fontSize(11)
             .fontColor('#666')
           Blank()
           if (this.selectedKeys.length > 0) {
+            if (this.isSequenceMode) {
+              Text('添加步骤')
+                .fontSize(10)
+                .fontColor('#4ECDC4')
+                .onClick(() => {
+                  if (this.selectedKeys.length > 0) {
+                    this.sequenceSteps = [...this.sequenceSteps, [...this.selectedKeys]];
+                    this.selectedKeys = [];
+                  }
+                })
+            }
             Text('清空')
               .fontSize(10)
               .fontColor('#FF6B6B')
+              .margin({ left: 8 })
               .onClick(() => { this.selectedKeys = []; })
           }
         }
@@ -198,7 +323,7 @@ export struct ShortcutEditorDialog {
         // 已选按键显示
         Row() {
           if (this.selectedKeys.length === 0) {
-            Text('点击下方选择按键')
+            Text(this.isSequenceMode ? '选择按键后点击「添加步骤」' : '点击下方选择按键')
               .fontSize(12)
               .fontColor('#555')
           } else {
@@ -229,34 +354,33 @@ export struct ShortcutEditorDialog {
         .borderRadius(6)
         .alignItems(VerticalAlign.Center)
         
-        // 按键选择器
-        Scroll() {
-          this.KeyPicker()
-        }
-        .width('100%')
-        .constraintSize({ maxHeight: 200 })
-        .scrollBar(BarState.Auto)
-        .margin({ top: 6 })
+        // 按键选择器（由外层 Scroll 统一滚动，不再嵌套）
+        this.KeyPicker()
       }
       .width('100%')
       .margin({ bottom: 10 })
       
       // 预览
       Row() {
-        Text(this.selectedIcon)
-          .fontSize(16)
-          .margin({ right: 8 })
+        if (this.selectedIcon) {
+          Text(this.selectedIcon)
+            .fontSize(16)
+            .margin({ right: 8 })
+        }
         Column() {
           Text(this.name || '名称')
             .fontSize(13)
             .fontColor('#FFF')
-          Text(this.selectedKeys.length > 0 ? this.shortcutManager.keysToDisplayText(this.selectedKeys) : '--')
+          Text(this.getPreviewText())
             .fontSize(10)
             .fontColor('#888')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
         Blank()
-        Text('预览')
+        Text(this.isSequenceMode ? '序列' : '预览')
           .fontSize(10)
           .fontColor('#666')
       }
@@ -267,6 +391,13 @@ export struct ShortcutEditorDialog {
       .borderRadius(8)
       .border({ width: 1, color: `#80${this.selectedColor.replace('#', '')}` })
       .margin({ bottom: 12 })
+      
+        } // Column inside Scroll
+        .width('100%')
+      } // Scroll end
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
       
       // 操作按钮
       Row() {
@@ -296,6 +427,7 @@ export struct ShortcutEditorDialog {
       .width('100%')
     }
     .width(320)
+    .constraintSize({ maxHeight: '85%' })
     .padding(16)
     .backgroundColor('#1A1A1A')
     .borderRadius(14)
@@ -404,6 +536,25 @@ export struct ShortcutEditorDialog {
   }
   
   private canSave(): boolean {
-    return this.name.trim().length > 0 && this.selectedKeys.length > 0;
+    if (this.name.trim().length === 0) return false;
+    if (this.isSequenceMode) {
+      return this.sequenceSteps.length > 0;
+    }
+    return this.selectedKeys.length > 0;
+  }
+
+  /**
+   * 获取预览显示文本
+   */
+  private getPreviewText(): string {
+    if (this.isSequenceMode) {
+      if (this.sequenceSteps.length === 0) return '--';
+      return this.sequenceSteps
+        .map(step => this.shortcutManager.keysToDisplayText(step))
+        .join(' → ');
+    }
+    return this.selectedKeys.length > 0
+      ? this.shortcutManager.keysToDisplayText(this.selectedKeys)
+      : '--';
   }
 }

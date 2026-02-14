@@ -9,7 +9,8 @@
  */
 
 import { router, promptAction, display } from '@kit.ArkUI';
-import { common, Want } from '@kit.AbilityKit';
+import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
+import { common, Want, bundleManager } from '@kit.AbilityKit';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { StreamingSession, DecoderCapabilities } from '../service/StreamingSession';
@@ -110,7 +111,6 @@ class SettingsKeys {
   static readonly VIBRATE_OSC: string = 'settings_vibrate_osc';
   
   // 输入 - 鼠标/触控
-  static readonly MOUSE_EMULATION: string = 'settings_mouse_emulation';
   static readonly ABSOLUTE_MOUSE_MODE: string = 'settings_absolute_mouse_mode';
   static readonly TOUCHSCREEN_TRACKPAD: string = 'settings_touchscreen_trackpad';
   static readonly ENABLE_DOUBLE_CLICK_DRAG: string = 'settings_enable_double_click_drag';
@@ -239,7 +239,7 @@ struct SettingsPageV2 {
   @State gamepadTouchpadMouse: boolean = false;
   @State enableStartKeyMenu: boolean = true;
   @State ignoreDeviceDisconnect: boolean = false;
-  @State enableKeyInterceptor: boolean = true;
+  @State enableKeyInterceptor: boolean = false;
   @State keyInterceptorAvailable: boolean = false;  // 按键注入 API 是否可用（API 13+ 才支持反劫持）
   @State gcButtonHomeMapping: string = 'guide';  // 2313键（Home键）动作映射
   @State usbDriverEnabled: boolean = false;  // 默认关闭 USB 手柄驱动
@@ -254,7 +254,6 @@ struct SettingsPageV2 {
   @State vibrateOsc: boolean = true;
   
   // 输入 - 鼠标/触控
-  @State mouseEmulation: boolean = true;
   @State absoluteMouseMode: boolean = true;  // 默认启用绝对触摸模式
   @State touchscreenTrackpad: boolean = false;
   @State enableDoubleClickDrag: boolean = false;
@@ -302,6 +301,9 @@ struct SettingsPageV2 {
   @State resumeStream: boolean = false;
   @State developerMode: boolean = false;  // 开发者模式
   
+  // 应用版本
+  @State appVersion: string = '';
+  
   // 加载状态
   @State isLoading: boolean = true;
   
@@ -345,9 +347,24 @@ struct SettingsPageV2 {
   private nativeHeight: number = 0;
 
   aboutToAppear(): void {
+    this.loadVersionInfo();
     this.loadNativeResolution();
     this.loadSettings();
     this.loadDecoderCapabilities();
+  }
+
+  onBackPress(): boolean {
+    router.back();
+    return true;
+  }
+
+  private loadVersionInfo(): void {
+    try {
+      const bundleInfo = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+      this.appVersion = bundleInfo.versionName;
+    } catch (e) {
+      this.appVersion = '未知';
+    }
   }
   
   /**
@@ -398,7 +415,12 @@ struct SettingsPageV2 {
         supportsAV1: false,
         maxWidth: 1920,
         maxHeight: 1080,
-        maxFps: 60
+        maxFps: 60,
+        supportsLowLatency: false,
+        supports4K60: false,
+        supports4K120: false,
+        supports1080p120: false,
+        maxInstances: 1
       };
     }
   }
@@ -492,7 +514,7 @@ struct SettingsPageV2 {
       this.gamepadTouchpadMouse = await this.loadBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
       this.enableStartKeyMenu = await this.loadBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true);
       this.ignoreDeviceDisconnect = await this.loadBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false);
-      this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, true);
+      this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false);
       // 检查按键注入 API 是否可用（API 13+），不可用则强制禁用反劫持
       this.keyInterceptorAvailable = InputInterceptorService.getInstance().isInjectApiAvailable();
       if (!this.keyInterceptorAvailable && this.enableKeyInterceptor) {
@@ -512,7 +534,6 @@ struct SettingsPageV2 {
       this.vibrateOsc = await this.loadBoolean(SettingsKeys.VIBRATE_OSC, true);
       
       // 输入 - 鼠标/触控
-      this.mouseEmulation = await this.loadBoolean(SettingsKeys.MOUSE_EMULATION, true);
       this.absoluteMouseMode = await this.loadBoolean(SettingsKeys.ABSOLUTE_MOUSE_MODE, true);  // 默认启用绝对触摸模式
       this.touchscreenTrackpad = await this.loadBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false);
       this.enableDoubleClickDrag = await this.loadBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false);
@@ -1266,16 +1287,6 @@ struct SettingsPageV2 {
             title: '鼠标和触控',
             items: [
               {
-                title: '鼠标模拟',
-                subtitle: '用手柄模拟鼠标',
-                type: 'toggle',
-                value: this.mouseEmulation,
-                action: () => {
-                  this.mouseEmulation = !this.mouseEmulation;
-                  this.saveSetting(SettingsKeys.MOUSE_EMULATION, this.mouseEmulation);
-                }
-              },
-              {
                 title: '绝对鼠标模式',
                 subtitle: '远程桌面模式',
                 type: 'toggle',
@@ -1703,7 +1714,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '版本',
-                subtitle: '1.0.0.576',
+                subtitle: this.appVersion,
                 type: 'action',
                 action: () => {}
               },
@@ -1861,6 +1872,24 @@ struct SettingsPageV2 {
       .padding({ left: AppSpacing.Small, right: AppSpacing.Medium })
       .backgroundColor(this.expandedGroup === group.id ? AppColors.Surface : Color.Transparent)
       .borderRadius(AppSizes.RadiusMedium)
+      .focusable(true)
+      .focusOnTouch(true)
+      .focusBox({
+        margin: LengthMetrics.vp(1),
+        strokeColor: ColorMetrics.rgba(0, 212, 255, 0.8),
+        strokeWidth: LengthMetrics.vp(1.5)
+      })
+      .onKeyEvent((event: KeyEvent) => {
+        if (event.type === KeyType.Down && (event.keyCode === 2054 || event.keyCode === 2050)) {
+          if (this.expandedGroup === group.id) {
+            this.expandedGroup = '';
+          } else {
+            this.expandedGroup = group.id;
+          }
+          return true;
+        }
+        return false;
+      })
       .onClick(() => {
         // 点击切换展开/折叠状态
         if (this.expandedGroup === group.id) {
@@ -1973,6 +2002,27 @@ struct SettingsPageV2 {
     .height(item.type === 'slider' ? 70 : 60)
     .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
     .opacity(item.disabled ? 0.5 : 1.0)
+    .focusable(!item.disabled)
+    .focusOnTouch(true)
+    .focusBox({
+      margin: LengthMetrics.vp(1),
+      strokeColor: ColorMetrics.rgba(74, 222, 128, 0.8),
+      strokeWidth: LengthMetrics.vp(1.5)
+    })
+    .onKeyEvent((event: KeyEvent) => {
+      if (event.type === KeyType.Down && !item.disabled) {
+        // A键/回车 → 触发操作
+        if (event.keyCode === 2054 || event.keyCode === 2050) {
+          if (item.type === 'toggle' && item.action) {
+            item.action();
+          } else if (item.action) {
+            item.action();
+          }
+          return true;
+        }
+      }
+      return false;
+    })
     .onClick(() => {
       if (item.disabled) return;
       console.info(`SettingsPageV2: 点击设置项 ${item.title}, type=${item.type}, hasAction=${!!item.action}`);

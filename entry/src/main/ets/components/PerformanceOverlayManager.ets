@@ -97,6 +97,7 @@ export class OverlayConfig {
   isLocked: boolean = false;           // 是否锁定（不可拖动）
   position: SnapPosition = SnapPosition.TOP_RIGHT;  // 当前位置（默认右上角）
   enabledItems: Set<string> = new Set<string>();   // 启用的项目（使用 string 类型）
+  bgOpacity: number = 0.53;                        // 背景透明度（0.0-1.0）
   customX: number = 0;                 // 自定义X坐标
   customY: number = 0;                 // 自定义Y坐标
 }

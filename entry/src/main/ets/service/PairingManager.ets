@@ -78,8 +78,10 @@ export class PairingManager {
     const port = httpPort || parsedPort || PairingManager.DEFAULT_HTTP_PORT;
     // HTTPS 端口 = HTTP 端口 - 5 (47989 -> 47984)
     const httpsPort = port - 5;
-    this.baseUrl = `http://${this.address}:${port}`;
-    this.httpsUrl = `https://${this.address}:${httpsPort}`;
+    // IPv6 地址在 URL 中需要方括号包裹，否则冒号会与端口分隔符冲突
+    const formattedHost = this.formatAddressForUrl(this.address);
+    this.baseUrl = `http://${formattedHost}:${port}`;
+    this.httpsUrl = `https://${formattedHost}:${httpsPort}`;
     this.uniqueId = uniqueId;
     this.clientName = this.getClientName();
     if (context) {
@@ -167,6 +169,17 @@ export class PairingManager {
     }
     
     return undefined;
+  }
+
+  /**
+   * 格式化地址用于 URL：IPv6 地址需要加方括号
+   * e.g. "fe80::1" → "[fe80::1]", "192.168.1.1" → "192.168.1.1"
+   */
+  private formatAddressForUrl(addr: string): string {
+    if (addr.includes(':') && !addr.startsWith('[')) {
+      return `[${addr}]`;
+    }
+    return addr;
   }
 
   /**
