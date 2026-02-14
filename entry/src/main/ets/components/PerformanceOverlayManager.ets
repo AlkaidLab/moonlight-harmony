@@ -18,13 +18,10 @@
  * - 锁定模式
  */
 
-import { promptAction } from '@kit.ArkUI';
-
 // 性能项目图标常量类 - 统一管理所有 emoji 图标
 export class PerfIcons {
   static readonly RESOLUTION: string = '📱';      // 分辨率
   static readonly DECODER: string = '🎬';         // 解码器
-  static readonly FPS: string = '🎮';             // 帧率（不再使用，保留兼容）
   static readonly PACKET_LOSS: string = '📶';     // 丢包率/网络信号
   static readonly BITRATE: string = '⏳';         // 带宽/传输
   static readonly NETWORK: string = '🌐';         // 网络延迟
@@ -98,8 +95,6 @@ export class OverlayConfig {
   position: SnapPosition = SnapPosition.TOP_RIGHT;  // 当前位置（默认右上角）
   enabledItems: Set<string> = new Set<string>();   // 启用的项目（使用 string 类型）
   bgOpacity: number = 0.53;                        // 背景透明度（0.0-1.0）
-  customX: number = 0;                 // 自定义X坐标
-  customY: number = 0;                 // 自定义Y坐标
 }
 
 // 性能项目信息类
@@ -216,18 +211,6 @@ export function getMoonPhaseIcon(): string {
 }
 
 /**
- * 格式化码率显示
- */
-export function formatBitrate(bps: number): string {
-  if (bps >= 1000000) {
-    return `${(bps / 1000000).toFixed(1)} Mbps`;
-  } else if (bps >= 1000) {
-    return `${(bps / 1000).toFixed(0)} Kbps`;
-  }
-  return `${bps} bps`;
-}
-
-/**
  * 格式化数据流量显示（从码率 bps 转换为每秒数据量）
  * 码率 (bps) 转换为字节/秒 需要除以 8
  */
@@ -240,13 +223,6 @@ export function formatDataRate(bps: number): string {
     return `${(bytesPerSec / 1024).toFixed(0)} KB/s`;
   }
   return `${bytesPerSec.toFixed(0)} B/s`;
-}
-
-/**
- * 格式化延迟显示
- */
-export function formatLatency(ms: number): string {
-  return `${ms.toFixed(1)} ms`;
 }
 
 /**
@@ -295,111 +271,84 @@ export function getBatteryColor(level: number): string {
 }
 
 /**
- * 显示性能项目详情对话框
- */
-export function showItemInfoDialog(item: PerformanceItem, data: PerformanceData | null): void {
-  const info = getPerformanceItemInfo(item);
-  if (!info) return;
-  
-  let message = info.description;
-  
-  // 添加当前数值
-  if (data !== null) {
-    switch (item) {
-      case PerformanceItem.RESOLUTION:
-        message = `${data.streamWidth}×${data.streamHeight} @ ${data.renderedFps}/${data.targetFps} FPS\n\n${info.description}`;
-        break;
-      case PerformanceItem.DECODER:
-        message = `${data.codec}${data.isHdr ? ' HDR' : ''}\n\n${info.description}`;
-        break;
-      case PerformanceItem.RENDER_FPS:
-        message = `Rx: ${data.receivedFps}  Rd: ${data.renderedFps}\n\n${info.description}`;
-        break;
-      case PerformanceItem.PACKET_LOSS:
-        message = `${data.packetLoss.toFixed(2)}%\n\n${info.description}`;
-        break;
-      case PerformanceItem.BITRATE:
-        message = `${formatBitrate(data.bitrate)}\n\n${info.description}`;
-        break;
-      case PerformanceItem.NETWORK_LATENCY:
-        message = `${data.networkLatency} ms\n\n${info.description}`;
-        break;
-      case PerformanceItem.DECODE_LATENCY:
-        message = `${data.decodeLatency.toFixed(1)} ms\n\n${info.description}`;
-        break;
-      case PerformanceItem.HOST_LATENCY:
-        message = `${data.hostLatency.toFixed(1)} ms\n\n${info.description}`;
-        break;
-      case PerformanceItem.BATTERY:
-        message = `${data.batteryLevel}%${data.isCharging ? ' 🔌充电中' : ''}\n\n${info.description}`;
-        break;
-    }
-  }
-  
-  const dialogButton: promptAction.Button = { text: '确定', color: '#0A59F7' };
-  promptAction.showDialog({
-    title: info.title,
-    message: message,
-    buttons: [dialogButton]
-  });
-}
-
-/**
- * 计算吸附位置坐标
+ * 计算吸附位置坐标（完全贴边，0 padding）
  */
 export function calculateSnapPosition(
   position: SnapPosition,
   screenWidth: number,
   screenHeight: number,
   overlayWidth: number,
-  overlayHeight: number,
-  safeAreaTop: number = 8,
-  safeAreaBottom: number = 0
+  overlayHeight: number
 ): Position {
-  const padding = 8;  // 左右安全区也设为8
-  
   let x: number;
   let y: number;
   
   switch (position) {
     case SnapPosition.TOP_LEFT:
-      x = padding;
-      y = safeAreaTop;
+      x = 0;
+      y = 0;
       break;
     case SnapPosition.TOP_CENTER:
       x = (screenWidth - overlayWidth) / 2;
-      y = safeAreaTop;
+      y = 0;
       break;
     case SnapPosition.TOP_RIGHT:
-      x = screenWidth - overlayWidth - padding;
-      y = safeAreaTop;
+      x = screenWidth - overlayWidth;
+      y = 0;
       break;
     case SnapPosition.CENTER_LEFT:
-      x = padding;
+      x = 0;
       y = (screenHeight - overlayHeight) / 2;
       break;
     case SnapPosition.CENTER_RIGHT:
-      x = screenWidth - overlayWidth - padding;
+      x = screenWidth - overlayWidth;
       y = (screenHeight - overlayHeight) / 2;
       break;
     case SnapPosition.BOTTOM_LEFT:
-      x = padding;
-      y = screenHeight - overlayHeight - safeAreaBottom;
+      x = 0;
+      y = screenHeight - overlayHeight;
       break;
     case SnapPosition.BOTTOM_CENTER:
       x = (screenWidth - overlayWidth) / 2;
-      y = screenHeight - overlayHeight - safeAreaBottom;
+      y = screenHeight - overlayHeight;
       break;
     case SnapPosition.BOTTOM_RIGHT:
-      x = screenWidth - overlayWidth - padding;
-      y = screenHeight - overlayHeight - safeAreaBottom;
+      x = screenWidth - overlayWidth;
+      y = screenHeight - overlayHeight;
       break;
     default:
-      x = padding;
-      y = safeAreaTop;
+      x = 0;
+      y = 0;
   }
   
   return new Position(x, y);
+}
+
+/**
+ * 根据吸附位置获取圆角（仅不贴边方向有圆角）
+ */
+export function getSnapBorderRadius(position: SnapPosition, radius: number = 12): BorderRadiuses {
+  // 贴边方向圆角为 0，不贴边方向保留圆角
+  switch (position) {
+    case SnapPosition.TOP_LEFT:
+      return { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: radius };
+    case SnapPosition.TOP_CENTER:
+      return { topLeft: 0, topRight: 0, bottomLeft: radius, bottomRight: radius };
+    case SnapPosition.TOP_RIGHT:
+      return { topLeft: 0, topRight: 0, bottomLeft: radius, bottomRight: 0 };
+    case SnapPosition.CENTER_LEFT:
+      return { topLeft: 0, topRight: radius, bottomLeft: 0, bottomRight: radius };
+    case SnapPosition.CENTER_RIGHT:
+      return { topLeft: radius, topRight: 0, bottomLeft: radius, bottomRight: 0 };
+    case SnapPosition.BOTTOM_LEFT:
+      return { topLeft: 0, topRight: radius, bottomLeft: 0, bottomRight: 0 };
+    case SnapPosition.BOTTOM_CENTER:
+      return { topLeft: radius, topRight: radius, bottomLeft: 0, bottomRight: 0 };
+    case SnapPosition.BOTTOM_RIGHT:
+      return { topLeft: radius, topRight: 0, bottomLeft: 0, bottomRight: 0 };
+    default:
+      return { topLeft: radius, topRight: radius, bottomLeft: radius, bottomRight: radius };
+  }
 }
 
 // 所有吸附位置列表

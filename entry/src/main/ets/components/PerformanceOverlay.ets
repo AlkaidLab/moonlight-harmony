@@ -22,7 +22,7 @@ import {
   getMoonPhaseIcon, formatDataRate, getDecoderString,
   getPacketLossColor, getLatencyColor, getBatteryColor,
   calculateSnapPosition, findNearestSnapPosition,
-  getPerformanceItemInfo
+  getPerformanceItemInfo, getSnapBorderRadius, SnapPosition
 } from './PerformanceOverlayManager';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
@@ -33,14 +33,6 @@ import { SettingsKeys } from '../service/SettingsService';
  */
 const CLICK_THRESHOLD = 10;
 const DOUBLE_CLICK_TIMEOUT = 300;
-
-/**
- * 性能覆盖层属性接口
- */
-export interface PerformanceOverlayProps {
-  screenWidth: number;
-  screenHeight: number;
-}
 
 @Component
 export struct PerformanceOverlay {
@@ -69,12 +61,13 @@ export struct PerformanceOverlay {
   @State overlayScale: number = 1.0;
   @State isVertical: boolean = true;
   @State overlayBgOpacity: number = 0.53;
+  @State currentSnapPosition: SnapPosition = SnapPosition.TOP_RIGHT;
+  @State overlayDragging: boolean = false;  // 拖动中显示全圆角
   
   // 启用的性能项（@State 数组驱动 UI 响应式渲染，Set 变更不被追踪）
   @State enabledItemsList: string[] = [];
   
   // 拖动状态
-  private isDragging: boolean = false;
   private dragStartX: number = 0;
   private dragStartY: number = 0;
   private clickStartTime: number = 0;
@@ -108,8 +101,9 @@ export struct PerformanceOverlay {
   }
   
   private initPosition(): void {
+    this.currentSnapPosition = this.viewModel.overlayState.config.position;
     const snapPos = calculateSnapPosition(
-      this.viewModel.overlayState.config.position,
+      this.currentSnapPosition,
       this.screenWidth,
       this.screenHeight,
       this.overlayWidth,
@@ -177,7 +171,7 @@ export struct PerformanceOverlay {
     }
     .padding(this.isVertical ? 12 : { left: 12, right: 12, top: 8, bottom: 8 })
     .backgroundColor(`#${Math.round(this.overlayBgOpacity * 255).toString(16).padStart(2, '0')}161616`)
-    .borderRadius(12)
+    .borderRadius(this.overlayDragging ? 12 : getSnapBorderRadius(this.currentSnapPosition, 12))
     .opacity(this.overlayOpacity)
     .scale({ x: this.overlayScale, y: this.overlayScale })
     .position({ x: this.overlayX, y: this.overlayY })
@@ -491,7 +485,7 @@ export struct PerformanceOverlay {
   // ==================== 拖动处理 ====================
   
   private handleDragStart(event: GestureEvent): void {
-    this.isDragging = true;
+    this.overlayDragging = true;
     this.dragStartX = this.overlayX;
     this.dragStartY = this.overlayY;
     this.clickStartTime = Date.now();
@@ -503,7 +497,7 @@ export struct PerformanceOverlay {
   }
   
   private handleDragUpdate(event: GestureEvent): void {
-    if (!this.isDragging) return;
+    if (!this.overlayDragging) return;
     
     const offsetX = event.offsetX;
     const offsetY = event.offsetY;
@@ -522,14 +516,14 @@ export struct PerformanceOverlay {
   }
   
   private handleDragEnd(event: GestureEvent): void {
-    this.isDragging = false;
-    
     // 恢复视觉效果
     this.overlayOpacity = 1.0;
     this.overlayScale = 1.0;
     
     const duration = Date.now() - this.clickStartTime;
     if (this.moveDistance < CLICK_THRESHOLD && duration < 500) {
+      // 非拖动（点击），恢复贴边圆角
+      this.overlayDragging = false;
       const timeSinceLastClick = Date.now() - this.lastClickTime;
       if (timeSinceLastClick < DOUBLE_CLICK_TIMEOUT && this.lastClickTime > 0) {
         this.toggleLayout();
@@ -543,6 +537,7 @@ export struct PerformanceOverlay {
         }, DOUBLE_CLICK_TIMEOUT);
       }
     } else {
+      // 拖动结束，snapToPosition 内动画中会恢复 overlayDragging
       this.snapToPosition();
     }
   }
@@ -571,6 +566,8 @@ export struct PerformanceOverlay {
     }, () => {
       this.overlayX = snapPos.x;
       this.overlayY = snapPos.y;
+      this.currentSnapPosition = nearestPos;
+      this.overlayDragging = false;  // 恢复贴边圆角，跟随动画过渡
     });
     
     this.viewModel.overlayState.config.position = nearestPos;
