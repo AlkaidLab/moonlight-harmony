@@ -21,6 +21,10 @@
 #include <cstring>
 #include <time.h>
 #include <dlfcn.h>
+#include <sched.h>
+#include <unistd.h>
+#include <fstream>
+#include <vector>
 #include <qos/qos.h>
 
 #define LOG_TAG "VideoDecoder"
@@ -28,6 +32,122 @@
 // 是否启用异步渲染（通过 NativeRender）
 // 启用后可利用 SetExpectedFrameRateRange 优化高帧率显示
 static bool g_useAsyncRender = true;
+
+// =============================================================================
+// 大核绑定 + QoS 线程优化
+// 检测 ARM big.LITTLE 架构中的高频核心（大核），将解码线程绑定以获取最大性能
+// 结合 QoS_USER_INTERACTIVE（最高等级）确保调度优先级
+// =============================================================================
+
+// 缓存大核 CPU ID（运行期间不变，只检测一次）
+static std::vector<int> g_bigCoreIds;
+static bool g_bigCoreDetected = false;
+
+/**
+ * 检测大核 CPU ID
+ * 读取 /sys/devices/system/cpu/cpuN/cpufreq/cpuinfo_max_freq
+ * 将最高频率 80% 以上的核心视为大核
+ */
+static void DetectBigCores() {
+    if (g_bigCoreDetected) return;
+    g_bigCoreDetected = true;
+    
+    int numCpus = sysconf(_SC_NPROCESSORS_CONF);
+    if (numCpus <= 0) {
+        OH_LOG_WARN(LOG_APP, "Failed to get CPU count");
+        return;
+    }
+    
+    std::vector<long> freqs(numCpus, 0);
+    long maxFreq = 0;
+    
+    for (int i = 0; i < numCpus; i++) {
+        char path[128];
+        snprintf(path, sizeof(path),
+                 "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", i);
+        std::ifstream f(path);
+        long freq = 0;
+        if (f >> freq) {
+            freqs[i] = freq;
+            maxFreq = std::max(maxFreq, freq);
+        }
+    }
+    
+    if (maxFreq <= 0) {
+        OH_LOG_WARN(LOG_APP, "Failed to read CPU frequencies, big core detection skipped");
+        return;
+    }
+    
+    // 频率 >= 最高值 80% 的视为大核
+    long threshold = static_cast<long>(maxFreq * 0.8);
+    for (int i = 0; i < numCpus; i++) {
+        if (freqs[i] >= threshold) {
+            g_bigCoreIds.push_back(i);
+        }
+    }
+    
+    // 日志输出检测结果
+    std::string coreList;
+    for (size_t i = 0; i < g_bigCoreIds.size(); i++) {
+        if (i > 0) coreList += ",";
+        coreList += std::to_string(g_bigCoreIds[i]);
+    }
+    OH_LOG_INFO(LOG_APP, "Big core detection: %{public}d CPUs, maxFreq=%{public}ld, "
+                "big cores=[%{public}s] (%{public}zu cores)",
+                numCpus, maxFreq, coreList.c_str(), g_bigCoreIds.size());
+}
+
+/**
+ * 配置当前线程为高性能解码线程
+ * 1. 设置 QoS 为 USER_INTERACTIVE（最高等级）或 DEADLINE_REQUEST（次高）
+ * 2. 尝试通过 sched_setaffinity 绑定到大核（失败则静默忽略）
+ * 
+ * 使用 thread_local 确保每个线程只执行一次
+ */
+static void SetupDecodeThreadPriority() {
+    static thread_local bool setupDone = false;
+    if (setupDone) return;
+    setupDone = true;
+    
+    // 1. 设置 QoS 等级（优先 USER_INTERACTIVE，最高等级）
+    int qosRet = OH_QoS_SetThreadQoS(QOS_USER_INTERACTIVE);
+    if (qosRet == 0) {
+        OH_LOG_INFO(LOG_APP, "Decode thread QoS: USER_INTERACTIVE (highest)");
+    } else {
+        qosRet = OH_QoS_SetThreadQoS(QOS_DEADLINE_REQUEST);
+        if (qosRet == 0) {
+            OH_LOG_INFO(LOG_APP, "Decode thread QoS: DEADLINE_REQUEST (fallback)");
+        } else {
+            qosRet = OH_QoS_SetThreadQoS(QOS_USER_INITIATED);
+            if (qosRet == 0) {
+                OH_LOG_INFO(LOG_APP, "Decode thread QoS: USER_INITIATED (fallback2)");
+            } else {
+                OH_LOG_WARN(LOG_APP, "Failed to set decode thread QoS");
+            }
+        }
+    }
+    
+    // 2. 检测大核并绑定
+    DetectBigCores();
+    
+    if (!g_bigCoreIds.empty()) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        for (int cpu : g_bigCoreIds) {
+            CPU_SET(cpu, &cpuset);
+        }
+        
+        int ret = sched_setaffinity(0, sizeof(cpuset), &cpuset);
+        if (ret == 0) {
+            OH_LOG_INFO(LOG_APP, "Decode thread bound to %{public}zu big cores", g_bigCoreIds.size());
+        } else {
+            // HarmonyOS 沙箱可能限制 sched_setaffinity，失败是可接受的
+            // QoS_USER_INTERACTIVE 已经暗示调度器优先使用大核
+            OH_LOG_WARN(LOG_APP, "sched_setaffinity failed (errno=%{public}d), relying on QoS scheduling",
+                        errno);
+        }
+    }
+}
 
 // =============================================================================
 // 同步模式 API 动态加载（API 14+，HarmonyOS 5.0.5 等低版本不存在这些符号）
@@ -437,7 +557,7 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     if (config_.enableHdr) {
         switch (config_.hdrType) {
             case HdrType::HDR10:     transferChar = kTransferCharPQ;  break;
-            case HdrType::HDR_VIVID: transferChar = kTransferCharHLG; break;
+            case HdrType::HLG:      transferChar = kTransferCharHLG; break;
             default:                 transferChar = kTransferCharPQ;  break;
         }
     }
@@ -460,10 +580,12 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     OH_LOG_WARN(LOG_APP, "{Init} OH_MD_KEY_MATRIX_COEFFICIENTS not available");
 #endif
     
-    // 配置 HDR Vivid 模式（对于 HLG 传输函数）
-    if (config_.enableHdr && config_.hdrType == HdrType::HDR_VIVID) {
+    // 配置 HDR Vivid 模式（Sunshine 编码端在 HLG 模式下会携带 CUVA T.35 Vivid 动态元数据）
+    // 告诉解码器按 HDR Vivid 标准解析码流中的 CUVA SEI
+    if (config_.enableHdr && config_.hdrType == HdrType::HLG) {
 #ifdef OH_MD_KEY_VIDEO_IS_HDR_VIVID
         OH_AVFormat_SetIntValue(format, OH_MD_KEY_VIDEO_IS_HDR_VIVID, 1);
+        OH_LOG_INFO(LOG_APP, "{Init} HDR Vivid mode enabled for HLG stream");
 #else
         OH_LOG_WARN(LOG_APP, "{Init} OH_MD_KEY_VIDEO_IS_HDR_VIVID not available");
 #endif
@@ -504,9 +626,12 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
             bool isFullRange = (config_.colorRange == ColorRange::FULL);
             
             switch (config_.hdrType) {
-                case HdrType::HDR_VIVID:  // HLG
+                case HdrType::HLG:       // HLG with HDR Vivid
                     windowColorSpace = isFullRange ? OH_COLORSPACE_BT2020_HLG_FULL : OH_COLORSPACE_BT2020_HLG_LIMIT;
-                    metadataType = OH_VIDEO_HDR_HLG;
+                    // 使用 OH_VIDEO_HDR_VIVID 而非 OH_VIDEO_HDR_HLG
+                    // Sunshine 编码端会在 HLG 码流中携带 CUVA T.35 Vivid 动态元数据
+                    // OH_VIDEO_HDR_VIVID 告知显示管线按 Vivid 标准处理色调映射
+                    metadataType = OH_VIDEO_HDR_VIVID;
                     break;
                 case HdrType::HDR10:      // PQ
                 default:
@@ -520,7 +645,7 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
             
 #ifdef __OHOS__
             // 1. 设置 Color Gamut（颜色域）
-            int32_t colorGamut = (config_.hdrType == HdrType::HDR_VIVID) ?
+            int32_t colorGamut = (config_.hdrType == HdrType::HLG) ?
                 NATIVEBUFFER_COLOR_GAMUT_BT2100_HLG : NATIVEBUFFER_COLOR_GAMUT_BT2100_PQ;
             int32_t gamutRet = OH_NativeWindow_NativeWindowHandleOpt(window_, SET_COLOR_GAMUT, colorGamut);
             if (gamutRet != 0) {
@@ -545,6 +670,29 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
             int32_t hdrBrightRet = OH_NativeWindow_NativeWindowHandleOpt(window_, SET_HDR_WHITE_POINT_BRIGHTNESS, hdrWhitePointBrightness);
             if (hdrBrightRet != 0) {
                 OH_LOG_WARN(LOG_APP, "{Init} Failed to set HDR white point: %{public}d", hdrBrightRet);
+            }
+            
+            // 5. 设置 HDR 静态元数据（SMPTE 2086 + CTA 861.3）
+            // 这些数据由 Sunshine 编码端从显示器 EDID 读取并通过 SEI 传递
+            // 解码器会从码流中解析 MDCV/CLL SEI，但显示管线初始化时也需要默认值
+            // 使用 BT.2020 标准色域 + 典型 HDR 显示器参数作为默认值
+            OH_NativeBuffer_StaticMetadata staticMetadata = {};
+            // BT.2020 色域主色坐标
+            staticMetadata.smpte2086.displayPrimaryRed   = {0.708f, 0.292f};
+            staticMetadata.smpte2086.displayPrimaryGreen  = {0.170f, 0.797f};
+            staticMetadata.smpte2086.displayPrimaryBlue   = {0.131f, 0.046f};
+            staticMetadata.smpte2086.whitePoint           = {0.3127f, 0.3290f};  // D65
+            staticMetadata.smpte2086.maxLuminance         = 1000.0f;  // 典型 HDR 峰值亮度 1000 nits
+            staticMetadata.smpte2086.minLuminance         = 0.001f;   // 典型最低亮度
+            staticMetadata.cta861.maxContentLightLevel         = 1000.0f;
+            staticMetadata.cta861.maxFrameAverageLightLevel    = 400.0f;
+            
+            int32_t staticMetaRet = OH_NativeWindow_SetMetadataValue(window_, OH_HDR_STATIC_METADATA,
+                sizeof(staticMetadata), reinterpret_cast<uint8_t*>(&staticMetadata));
+            if (staticMetaRet != 0) {
+                OH_LOG_WARN(LOG_APP, "{Init} Failed to set HDR static metadata: %{public}d", staticMetaRet);
+            } else {
+                OH_LOG_INFO(LOG_APP, "{Init} HDR static metadata set: maxLum=1000, minLum=0.001, maxCLL=1000, maxFALL=400");
             }
 #else
             OH_LOG_WARN(LOG_APP, "{Init} OH_NativeWindow HDR APIs not available on this platform");
@@ -716,20 +864,15 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
         return -1;
     }
     
-    // 首次调用时设置当前线程的 QoS 等级为高优先级
-    static thread_local bool qosSet = false;
-    if (!qosSet) {
-        int ret = OH_QoS_SetThreadQoS(QOS_DEADLINE_REQUEST);
-        if (ret == 0) {
-            OH_LOG_INFO(LOG_APP, "Set decode thread QoS to DEADLINE_REQUEST");
-        } else {
-            ret = OH_QoS_SetThreadQoS(QOS_USER_INITIATED);
-            if (ret == 0) {
-                OH_LOG_INFO(LOG_APP, "Set decode thread QoS to USER_INITIATED");
-            }
-        }
-        qosSet = true;
+    // 解码器健康检查（节流：每 500ms 一次）
+    // 如果解码器已失效，尽早返回错误触发上层恢复
+    if (!CheckDecoderValid()) {
+        OH_LOG_ERROR(LOG_APP, "Decoder invalid, requesting IDR for recovery");
+        return -1;  // 触发 DR_NEED_IDR
     }
+    
+    // 首次调用时设置线程优先级 + 绑定大核
+    SetupDecodeThreadPriority();
     
     // === L3 延迟恢复：临界延迟检查 ===
     // 当解码延迟过高时，丢弃 P 帧并触发 IDR 请求
@@ -909,20 +1052,14 @@ int VideoDecoder::SubmitDecodeUnit(const uint8_t* data, int size,
         return -1;
     }
     
-    // 首次调用时设置当前线程的 QoS 等级为高优先级
-    static thread_local bool qosSet = false;
-    if (!qosSet) {
-        int ret = OH_QoS_SetThreadQoS(QOS_DEADLINE_REQUEST);
-        if (ret == 0) {
-            OH_LOG_INFO(LOG_APP, "Set decode thread QoS to DEADLINE_REQUEST");
-        } else {
-            ret = OH_QoS_SetThreadQoS(QOS_USER_INITIATED);
-            if (ret == 0) {
-                OH_LOG_INFO(LOG_APP, "Set decode thread QoS to USER_INITIATED");
-            }
-        }
-        qosSet = true;
+    // 解码器健康检查（节流：每 500ms 一次）
+    if (!CheckDecoderValid()) {
+        OH_LOG_ERROR(LOG_APP, "Decoder invalid (non-scatter path), requesting recovery");
+        return -1;
     }
+    
+    // 首次调用时设置线程优先级 + 绑定大核
+    SetupDecodeThreadPriority();
     
     // === L3 延迟恢复：临界延迟检查 ===
     int recoveryResult = CheckLatencyRecovery(frameType, size, hostProcessingLatency);
@@ -1372,6 +1509,44 @@ void VideoDecoder::UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32
 }
 
 // =============================================================================
+// =============================================================================
+// 解码器健康检查
+// 使用 OH_VideoDecoder_IsValid 检测解码器是否进入不可恢复的错误状态
+// 节流：每 500ms 最多检查一次，避免 API 调用开销
+// =============================================================================
+
+bool VideoDecoder::CheckDecoderValid() {
+    if (decoder_ == nullptr) {
+        return false;
+    }
+    
+    auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    
+    // 节流：每 500ms 检查一次
+    constexpr int64_t kHealthCheckIntervalMs = 500;
+    int64_t lastCheck = lastHealthCheckTimeMs_.load();
+    if (nowMs - lastCheck < kHealthCheckIntervalMs) {
+        return true;  // 在冷却期内，假定有效
+    }
+    lastHealthCheckTimeMs_.store(nowMs);
+    
+    bool isValid = false;
+    OH_AVErrCode ret = OH_VideoDecoder_IsValid(decoder_, &isValid);
+    
+    if (ret != AV_ERR_OK || !isValid) {
+        int errCount = consecutiveErrors_.fetch_add(1) + 1;
+        OH_LOG_ERROR(LOG_APP, "Decoder health check FAILED: ret=%{public}d, valid=%{public}d, consecutive=%{public}d",
+                     ret, isValid ? 1 : 0, errCount);
+        return false;
+    }
+    
+    // 健康检查通过，重置错误计数
+    consecutiveErrors_.store(0);
+    return true;
+}
+
+// =============================================================================
 // L3 延迟恢复：临界延迟 IDR 请求
 // 当瞬时解码耗时过高时，丢弃当前 P 帧并返回 DR_NEED_IDR
 // moonlight-common-c 收到后会：1) 请求服务器发送 IDR  2) 丢弃后续 P 帧
@@ -1430,12 +1605,9 @@ int VideoDecoder::CheckLatencyRecovery(VideoFrameType frameType, int size, uint1
 void VideoDecoder::SyncDecodeLoop() {
     OH_LOG_INFO(LOG_APP, "Sync decode loop started (output-focused mode), decoder=%{public}p", static_cast<void*>(decoder_));
     
-    // 设置线程 QoS 为高优先级
-    int qosRet = OH_QoS_SetThreadQoS(QOS_DEADLINE_REQUEST);
-    if (qosRet != 0) {
-        OH_QoS_SetThreadQoS(QOS_USER_INITIATED);
-    }
-    OH_LOG_INFO(LOG_APP, "Sync decode thread QoS set, syncRunning=%{public}d, running=%{public}d", 
+    // 设置线程优先级 + 绑定大核
+    SetupDecodeThreadPriority();
+    OH_LOG_INFO(LOG_APP, "Sync decode thread priority set, syncRunning=%{public}d, running=%{public}d", 
                 syncDecodeRunning_ ? 1 : 0, running_ ? 1 : 0);
     
     int consecutiveOutputErrors = 0;
@@ -1512,6 +1684,13 @@ void VideoDecoder::SyncDecodeLoop() {
         // 连续输出错误检查
         if (consecutiveOutputErrors >= maxConsecutiveErrors) {
             OH_LOG_ERROR(LOG_APP, "Sync decode: too many output errors (%{public}d), exiting", 
+                         consecutiveOutputErrors);
+            break;
+        }
+        
+        // 解码器健康检查（节流在 CheckDecoderValid 内部，每 500ms 一次）
+        if (consecutiveOutputErrors > 5 && !CheckDecoderValid()) {
+            OH_LOG_ERROR(LOG_APP, "Sync decode: decoder invalid after %{public}d errors, exiting loop",
                          consecutiveOutputErrors);
             break;
         }
@@ -1783,6 +1962,18 @@ namespace {
 
 namespace VideoDecoderInstance {
 
+// 查询指定 MIME 类型解码器的硬件能力
+// 返回: OH_AVCapability* (系统管理，无需释放), 或 nullptr 不支持
+static OH_AVCapability* GetHWDecoderCapability(const char* mimeType) {
+    // 优先查询硬件解码器
+    OH_AVCapability* cap = OH_AVCodec_GetCapabilityByCategory(mimeType, false, HARDWARE);
+    if (cap != nullptr && OH_AVCapability_IsHardware(cap)) {
+        return cap;
+    }
+    // 回退到系统推荐解码器
+    return OH_AVCodec_GetCapability(mimeType, false);
+}
+
 // 检测编解码器支持
 bool IsCodecSupported(VideoCodecType codec) {
     const char* mimeType = nullptr;
@@ -1799,16 +1990,10 @@ bool IsCodecSupported(VideoCodecType codec) {
             return false;
     }
     
-    // 尝试创建解码器
-    OH_AVCodec* testDecoder = OH_VideoDecoder_CreateByMime(mimeType);
-    if (testDecoder != nullptr) {
-        OH_VideoDecoder_Destroy(testDecoder);
-        return true;
-    }
-    return false;
+    return GetHWDecoderCapability(mimeType) != nullptr;
 }
 
-// 获取解码器能力
+// 获取解码器能力（使用 OH_AVCapability API 查询真实硬件参数）
 DecoderCapabilities GetCapabilities() {
     DecoderCapabilities caps = {};
     
@@ -1816,13 +2001,66 @@ DecoderCapabilities GetCapabilities() {
     caps.supportsHEVC = IsCodecSupported(VideoCodecType::HEVC);
     caps.supportsAV1 = IsCodecSupported(VideoCodecType::AV1);
     
-    // 默认最大分辨率（大多数设备支持 4K）
-    caps.maxWidth = 3840;
-    caps.maxHeight = 2160;
-    caps.maxFps = 60;
+    // 查询实际硬件支持的最大分辨率和帧率
+    // 优先用 HEVC（通常上限更高），回退 H264
+    const char* probeMime = caps.supportsHEVC ? OH_AVCODEC_MIMETYPE_VIDEO_HEVC : OH_AVCODEC_MIMETYPE_VIDEO_AVC;
+    OH_AVCapability* cap = GetHWDecoderCapability(probeMime);
     
-    OH_LOG_INFO(LOG_APP, "Decoder caps: H264=%{public}d, HEVC=%{public}d, AV1=%{public}d", 
-                caps.supportsH264, caps.supportsHEVC, caps.supportsAV1);
+    if (cap != nullptr) {
+        const char* codecName = OH_AVCapability_GetName(cap);
+        bool isHW = OH_AVCapability_IsHardware(cap);
+        
+        OH_AVRange widthRange = {0, 0};
+        OH_AVRange heightRange = {0, 0};
+        OH_AVRange fpsRange = {0, 0};
+        
+        OH_AVCapability_GetVideoWidthRange(cap, &widthRange);
+        OH_AVCapability_GetVideoHeightRange(cap, &heightRange);
+        OH_AVCapability_GetVideoFrameRateRange(cap, &fpsRange);
+        
+        caps.maxWidth = widthRange.maxVal > 0 ? widthRange.maxVal : 3840;
+        caps.maxHeight = heightRange.maxVal > 0 ? heightRange.maxVal : 2160;
+        caps.maxFps = fpsRange.maxVal > 0 ? fpsRange.maxVal : 60;
+        
+        // 检查是否真正支持低延迟特性（API 12+）
+        caps.supportsLowLatency = OH_AVCapability_IsFeatureSupported(cap, VIDEO_LOW_LATENCY);
+        
+        // 查询具体分辨率+帧率组合的支持情况
+        // 用于在设置页面精准提示用户
+        caps.supports4K60 = OH_AVCapability_AreVideoSizeAndFrameRateSupported(cap, 3840, 2160, 60);
+        caps.supports4K120 = OH_AVCapability_AreVideoSizeAndFrameRateSupported(cap, 3840, 2160, 120);
+        caps.supports1080p120 = OH_AVCapability_AreVideoSizeAndFrameRateSupported(cap, 1920, 1080, 120);
+        
+        // 获取最大实例数（用于判断是否支持多解码器）
+        caps.maxInstances = OH_AVCapability_GetMaxSupportedInstances(cap);
+        
+        OH_LOG_INFO(LOG_APP, "Decoder caps [%{public}s, HW=%{public}d]: "
+                    "maxRes=%{public}dx%{public}d, maxFps=%{public}d, "
+                    "lowLatency=%{public}d, 4K60=%{public}d, 4K120=%{public}d, 1080p120=%{public}d, "
+                    "maxInstances=%{public}d",
+                    codecName ? codecName : "unknown", isHW ? 1 : 0,
+                    caps.maxWidth, caps.maxHeight, caps.maxFps,
+                    caps.supportsLowLatency ? 1 : 0,
+                    caps.supports4K60 ? 1 : 0, caps.supports4K120 ? 1 : 0,
+                    caps.supports1080p120 ? 1 : 0,
+                    caps.maxInstances);
+    } else {
+        // 无法查询能力，使用保守默认值
+        caps.maxWidth = 3840;
+        caps.maxHeight = 2160;
+        caps.maxFps = 60;
+        caps.supportsLowLatency = false;
+        caps.supports4K60 = false;
+        caps.supports4K120 = false;
+        caps.supports1080p120 = false;
+        caps.maxInstances = 1;
+        
+        OH_LOG_WARN(LOG_APP, "Failed to query decoder capability, using defaults");
+    }
+    
+    OH_LOG_INFO(LOG_APP, "Decoder caps: H264=%{public}d, HEVC=%{public}d, AV1=%{public}d, maxRes=%{public}dx%{public}d@%{public}d",
+                caps.supportsH264, caps.supportsHEVC, caps.supportsAV1,
+                caps.maxWidth, caps.maxHeight, caps.maxFps);
     
     return caps;
 }
@@ -2007,7 +2245,7 @@ void SetHdrConfig(bool enableHdr, int hdrType, int colorSpace, int colorRange) {
     g_enableHdr = enableHdr;
     switch (hdrType) {
         case 1:  g_hdrType = HdrType::HDR10; break;
-        case 2:  g_hdrType = HdrType::HDR_VIVID; break;
+        case 2:  g_hdrType = HdrType::HLG; break;
         default: g_hdrType = HdrType::SDR; break;
     }
     g_colorSpace = colorSpace;

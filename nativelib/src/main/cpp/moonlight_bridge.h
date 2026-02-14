@@ -160,8 +160,9 @@ napi_value MoonBridge_ReleaseVideoSurface(napi_env env, napi_callback_info info)
 napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info);
 
 /**
- * 获取解码器能力信息
- * @return { supportsH264, supportsHEVC, supportsAV1, maxWidth, maxHeight, maxFps }
+ * 获取解码器能力信息（通过 OH_AVCapability API 查询硬件真实参数）
+ * @return { supportsH264, supportsHEVC, supportsAV1, maxWidth, maxHeight, maxFps,
+ *           supportsLowLatency, supports4K60, supports4K120, supports1080p120, maxInstances }
  */
 napi_value MoonBridge_GetDecoderCapabilities(napi_env env, napi_callback_info info);
 

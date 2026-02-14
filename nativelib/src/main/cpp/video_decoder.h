@@ -77,7 +77,7 @@ enum class ColorRange {
 enum class HdrType {
     SDR = 0,        // 标准动态范围
     HDR10 = 1,      // HDR10 (PQ 传输特性)
-    HDR_VIVID = 2   // HDR Vivid (HLG 传输特性，支持动态元数据)
+    HLG = 2         // HLG (Hybrid Log-Gamma, ARIB STD-B67)
 };
 
 /**
@@ -242,7 +242,13 @@ public:
      * 检查是否正在运行
      */
     bool IsRunning() const { return running_; }
-
+    
+    /**
+     * 检查解码器是否仍然有效
+     * 使用 OH_VideoDecoder_IsValid 检测解码器健康状态
+     * @return true 解码器有效，false 解码器已失效
+     */
+    bool CheckDecoderValid();
 private:
     // AVCodec 回调
     static void OnError(OH_AVCodec* codec, int32_t errorCode, void* userData);
@@ -330,10 +336,14 @@ private:
     // 延迟恢复状态
     std::atomic<int64_t> lastInstantDecodeTimeMs_{0};  // 最近一帧的实际解码耗时 (ms)
     std::atomic<bool> latencyRecoveryActive_{false};    // 是否已请求 IDR 恢复
+    
+    // 解码器健康检查状态
+    std::atomic<int64_t> lastHealthCheckTimeMs_{0};     // 上次健康检查时间 (ms)
+    std::atomic<int> consecutiveErrors_{0};             // 连续错误计数
 };
 
 /**
- * 解码器能力信息
+ * 解码器能力信息（通过 OH_AVCapability API 从硬件查询）
  */
 struct DecoderCapabilities {
     bool supportsH264;
@@ -342,6 +352,12 @@ struct DecoderCapabilities {
     int maxWidth;
     int maxHeight;
     int maxFps;
+    // 扩展能力信息
+    bool supportsLowLatency;     // 硬件是否真正支持低延迟特性
+    bool supports4K60;           // 是否支持 4K@60fps
+    bool supports4K120;          // 是否支持 4K@120fps
+    bool supports1080p120;       // 是否支持 1080p@120fps
+    int maxInstances;            // 最大解码器实例数
 };
 
 /**
@@ -378,7 +394,7 @@ namespace VideoDecoderInstance {
     /**
      * 设置 HDR 配置
      * @param enableHdr 是否启用 HDR
-     * @param hdrType HDR 类型 (0=SDR, 1=HDR10, 2=HDR_VIVID)
+     * @param hdrType HDR 类型 (0=SDR, 1=HDR10, 2=HLG)
      * @param colorSpace 颜色空间 (0=REC_601, 1=REC_709, 2=REC_2020)
      * @param colorRange 颜色范围 (0=Limited, 1=Full)
      */

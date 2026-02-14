@@ -1256,6 +1256,7 @@ napi_value MoonBridge_GetDecoderCapabilities(napi_env env, napi_callback_info in
     
     napi_value supportsH264, supportsHEVC, supportsAV1;
     napi_value maxWidth, maxHeight, maxFps;
+    napi_value supportsLowLatency, supports4K60, supports4K120, supports1080p120, maxInstances;
     
     napi_get_boolean(env, caps.supportsH264, &supportsH264);
     napi_get_boolean(env, caps.supportsHEVC, &supportsHEVC);
@@ -1263,6 +1264,11 @@ napi_value MoonBridge_GetDecoderCapabilities(napi_env env, napi_callback_info in
     napi_create_uint32(env, caps.maxWidth, &maxWidth);
     napi_create_uint32(env, caps.maxHeight, &maxHeight);
     napi_create_uint32(env, caps.maxFps, &maxFps);
+    napi_get_boolean(env, caps.supportsLowLatency, &supportsLowLatency);
+    napi_get_boolean(env, caps.supports4K60, &supports4K60);
+    napi_get_boolean(env, caps.supports4K120, &supports4K120);
+    napi_get_boolean(env, caps.supports1080p120, &supports1080p120);
+    napi_create_int32(env, caps.maxInstances, &maxInstances);
     
     napi_set_named_property(env, result, "supportsH264", supportsH264);
     napi_set_named_property(env, result, "supportsHEVC", supportsHEVC);
@@ -1270,6 +1276,11 @@ napi_value MoonBridge_GetDecoderCapabilities(napi_env env, napi_callback_info in
     napi_set_named_property(env, result, "maxWidth", maxWidth);
     napi_set_named_property(env, result, "maxHeight", maxHeight);
     napi_set_named_property(env, result, "maxFps", maxFps);
+    napi_set_named_property(env, result, "supportsLowLatency", supportsLowLatency);
+    napi_set_named_property(env, result, "supports4K60", supports4K60);
+    napi_set_named_property(env, result, "supports4K120", supports4K120);
+    napi_set_named_property(env, result, "supports1080p120", supports1080p120);
+    napi_set_named_property(env, result, "maxInstances", maxInstances);
     
     return result;
 }
