@@ -639,6 +639,7 @@ export class StreamingSession {
       );
       if (ret >= 0) {
         this.virtualControllerArrived = true;
+        console.info(`[VirtualCtrl] Controller ${controllerIndex} arrival sent, mask=0x${this.activeGamepadMask.toString(16)}`);
       } else {
         console.warn(`[VirtualCtrl] Controller arrival failed (ret=${ret}), will retry`);
       }
@@ -688,6 +689,12 @@ export class StreamingSession {
   ): void {
     if (!this.isRunning) {
       return;
+    }
+
+    // 安全钳位：controllerIndex 必须在 0-3 范围内，防止溢出导致幽灵手柄
+    if (controllerIndex < 0 || controllerIndex > 3) {
+      console.warn(`[Gamepad] controllerIndex 越界: ${controllerIndex}, 钳位到 0`);
+      controllerIndex = 0;
     }
 
     // 确保物理手柄的 arrival 事件已发送（传递真实控制器类型）

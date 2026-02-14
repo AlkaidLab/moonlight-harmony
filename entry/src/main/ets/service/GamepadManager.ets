@@ -63,6 +63,8 @@ export class GamepadManager implements UsbDriverListener {
   
   // Game Controller Kit 状态
   private useGameControllerKit = false;
+  /** USB 驱动是否已启用（混合模式：GCK 处理蓝牙，UsbDriver 处理 USB 震动/附加功能） */
+  private useUsbDriverMode = false;
   /** 输入模式是否已确定（loadUsbDriverSetting 异步完成后置 true）。
    *  在此之前 setListener 不应扫描/通知设备，避免传统路径与 GCK 竞争产生幽灵手柄。 */
   private modeInitialized = false;
@@ -144,22 +146,47 @@ export class GamepadManager implements UsbDriverListener {
 
   /**
    * 加载 USB 驱动设置并决定输入模式
-   * 如果用户启用了 USB 驱动，则直接使用 USB 驱动模式（跳过 GCK）
+   * 
+   * 混合模式设计：
+   * - GCK 始终作为主要输入源（处理 USB + 蓝牙手柄的按键/摇杆/扳机）
+   * - 当 USB 驱动启用时，UsbDriverService 额外提供 USB 手柄的震动/LED 等高级功能
+   * - 当 GCK 不可用时，回退到纯传统模式（InputKit + USB 驱动）
+   * 
+   * 这确保蓝牙手柄始终通过 GCK 获得完整支持，不受 USB 驱动设置影响。
    */
   private loadUsbDriverSetting(): void {
     PreferencesUtil.get<boolean>(SettingsKeys.USB_DRIVER_ENABLED, false).then(usbEnabled => {
-      if (usbEnabled) {
-        console.info('[GAMEPAD] USB 驱动模式已启用（用户设置），跳过 Game Controller Kit');
-        this.fallbackToLegacyInput();
-      } else {
-        this.initializeGameControllerKit();
+      // 始终优先尝试 GCK（为蓝牙手柄提供完整轴数据支持）
+      this.initializeGameControllerKit();
+
+      if (usbEnabled && this.useGameControllerKit) {
+        // 混合模式：GCK 处理所有手柄输入，UsbDriverService 提供 USB 震动/附加功能
+        console.info('[GAMEPAD] 混合模式：GCK(输入) + USB驱动(震动/高级功能)');
+        this.useUsbDriverMode = true;
+        this.initializeUsbDriver();
+      } else if (usbEnabled && !this.useGameControllerKit) {
+        // GCK 不可用，纯传统模式
+        console.info('[GAMEPAD] GCK 不可用，回退到纯 USB 驱动 + InputKit 模式');
+        this.useUsbDriverMode = true;
+        this.initializeDeviceListener();
+        this.initializeUsbDriver();
+      } else if (!this.useGameControllerKit) {
+        // GCK 不可用且 USB 驱动未启用，仅用 InputKit
+        console.info('[GAMEPAD] GCK 不可用，使用 InputKit 传统模式');
+        this.initializeDeviceListener();
       }
+      // else: 纯 GCK 模式（默认）
+
       this.modeInitialized = true;
       // 输入模式已确定，如果 listener 在此之前已设置，补发设备通知
       this.notifyListenerOfExistingDevices();
     }).catch(() => {
       // 读取设置失败，使用默认行为（尝试 GCK）
       this.initializeGameControllerKit();
+      // GCK 失败时回退到 InputKit
+      if (!this.useGameControllerKit) {
+        this.initializeDeviceListener();
+      }
       this.modeInitialized = true;
       this.notifyListenerOfExistingDevices();
     });
@@ -314,12 +341,11 @@ export class GamepadManager implements UsbDriverListener {
   }
   
   /**
-   * 回退到传统输入方案 (InputKit + USB 驱动)
+   * 回退到传统输入方案
+   * 仅标记模式切换，不启动驱动服务（由 loadUsbDriverSetting 统一管理）
    */
   private fallbackToLegacyInput(): void {
     this.useGameControllerKit = false;
-    this.initializeDeviceListener();
-    this.initializeUsbDriver();
   }
   
   /**
@@ -330,7 +356,7 @@ export class GamepadManager implements UsbDriverListener {
   async forceUsbDriverMode(): Promise<boolean> {
     console.info('[GAMEPAD] 用户请求强制切换到 USB 驱动模式');
     
-    // 如果已经在使用 USB 驱动模式，直接返回
+    // 如果已经在纯传统模式，直接返回
     if (!this.useGameControllerKit) {
       console.info('[GAMEPAD] 当前已是 USB 驱动模式');
       return true;
@@ -359,10 +385,25 @@ export class GamepadManager implements UsbDriverListener {
       console.error('[GAMEPAD] 停止 Game Controller Kit 失败:', err);
     }
     
-    // 切换到 USB 驱动模式
-    this.fallbackToLegacyInput();
+    // 如果是混合模式，USB 驱动已在运行，只需切到纯传统模式
+    // 清理混合模式下仅用于震动的 USB 记录，让它们重新注册为输入设备
+    const wasHybridMode = this.useUsbDriverMode;
+    if (wasHybridMode) {
+      this.usbDeviceKeyToId.clear();
+      this.controllerIdToDeviceKey.clear();
+    }
     
-    console.info('[GAMEPAD] 已切换到 USB 驱动模式');
+    // 切换到纯传统模式
+    this.useGameControllerKit = false;
+    this.useUsbDriverMode = true;
+    this.initializeDeviceListener();
+    
+    // 如果 USB 驱动尚未运行（此前是纯 GCK 模式），启动它
+    if (!wasHybridMode) {
+      this.initializeUsbDriver();
+    }
+    
+    console.info('[GAMEPAD] 已切换到纯 USB 驱动模式');
     return true;
   }
   
@@ -433,6 +474,13 @@ export class GamepadManager implements UsbDriverListener {
       this.setupGCCallbacks();
       gameControllerService.startMonitor();
       console.info('[GAMEPAD] GC Kit 回调已恢复');
+      
+      // 混合模式：同时恢复 USB 驱动（用于震动）
+      if (this.useUsbDriverMode) {
+        this.usbDriverService.setListener(this);
+        this.usbDriverService.start();
+        console.info('[GAMEPAD] USB 驱动 listener 已恢复（混合模式-震动）');
+      }
     } else {
       // 传统模式：重新设置 USB 驱动 listener 并确保驱动运行中
       this.usbDriverService.setListener(this);
@@ -445,7 +493,9 @@ export class GamepadManager implements UsbDriverListener {
    * 获取当前输入模式的描述
    */
   getInputModeDescription(): string {
-    if (this.useGameControllerKit) {
+    if (this.useGameControllerKit && this.useUsbDriverMode) {
+      return 'Game Controller Kit + USB 驱动 (混合模式)';
+    } else if (this.useGameControllerKit) {
       return 'Game Controller Kit (系统统一输入)';
     } else {
       return 'USB 驱动 (直接设备控制)';
@@ -476,7 +526,6 @@ export class GamepadManager implements UsbDriverListener {
     this.vibrationService.setSettings(enabled, strength, mode);
   }
 
-  /**
   /**
    * 设置输入监听器
    * 设置后会立即通知所有已连接的设备
@@ -542,8 +591,9 @@ export class GamepadManager implements UsbDriverListener {
         this.connectedDevices.forEach((name, deviceId) => {
           const info = this.deviceInfoMap.get(deviceId);
           const ctrlType = info?.vendor ? MoonlightControllerType.fromVendorProduct(info.vendor, info.product ?? 0) : MoonlightControllerType.fromDeviceName(name);
-          console.info(`GamepadManager: 通知已连接手柄: ${name} (ID: ${deviceId}, Type: ${ctrlType})`);
-          listener.onGamepadConnected(deviceId, name, ctrlType);
+          const slot = this.getControllerSlot(deviceId);
+          console.info(`GamepadManager: 通知已连接手柄: ${name} (ID: ${deviceId}, Slot: ${slot}, Type: ${ctrlType})`);
+          listener.onGamepadConnected(slot, name, ctrlType);
         });
         
         // 重新扫描设备，确保不遗漏
@@ -723,12 +773,22 @@ export class GamepadManager implements UsbDriverListener {
     };
     this.deviceInfoMap.set(deviceId, gamepadInfo);
     
+    // 为 InputKit 设备分配正确的槽位 (0-3)
+    // USB 设备可能稍后由 UsbDriverService 接管（使用 USB deviceKey），
+    // 这里用 InputKit deviceId 作为 key 先行分配
+    const deviceKey = `inputkit_${deviceId}`;
+    const slot = this.allocateSlotForDevice(deviceKey);
+    if (slot >= 0) {
+      this.controllerIdToDeviceKey.set(deviceId, deviceKey);
+    }
+    
     const connectionType = isBluetooth ? '蓝牙' : (isUsb ? 'USB' : `其他(${bus})`);
-    console.info(`[GAMEPAD] ★ 注册手柄: "${deviceInfo.name}" (ID: ${deviceId}, ${connectionType})`);
+    const effectiveSlot = slot >= 0 ? slot : deviceId;
+    console.info(`[GAMEPAD] ★ 注册手柄: "${deviceInfo.name}" (ID: ${deviceId}, Slot: ${effectiveSlot}, ${connectionType})`);
     GamepadManager.DEBUG && console.info(`[GAMEPAD]   检测: joystick源=${hasJoystickSource}, 名称匹配=${nameIndicatesGamepad}`);
     
     const ctrlType = deviceInfo.vendor ? MoonlightControllerType.fromVendorProduct(deviceInfo.vendor, deviceInfo.product ?? 0) : MoonlightControllerType.fromDeviceName(deviceInfo.name);
-    this.listener?.onGamepadConnected(deviceId, deviceInfo.name, ctrlType);
+    this.listener?.onGamepadConnected(effectiveSlot, deviceInfo.name, ctrlType);
   }
   
   /**
@@ -754,15 +814,25 @@ export class GamepadManager implements UsbDriverListener {
       const info = this.deviceInfoMap.get(deviceId);
       const connectionType = info?.isBluetooth ? '蓝牙' : (info?.isUsb ? 'USB' : '未知');
       
+      // 获取槽位（在清理之前）
+      const slot = this.getControllerSlot(deviceId);
+      
       this.connectedDevices.delete(deviceId);
       this.deviceStates.delete(deviceId);
       this.deviceInfoMap.delete(deviceId);
       this.dpadAxisActive.delete(deviceId);
       
-      console.info(`GamepadManager: 移除手柄 ${name} (ID: ${deviceId}, 连接类型: ${connectionType})`);
+      // 释放 InputKit 设备的槽位
+      const deviceKey = this.controllerIdToDeviceKey.get(deviceId);
+      if (deviceKey) {
+        this.releaseSlotForDevice(deviceKey);
+        this.controllerIdToDeviceKey.delete(deviceId);
+      }
+      
+      console.info(`GamepadManager: 移除手柄 ${name} (ID: ${deviceId}, Slot: ${slot}, 连接类型: ${connectionType})`);
       
       if (this.listener) {
-        this.listener.onGamepadDisconnected(deviceId);
+        this.listener.onGamepadDisconnected(slot);
       }
     }
   }
@@ -898,6 +968,12 @@ export class GamepadManager implements UsbDriverListener {
     console.info(`[GAMEPAD-GC] 设备状态变化: deviceId=${deviceId}, isConnected=${isConnected}, name=${info?.name}, physAddr=${info?.physicalAddress || 'N/A'}`);
     
     if (isConnected) {
+      // 防止重复注册：同一 deviceId 已分配槽位时，跳过（startMonitor 重复回调防护）
+      if (this.gcDeviceIdToSlot.has(deviceId)) {
+        console.info(`[GAMEPAD-GC] 设备已注册，跳过: deviceId=${deviceId}, slot=${this.gcDeviceIdToSlot.get(deviceId)}`);
+        return;
+      }
+
       // 过滤非手柄设备（如手表、手环等）
       const deviceNameLower = (info?.name || '').toLowerCase();
       if (NON_GAMEPAD_KEYWORDS.some(kw => deviceNameLower.includes(kw))) {
@@ -905,13 +981,13 @@ export class GamepadManager implements UsbDriverListener {
         return;
       }
 
-      // 去重检查：同一物理地址的设备只注册一次
+      // 去重检查 1：同一物理地址的设备只注册一次
       const physAddr = info?.physicalAddress || '';
       if (physAddr && physAddr.length > 0) {
         const existingDeviceId = this.gcPhysicalAddressToDeviceId.get(physAddr);
         if (existingDeviceId && existingDeviceId !== deviceId) {
           // 同一物理设备的另一个 HID 接口，合并到已有设备
-          console.info(`[GAMEPAD-GC] 跳过重复设备: deviceId=${deviceId} -> 已有设备 ${existingDeviceId} (physAddr=${physAddr})`);
+          console.info(`[GAMEPAD-GC] 跳过重复设备(物理地址): deviceId=${deviceId} -> 已有设备 ${existingDeviceId} (physAddr=${physAddr})`);
           // 将此 deviceId 映射到已有设备的槽位，使输入事件可以正确路由
           const existSlot = this.gcDeviceIdToSlot.get(existingDeviceId);
           if (existSlot !== undefined) {
@@ -923,8 +999,9 @@ export class GamepadManager implements UsbDriverListener {
         this.gcPhysicalAddressToDeviceId.set(physAddr, deviceId);
       }
 
-      // 后备去重：同名同 product 的设备视为同一物理设备
-      if (!physAddr || physAddr.length === 0) {
+      // 去重检查 2：同名同 product 的设备视为同一物理设备的不同 HID 接口
+      // 始终执行（不仅限于物理地址为空时），因为多接口 USB 手柄可能报告不同的物理地址
+      {
         const slotEntries = Array.from(this.gcDeviceIdToSlot.entries());
         for (let i = 0; i < slotEntries.length; i++) {
           const existId = slotEntries[i][0];
@@ -932,7 +1009,7 @@ export class GamepadManager implements UsbDriverListener {
           if (existId === deviceId) continue;
           const existInfo = this.getGCDeviceInfoCached(existId);
           if (existInfo && existInfo.name === info?.name && existInfo.product === info?.product) {
-            console.info(`[GAMEPAD-GC] 跳过重复设备(按名称): deviceId=${deviceId} -> 已有设备 ${existId}`);
+            console.info(`[GAMEPAD-GC] 跳过重复设备(名称+产品ID): deviceId=${deviceId} -> 已有设备 ${existId} (name=${info?.name}, product=${info?.product})`);
             this.gcDeviceIdToSlot.set(deviceId, existSlot);
             this.gcDeviceStates.set(deviceId, this.gcDeviceStates.get(existId) || this.createEmptyState());
             return;
@@ -958,6 +1035,7 @@ export class GamepadManager implements UsbDriverListener {
       // 通知监听器
       if (this.listener) {
         const ctrlType = MoonlightControllerType.fromDeviceName(info?.name || '');
+        console.info(`[GAMEPAD-GC] 通知手柄连接: slot=${slot}, name=${info?.name || `Controller ${slot}`}, type=${ctrlType}`);
         this.listener.onGamepadConnected(slot, info?.name || `Controller ${slot}`, ctrlType);
       }
     } else {
@@ -1182,8 +1260,15 @@ export class GamepadManager implements UsbDriverListener {
     if (!this.deviceStates.has(deviceId)) {
       this.deviceStates.set(deviceId, this.createEmptyState());
       this.connectedDevices.set(deviceId, `Unknown Controller ${deviceId}`);
-      console.info(`[GAMEPAD-KEY] 动态注册设备 ${deviceId}`);
-      this.listener?.onGamepadConnected(deviceId, `Controller ${deviceId}`, MoonlightControllerType.XBOX);
+      // 分配正确的槽位 (0-3)，避免原始 deviceId 溢出
+      const deviceKey = `inputkit_${deviceId}`;
+      const slot = this.allocateSlotForDevice(deviceKey);
+      if (slot >= 0) {
+        this.controllerIdToDeviceKey.set(deviceId, deviceKey);
+      }
+      const effectiveSlot = slot >= 0 ? slot : 0;
+      console.info(`[GAMEPAD-KEY] 动态注册设备 ${deviceId} -> Slot ${effectiveSlot}`);
+      this.listener?.onGamepadConnected(effectiveSlot, `Controller ${effectiveSlot}`, MoonlightControllerType.XBOX);
     }
     return deviceId;
   }
@@ -1422,6 +1507,9 @@ export class GamepadManager implements UsbDriverListener {
   
   /**
    * USB 控制器状态报告
+   * 
+   * 混合模式下（GCK + USB 驱动），GCK 已处理所有输入，
+   * USB 驱动的状态报告仅用于设备震动/附加功能的状态同步，不重复发送到主机。
    */
   reportControllerState(
     controllerId: number,
@@ -1433,6 +1521,11 @@ export class GamepadManager implements UsbDriverListener {
     leftTrigger: number,
     rightTrigger: number
   ): void {
+    // 混合模式：GCK 已处理输入，跳过 USB 驱动的输入报告避免双重发送
+    if (this.useGameControllerKit) {
+      return;
+    }
+    
     let state = this.deviceStates.get(controllerId);
     if (!state) {
       state = this.createEmptyState();
@@ -1609,7 +1702,15 @@ export class GamepadManager implements UsbDriverListener {
     const controllerId = controller.getControllerId();
     const deviceKey = controller.getDeviceKey();
     console.info(`[GAMEPAD-USB] 设备移除: ID=${controllerId}, Key=${deviceKey}`);
-    
+
+    // 混合模式：GCK 管理设备生命周期，这里只清理震动路由记录
+    if (this.useGameControllerKit) {
+      this.usbDeviceKeyToId.delete(deviceKey);
+      this.controllerIdToDeviceKey.delete(controllerId);
+      console.info(`[GAMEPAD-USB] 混合模式: 清理震动路由记录`);
+      return;
+    }
+
     if (!this.connectedDevices.has(controllerId)) return;
     
     const slot = this.getControllerSlot(controllerId);
@@ -1634,6 +1735,17 @@ export class GamepadManager implements UsbDriverListener {
     const vendorId = controller.getVendorId();
     const productId = controller.getProductId();
     const deviceKey = controller.getDeviceKey();
+    
+    // 混合模式：GCK 处理设备管理和输入，USB 驱动只提供震动/附加功能
+    // 不注册设备、不分配槽位、不通知 listener（避免与 GCK 双重注册）
+    if (this.useGameControllerKit) {
+      const name = this.getControllerFriendlyName(vendorId, productId);
+      // 仅记录 USB 设备 key → 用于震动路由
+      this.usbDeviceKeyToId.set(deviceKey, controllerId);
+      this.controllerIdToDeviceKey.set(controllerId, deviceKey);
+      console.info(`[GAMEPAD-USB] 混合模式: 记录 USB 设备用于震动: ${name} (ID=${controllerId})`);
+      return;
+    }
     
     // 防止重复添加
     if (this.connectedDevices.has(controllerId)) {
