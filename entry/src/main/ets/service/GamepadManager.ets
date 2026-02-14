@@ -178,6 +178,7 @@ export class GamepadManager implements UsbDriverListener {
       // else: 纯 GCK 模式（默认）
 
       this.modeInitialized = true;
+      console.info(`[GAMEPAD] 最终输入模式: ${this.getInputModeDescription()}`);
       // 输入模式已确定，如果 listener 在此之前已设置，补发设备通知
       this.notifyListenerOfExistingDevices();
     }).catch(() => {
@@ -1385,6 +1386,14 @@ export class GamepadManager implements UsbDriverListener {
       return;
     }
     this.listener?.onGamepadInput(slot, copy);
+  }
+
+  /**
+   * 检查是否有 USB 手柄连接
+   * 用于 UI 决定是否显示 USB 驱动相关选项
+   */
+  hasUsbGamepad(): boolean {
+    return this.usbDriverService.getControllerCount() > 0;
   }
 
   /**

@@ -404,6 +404,7 @@ struct StreamPage {
         viewModel: this.viewModel,
         superCmds: this.cmdList,  // 传递超级指令列表
         isUsbDriverMode: !this.gamepadManager.isUsingGameControllerKit(),
+        hasUsbGamepad: this.gamepadManager.hasUsbGamepad(),
         isMouseEmulationActive: this.gamepadManager.isMouseEmulationActive(),
         hasConnectedGamepad: this.gamepadManager.getConnectedGamepads().length > 0,
         callbacks: {

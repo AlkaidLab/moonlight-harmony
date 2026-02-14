@@ -70,6 +70,7 @@ export struct GameMenuDialog {
   };
   superCmds: SuperCmd[] = [];  // 超级指令列表 (Sunshine 功能)
   isUsbDriverMode: boolean = false;  // 当前是否处于 USB 驱动模式
+  hasUsbGamepad: boolean = false;  // 是否有 USB 手柄连接
   isMouseEmulationActive: boolean = false;  // 当前是否处于手柄鼠标模拟模式
   hasConnectedGamepad: boolean = false;  // 是否有手柄连接
   
@@ -530,7 +531,10 @@ export struct GameMenuDialog {
       // ==================== 一级菜单（右侧袜子按钮）====================
       Column() {
         this.SockButton(0)
-        this.SockButton(1)
+        // USB 驱动按钮仅在有 USB 手柄连接时显示
+        if (this.hasUsbGamepad) {
+          this.SockButton(1)
+        }
         this.SockButton(2)
         this.SockButton(3)
         // 虚拟手柄按钮仅在设置启用时显示
