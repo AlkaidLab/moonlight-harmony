@@ -1106,9 +1106,9 @@ export class GamepadManager implements UsbDriverListener {
     // 映射按键码到按钮标志
     const buttonFlag = gcButtonMap.get(buttonCode);
     if (buttonFlag !== undefined) {
-      // 通道级D-pad去重：如果Axis通道已提供D-pad，Button通道的D-pad事件静默丢弃
+      // D-pad 按键去重：如果该设备已经通过 Axis 通道报告了 D-pad，
+      // 则丢弃 Button 通道的 D-pad 事件，避免双发（蓝牙手柄 Axis + Button 同时上报）
       if ((buttonFlag & MoonlightButton.DPAD_MASK) !== 0 && this.gcDpadAxisActive.has(deviceId)) {
-        GamepadManager.DEBUG && console.info(`[GAMEPAD-GC] D-pad通道去重: buttonCode=${buttonCode} (Axis通道已处理)`);
         return;
       }
       this.updateButtonState(state, buttonFlag, isPressed);
@@ -1195,8 +1195,27 @@ export class GamepadManager implements UsbDriverListener {
     GamepadManager.DEBUG && console.info(`[GAMEPAD-KEY] handleKeyEvent: deviceId=${deviceId}, keyCode=${keyCode}, isPressed=${isPressed}`);
     
     // 特殊处理 2313 按键（可自定义动作）- 无论是否使用 GC Kit 都处理
-    if (keyCode === 2313 && isPressed && this.handleGCButton2313Action()) {
-      return;  // 自定义动作已处理
+    if (keyCode === 2313) {
+      if (isPressed && this.handleGCButton2313Action()) {
+        return;  // 自定义动作已处理（toggle_mouse, toggle_perf, show_menu, none）
+      }
+      // 'guide'/'select' 映射：通过映射表发送按钮状态
+      // 某些手柄的 Home/Guide 键仅通过 KeyEvent 到达（不经过 GCK Button 回调），
+      // 如果依赖 GCK Button 回调处理会导致按键丢失
+      if (this.useGameControllerKit) {
+        const mappedButton = gcButtonMap.get(2313);
+        if (mappedButton !== undefined) {
+          const firstDeviceId = this.gcDeviceStates.keys().next().value as string;
+          if (firstDeviceId) {
+            const state = this.gcDeviceStates.get(firstDeviceId);
+            if (state) {
+              this.updateButtonState(state, mappedButton, isPressed);
+              this.notifyGCStateChange(this.getSlotForGCDevice(firstDeviceId), state);
+            }
+          }
+        }
+        return;
+      }
     }
 
     // 长按 Start 检测 (108 = KEYCODE_BUTTON_START, 2312 = GCK Start)

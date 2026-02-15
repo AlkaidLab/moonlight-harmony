@@ -182,6 +182,13 @@ export class StreamInputHandler {
       return true;
     }
 
+    // D-pad 方向键 (2012-2015) - GCK 活跃时消费掉，避免与 GCK Axis 路径双发
+    // 蓝牙手柄 D-pad 会同时产生 GCK Axis 事件和 KeyEvent(2012-2015)
+    // GCK Axis 已发送手柄 D-pad，这里如果再翻译成键盘方向键 VK_UP 等就会"按一下走两格"
+    if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.isUsingGameControllerKit()) {
+      return true; // 消费事件，不转发
+    }
+
     // 键盘按键 → 翻译为 Windows VK 码并发送
     if (KeyboardTranslator.isKeyboardKey(keyCode)) {
       const vkCode = KeyboardTranslator.translate(keyCode);
@@ -221,7 +228,18 @@ export class StreamInputHandler {
         return;
       }
 
-      // 2. 音量键 (16=VOLUME_UP, 17=VOLUME_DOWN, 22=VOLUME_MUTE)
+      // 2. D-pad 方向键 (2012-2015) - GCK 活跃时消费掉，避免与 GCK Axis 双发
+      //    GCK Axis 已经处理了手柄 D-pad，这里如果再翻译成键盘方向键发送
+      //    会导致游戏同时收到手柄 D-pad + 键盘方向键 = "按一下走两格"
+      if (keyCode >= 2012 && keyCode <= 2015) {
+        if (this.gamepadManager?.isUsingGameControllerKit()) {
+          // GCK 已接管 D-pad，丢弃拦截器中的方向键事件
+          return;
+        }
+        // 没有 GCK 设备时，作为键盘方向键正常转发（后面的 isKeyboardKey 分支会处理）
+      }
+
+      // 3. 音量键 (16=VOLUME_UP, 17=VOLUME_DOWN, 22=VOLUME_MUTE)
       //    C++ 层已优先尝试回注到系统；到达这里说明回注失败，用应用级音量补偿
       if (keyCode === 16 || keyCode === 17 || keyCode === 22) {
         if (isPressed) {
@@ -230,7 +248,7 @@ export class StreamInputHandler {
         return;
       }
 
-      // 3. 键盘按键（2000-2120）— 翻译为 Windows VK 码后发送
+      // 4. 键盘按键（2000-2120）— 翻译为 Windows VK 码后发送
       if (KeyboardTranslator.isKeyboardKey(keyCode)) {
         const vkCode = KeyboardTranslator.translate(keyCode);
         if (vkCode > 0) {
@@ -244,7 +262,7 @@ export class StreamInputHandler {
         return;
       }
 
-      // 4. 容易被系统劫持的特殊键盘按键 - 转发到主机
+      // 5. 容易被系统劫持的特殊键盘按键 - 转发到主机
       //    Home(1), Back(2), 多任务(3),
       //    媒体键: Play/Pause(10), Stop(11), Next(12), Previous(13)
       const SYSTEM_HIJACKED_KEYS: Set<number> = new Set([

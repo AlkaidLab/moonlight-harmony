@@ -1091,29 +1091,24 @@ export class StreamingSession {
     let maxAverageBrightness = 200; // 默认最大平均亮度
 
     try {
-      const displayInfo = display.getDefaultDisplaySync();
-      if (displayInfo) {
-        // 通过 JSON 序列化检测 hdrFormats 属性（避免 ArkTS 类型限制）
-        try {
-          const displayJson: string = JSON.stringify(displayInfo);
-          const displayObj: Record<string, Object> = JSON.parse(displayJson) as Record<string, Object>;
-          const hdrFormats = displayObj['hdrFormats'] as number[];
-          if (hdrFormats && hdrFormats.length > 0) {
-            // 设备支持 HDR，使用更高的默认亮度值
-            maxBrightness = Math.max(maxBrightness, 1000);
-            maxAverageBrightness = Math.max(maxAverageBrightness, 400);
-            console.info(`StreamingSession: 设备支持 HDR, formats=${JSON.stringify(hdrFormats)}, ` +
-              `maxBrightness=${maxBrightness}, maxAverageBrightness=${maxAverageBrightness}`);
-          }
-        } catch (innerErr) {
-          // hdrFormats 属性不存在或解析失败，使用默认值
-        }
+      // API 22+: display.getBrightnessInfo 可获取真实屏幕亮度信息
+      // BrightnessInfo: { sdrNits, currentHeadroom, maxHeadroom }
+      // HDR 峰值亮度 = sdrNits × maxHeadroom
+      const brightnessInfo = display.getBrightnessInfo(0);
+      console.info(`[Brightness] BrightnessInfo: sdrNits=${brightnessInfo.sdrNits}, ` +
+        `currentHeadroom=${brightnessInfo.currentHeadroom}, maxHeadroom=${brightnessInfo.maxHeadroom}`);
+
+      if (brightnessInfo.sdrNits > 0) {
+        // maxBrightness = HDR 峰值亮度（屏幕硬件最大亮度）
+        maxBrightness = brightnessInfo.sdrNits * brightnessInfo.maxHeadroom;
+        // maxAverageBrightness = SDR 亮度（典型持续亮度）
+        maxAverageBrightness = brightnessInfo.sdrNits;
       }
     } catch (err) {
-      console.warn(`StreamingSession: 获取屏幕信息失败: ${err}`);
+      console.warn(`[Brightness] getBrightnessInfo 不可用，使用默认值: ${err}`);
     }
 
-    console.info(`StreamingSession: 亮度范围: min=${minBrightness}, max=${maxBrightness}, avg=${maxAverageBrightness} nits`);
+    console.info(`[Brightness] 最终亮度范围: min=${minBrightness}, max=${maxBrightness}, avg=${maxAverageBrightness} nits`);
     return [minBrightness, maxBrightness, maxAverageBrightness];
   }
 
