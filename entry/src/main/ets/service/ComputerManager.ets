@@ -10,13 +10,16 @@
 
 import { ComputerInfo, ComputerState, PairState, ComputerInfoBuilder, selectBestAddress } from '../model/ComputerInfo';
 import { NvHttp, ServerInfo } from './NvHttp';
+import { PairingManager, PairState as PMPairState } from './PairingManager';
 import { MdnsDiscovery, DiscoveredComputer } from './MdnsDiscovery';
+import { ComputerPersistence } from './ComputerPersistence';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { WakeOnLan } from './WakeOnLan';
 import { isLanAddress } from '../utils/NetHelper';
 import { connection } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
+import { buffer } from '@kit.ArkTS';
 
 /**
  * 地址解析结果
@@ -27,38 +30,11 @@ class AddressParseResult {
 }
 
 /**
- * 地址端口提取结果
- */
-interface ExtractedHostPort {
-  host: string;
-  port: number;
-}
-
-/**
  * 轮询结果
  */
 interface PollResult {
   address: string;
   serverInfo: ServerInfo | null;
-}
-
-/**
- * 持久化存储的电脑数据格式
- */
-interface SavedComputerData {
-  uuid: string;
-  name: string;
-  address: string;
-  localAddress: string;
-  remoteAddress: string;
-  manualAddress?: string;
-  ipv6Address?: string;
-  macAddress: string;
-  serverCert: string;
-  pairState: string;
-  runningGameId: number;
-  boxArtUrl?: string;
-  httpPort?: number;
 }
 
 /** 轮询间隔（毫秒），参照 Android ComputerManagerService */
@@ -115,7 +91,7 @@ export class ComputerManager {
     });
 
     // 加载已保存的电脑（等待完成）
-    await this.loadComputers();
+    this.computers = await ComputerPersistence.loadComputers();
     
     // 注册网络变化监听（类似 Android 的 registerDefaultNetworkCallback）
     this.registerNetworkListener();
@@ -254,36 +230,7 @@ export class ComputerManager {
    * 返回深拷贝的对象，确保 ArkTS @State 能检测到变化
    */
   async getComputers(): Promise<ComputerInfo[]> {
-    return Array.from(this.computers.values()).map(computer => this.cloneComputer(computer));
-  }
-
-  /**
-   * 深拷贝电脑对象
-   */
-  private cloneComputer(computer: ComputerInfo): ComputerInfo {
-    return {
-      uuid: computer.uuid,
-      name: computer.name,
-      address: computer.address,
-      localAddress: computer.localAddress,
-      remoteAddress: computer.remoteAddress,
-      manualAddress: computer.manualAddress,
-      ipv6Address: computer.ipv6Address,
-      macAddress: computer.macAddress,
-      state: computer.state,
-      pairState: computer.pairState,
-      runningGameId: computer.runningGameId,
-      serverCert: computer.serverCert,
-      pairName: computer.pairName,
-      gpuType: computer.gpuType,
-      maxSupportedResolution: {
-        width: computer.maxSupportedResolution.width,
-        height: computer.maxSupportedResolution.height
-      },
-      isNvidiaSoftware: computer.isNvidiaSoftware,
-      boxArtUrl: computer.boxArtUrl,
-      httpPort: computer.httpPort
-    };
+    return Array.from(this.computers.values()).map(computer => ComputerPersistence.cloneComputer(computer));
   }
 
   /**
@@ -291,7 +238,7 @@ export class ComputerManager {
    */
   getComputer(uuid: string): ComputerInfo | undefined {
     const computer = this.computers.get(uuid);
-    return computer ? this.cloneComputer(computer) : undefined;
+    return computer ? ComputerPersistence.cloneComputer(computer) : undefined;
   }
 
   /**
@@ -893,7 +840,7 @@ export class ComputerManager {
   }
 
   /**
-   * 与电脑配对
+   * 与电脑配对（使用完整的 PairingManager，匹配 Android 配对流程）
    */
   async pairComputer(uuid: string): Promise<string> {
     const computer = this.computers.get(uuid);
@@ -901,20 +848,42 @@ export class ComputerManager {
       throw new Error('电脑不存在');
     }
 
-    const nvHttp = new NvHttp(selectBestAddress(computer), null, this.context || undefined, computer.httpPort);
     const pin = this.generatePin();
-    
     computer.pairState = PairState.NOT_PAIRED;
-    
+
     try {
-      await nvHttp.pair(pin);
-      computer.pairState = PairState.PAIRED;
-      computer.serverCert = nvHttp.getServerCert();
-      await this.saveComputers();
-      return pin;
+      const pairingManager = new PairingManager(
+        selectBestAddress(computer), computer.uuid, this.context || undefined, computer.httpPort
+      );
+      const result = await pairingManager.pair(pin);
+
+      if (result.state === PMPairState.PAIRED) {
+        computer.pairState = PairState.PAIRED;
+        if (result.serverCert) {
+          const buf = buffer.from(result.serverCert);
+          computer.serverCert = buf.toString('base64');
+        }
+        computer.pairName = result.pairName || '';
+        await this.saveComputers();
+        return pin;
+      } else if (result.state === PMPairState.PIN_WRONG) {
+        computer.pairState = PairState.FAILED;
+        throw new Error('PIN 码错误');
+      } else if (result.state === PMPairState.ALREADY_IN_PROGRESS) {
+        computer.pairState = PairState.FAILED;
+        throw new Error('另一个设备正在配对中');
+      } else {
+        computer.pairState = PairState.FAILED;
+        throw new Error(`配对失败: ${result.state}`);
+      }
     } catch (err) {
-      computer.pairState = PairState.FAILED;
-      throw new Error(`配对失败: ${(err as Error).message}`);
+      if (computer.pairState !== PairState.FAILED) {
+        computer.pairState = PairState.FAILED;
+      }
+      if (err instanceof Error) {
+        throw err;
+      }
+      throw new Error(`配对失败: ${err}`);
     }
   }
 
@@ -965,130 +934,13 @@ export class ComputerManager {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 持久化
+  // 持久化（委托给 ComputerPersistence）
   // ═══════════════════════════════════════════════════════════
 
   /**
    * 保存电脑列表到持久化存储
    */
   async saveComputers(): Promise<void> {
-    try {
-      const computerList: SavedComputerData[] = [];
-      this.computers.forEach((computer) => {
-        let pairStateStr: string = 'NOT_PAIRED';
-        if (computer.pairState === PairState.PAIRED) {
-          pairStateStr = 'PAIRED';
-        } else if (computer.pairState === PairState.PIN_WRONG) {
-          pairStateStr = 'PIN_WRONG';
-        } else if (computer.pairState === PairState.FAILED) {
-          pairStateStr = 'FAILED';
-        }
-        
-        const savedData: SavedComputerData = {
-          uuid: computer.uuid,
-          name: computer.name,
-          address: computer.address,
-          localAddress: computer.localAddress,
-          remoteAddress: computer.remoteAddress,
-          manualAddress: computer.manualAddress,
-          ipv6Address: computer.ipv6Address,
-          macAddress: computer.macAddress,
-          serverCert: computer.serverCert,
-          pairState: pairStateStr,
-          runningGameId: computer.runningGameId,
-          boxArtUrl: computer.boxArtUrl || '',
-          httpPort: computer.httpPort
-        };
-        computerList.push(savedData);
-      });
-      
-      await PreferencesUtil.put('saved_computers', JSON.stringify(computerList));
-      console.info(`ComputerManager: 保存 ${computerList.length} 台电脑`);
-    } catch (err) {
-      console.error('ComputerManager: 保存电脑列表失败', err);
-    }
-  }
-
-  /**
-   * 从持久化存储加载电脑列表
-   */
-  private async loadComputers(): Promise<void> {
-    try {
-      const savedJson = await PreferencesUtil.get<string>('saved_computers', '');
-      if (!savedJson) {
-        console.info('ComputerManager: 没有保存的电脑');
-        return;
-      }
-      
-      const computerList = JSON.parse(savedJson) as SavedComputerData[];
-      console.info(`ComputerManager: 解析到 ${computerList.length} 台电脑`);
-      
-      for (const saved of computerList) {
-        // 解析配对状态（兼容旧格式数字字符串 "1" 和新格式 "PAIRED"）
-        const pairState = this.parsePairState(saved.pairState);
-        
-        // 兼容旧数据：从地址中提取端口
-        let httpPort = saved.httpPort;
-        let addressHost = saved.address;
-        if (!httpPort && saved.address) {
-          const extracted = this.extractPortFromAddress(saved.address);
-          if (extracted) {
-            httpPort = extracted.port;
-            addressHost = extracted.host;
-          }
-        }
-        
-        console.info(`ComputerManager: 加载 ${saved.name} (pairState=${pairState}, httpPort=${httpPort}, cert=${saved.serverCert ? '有' : '无'})`);
-        
-        const computer = new ComputerInfoBuilder()
-          .setUuid(saved.uuid)
-          .setName(saved.name)
-          .setAddress(addressHost)
-          .setLocalAddress(saved.localAddress || addressHost)
-          .setRemoteAddress(saved.remoteAddress || '')
-          .setManualAddress(saved.manualAddress)
-          .setIpv6Address(saved.ipv6Address)
-          .setMacAddress(saved.macAddress || '')
-          .setServerCert(saved.serverCert || '')
-          .setState(ComputerState.UNKNOWN)
-          .setPairState(pairState)
-          .setRunningGameId(saved.runningGameId || 0)
-          .setBoxArtUrl(saved.boxArtUrl || '')
-          .setHttpPort(httpPort)
-          .build();
-        
-        this.computers.set(computer.uuid, computer);
-      }
-      
-      console.info(`ComputerManager: 加载完成，共 ${this.computers.size} 台电脑`);
-    } catch (err) {
-      console.error('ComputerManager: 加载电脑列表失败', err);
-    }
-  }
-
-  /**
-   * 解析配对状态字符串
-   */
-  private parsePairState(stateStr: string): PairState {
-    if (stateStr === 'PAIRED' || stateStr === '1') return PairState.PAIRED;
-    if (stateStr === 'FAILED' || stateStr === '3') return PairState.FAILED;
-    if (stateStr === 'PIN_WRONG' || stateStr === '2') return PairState.PIN_WRONG;
-    return PairState.NOT_PAIRED;
-  }
-
-  /**
-   * 从旧格式地址中提取端口（兼容迁移）
-   */
-  private extractPortFromAddress(address: string): ExtractedHostPort | null {
-    const colonIndex = address.indexOf(':');
-    if (colonIndex > 0 && address.indexOf(':', colonIndex + 1) === -1) {
-      const portStr = address.substring(colonIndex + 1);
-      const port = parseInt(portStr);
-      if (port > 0 && port <= 65535 && port !== 47989) {
-        const result: ExtractedHostPort = { host: address.substring(0, colonIndex), port: port };
-        return result;
-      }
-    }
-    return null;
+    await ComputerPersistence.saveComputers(this.computers);
   }
 }

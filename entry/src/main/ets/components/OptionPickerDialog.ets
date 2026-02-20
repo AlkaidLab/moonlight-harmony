@@ -134,18 +134,21 @@ export struct OptionPickerDialog {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
         
-        Text('✕')
-          .fontSize(20)
-          .fontColor(AppColors.TextSecondary)
-          .padding(8)
-          .borderRadius(20)
-          .backgroundColor(AppColors.Surface)
-          .onClick(() => {
-            if (this.config.onCancel) {
-              this.config.onCancel();
-            }
-            this.controller.close();
-          })
+        Stack() {
+          Text('✕')
+            .fontSize(20)
+            .fontColor(AppColors.TextSecondary)
+        }
+        .width(40)
+        .height(40)
+        .borderRadius(20)
+        .backgroundColor(AppColors.Surface)
+        .onClick(() => {
+          if (this.config.onCancel) {
+            this.config.onCancel();
+          }
+          this.controller.close();
+        })
       }
       .width('100%')
       .padding({ top: AppSpacing.Large, bottom: AppSpacing.Medium, left: AppSpacing.Medium, right: AppSpacing.Medium })

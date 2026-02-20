@@ -27,6 +27,11 @@
 #include <vector>
 #include <qos/qos.h>
 
+// moonlight-common-c API (用于 IDR 帧请求)
+extern "C" {
+    void LiRequestIdrFrame(void);
+}
+
 #define LOG_TAG "VideoDecoder"
 
 // 是否启用异步渲染（通过 NativeRender）
@@ -2315,13 +2320,27 @@ void Resume() {
         return;
     }
     
-    // 检查当前状态并尝试恢复
-    // 重新启动解码器（如果已暂停）
-    int ret = g_videoDecoder->Start();
+    // 后台期间解码器可能处于以下状态之一：
+    // 1. 仍在运行但输出 Surface 被冻结 → 输入缓冲区可能耗尽
+    // 2. 遇到错误停止 → 需要重启
+    // 3. 正常运行但画面卡在最后一帧
+    //
+    // 统一处理：Flush 清空内部队列 + 重启编解码器 + 请求 IDR 关键帧
+    int ret = g_videoDecoder->Flush();
     if (ret == 0) {
-        OH_LOG_INFO(LOG_APP, "Resume: 解码器恢复成功");
+        OH_LOG_INFO(LOG_APP, "Resume: 解码器 Flush 成功，请求 IDR 关键帧");
+        // 请求服务器发送新的关键帧，让解码器从干净状态开始
+        LiRequestIdrFrame();
     } else {
-        OH_LOG_WARN(LOG_APP, "Resume: 解码器恢复可能已处于运行状态 (ret=%{public}d)", ret);
+        OH_LOG_WARN(LOG_APP, "Resume: Flush 失败 (ret=%{public}d)，尝试 Start", ret);
+        // Flush 失败（可能解码器已停止），尝试直接 Start
+        int startRet = g_videoDecoder->Start();
+        if (startRet == 0) {
+            OH_LOG_INFO(LOG_APP, "Resume: 解码器 Start 成功，请求 IDR 关键帧");
+            LiRequestIdrFrame();
+        } else {
+            OH_LOG_ERROR(LOG_APP, "Resume: 解码器恢复失败 (start ret=%{public}d)", startRet);
+        }
     }
 }
 

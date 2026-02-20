@@ -14,7 +14,7 @@
  * 负责生成电脑操作菜单的配置
  */
 import { OptionItem } from '../components/OptionPickerDialog';
-import { ObservableComputer } from '../viewmodel/ComputerViewModel';
+import { ObservableComputer } from './ComputerViewModel';
 
 /**
  * 菜单动作回调接口

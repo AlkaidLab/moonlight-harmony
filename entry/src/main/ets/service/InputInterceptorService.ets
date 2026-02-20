@@ -43,6 +43,13 @@ interface InputInterceptorNative {
   isInjectApiAvailable(): boolean;
 }
 
+interface MouseInterceptorNative {
+  addMouseInterceptor(): number;
+  removeMouseInterceptor(): number;
+  configureMouseInterceptor(absoluteMode: boolean, viewWidth: number, viewHeight: number, density: number): void;
+  isMouseInterceptorActive(): boolean;
+}
+
 /**
  * 输入拦截器服务（单例）
  */
@@ -117,6 +124,86 @@ export class InputInterceptorService {
   isInjectApiAvailable(): boolean {
     if (this.native) {
       return this.native.isInjectApiAvailable();
+    }
+    return false;
+  }
+}
+
+/**
+ * 鼠标事件拦截器服务（单例）
+ *
+ * 使用 OH_Input_AddInputEventInterceptor 在系统输入管线层级拦截鼠标事件，
+ * 绕过 ArkUI 渲染帧率限制（不触摸时 .onMouse 降至 ~30Hz），
+ * 以硬件原始轮询率直接调用 moonlight-common-c 输入 API。
+ *
+ * 使用方法:
+ *   MouseInterceptorService.getInstance().configure(...)  // 配置参数
+ *   MouseInterceptorService.getInstance().start()         // 串流开始时
+ *   MouseInterceptorService.getInstance().stop()          // 串流结束/菜单弹出时
+ */
+export class MouseInterceptorService {
+  private static instance: MouseInterceptorService;
+  private native: MouseInterceptorNative | null;
+  private active: boolean = false;
+
+  private constructor() {
+    this.native = (nativeLib as Record<string, Object>)['MouseInterceptor'] as MouseInterceptorNative;
+  }
+
+  static getInstance(): MouseInterceptorService {
+    if (!MouseInterceptorService.instance) {
+      MouseInterceptorService.instance = new MouseInterceptorService();
+    }
+    return MouseInterceptorService.instance;
+  }
+
+  /**
+   * 配置拦截器参数（可在运行中调用以更新）
+   * @param viewWidth 视图宽度 (vp)
+   * @param viewHeight 视图高度 (vp)
+   * @param density 显示密度 (px/vp)
+   */
+  configure(viewWidth: number, viewHeight: number, density: number): void {
+    if (!this.native) return;
+    this.native.configureMouseInterceptor(true, viewWidth, viewHeight, density);
+  }
+
+  /**
+   * 启动鼠标拦截器
+   * @returns 0 成功，其他为错误码
+   */
+  start(): number {
+    if (this.active) {
+      this.stop();
+    }
+    if (!this.native) {
+      console.warn('MouseInterceptor: Native 模块不可用');
+      return -1;
+    }
+
+    const result = this.native.addMouseInterceptor();
+    if (result === 0) {
+      this.active = true;
+      console.info('MouseInterceptor: 鼠标拦截器已启动（全速轮询）');
+    } else {
+      console.warn(`MouseInterceptor: 启动失败，错误码=${result}`);
+    }
+    return result;
+  }
+
+  /**
+   * 停止鼠标拦截器
+   */
+  stop(): void {
+    if (!this.active || !this.native) return;
+    this.native.removeMouseInterceptor();
+    this.active = false;
+    console.info('MouseInterceptor: 鼠标拦截器已停止');
+  }
+
+  isActive(): boolean {
+    if (this.native) {
+      return this.native.isMouseInterceptorActive();
     }
     return false;
   }

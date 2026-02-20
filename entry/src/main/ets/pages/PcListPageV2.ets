@@ -27,8 +27,8 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 // 新增：使用抽取的辅助类
-import { ComputerMenuHelper, ComputerMenuCallbacks } from '../utils/ComputerMenuHelper';
-import { PcListActions } from '../utils/PcListActions';
+import { ComputerMenuHelper, ComputerMenuCallbacks } from '../viewmodel/ComputerMenuHelper';
+import { PcListActions } from '../viewmodel/PcListActions';
 
 /**
  * 电脑列表页面 (现代化版本)
@@ -297,6 +297,20 @@ struct PcListPageV2 {
     
     // 只有当电脑数量变化时才替换整个数组
     if (hasChanges || this.viewModel.computers.length !== newList.length) {
+      // 排序：在线已配对 > 在线未配对 > 离线，同优先级按名称排序
+      newList.sort((a, b) => {
+        const getPriority = (c: ObservableComputer): number => {
+          if (c.isOnline && c.isPaired) return 0;  // 在线已配对
+          if (c.isOnline) return 1;                  // 在线未配对
+          return 2;                                   // 离线
+        };
+        const pa = getPriority(a);
+        const pb = getPriority(b);
+        if (pa !== pb) {
+          return pa - pb;
+        }
+        return a.name.localeCompare(b.name);
+      });
       this.viewModel.computers = newList;
       // 同步更新 LazyForEach 数据源
       this.computerDataSource.reloadData(newList);

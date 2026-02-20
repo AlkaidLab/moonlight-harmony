@@ -29,6 +29,7 @@ struct AddPcPageV2 {
   @State ipAddress: string = '';
   @State isAdding: boolean = false;
   @State errorMessage: string = '';
+
   @State isValidInput: boolean = false;
   @State showSuccess: boolean = false;
   @State inputFocused: boolean = false;

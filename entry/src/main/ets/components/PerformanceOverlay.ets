@@ -34,6 +34,9 @@ import { SettingsKeys } from '../service/SettingsService';
 const CLICK_THRESHOLD = 10;
 const DOUBLE_CLICK_TIMEOUT = 300;
 
+/** AppStorage 键：与 StreamPage 解锁时同步，保证解锁后覆盖层图标/透传立即刷新 */
+const PERF_OVERLAY_LOCKED_STORAGE_KEY = 'perf_overlay_locked';
+
 @Component
 export struct PerformanceOverlay {
   // 外部传入的 ViewModel
@@ -42,6 +45,9 @@ export struct PerformanceOverlay {
   // 屏幕尺寸
   @Prop screenWidth: number = 0;
   @Prop screenHeight: number = 0;
+  
+  // 锁定状态用 StorageLink，菜单解锁时 set 后覆盖层能立即重绘
+  @StorageLink(PERF_OVERLAY_LOCKED_STORAGE_KEY) overlayLocked: boolean = false;
   
   // 性能数据 - 独立 @State 变量确保UI刷新
   @State perfFps: number = 0;
@@ -85,6 +91,9 @@ export struct PerformanceOverlay {
   aboutToAppear(): void {
     // 初始化位置和布局
     this.initPosition();
+    
+    // 与 viewModel 同步锁定状态到 AppStorage，供本组件与菜单解锁联动
+    AppStorage.setOrCreate(PERF_OVERLAY_LOCKED_STORAGE_KEY, this.viewModel.overlayState.config.isLocked);
     
     // 初始化背景透明度
     this.overlayBgOpacity = this.viewModel.overlayState.config.bgOpacity;
@@ -175,7 +184,8 @@ export struct PerformanceOverlay {
     .opacity(this.overlayOpacity)
     .scale({ x: this.overlayScale, y: this.overlayScale })
     .position({ x: this.overlayX, y: this.overlayY })
-    .hitTestBehavior(HitTestMode.Block)
+    // 锁定状态下透传触摸到下层串流视图，未锁定时拦截（用 overlayLocked 保证菜单解锁后立即刷新）
+    .hitTestBehavior(this.overlayLocked ? HitTestMode.Transparent : HitTestMode.Block)
     .focusable(false)  // 禁止获取控制器焦点，确保游戏能接收输入
     .onAreaChange((oldValue: Area, newValue: Area) => {
       const oldWidth = this.overlayWidth;
@@ -192,20 +202,33 @@ export struct PerformanceOverlay {
     .gesture(
       PanGesture({ fingers: 1, direction: PanDirection.All, distance: 5 })
         .onActionStart((event: GestureEvent) => {
-          if (this.viewModel.overlayState.config.isLocked) return;
+          if (this.overlayLocked) return;
           this.handleDragStart(event);
         })
         .onActionUpdate((event: GestureEvent) => {
-          if (this.viewModel.overlayState.config.isLocked) return;
+          if (this.overlayLocked) return;
           this.handleDragUpdate(event);
         })
         .onActionEnd((event: GestureEvent) => {
-          if (this.viewModel.overlayState.config.isLocked) return;
+          if (this.overlayLocked) return;
           this.handleDragEnd(event);
         })
     )
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          if (this.overlayLocked) return;
+          this.overlayLocked = true;
+          this.viewModel.overlayState.config.isLocked = true;
+          this.viewModel.overlayState.configVersion++;
+          PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, true);
+          try {
+            promptAction.showToast({ message: '已锁定，触摸将透传至游戏', duration: 1500 });
+          } catch (_) {}
+        })
+    )
     .onClick(() => {
-      if (this.viewModel.overlayState.config.isLocked) return;
+      if (this.overlayLocked) return;
       this.handleClick();
     })
   }
@@ -217,7 +240,7 @@ export struct PerformanceOverlay {
     // 分辨率行
     if (this.enabledItemsList.includes(PerformanceItem.RESOLUTION)) {
       Row() {
-        Text(getMoonPhaseIcon())
+        Text(this.overlayLocked ? '🔒' : getMoonPhaseIcon())
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
         Text(` ${this.viewModel.displayInfo.streamWidth}x${this.viewModel.displayInfo.streamHeight}@${this.viewModel.streamConfig?.fps || 60}`)
@@ -353,7 +376,7 @@ export struct PerformanceOverlay {
     Row() {
       // 分辨率
       if (this.enabledItemsList.includes(PerformanceItem.RESOLUTION)) {
-        Text(getMoonPhaseIcon())
+        Text(this.overlayLocked ? '🔒' : getMoonPhaseIcon())
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
         Text(` ${this.viewModel.displayInfo.streamWidth}x${this.viewModel.displayInfo.streamHeight}@${this.viewModel.streamConfig?.fps || 60}`)
@@ -693,7 +716,7 @@ export struct PerformanceOverlay {
 
     const config: OptionPickerDialogConfig = {
       title: '性能覆盖层',
-      subtitle: '单击设置显示/隐藏项目，拖动调整位置，双击切换布局',
+      subtitle: '单击设置显示/隐藏项目，拖动调整位置，双击切换布局，长按锁定事件穿透',
       options: this.buildSettingsOptions(),
       selectedValue: '',
       sliderConfig: sliderCfg,

@@ -88,7 +88,8 @@ export class PerformanceData {
   isCharging: boolean = false;
 }
 
-// 覆盖层配置类
+// 覆盖层配置类（@Observed 以便解锁后覆盖层图标等 UI 能响应更新）
+@Observed
 export class OverlayConfig {
   isVertical: boolean = true;          // 是否垂直布局
   isLocked: boolean = false;           // 是否锁定（不可拖动）

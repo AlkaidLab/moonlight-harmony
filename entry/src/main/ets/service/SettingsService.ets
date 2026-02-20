@@ -90,11 +90,10 @@ export class SettingsKeys {
   static readonly VIBRATE_OSC: string = 'settings_vibrate_osc';
 
   // 输入 - 鼠标/触控
-  static readonly ABSOLUTE_MOUSE_MODE: string = 'settings_absolute_mouse_mode';
+  static readonly SHOW_LOCAL_CURSOR: string = 'settings_show_local_cursor';
   static readonly TOUCHSCREEN_TRACKPAD: string = 'settings_touchscreen_trackpad';
   static readonly ENABLE_DOUBLE_CLICK_DRAG: string = 'settings_enable_double_click_drag';
   static readonly DOUBLE_TAP_TIME_THRESHOLD: string = 'settings_double_tap_time_threshold';
-  static readonly ENABLE_LOCAL_CURSOR: string = 'settings_enable_local_cursor';
   static readonly ANALOG_SCROLLING: string = 'settings_analog_scrolling';
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
   static readonly LAST_TOUCH_MODE: string = 'settings_last_touch_mode';  // 运行时触摸模式（菜单切换后持久化）
@@ -129,6 +128,7 @@ export class SettingsKeys {
   static readonly ENABLE_STUN: string = 'settings_enable_stun';
   static readonly ENABLE_ESC_MENU: string = 'settings_enable_esc_menu';
   static readonly ESC_MENU_KEY: string = 'settings_esc_menu_key';
+  static readonly ENABLE_BACKGROUND_TASK: string = 'settings_enable_background_task';  // 后台保活
 
   // UI 设置
   static readonly SMALL_ICON_MODE: string = 'settings_small_icon_mode';
@@ -182,11 +182,10 @@ export interface InputSettings {
   vibrateOsc: boolean;
 
   // 鼠标/触控
-  absoluteMouseMode: boolean;
+  showLocalCursor: boolean;
   touchscreenTrackpad: boolean;
   enableDoubleClickDrag: boolean;
   doubleTapTimeThreshold: number;
-  enableLocalCursor: boolean;
   analogScrolling: string;
   mouseNavButtons: boolean;
 
@@ -542,11 +541,10 @@ export class SettingsService {
     const flipFaceButtons = await this.getBoolean(SettingsKeys.FLIP_FACE_BUTTONS, false);
 
     // 获取鼠标/触控设置
-    const absoluteMouseMode = await this.getBoolean(SettingsKeys.ABSOLUTE_MOUSE_MODE, true);  // 默认启用绝对触摸模式
+    const showLocalCursor = await this.getBoolean(SettingsKeys.SHOW_LOCAL_CURSOR, false);  // 默认不显示本地光标
     const touchscreenTrackpad = await this.getBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false);
     const enableDoubleClickDrag = await this.getBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false);
     const doubleTapTimeThreshold = await this.getNumber(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125);
-    const enableLocalCursor = await this.getBoolean(SettingsKeys.ENABLE_LOCAL_CURSOR, false);
 
     // 获取增强触控设置
     const enableEnhancedTouch = await this.getBoolean(SettingsKeys.ENABLE_ENHANCED_TOUCH, true);
@@ -611,11 +609,10 @@ export class SettingsService {
       flipFaceButtons: flipFaceButtons,
 
       // 鼠标/触控设置
-      absoluteMouseMode: absoluteMouseMode,
+      showLocalCursor: showLocalCursor,
       touchscreenTrackpad: touchscreenTrackpad,
       enableDoubleClickDrag: enableDoubleClickDrag,
       doubleTapTimeThreshold: doubleTapTimeThreshold,
-      enableLocalCursor: enableLocalCursor,
 
       // 增强触控设置
       enableEnhancedTouch: enableEnhancedTouch,
@@ -690,11 +687,10 @@ export class SettingsService {
       vibrateOsc: await this.getBoolean(SettingsKeys.VIBRATE_OSC, true),
 
       // 鼠标/触控
-      absoluteMouseMode: await this.getBoolean(SettingsKeys.ABSOLUTE_MOUSE_MODE, true),  // 默认启用绝对触摸模式
+      showLocalCursor: await this.getBoolean(SettingsKeys.SHOW_LOCAL_CURSOR, false),
       touchscreenTrackpad: await this.getBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false),
       enableDoubleClickDrag: await this.getBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false),
       doubleTapTimeThreshold: await this.getNumber(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125),
-      enableLocalCursor: await this.getBoolean(SettingsKeys.ENABLE_LOCAL_CURSOR, false),
       analogScrolling: await this.getString(SettingsKeys.ANALOG_SCROLLING, '右摇杆'),
       mouseNavButtons: await this.getBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false),
 

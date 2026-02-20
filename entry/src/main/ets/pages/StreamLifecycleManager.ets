@@ -18,6 +18,8 @@ import { display, promptAction } from '@kit.ArkUI';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { StreamWindowManager } from '../service/StreamWindowManager';
 import { AppStateService, AppState } from '../service/AppStateService';
+import { BackgroundStreamService } from '../service/BackgroundStreamService';
+import { common } from '@kit.AbilityKit';
 
 /**
  * StreamPage 需要实现的回调接口
@@ -28,6 +30,8 @@ export interface LifecycleCallbacks {
   updateXComponentSize: (width: Length, height: Length) => void;
   /** 停止串流并返回菜单页 */
   stopStreaming: () => void;
+  /** 重连串流（无后台保活时从后台恢复） */
+  reconnectStreaming: () => void;
 }
 
 export class StreamLifecycleManager {
@@ -40,6 +44,8 @@ export class StreamLifecycleManager {
   private appStateService: AppStateService = AppStateService.getInstance();
   private appStateListener: ((state: AppState) => void) | null = null;
   private wasInBackground: boolean = false;
+  private backgroundService: BackgroundStreamService = BackgroundStreamService.getInstance();
+  private enableBackgroundTask: boolean = true;  // 后台保活开关
 
   // ── 屏幕方向变化监听相关 ──
   private displayChangeCallback: ((displayId: number) => void) | null = null;
@@ -63,6 +69,14 @@ export class StreamLifecycleManager {
    */
   setLatencyToastEnabled(enabled: boolean): void {
     this.latencyToastEnabled = enabled;
+  }
+
+  /**
+   * 设置是否启用后台保活
+   * 关闭后台保活时，从后台恢复会走重连路径而非 Flush+IDR
+   */
+  setEnableBackgroundTask(enabled: boolean): void {
+    this.enableBackgroundTask = enabled;
   }
 
   // ==================== 应用前后台状态 ====================
@@ -214,19 +228,57 @@ export class StreamLifecycleManager {
     }
   }
 
+  // ==================== 后台保活 (AVSession + 长时任务) ====================
+
+  /**
+   * 启动后台保活服务
+   * 在串流连接建立后调用，防止应用退到后台时被系统冻结
+   * @param context UIAbilityContext
+   * @param gameName 当前串流的游戏名称
+   */
+  async startBackgroundTask(context: common.UIAbilityContext, gameName?: string): Promise<void> {
+    try {
+      await this.backgroundService.start(context, gameName);
+      console.info('[StreamPage] 后台保活已启动');
+    } catch (err) {
+      console.warn('[StreamPage] 启动后台保活失败（不影响串流）:', err);
+    }
+  }
+
+  /**
+   * 停止后台保活服务
+   * 在串流结束时调用
+   */
+  async stopBackgroundTask(): Promise<void> {
+    try {
+      await this.backgroundService.stop();
+      console.info('[StreamPage] 后台保活已停止');
+    } catch (err) {
+      console.warn('[StreamPage] 停止后台保活失败:', err);
+    }
+  }
+
   // ==================== 应用恢复 ====================
 
   /**
    * 处理应用从后台恢复
    * 当应用从后台切回前台时，需要检查串流状态并尝试恢复
+   * - 后台保活开启：进程未被冻结，Flush+IDR 恢复解码器
+   * - 后台保活关闭：进程可能被系统冻结，连接可能已断，执行重连
    */
   private handleAppResume(): void {
-    console.info(`[StreamPage] 处理应用恢复, 连接状态: ${this.viewModel?.connectionState}`);
+    console.info(`[StreamPage] 处理应用恢复, 连接状态: ${this.viewModel?.connectionState}, 后台保活: ${this.enableBackgroundTask}`);
 
-    // 如果当前已连接，尝试恢复串流
-    if (this.viewModel?.isConnected) {
-      console.info('[StreamPage] 尝试恢复串流...');
-      this.viewModel.resumeFromBackground();
+    if (this.enableBackgroundTask) {
+      // 后台保活开启：进程一直在运行，只需恢复解码器
+      if (this.viewModel?.isConnected) {
+        console.info('[StreamPage] 后台保活开启，尝试恢复串流...');
+        this.viewModel.resumeFromBackground();
+      }
+    } else {
+      // 后台保活关闭：进程可能被冻结过，执行重连
+      console.info('[StreamPage] 后台保活关闭，触发重连...');
+      this.callbacks?.reconnectStreaming();
     }
   }
 

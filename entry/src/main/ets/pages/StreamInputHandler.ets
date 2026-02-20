@@ -14,10 +14,10 @@
  * 封装键盘、鼠标、滚轮、音量键、按键拦截器等所有输入处理逻辑，
  * 从 StreamPage 中解耦以降低单文件复杂度。
  */
-import { promptAction } from '@kit.ArkUI';
+import { display, promptAction } from '@kit.ArkUI';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { GamepadManager } from '../service/GamepadManager';
-import { AbsoluteMouseManager } from '../service/LocalCursorManager';
+
 import {
   MoonBridge,
   BUTTON_ACTION_PRESS,
@@ -35,7 +35,7 @@ import {
   MODIFIER_META
 } from '../service/MoonBridge';
 import { KeyboardTranslator } from '../service/KeyboardTranslator';
-import { InputInterceptorService } from '../service/InputInterceptorService';
+import { InputInterceptorService, MouseInterceptorService } from '../service/InputInterceptorService';
 
 export class StreamInputHandler {
   // ── 键盘修饰键状态追踪（位掩码：Shift=0x01, Ctrl=0x02, Alt=0x04, Meta=0x08）──
@@ -45,6 +45,9 @@ export class StreamInputHandler {
   private lastMouseX: number = -1;
   private lastMouseY: number = -1;
 
+  // ── 鼠标拦截器（绕过 ArkUI 帧率限制，全速鼠标轮询）──
+  private mouseInterceptorActive: boolean = false;
+
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
   private appVolume: number = 1.0;
   private preMuteVolume: number = 1.0;
@@ -53,7 +56,6 @@ export class StreamInputHandler {
   // ── 外部依赖 ──
   private viewModel: StreamViewModel | null = null;
   private gamepadManager: GamepadManager | null = null;
-  private absoluteMouseManager: AbsoluteMouseManager | null = null;
 
   /**
    * 初始化依赖项
@@ -64,48 +66,95 @@ export class StreamInputHandler {
   }
 
   /**
-   * 设置绝对鼠标管理器（串流开始后、绝对鼠标模式下调用）
-   */
-  setAbsoluteMouseManager(manager: AbsoluteMouseManager | null): void {
-    this.absoluteMouseManager = manager;
-  }
-
-  /**
    * 重置所有输入状态（串流停止时调用）
    */
   resetState(): void {
     this.modifierFlags = 0;
     this.lastMouseX = -1;
     this.lastMouseY = -1;
+    this.stopMouseInterceptor();
+  }
+
+  // ==================== 鼠标高速轮询 ====================
+
+  /**
+   * 启动鼠标高速轮询
+   *
+   * 优先尝试 C++ 层 OH_Input_AddMouseEventMonitor（需要 INPUT_MONITORING 权限），
+   * 以硬件轮询率直接调用 moonlight API。
+   *
+   * @param viewWidth 视图宽度 (vp)
+   * @param viewHeight 视图高度 (vp)
+   * @returns true 表示 C++ Monitor 已启动（不需要 keepalive），
+   *          false 表示 Monitor 不可用（调用方应启用 keepalive 动画来保持 ArkUI 帧率）
+   */
+  startMouseInterceptor(viewWidth: number, viewHeight: number): boolean {
+    const mouseInterceptor = MouseInterceptorService.getInstance();
+
+    let density = 1.0;
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      density = displayInfo.densityPixels;
+    } catch (_) {}
+
+    mouseInterceptor.configure(viewWidth, viewHeight, density);
+
+    const result = mouseInterceptor.start();
+    if (result === 0) {
+      this.mouseInterceptorActive = true;
+      console.info(`StreamInputHandler: C++ 鼠标 Monitor 已启动 (${viewWidth}x${viewHeight}, density=${density})`);
+      return true;
+    }
+
+    this.mouseInterceptorActive = false;
+    console.info(`StreamInputHandler: C++ Monitor 不可用 (${result})，将使用 keepalive 动画保持 .onMouse 全速`);
+    return false;
+  }
+
+  /**
+   * 停止鼠标高速轮询
+   */
+  stopMouseInterceptor(): void {
+    if (!this.mouseInterceptorActive) return;
+    MouseInterceptorService.getInstance().stop();
+    this.mouseInterceptorActive = false;
+    this.lastMouseX = -1;
+    this.lastMouseY = -1;
+  }
+
+  /**
+   * 查询 C++ Monitor 是否激活
+   */
+  isMouseInterceptorActive(): boolean {
+    return this.mouseInterceptorActive;
   }
 
   // ==================== 鼠标输入 ====================
 
   /**
    * 处理物理鼠标事件（挂载在 XComponent 上以获取原生 Surface 级事件频率）
+   * 当鼠标拦截器启用时，鼠标事件由 C++ 层直接处理，此方法不再执行。
    */
   handleMouseEvent(event: MouseEvent): void {
     if (!this.viewModel?.isConnected) return;
 
+    // 阻止事件继续传递，避免触发系统默认行为（无论 Monitor 是否启用都要调用）
+    event.stopPropagation();
+
+    // Monitor 启用时鼠标事件已由 C++ 层直接处理，跳过 ArkTS 处理避免重复
+    if (this.mouseInterceptorActive) return;
+
     if (event.action === MouseAction.Move) {
-      // 鼠标移动
-      if (this.absoluteMouseManager) {
-        // 绝对模式：直接发送坐标
-        this.absoluteMouseManager.handleMouseEvent(event.x, event.y);
-      } else {
-        // 相对模式：计算 delta 并发送
-        if (this.lastMouseX >= 0 && this.lastMouseY >= 0) {
-          const deltaX = Math.round(event.x - this.lastMouseX);
-          const deltaY = Math.round(event.y - this.lastMouseY);
-          if (deltaX !== 0 || deltaY !== 0) {
-            MoonBridge.sendMouseMove(deltaX, deltaY);
-          }
+      if (this.lastMouseX >= 0 && this.lastMouseY >= 0) {
+        const deltaX = Math.round(event.x - this.lastMouseX);
+        const deltaY = Math.round(event.y - this.lastMouseY);
+        if (deltaX !== 0 || deltaY !== 0) {
+          MoonBridge.sendMouseMove(deltaX, deltaY);
         }
-        this.lastMouseX = event.x;
-        this.lastMouseY = event.y;
       }
+      this.lastMouseX = event.x;
+      this.lastMouseY = event.y;
     } else if (event.action === MouseAction.Press || event.action === MouseAction.Release) {
-      // 鼠标按键按下/释放
       const button = this.mapMouseButton(event.button);
       if (button > 0) {
         const action = event.action === MouseAction.Press
@@ -113,9 +162,6 @@ export class StreamInputHandler {
         MoonBridge.sendMouseButton(action, button);
       }
     }
-
-    // 阻止事件继续传递，避免触发系统默认行为
-    event.stopPropagation();
   }
 
   // ==================== 滚轮输入 ====================

@@ -51,11 +51,10 @@ export interface StreamConfig {
   flipFaceButtons: boolean;
 
   // 鼠标/触控设置
-  absoluteMouseMode: boolean;
+  showLocalCursor: boolean;
   touchscreenTrackpad: boolean;
   enableDoubleClickDrag: boolean;
   doubleTapTimeThreshold: number;
-  enableLocalCursor: boolean;
 
   // 增强触控设置
   enableEnhancedTouch: boolean;
@@ -218,11 +217,10 @@ export function getDefaultStreamConfig(): StreamConfig {
     flipFaceButtons: false,
 
     // 鼠标/触控设置
-    absoluteMouseMode: false,
+    showLocalCursor: false,
     touchscreenTrackpad: false,
     enableDoubleClickDrag: false,
     doubleTapTimeThreshold: 125,
-    enableLocalCursor: false,
 
     // 增强触控设置
     enableEnhancedTouch: true,

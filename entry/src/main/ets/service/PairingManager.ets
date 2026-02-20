@@ -45,10 +45,10 @@ export interface PairResult {
  */
 export class PairingManager {
   private baseUrl: string;
-  private httpsUrl: string;
   private address: string;
   private uniqueId: string;
   private clientName: string;
+  private formattedHost: string;
 
   // 客户端密钥对和证书
   private keyPair: cryptoFramework.KeyPair | null = null;
@@ -76,12 +76,10 @@ export class PairingManager {
     const parsedPort = this.parseAddressPort(address);
     this.address = parsedHost;
     const port = httpPort || parsedPort || PairingManager.DEFAULT_HTTP_PORT;
-    // HTTPS 端口 = HTTP 端口 - 5 (47989 -> 47984)
-    const httpsPort = port - 5;
     // IPv6 地址在 URL 中需要方括号包裹，否则冒号会与端口分隔符冲突
     const formattedHost = this.formatAddressForUrl(this.address);
+    this.formattedHost = formattedHost;
     this.baseUrl = `http://${formattedHost}:${port}`;
-    this.httpsUrl = `https://${formattedHost}:${httpsPort}`;
     this.uniqueId = uniqueId;
     this.clientName = this.getClientName();
     if (context) {
@@ -400,11 +398,22 @@ export class PairingManager {
   /**
    * 获取服务器主版本号
    * 通过 /serverinfo 接口获取 appversion 字段
+   * 同时缓存 HTTPS 端口用于后续 pairchallenge 步骤
    */
+  private serverInfoCache: string | null = null;
+
+  private async fetchServerInfo(): Promise<string> {
+    if (this.serverInfoCache) {
+      return this.serverInfoCache;
+    }
+    const url = `${this.baseUrl}/serverinfo?uniqueid=${this.uniqueId}`;
+    this.serverInfoCache = await this.doRequest(url, 10000);
+    return this.serverInfoCache;
+  }
+
   private async fetchServerMajorVersion(): Promise<number> {
     try {
-      const url = `${this.baseUrl}/serverinfo?uniqueid=${this.uniqueId}`;
-      const response = await this.doRequest(url, 10000);
+      const response = await this.fetchServerInfo();
       const appVersion = XmlUtil.getValue(response, 'appversion');
       if (appVersion) {
         const parts = appVersion.split('.');
@@ -420,6 +429,30 @@ export class PairingManager {
       console.warn(`PairingManager: 获取服务器版本失败: ${err}, 使用默认值 7`);
     }
     return 7;
+  }
+
+  /**
+   * 获取 HTTPS URL（匹配 Android getHttpsUrl 行为）
+   * 优先使用 serverinfo 返回的 HttpsPort，兜底用 httpPort - 5
+   */
+  private async getHttpsUrl(): Promise<string> {
+    try {
+      const response = await this.fetchServerInfo();
+      const httpsPortStr = XmlUtil.getValue(response, 'HttpsPort');
+      if (httpsPortStr) {
+        const httpsPort = parseInt(httpsPortStr);
+        if (httpsPort > 0) {
+          console.info(`PairingManager: 从 serverinfo 获取 HTTPS 端口: ${httpsPort}`);
+          return `https://${this.formattedHost}:${httpsPort}`;
+        }
+      }
+    } catch (err) {
+      console.warn(`PairingManager: 获取 HTTPS 端口失败: ${err}`);
+    }
+    // 兜底：httpPort - 5
+    const fallbackPort = PairingManager.DEFAULT_HTTPS_PORT;
+    console.info(`PairingManager: 使用默认 HTTPS 端口: ${fallbackPort}`);
+    return `https://${this.formattedHost}:${fallbackPort}`;
   }
 
   /**
@@ -587,8 +620,9 @@ export class PairingManager {
       // ============ 步骤 5: 执行配对挑战（完成配对） ============
       console.info('PairingManager: 步骤5 - 完成配对');
 
-      // 使用 HTTPS 端口 47984 发送 pairchallenge（需要客户端证书）
-      const step5Url = `${this.httpsUrl}/pair?` +
+      // 动态获取 HTTPS URL（匹配 Android executePairingChallenge → getHttpsUrl 行为）
+      const httpsUrl = await this.getHttpsUrl();
+      const step5Url = `${httpsUrl}/pair?` +
         `uniqueid=${this.uniqueId}&devicename=roth&updateState=1&phrase=pairchallenge`;
 
       // 步骤5 需要使用客户端证书进行 HTTPS 请求

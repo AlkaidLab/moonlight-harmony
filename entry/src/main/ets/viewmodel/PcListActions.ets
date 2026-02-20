@@ -17,7 +17,7 @@ import { promptAction } from '@kit.ArkUI';
 import { common, bundleManager, Want } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { ObservableComputer } from '../viewmodel/ComputerViewModel';
+import { ObservableComputer } from './ComputerViewModel';
 import { ComputerManager } from '../service/ComputerManager';
 import { PairingManager, PairState as PMPairState } from '../service/PairingManager';
 import { NvHttp } from '../service/NvHttp';

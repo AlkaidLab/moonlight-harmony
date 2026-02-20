@@ -104,6 +104,10 @@ export class GamepadManager implements UsbDriverListener {
   private gcDpadAxisActive = new Set<string>();
   /** 传统模式中已通过 ABS_HAT0X/Y 轴提供D-pad数据的设备集合 */
   private dpadAxisActive = new Set<number>();
+
+  /** GCK 轴事件合并：Android 一次 MotionEvent 含所有轴只发 1 包，我们按轴类型多次回调会发 N 包，此处合并为每 tick 每 slot 只通知一次 */
+  private gcAxisFlushPending = new Set<number>();
+  private gcAxisFlushTimerId: number = -1;
   
   // ==================== 长按 Start → 返回菜单 ====================
   /** Start 按键按下的时间戳 (ms)，0 表示未按下 */
@@ -625,6 +629,11 @@ export class GamepadManager implements UsbDriverListener {
     
     // 扫描已连接的设备（可能在监听暂停期间已经连接）
     this.rescanGCKitDevices();
+    // 键鼠场景：若无手柄则暂停 Monitor，避免系统层以约 30Hz 占用/干扰鼠标轮询
+    if (this.gcDeviceIdToSlot.size === 0) {
+      gameControllerService.stopMonitor();
+      console.info('[GAMEPAD] 初始扫描无手柄，暂停 GCK Monitor（键鼠场景保持高鼠标轮询率）');
+    }
   }
   
   /**
@@ -655,6 +664,12 @@ export class GamepadManager implements UsbDriverListener {
         this.handleDeviceAdded(data.deviceId);
         // 同时刷新 USB 设备，因为新的 USB 手柄插入也会触发此事件
         this.usbDriverService.refreshDevices();
+        // 键鼠场景下曾暂停 GCK Monitor；新设备加入时尝试恢复并同步 GCK 设备列表
+        if (this.useGameControllerKit && this.gcDeviceIdToSlot.size === 0) {
+          gameControllerService.refreshDeviceCache();
+          gameControllerService.startMonitor();
+          this.rescanGCKitDevices();
+        }
       } else if (data.type === 'remove') {
         this.handleDeviceRemoved(data.deviceId);
         // 检查 USB 控制器是否需要清理
@@ -1018,6 +1033,9 @@ export class GamepadManager implements UsbDriverListener {
         }
       }
 
+      // 无手柄时曾暂停 Monitor，现从 0→1 需恢复（键鼠场景下避免 GCK 干扰鼠标轮询）
+      const hadNoGcDevices = this.gcDeviceIdToSlot.size === 0;
+
       // 分配槽位
       const slot = this.allocateSlotForGCDevice(deviceId);
       if (slot < 0) {
@@ -1038,6 +1056,11 @@ export class GamepadManager implements UsbDriverListener {
         const ctrlType = MoonlightControllerType.fromDeviceName(info?.name || '');
         console.info(`[GAMEPAD-GC] 通知手柄连接: slot=${slot}, name=${info?.name || `Controller ${slot}`}, type=${ctrlType}`);
         this.listener.onGamepadConnected(slot, info?.name || `Controller ${slot}`, ctrlType);
+      }
+
+      if (hadNoGcDevices) {
+        gameControllerService.startMonitor();
+        console.info('[GAMEPAD] 检测到手柄连接，恢复 GCK Monitor');
       }
     } else {
       // 获取槽位（在清理之前）
@@ -1083,6 +1106,12 @@ export class GamepadManager implements UsbDriverListener {
       // 通知监听器
       if (this.listener) {
         this.listener.onGamepadDisconnected(slot);
+      }
+
+      // 无手柄时暂停 GCK Monitor，减轻键鼠场景下对鼠标轮询的干扰（避免返回菜单后约 1～2 秒鼠标掉回 30Hz）
+      if (this.gcDeviceIdToSlot.size === 0) {
+        gameControllerService.stopMonitor();
+        console.info('[GAMEPAD] 无手柄连接，暂停 GCK Monitor（键鼠场景保持高鼠标轮询率）');
       }
     }
   }
@@ -1159,7 +1188,36 @@ export class GamepadManager implements UsbDriverListener {
     }
     
     const slot = this.getSlotForGCDevice(deviceId);
-    this.notifyGCStateChange(slot, state);
+    this.gcAxisFlushPending.add(slot);
+    this.scheduleGCAxisFlush();
+  }
+
+  /** 调度一次轴状态合并发送（同一 event loop tick 内多次轴回调只发 1 次，与 Android 一次 MotionEvent 一发一致） */
+  private scheduleGCAxisFlush(): void {
+    if (this.gcAxisFlushTimerId !== -1) {
+      return;
+    }
+    this.gcAxisFlushTimerId = setTimeout(() => {
+      this.gcAxisFlushTimerId = -1;
+      this.flushGCAxisPending();
+    }, 0);
+  }
+
+  private flushGCAxisPending(): void {
+    if (this.gcAxisFlushPending.size === 0 || !this.listener) {
+      this.gcAxisFlushPending.clear();
+      return;
+    }
+    this.gcDeviceIdToSlot.forEach((slot: number, deviceId: string) => {
+      if (!this.gcAxisFlushPending.has(slot)) {
+        return;
+      }
+      const state = this.gcDeviceStates.get(deviceId);
+      if (state) {
+        this.notifyGCStateChange(slot, state);
+      }
+    });
+    this.gcAxisFlushPending.clear();
   }
   
   /**
@@ -1454,6 +1512,12 @@ export class GamepadManager implements UsbDriverListener {
     this.mouseEmulationService.cleanup();
     this.vibrationService.stopAll();
 
+    if (this.gcAxisFlushTimerId !== -1) {
+      clearTimeout(this.gcAxisFlushTimerId);
+      this.gcAxisFlushTimerId = -1;
+    }
+    this.gcAxisFlushPending.clear();
+
     // 重置槽位管理状态
     this.slotOccupied = [false, false, false, false];
     this.deviceKeyToSlot.clear();
@@ -1495,6 +1559,12 @@ export class GamepadManager implements UsbDriverListener {
     // 停止鼠标模拟 & 震动
     this.mouseEmulationService.cleanup();
     this.vibrationService.stopAll();
+
+    if (this.gcAxisFlushTimerId !== -1) {
+      clearTimeout(this.gcAxisFlushTimerId);
+      this.gcAxisFlushTimerId = -1;
+    }
+    this.gcAxisFlushPending.clear();
 
     // 清理 Game Controller Kit
     if (this.useGameControllerKit) {

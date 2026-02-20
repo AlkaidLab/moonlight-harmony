@@ -16,6 +16,7 @@
 import { router, promptAction } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
+import { displaySync } from '@kit.ArkGraphics2D';
 import { VirtualControllerV2, VirtualControllerConfig } from '../components/VirtualControllerV2';
 import { PerformanceOverlay } from '../components/PerformanceOverlay';
 import { OptionPickerDialog, OptionPickerDialogConfig } from '../components/OptionPickerDialog';
@@ -30,7 +31,6 @@ import { GamepadManager, GamepadInputListener, GamepadState, MoonlightController
 import { GyroAssistService } from '../service/GyroAssistService';
 import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../service/MoonBridge';
 import { SuperCmd } from '../service/NvHttp';
-import { AbsoluteMouseManager } from '../service/LocalCursorManager';
 import { VirtualKey } from '../components/StreamMenuManager';
 import { pointer } from '@kit.InputKit';
 import { InputInterceptorService } from '../service/InputInterceptorService';
@@ -80,8 +80,10 @@ struct StreamPage {
   @State showKeyboardPanel: boolean = false;  // 系统键盘输入面板
   @State keyboardHeight: number = 0;  // IME 键盘高度 (vp)
   
-  // 绝对鼠标管理器
-  private absoluteMouseManager: AbsoluteMouseManager | null = null;
+  // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
+  // 使用 DisplaySync 直接向系统合成器请求高刷新率，
+  // 解决无触摸时 ArkUI .onMouse 降至 ~30Hz 的问题
+  private mouseDisplaySync: displaySync.DisplaySync | null = null;
   
   // ── 解耦的处理器/管理器 ──
   private inputHandler: StreamInputHandler = new StreamInputHandler();
@@ -111,15 +113,18 @@ struct StreamPage {
   // 页面参数
   private computerId: string = '';
   private appId: number = 0;
+  private appName: string = '';
   private displayGuid: string = '';
   private useVdd: boolean = false;
   private cmdList: SuperCmd[] = [];  // 超级指令列表
+  private enableBackgroundTask: boolean = true;  // 后台保活开关
   
   aboutToAppear(): void {
     const params = router.getParams() as StreamPageParams;
     if (params) {
       this.computerId = params.computerId;
       this.appId = params.appId;
+      this.appName = params.appName || '';
       this.displayGuid = params.displayGuid || '';
       this.useVdd = params.useVdd || false;
       // 解析超级指令列表
@@ -173,6 +178,9 @@ struct StreamPage {
       },
       stopStreaming: () => {
         this.stopStreaming();
+      },
+      reconnectStreaming: () => {
+        this.reconnectStreaming();
       }
     });
     
@@ -338,6 +346,9 @@ struct StreamPage {
     // 取消生命周期监听
     this.lifecycleManager.unregisterAppStateListener();
     this.lifecycleManager.unregisterDisplayChangeListener();
+
+    // 停止后台保活（安全兜底）
+    this.lifecycleManager.stopBackgroundTask();
     
     // 清理 ViewModel
     this.viewModel.dispose();
@@ -345,8 +356,10 @@ struct StreamPage {
     // 清理触摸处理器
     this.touchInputHandler.dispose();
     
-    // 停止按键拦截器
+    // 停止按键拦截器、鼠标 Monitor 和 DisplaySync
     InputInterceptorService.getInstance().stop();
+    this.inputHandler.stopMouseInterceptor();
+    this.stopMouseKeepAlive();
 
     // 停止体感助手
     GyroAssistService.getInstance().dispose();
@@ -396,6 +409,10 @@ struct StreamPage {
    */
   showStreamMenu(): void {
     if (!this.menuManager) return;
+
+    // 暂停鼠标全速轮询（Monitor 暂停 + DisplaySync 停止）
+    this.inputHandler.stopMouseInterceptor();
+    this.stopMouseKeepAlive();
     
     this.optionPickerDialogConfig = this.menuManager.getStreamMenuConfig();
     // 使用新的游戏菜单对话框
@@ -408,7 +425,10 @@ struct StreamPage {
         isMouseEmulationActive: this.gamepadManager.isMouseEmulationActive(),
         hasConnectedGamepad: this.gamepadManager.getConnectedGamepads().length > 0,
         callbacks: {
-          onDismiss: () => {},
+          onDismiss: () => {
+            // 对话框关闭后恢复鼠标拦截器
+            this.resumeMouseInterceptor();
+          },
           onDisconnect: () => {
             this.stopStreaming();
           },
@@ -419,7 +439,7 @@ struct StreamPage {
             this.setTouchMode(mode);
           },
           onOpenShortcutEditor: () => {
-            // 关闭游戏菜单后打开快捷键编辑器
+            // 关闭游戏菜单后打开快捷键编辑器（拦截器在快捷键编辑器关闭后恢复）
             this.gameMenuDialogController?.close();
             setTimeout(() => {
               this.showShortcutEditor();
@@ -458,6 +478,14 @@ struct StreamPage {
           },
           onClose: () => {
             this.gameMenuDialogController?.close();
+          },
+          onUnlockOverlay: () => {
+            this.viewModel.overlayState.config.isLocked = false;
+            this.viewModel.overlayState.configVersion++;
+            AppStorage.setOrCreate('perf_overlay_locked', false);
+            PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, false);
+            promptAction.showToast({ message: '已解锁覆盖层', duration: 1500 });
+            this.gameMenuDialogController?.close();
           }
         }
       }),
@@ -469,6 +497,57 @@ struct StreamPage {
   }
   
   /**
+   * 恢复鼠标全速轮询（对话框关闭后调用）
+   */
+  private resumeMouseInterceptor(): void {
+    if (!this.viewModel.isConnected) return;
+    const monitorOk = this.inputHandler.startMouseInterceptor(
+      this.viewModel.displayInfo.screenWidth,
+      this.viewModel.displayInfo.screenHeight
+    );
+    if (!monitorOk) {
+      this.startMouseKeepAlive();
+    }
+  }
+
+  /**
+   * 启动鼠标高帧率保持
+   *
+   * 使用 DisplaySync 直接向系统合成器请求 120Hz 刷新率，
+   * 保持 ArkUI 渲染循环高帧率，使 .onMouse 以屏幕刷新率投递。
+   * 仅在 C++ Mouse Monitor 不可用时使用。
+   */
+  private startMouseKeepAlive(): void {
+    if (this.mouseDisplaySync) return;
+    try {
+      this.mouseDisplaySync = displaySync.create();
+      this.mouseDisplaySync.setExpectedFrameRateRange({
+        min: 60,
+        max: 120,
+        expected: 120,
+      });
+      this.mouseDisplaySync.start();
+      console.info('StreamPage: DisplaySync 已启动（请求 60-120Hz 高刷新率）');
+    } catch (e) {
+      console.warn('StreamPage: DisplaySync 创建失败:', JSON.stringify(e));
+      this.mouseDisplaySync = null;
+    }
+  }
+
+  /**
+   * 停止鼠标高帧率保持
+   */
+  private stopMouseKeepAlive(): void {
+    if (this.mouseDisplaySync) {
+      try {
+        this.mouseDisplaySync.stop();
+      } catch (_) {}
+      this.mouseDisplaySync = null;
+      console.info('StreamPage: DisplaySync 已停止');
+    }
+  }
+
+  /**
    * 显示快捷键编辑器
    * @param editingShortcut 如果传入，则为编辑模式
    */
@@ -479,7 +558,6 @@ struct StreamPage {
         callbacks: {
           onSave: async (data: ShortcutEditData) => {
             if (editingShortcut) {
-              // 编辑模式
               await this.shortcutManager.updateShortcut(
                 editingShortcut.id,
                 data.name,
@@ -490,12 +568,14 @@ struct StreamPage {
               );
               promptAction.showToast({ message: `快捷键 "${data.name}" 已更新` });
             } else {
-              // 添加模式
               await this.shortcutManager.addShortcut(data.name, data.keys, data.icon, data.color, data.keySequence);
               promptAction.showToast({ message: `快捷键 "${data.name}" 已添加` });
             }
+            this.resumeMouseInterceptor();
           },
-          onCancel: () => {}
+          onCancel: () => {
+            this.resumeMouseInterceptor();
+          }
         }
       }),
       alignment: DialogAlignment.Center,
@@ -530,6 +610,8 @@ struct StreamPage {
       this.lifecycleManager.setLatencyToastEnabled(
         await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false)
       );
+      this.enableBackgroundTask = await PreferencesUtil.get<boolean>(SettingsKeys.ENABLE_BACKGROUND_TASK, true);
+      this.lifecycleManager.setEnableBackgroundTask(this.enableBackgroundTask);
       await this.gamepadManager.reloadSettings();
       
       // 设置串流分辨率
@@ -565,9 +647,6 @@ struct StreamPage {
       const touchModeStr = this.viewModel.touchMode as string;
       this.touchInputHandler.setMode(touchModeStr as TouchInputMode);
       
-      // 初始化绝对鼠标模式
-      this.initializeAbsoluteMouseMode();
-      
       // 设置连接终止回调
       this.viewModel.setConnectionTerminatedCallback((errorCode: number) => {
         this.lifecycleManager.handleConnectionTerminated(errorCode);
@@ -582,30 +661,40 @@ struct StreamPage {
       const surfaceId = this.xComponentController.getXComponentSurfaceId();
       await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
 
+      // 启动后台保活（AVSession + 长时任务），防止退到后台时进程被冻结
+      if (this.enableBackgroundTask) {
+        await this.lifecycleManager.startBackgroundTask(this.context, this.appName || undefined);
+      }
+
       // 启动按键拦截器（拦截被系统劫持的手柄按键，如蓝牙手柄 Home 键）
       if (this.viewModel.inputSettings?.enableKeyInterceptor) {
         this.inputHandler.startKeyInterceptor();
       }
 
+      // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底
+      const monitorOk = this.inputHandler.startMouseInterceptor(
+        this.viewModel.displayInfo.screenWidth,
+        this.viewModel.displayInfo.screenHeight
+      );
+      if (!monitorOk) {
+        this.startMouseKeepAlive();
+      }
+
       // 初始化体感助手
       this.initializeGyroAssist();
 
-      // 隐藏本地系统鼠标光标（串流时由远端/本地光标管理器接管）
-      try {
-        pointer.setPointerVisibleSync(false);
-        console.info('StreamPage: 已隐藏本地系统鼠标光标');
-      } catch (e) {
-        console.warn('StreamPage: 隐藏鼠标光标失败:', JSON.stringify(e));
-      }
-
-      // 绝对鼠标模式下自动隐藏远端光标
-      // 发送 Ctrl+Alt+Shift+N 切换 Sunshine display_cursor
-      if (this.viewModel.absoluteMouseMode) {
-        setTimeout(() => {
-          const session = this.viewModel.getSession();
-          session?.sendKeys([VirtualKey.VK_CONTROL, VirtualKey.VK_MENU, VirtualKey.VK_SHIFT, VirtualKey.VK_N]);
-          console.info('StreamPage: 绝对鼠标模式 - 已发送隐藏远端光标指令');
-        }, 500); // 延迟 500ms 确保连接稳定
+      // 本地光标显示控制
+      // showLocalCursor=true 时保持本地系统光标可见（双光标模式，需配合绝对鼠标模式使用）
+      // showLocalCursor=false 时隐藏本地系统光标，仅显示远端视频流中的光标
+      if (!this.viewModel.showLocalCursor) {
+        try {
+          pointer.setPointerVisibleSync(false);
+          console.info('StreamPage: 已隐藏本地系统鼠标光标');
+        } catch (e) {
+          console.warn('StreamPage: 隐藏鼠标光标失败:', JSON.stringify(e));
+        }
+      } else {
+        console.info('StreamPage: 本地光标模式已启用，保持系统光标可见');
       }
       
     } catch (err) {
@@ -617,8 +706,12 @@ struct StreamPage {
     // 显示延迟统计 toast（在停止串流之前获取数据）
     this.lifecycleManager.showLatencyToastIfEnabled();
 
-    // 重置输入状态
+    // 停止后台保活
+    await this.lifecycleManager.stopBackgroundTask();
+
+    // 重置输入状态并停止 DisplaySync
     this.inputHandler.resetState();
+    this.stopMouseKeepAlive();
 
     // 恢复系统鼠标光标显示
     try {
@@ -641,6 +734,9 @@ struct StreamPage {
   async quitGameAndReturn(): Promise<void> {
     // 显示延迟统计 toast（在退出前获取数据）
     this.lifecycleManager.showLatencyToastIfEnabled();
+
+    // 停止后台保活
+    await this.lifecycleManager.stopBackgroundTask();
     
     // 先恢复窗口设置并返回菜单（立即响应）
     await this.windowManager?.restoreWindow();
@@ -650,6 +746,29 @@ struct StreamPage {
     this.viewModel.quitGame().then(()=> {
     }).catch((err: Error) => {
     });
+  }
+
+  /**
+   * 重连串流（后台保活关闭时从后台恢复使用）
+   * 静默停止当前会话，然后重新启动串流，不导航离开页面
+   */
+  async reconnectStreaming(): Promise<void> {
+    console.info('[StreamPage] 开始重连串流...');
+    try {
+      // 先停止当前会话（静默，不导航不显示 toast）
+      await this.viewModel.stopStreaming();
+      console.info('[StreamPage] 旧会话已停止，开始重新连接...');
+
+      // 用相同参数重新启动串流
+      const surfaceId = this.xComponentController.getXComponentSurfaceId();
+      await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+      console.info('[StreamPage] 重连串流成功');
+
+      promptAction.showToast({ message: '已重新连接' });
+    } catch (err) {
+      console.error('[StreamPage] 重连串流失败:', err);
+      promptAction.showToast({ message: '重连失败，请手动重试' });
+    }
   }
   
   /**
@@ -715,31 +834,6 @@ struct StreamPage {
       return;
     }
     this.touchInputHandler.handleTouchEvent(event);
-  }
-
-  /**
-   * 初始化绝对鼠标模式
-   */
-  private initializeAbsoluteMouseMode(): void {
-    const absoluteMouseMode = this.viewModel.absoluteMouseMode;
-    
-    if (absoluteMouseMode) {
-      // 初始化绝对鼠标管理器
-      this.absoluteMouseManager = AbsoluteMouseManager.getInstance();
-      
-      const viewWidth = this.viewModel.displayInfo.screenWidth;
-      const viewHeight = this.viewModel.displayInfo.screenHeight;
-      
-      this.absoluteMouseManager.initialize(MoonBridge, viewWidth, viewHeight);
-      this.absoluteMouseManager.setAbsoluteMouseMode(true);
-      
-      // 同步到 TouchInputHandler 和 InputHandler
-      this.touchInputHandler.setAbsoluteMouseMode(true);
-      this.touchInputHandler.updateViewSize(viewWidth, viewHeight);
-      this.inputHandler.setAbsoluteMouseManager(this.absoluteMouseManager);
-      
-      console.info(`StreamPage: 绝对鼠标模式已初始化 ${viewWidth}x${viewHeight}`);
-    }
   }
 
   /**
@@ -860,6 +954,8 @@ struct StreamPage {
       if (this.showKeyboardPanel) {
         this.KeyboardInputPanel()
       }
+
+
     }
     .width('100%')
     .height('100%')

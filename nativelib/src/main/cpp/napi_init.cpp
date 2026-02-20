@@ -23,6 +23,7 @@
 #include "gamepad_napi.h"
 #include "game_controller_native.h"
 #include "input_interceptor.h"
+#include "mouse_interceptor.h"
 #include "usb_helper.h"
 // SDL3 库尚未移植到 HarmonyOS，暂时禁用
 // #include "sdl3/sdl3_gamepad_napi.h"
@@ -142,6 +143,9 @@ static napi_value Init(napi_env env, napi_value exports) {
     
     // 初始化输入拦截器 NAPI (拦截被系统劫持的手柄按键)
     InputInterceptor_Init(env, exports);
+    
+    // 初始化鼠标拦截器 NAPI (绕过 ArkUI 帧率限制，全速鼠标轮询)
+    MouseInterceptor_Init(env, exports);
     
     // 初始化 USB Helper NAPI (内核 HID 驱动重绑定)
     UsbHelper_Init(env, exports);

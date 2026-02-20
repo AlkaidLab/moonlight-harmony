@@ -83,6 +83,8 @@ export class DisplayInfo {
 @Observed
 export class OverlayState {
   config: OverlayConfig = getDefaultOverlayConfig();
+  /** 锁定/解锁时递增，用于驱动 @ObjectLink 的覆盖层重绘（透传与图标） */
+  configVersion: number = 0;
   x: number = 0;
   y: number = 8;
   opacity: number = 1.0;
@@ -119,8 +121,8 @@ export class StreamViewModel {
   // 覆盖层状态
   overlayState: OverlayState = new OverlayState();
   
-  // 绝对鼠标模式（适合远程桌面）
-  absoluteMouseMode: boolean = false;
+  // 显示本地光标（双光标模式：本地即时响应 + 远端视频流中也可见）
+  showLocalCursor: boolean = false;
   
   // 配置
   streamConfig: StreamConfig | null = null;
@@ -212,8 +214,8 @@ export class StreamViewModel {
     this.displayInfo.streamWidth = this.streamConfig.width;
     this.displayInfo.streamHeight = this.streamConfig.height;
     
-    // 加载绝对鼠标模式设置
-    this.absoluteMouseMode = this.inputSettings.absoluteMouseMode ?? false;
+    // 加载光标显示设置
+    this.showLocalCursor = this.inputSettings.showLocalCursor ?? false;
     
     // 确定触摸模式
     // 优先使用用户在菜单中选择过的模式（持久化在 LAST_TOUCH_MODE）
@@ -228,7 +230,7 @@ export class StreamViewModel {
     }
     
     console.info(`StreamViewModel: 配置加载完成 - ${this.streamConfig.width}x${this.streamConfig.height}@${this.streamConfig.fps}fps`);
-    console.info(`StreamViewModel: 触摸模式=${this.touchMode}, 绝对鼠标=${this.absoluteMouseMode}`);
+    console.info(`StreamViewModel: 触摸模式=${this.touchMode}`);
     console.info(`StreamViewModel: 性能覆盖层=${this.showOverlay}, 虚拟控制器=${this.showController}`);
     
     // 配置震动设置

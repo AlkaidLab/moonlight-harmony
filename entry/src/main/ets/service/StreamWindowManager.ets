@@ -91,6 +91,12 @@ export class StreamWindowManager {
       win.setWindowKeepScreenOn(true);
       // 隐藏状态栏和导航栏
       win.setWindowSystemBarEnable([]);
+      // 隐藏窗口装饰栏（2in1/平板最大化时的标题栏）
+      try {
+        win.setWindowDecorVisible(false);
+      } catch (decorErr) {
+        console.warn('StreamWindowManager: setWindowDecorVisible 不可用（非 2in1 设备或 API 不支持）:', decorErr);
+      }
       console.info('StreamWindowManager: 已配置窗口基本设置');
     } catch (err) {
       console.error('配置窗口失败:', err);
@@ -161,6 +167,12 @@ export class StreamWindowManager {
       win.setWindowKeepScreenOn(false);
       // 恢复系统栏
       win.setWindowSystemBarEnable(['status', 'navigation']);
+      // 恢复窗口装饰栏
+      try {
+        win.setWindowDecorVisible(true);
+      } catch (decorErr) {
+        console.warn('StreamWindowManager: restoreWindow - setWindowDecorVisible 不可用:', decorErr);
+      }
       // 恢复自动旋转
       await win.setPreferredOrientation(window.Orientation.UNSPECIFIED);
       // 恢复屏幕亮度为系统默认

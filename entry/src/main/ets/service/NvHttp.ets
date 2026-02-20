@@ -292,23 +292,39 @@ export class NvHttp {
   }
 
   /**
-   * 获取 HTTPS 基础 URL
+   * 获取 HTTPS 基础 URL（懒加载模式，匹配 Android 的 getHttpsUrl 行为）
+   * 当 httpsPort 未知时，自动通过 HTTP 调用 serverinfo 获取真实 HTTPS 端口
    * 端口优先级：
-   * 1. 服务器返回的 httpsPort（serverInfo 中获取）
-   * 2. 根据 httpPort 计算的端口（httpPort - 5）
-   * 3. 默认端口 47984
+   * 1. 已缓存的 httpsPort（来自 serverInfo 或自动解析）
+   * 2. 自动通过 HTTP serverinfo 获取（懒加载）
+   * 3. 根据 httpPort 计算的端口（httpPort - 5）作为最终兜底
    */
-  private getHttpsBaseUrl(): string {
+  private async getHttpsBaseUrl(): Promise<string> {
+    if (this.httpsPort <= 0) {
+      // 和 Android 一样：httpsPort 未知时，自动通过 HTTP 调用 serverinfo 获取
+      try {
+        const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
+        const response = await this.doRequest(url);
+        const port = XmlUtil.getIntValue(response, 'HttpsPort', 0);
+        if (port > 0) {
+          this.httpsPort = port;
+          console.info(`NvHttp: 自动解析 HTTPS 端口: ${port}`);
+        }
+      } catch (err) {
+        console.warn(`NvHttp: 自动解析 HTTPS 端口失败: ${err}`);
+      }
+    }
+
     let port: number;
     if (this.httpsPort > 0) {
-      // 使用从服务器获取的 HTTPS 端口
+      // 使用已知的 HTTPS 端口
       port = this.httpsPort;
     } else if (this.httpPort !== NvHttp.DEFAULT_HTTP_PORT) {
-      // 自定义 HTTP 端口，计算 HTTPS 端口 (HTTP 端口 - 5)
+      // 自动解析也失败了，使用计算值作为兜底
       port = this.httpPort - 5;
-      console.info(`NvHttp: 使用自定义 HTTPS 端口 ${port} (httpPort=${this.httpPort})`);
+      console.info(`NvHttp: 使用计算的 HTTPS 端口 ${port} (httpPort=${this.httpPort})`);
     } else {
-      // 使用默认端口
+      // 最终兜底：默认端口
       port = NvHttp.DEFAULT_HTTPS_PORT;
     }
     return `https://${this.getFormattedAddress()}:${port}`;
@@ -366,7 +382,7 @@ export class NvHttp {
       if (this.serverCert && this.hasCertificateFiles()) {
         try {
           console.info(`NvHttp: getServerInfo 尝试 HTTPS + 客户端证书`);
-          const url = this.buildUrl(this.getHttpsBaseUrl(), 'serverinfo');
+          const url = this.buildUrl(await this.getHttpsBaseUrl(), 'serverinfo');
           response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
         } catch (err) {
           console.warn(`NvHttp: HTTPS serverinfo 失败: ${err}, 降级到 HTTP`);
@@ -396,62 +412,17 @@ export class NvHttp {
   }
 
   /**
-   * 获取应用列表
+   * 获取应用列表（仅 HTTPS，匹配 Android 行为）
+   * HTTPS 端口通过 getHttpsBaseUrl() 自动解析
    */
   async getAppList(): Promise<AppEntry[]> {
-    const url = this.buildUrl(this.getHttpsBaseUrl(), 'applist');
+    const url = this.buildUrl(await this.getHttpsBaseUrl(), 'applist');
     console.info(`NvHttp.getAppList: url=${url}, serverCert=${this.serverCert ? '有(长度' + this.serverCert.length + ')' : '无'}, hasCertFiles=${this.hasCertificateFiles()}`);
 
-    try {
-      // HTTPS 请求需要使用客户端证书
-      const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
-      console.info(`NvHttp.getAppList: HTTPS 请求成功`);
-      return this.parseAppList(response);
-    } catch (err) {
-      console.warn(`NvHttp: HTTPS applist 失败，尝试 HTTP: ${err}`);
-      // 如果 HTTPS 失败，尝试 HTTP（不需要证书）
-      const httpUrl = this.buildUrl(this.getHttpBaseUrl(), 'applist');
-      const response = await this.doRequest(httpUrl);
-      return this.parseAppList(response);
-    }
-  }
-
-  /**
-   * 配对 - 需要用户在主机上输入 PIN 码
-   */
-  async pair(pin: string): Promise<void> {
-    // 配对始终使用 HTTP（未配对状态）
-    const baseUrl = this.getHttpBaseUrl();
-
-    // 第一步：发送 salt 和 clientcert，获取服务器证书
-    const salt = this.generateRandomHex(16);
-    const clientCert = await this.getClientCertificate();
-
-    const step1Url = this.buildUrl(baseUrl, 'pair',
-      `devicename=${encodeURIComponent(this.clientName)}&updateState=1&phrase=getservercert&salt=${salt}&clientcert=${clientCert}`);
-
-    console.info('NvHttp: 配对步骤1 - 获取服务器证书');
-    const step1Response = await this.doRequest(step1Url);
-
-    // 解析响应检查状态
-    if (!this.checkPairStatus(step1Response)) {
-      throw new Error('配对步骤1失败');
-    }
-
-    // TODO: 完成后续配对步骤（需要加密库支持）
-    // 步骤2: 发送 clientchallenge
-    // 步骤3: 发送 serverchallengeresp
-    // 步骤4: 发送 clientpairingsecret
-
-    console.warn('NvHttp: 配对功能尚未完全实现（需要加密库支持）');
-  }
-
-  /**
-   * 检查配对状态
-   */
-  private checkPairStatus(xml: string): boolean {
-    const paired = XmlUtil.getValue(xml, 'paired');
-    return paired === '1';
+    // 与 Android 一致：只使用 HTTPS + 客户端证书，不 fallback 到 HTTP
+    const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+    console.info(`NvHttp.getAppList: HTTPS 请求成功`);
+    return this.parseAppList(response);
   }
 
   /**
@@ -469,7 +440,7 @@ export class NvHttp {
     // 确保 appId 一致
     const effectiveAppId = config.appId || appId;
     const query = this.buildLaunchQuery(effectiveAppId, config, 'launch');
-    const url = this.buildUrl(this.getHttpsBaseUrl(), 'launch', query);
+    const url = this.buildUrl(await this.getHttpsBaseUrl(), 'launch', query);
 
     // 启动可能需要较长时间，使用客户端证书
     const response = await this.doRequest(url, 60000, true);
@@ -493,7 +464,7 @@ export class NvHttp {
   async resumeApp(config: LaunchConfig): Promise<string> {
     // 使用与 launch 相同的完整参数列表
     const query = this.buildLaunchQuery(config.appId, config, 'resume');
-    const url = this.buildUrl(this.getHttpsBaseUrl(), 'resume', query);
+    const url = this.buildUrl(await this.getHttpsBaseUrl(), 'resume', query);
 
     console.info(`NvHttp: resumeApp URL: ${url}`);
 
@@ -512,7 +483,7 @@ export class NvHttp {
    * 退出应用
    */
   async quitApp(): Promise<boolean> {
-    const url = this.buildUrl(this.getHttpsBaseUrl(), 'cancel');
+    const url = this.buildUrl(await this.getHttpsBaseUrl(), 'cancel');
     // 使用客户端证书
     const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
 
@@ -527,7 +498,7 @@ export class NvHttp {
    */
   async setBitrate(bitrateKbps: number): Promise<boolean> {
     try {
-      const url = this.buildUrl(this.getHttpsBaseUrl(), 'bitrate', `bitrate=${bitrateKbps}`);
+      const url = this.buildUrl(await this.getHttpsBaseUrl(), 'bitrate', `bitrate=${bitrateKbps}`);
       // 使用客户端证书
       const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
       const result = XmlUtil.getValue(response, 'bitrate');
@@ -544,7 +515,7 @@ export class NvHttp {
    */
   async sendSuperCmd(cmdId: string): Promise<boolean> {
     try {
-      const url = this.buildUrl(this.getHttpsBaseUrl(), 'supercmd', `cmdId=${cmdId}`);
+      const url = this.buildUrl(await this.getHttpsBaseUrl(), 'supercmd', `cmdId=${cmdId}`);
       const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
       const result = XmlUtil.getValue(response, 'supercmd');
       return result !== '0';
@@ -558,7 +529,7 @@ export class NvHttp {
    */
   async pcSleep(): Promise<boolean> {
     try {
-      const url = this.buildUrl(this.getHttpsBaseUrl(), 'pcsleep');
+      const url = this.buildUrl(await this.getHttpsBaseUrl(), 'pcsleep');
       // 使用客户端证书
       const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
       const result = XmlUtil.getValue(response, 'pcsleep');
@@ -585,7 +556,7 @@ export class NvHttp {
         query += `&display_name=${encodeURIComponent(displayName)}`;
       }
       
-      const url = this.buildUrl(this.getHttpsBaseUrl(), 'rotate-display', query);
+      const url = this.buildUrl(await this.getHttpsBaseUrl(), 'rotate-display', query);
       const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
       
       // 解析 JSON 响应
@@ -613,7 +584,7 @@ export class NvHttp {
    * @returns 显示器信息列表
    */
   async getDisplays(): Promise<DisplayInfo[]> {
-    const url = this.buildUrl(this.getHttpsBaseUrl(), 'displays');
+    const url = this.buildUrl(await this.getHttpsBaseUrl(), 'displays');
     // 使用客户端证书
     const response = await this.doRequest(url, NvHttp.LONG_CONNECTION_TIMEOUT, true);
     
@@ -643,7 +614,7 @@ export class NvHttp {
    * 使用 HttpClient 支持 HTTPS 和自签名证书
    */
   async getAppAsset(appId: number): Promise<ArrayBuffer | null> {
-    const url = this.buildUrl(this.getHttpsBaseUrl(), 'appasset',
+    const url = this.buildUrl(await this.getHttpsBaseUrl(), 'appasset',
       `appid=${appId}&AssetType=2&AssetIdx=0`);
 
     try {
@@ -889,19 +860,6 @@ export class NvHttp {
     return result;
   }
 
-  /**
-   * 生成安全的随机十六进制字符串
-   */
-  private generateRandomHex(bytes: number): string {
-    const randomBytes = CryptoUtil.generateRandomBytes(bytes);
-    return CryptoUtil.bytesToHex(randomBytes);
-  }
-
-  private async getClientCertificate(): Promise<string> {
-    // TODO: 使用 HarmonyOS 加密 API 生成客户端证书
-    // 目前返回空字符串，配对功能需要完整实现
-    return '';
-  }
 }
 
 export interface AppEntry {

@@ -111,11 +111,10 @@ class SettingsKeys {
   static readonly VIBRATE_OSC: string = 'settings_vibrate_osc';
   
   // 输入 - 鼠标/触控
-  static readonly ABSOLUTE_MOUSE_MODE: string = 'settings_absolute_mouse_mode';
+  static readonly SHOW_LOCAL_CURSOR: string = 'settings_show_local_cursor';
   static readonly TOUCHSCREEN_TRACKPAD: string = 'settings_touchscreen_trackpad';
   static readonly ENABLE_DOUBLE_CLICK_DRAG: string = 'settings_enable_double_click_drag';
   static readonly DOUBLE_TAP_TIME_THRESHOLD: string = 'settings_double_tap_time_threshold';
-  static readonly ENABLE_LOCAL_CURSOR: string = 'settings_enable_local_cursor';
   static readonly ANALOG_SCROLLING: string = 'settings_analog_scrolling';
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
   
@@ -149,6 +148,7 @@ class SettingsKeys {
   static readonly ENABLE_STUN: string = 'settings_enable_stun';
   static readonly ENABLE_ESC_MENU: string = 'settings_enable_esc_menu';
   static readonly ESC_MENU_KEY: string = 'settings_esc_menu_key';
+  static readonly ENABLE_BACKGROUND_TASK: string = 'settings_enable_background_task';  // 后台保活
   
   // UI 设置
   static readonly SMALL_ICON_MODE: string = 'settings_small_icon_mode';
@@ -254,11 +254,10 @@ struct SettingsPageV2 {
   @State vibrateOsc: boolean = true;
   
   // 输入 - 鼠标/触控
-  @State absoluteMouseMode: boolean = true;  // 默认启用绝对触摸模式
+  @State showLocalCursor: boolean = false;   // 显示本地指针（双光标模式）
   @State touchscreenTrackpad: boolean = false;
   @State enableDoubleClickDrag: boolean = false;
   @State doubleTapTimeThreshold: number = 125;
-  @State enableLocalCursor: boolean = false;
   @State analogScrolling: string = '右摇杆';
   @State mouseNavButtons: boolean = false;
   
@@ -292,6 +291,7 @@ struct SettingsPageV2 {
   @State enableStun: boolean = false;
   @State enableEscMenu: boolean = true;
   @State escMenuKey: string = 'ESC';
+  @State enableBackgroundTask: boolean = true;  // 后台保活，默认开启
   
   // UI 设置
   @State smallIconMode: boolean = false;
@@ -534,11 +534,10 @@ struct SettingsPageV2 {
       this.vibrateOsc = await this.loadBoolean(SettingsKeys.VIBRATE_OSC, true);
       
       // 输入 - 鼠标/触控
-      this.absoluteMouseMode = await this.loadBoolean(SettingsKeys.ABSOLUTE_MOUSE_MODE, true);  // 默认启用绝对触摸模式
+      this.showLocalCursor = await this.loadBoolean(SettingsKeys.SHOW_LOCAL_CURSOR, false);
       this.touchscreenTrackpad = await this.loadBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false);
       this.enableDoubleClickDrag = await this.loadBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false);
       this.doubleTapTimeThreshold = await PreferencesUtil.get<number>(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125);
-      this.enableLocalCursor = await this.loadBoolean(SettingsKeys.ENABLE_LOCAL_CURSOR, false);
       this.analogScrolling = await PreferencesUtil.get<string>(SettingsKeys.ANALOG_SCROLLING, '右摇杆');
       this.mouseNavButtons = await this.loadBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false);
       
@@ -573,6 +572,7 @@ struct SettingsPageV2 {
       this.enableStun = await this.loadBoolean(SettingsKeys.ENABLE_STUN, false);
       this.enableEscMenu = await this.loadBoolean(SettingsKeys.ENABLE_ESC_MENU, true);
       this.escMenuKey = await PreferencesUtil.get<string>(SettingsKeys.ESC_MENU_KEY, 'ESC');
+      this.enableBackgroundTask = await this.loadBoolean(SettingsKeys.ENABLE_BACKGROUND_TASK, true);
       
       // UI 设置
       this.smallIconMode = await this.loadBoolean(SettingsKeys.SMALL_ICON_MODE, false);
@@ -1287,13 +1287,13 @@ struct SettingsPageV2 {
             title: '鼠标和触控',
             items: [
               {
-                title: '绝对鼠标模式',
-                subtitle: '远程桌面模式',
+                title: '显示本地光标',
+                subtitle: '保持系统光标可见',
                 type: 'toggle',
-                value: this.absoluteMouseMode,
+                value: this.showLocalCursor,
                 action: () => {
-                  this.absoluteMouseMode = !this.absoluteMouseMode;
-                  this.saveSetting(SettingsKeys.ABSOLUTE_MOUSE_MODE, this.absoluteMouseMode);
+                  this.showLocalCursor = !this.showLocalCursor;
+                  this.saveSetting(SettingsKeys.SHOW_LOCAL_CURSOR, this.showLocalCursor);
                 }
               },
               {
@@ -1329,16 +1329,6 @@ struct SettingsPageV2 {
                 onSliderChange: (value: number) => {
                   this.doubleTapTimeThreshold = value;
                   this.saveSetting(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, value);
-                }
-              },
-              {
-                title: '显示本地光标',
-                subtitle: '显示一个本地指针光标',
-                type: 'toggle',
-                value: this.enableLocalCursor,
-                action: () => {
-                  this.enableLocalCursor = !this.enableLocalCursor;
-                  this.saveSetting(SettingsKeys.ENABLE_LOCAL_CURSOR, this.enableLocalCursor);
                 }
               },
               {
@@ -1642,6 +1632,16 @@ struct SettingsPageV2 {
                 type: 'select',
                 visible: this.enableEscMenu,
                 action: () => this.showEscMenuKeyPicker()
+              },
+              {
+                title: '后台保活',
+                subtitle: '串流时保持后台运行，防止切后台后画面冻结',
+                type: 'toggle',
+                value: this.enableBackgroundTask,
+                action: () => {
+                  this.enableBackgroundTask = !this.enableBackgroundTask;
+                  this.saveSetting(SettingsKeys.ENABLE_BACKGROUND_TASK, this.enableBackgroundTask);
+                }
               }
             ]
           })

@@ -34,7 +34,8 @@
           }
         ],
         "backgroundModes": [
-          "dataTransfer"
+          "dataTransfer",
+          "audioPlayback"
         ]
       }
     ],
