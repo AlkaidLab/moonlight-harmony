@@ -178,10 +178,17 @@ int AudioRenderer::Init(const AudioRendererConfig& config) {
     }
     
     // 设置低延迟模式
-    result = OH_AudioStreamBuilder_SetLatencyMode(builder_, AUDIOSTREAM_LATENCY_MODE_FAST);
+    // 注意：当启用空间音频时使用 NORMAL 模式，因为 FAST 模式会绕过 DSP 空间化处理管线
+    OH_AudioStream_LatencyMode latencyMode = config_.enableSpatialAudio 
+        ? AUDIOSTREAM_LATENCY_MODE_NORMAL 
+        : AUDIOSTREAM_LATENCY_MODE_FAST;
+    result = OH_AudioStreamBuilder_SetLatencyMode(builder_, latencyMode);
     if (result != AUDIOSTREAM_SUCCESS) {
         OH_LOG_WARN(LOG_APP, "Failed to set latency mode: %{public}d", result);
         // 非致命错误，继续
+    } else {
+        OH_LOG_INFO(LOG_APP, "Audio latency mode: %{public}s",
+                    latencyMode == AUDIOSTREAM_LATENCY_MODE_FAST ? "FAST" : "NORMAL (spatial audio)");
     }
     
     // 尝试启用空间音频（HarmonyOS 5.0+ API 20）
@@ -196,20 +203,36 @@ int AudioRenderer::Init(const AudioRendererConfig& config) {
         OH_LOG_INFO(LOG_APP, "Spatial audio not available on this device/API level");
     }
     
-    // 设置回调
-    OH_AudioRenderer_Callbacks callbacks = {
-        .OH_AudioRenderer_OnWriteData = OnWriteData,
-        .OH_AudioRenderer_OnStreamEvent = OnStreamEvent,
-        .OH_AudioRenderer_OnInterruptEvent = OnInterruptEvent,
-        .OH_AudioRenderer_OnError = OnError
-    };
-    
-    result = OH_AudioStreamBuilder_SetRendererCallback(builder_, callbacks, this);
+    // 设置回调 (API 12+ 新版独立回调设置)
+    // 数据写入回调
+    result = OH_AudioStreamBuilder_SetRendererWriteDataCallback(builder_,
+        (OH_AudioRenderer_OnWriteDataCallback)OnWriteData, this);
     if (result != AUDIOSTREAM_SUCCESS) {
-        OH_LOG_ERROR(LOG_APP, "Failed to set renderer callback: %{public}d", result);
+        OH_LOG_ERROR(LOG_APP, "Failed to set write data callback: %{public}d", result);
         OH_AudioStreamBuilder_Destroy(builder_);
         builder_ = nullptr;
         return -1;
+    }
+    
+    // 中断事件回调
+    result = OH_AudioStreamBuilder_SetRendererInterruptCallback(builder_,
+        (OH_AudioRenderer_OnInterruptCallback)OnInterruptEvent, this);
+    if (result != AUDIOSTREAM_SUCCESS) {
+        OH_LOG_WARN(LOG_APP, "Failed to set interrupt callback: %{public}d", result);
+    }
+    
+    // 错误回调
+    result = OH_AudioStreamBuilder_SetRendererErrorCallback(builder_,
+        (OH_AudioRenderer_OnErrorCallback)OnError, this);
+    if (result != AUDIOSTREAM_SUCCESS) {
+        OH_LOG_WARN(LOG_APP, "Failed to set error callback: %{public}d", result);
+    }
+    
+    // 设备变更回调（替代旧版 OnStreamEvent）
+    result = OH_AudioStreamBuilder_SetRendererOutputDeviceChangeCallback(builder_,
+        (OH_AudioRenderer_OutputDeviceChangeCallback)OnDeviceChange, this);
+    if (result != AUDIOSTREAM_SUCCESS) {
+        OH_LOG_WARN(LOG_APP, "Failed to set device change callback: %{public}d", result);
     }
     
     // 创建渲染器
@@ -282,7 +305,7 @@ int AudioRenderer::Stop() {
     // 清空环形缓冲区
     ringHead_.store(0, std::memory_order_relaxed);
     ringTail_.store(0, std::memory_order_relaxed);
-    wasUnderrun_ = false;
+    wasUnderrun_.store(false, std::memory_order_relaxed);
     
     OH_LOG_INFO(LOG_APP, "Audio renderer stopped");
     return 0;
@@ -435,13 +458,13 @@ AudioRendererStats AudioRenderer::GetStats() const {
 // OHAudio 回调实现
 // =============================================================================
 
-int32_t AudioRenderer::OnWriteData(OH_AudioRenderer* renderer, void* userData,
+OH_AudioData_Callback_Result AudioRenderer::OnWriteData(OH_AudioRenderer* renderer, void* userData,
                                     void* buffer, int32_t bufferLen) {
     AudioRenderer* self = static_cast<AudioRenderer*>(userData);
     if (self == nullptr || !self->running_) {
         // 填充静音
         memset(buffer, 0, bufferLen);
-        return bufferLen;
+        return AUDIO_DATA_CALLBACK_RESULT_VALID;
     }
     
     // 始终设置音频回调线程 QoS 为最高优先级
@@ -471,9 +494,9 @@ int32_t AudioRenderer::OnWriteData(OH_AudioRenderer* renderer, void* userData,
     
     int toCopy = std::min(available, samplesNeeded);
     int channelCount = std::max(self->config_.channelCount, 1);
-    // 渐变长度（按采样帧计，非采样点）：约 5ms @48kHz = 240 采样帧
-    static constexpr int FADE_FRAMES = 240;
-    int fadeSamples = FADE_FRAMES * channelCount; // 按 int16_t 计的渐变长度
+    // 渐变长度（按采样帧计，非采样点）：约 2ms @48kHz = 96 采样帧
+    // 使用较短的渐变避免过度修改有效音频数据
+    static constexpr int FADE_FRAMES = 96;
     
     if (toCopy > 0) {
         // 从环形缓冲区读取
@@ -485,88 +508,91 @@ int32_t AudioRenderer::OnWriteData(OH_AudioRenderer* renderer, void* userData,
         self->ringHead_.store((head + toCopy) % RING_BUFFER_CAPACITY, std::memory_order_release);
         
         // Underrun 后恢复：对开头数据施加渐入（fade-in），避免静音→有信号的波形跳变
-        if (self->wasUnderrun_) {
-            int fadeLen = std::min(toCopy, fadeSamples);
-            for (int i = 0; i < fadeLen; i++) {
-                float gain = (float)i / (float)fadeLen;
-                outBuffer[i] = (int16_t)(outBuffer[i] * gain);
+        if (self->wasUnderrun_.load(std::memory_order_relaxed)) {
+            // 按帧步进（每帧 channelCount 个采样点），确保同一时间步的所有声道获得相同增益
+            int fadeFrames = std::min(toCopy / channelCount, FADE_FRAMES);
+            for (int f = 0; f < fadeFrames; f++) {
+                float gain = (float)f / (float)fadeFrames;
+                for (int c = 0; c < channelCount; c++) {
+                    outBuffer[f * channelCount + c] = (int16_t)(outBuffer[f * channelCount + c] * gain);
+                }
             }
         }
     }
     
     // 如果数据不足，填充静音（underrun）
     if (toCopy < samplesNeeded) {
-        // 对末尾有效数据施加渐出（fade-out），避免有信号→静音的波形跳变
-        if (toCopy > 0) {
-            int fadeLen = std::min(toCopy, fadeSamples);
-            int fadeStart = toCopy - fadeLen;
-            for (int i = 0; i < fadeLen; i++) {
-                float gain = 1.0f - (float)i / (float)fadeLen;
-                outBuffer[fadeStart + i] = (int16_t)(outBuffer[fadeStart + i] * gain);
+        // 计算欠缺比例：仅当大比例欠缺时才做渐出（小缺口直接填静音即可）
+        int gap = samplesNeeded - toCopy;
+        bool significantUnderrun = (gap > samplesNeeded / 4);  // 超过25%欠缺才渐出
+        
+        if (toCopy > 0 && significantUnderrun) {
+            // 对末尾有效数据施加渐出，避免有信号→静音的波形跳变
+            // 按帧步进确保多声道同步
+            int fadeFrames = std::min(toCopy / channelCount, FADE_FRAMES);
+            int fadeStartSample = toCopy - fadeFrames * channelCount;
+            for (int f = 0; f < fadeFrames; f++) {
+                float gain = 1.0f - (float)f / (float)fadeFrames;
+                for (int c = 0; c < channelCount; c++) {
+                    int idx = fadeStartSample + f * channelCount + c;
+                    outBuffer[idx] = (int16_t)(outBuffer[idx] * gain);
+                }
             }
         }
         memset(outBuffer + toCopy, 0, (samplesNeeded - toCopy) * sizeof(int16_t));
         self->underruns_.fetch_add(1, std::memory_order_relaxed);
-        self->wasUnderrun_ = true;
+        self->wasUnderrun_.store(true, std::memory_order_relaxed);
     } else {
-        self->wasUnderrun_ = false;
+        self->wasUnderrun_.store(false, std::memory_order_relaxed);
     }
     
     // 更新已播放样本数（按通道换算）
     self->playedSamples_.fetch_add(toCopy / channelCount, std::memory_order_relaxed);
     
-    return bufferLen;
+    return AUDIO_DATA_CALLBACK_RESULT_VALID;
 }
 
-int32_t AudioRenderer::OnStreamEvent(OH_AudioRenderer* renderer, void* userData,
-                                      OH_AudioStream_Event event) {
-    OH_LOG_INFO(LOG_APP, "Audio stream event: %{public}d", event);
+void AudioRenderer::OnDeviceChange(OH_AudioRenderer* renderer, void* userData,
+                                    OH_AudioStream_DeviceChangeReason reason) {
+    OH_LOG_INFO(LOG_APP, "Audio output device changed: reason=%{public}d", reason);
     
     AudioRenderer* self = static_cast<AudioRenderer*>(userData);
-    if (self == nullptr) return 0;
+    if (self == nullptr) return;
     
-    // AUDIOSTREAM_EVENT_ROUTING_CHANGED 等事件可能需要重启
-    // 标记 needRestart 让下次 PlaySamples 时触发恢复
-    if (event != 0) {
-        // 非正常事件，检查渲染器状态
-        OH_LOG_WARN(LOG_APP, "Audio stream event %{public}d received, checking state", event);
+    if (reason == REASON_OLD_DEVICE_UNAVAILABLE) {
+        // 旧设备不可用（如拔出耳机），标记重启
+        OH_LOG_WARN(LOG_APP, "Audio device unavailable, scheduling restart");
+        self->needRestart_ = true;
     }
-    
-    return 0;
 }
 
-int32_t AudioRenderer::OnInterruptEvent(OH_AudioRenderer* renderer, void* userData,
+void AudioRenderer::OnInterruptEvent(OH_AudioRenderer* renderer, void* userData,
                                          OH_AudioInterrupt_ForceType type,
                                          OH_AudioInterrupt_Hint hint) {
     OH_LOG_INFO(LOG_APP, "Audio interrupt: type=%{public}d, hint=%{public}d", type, hint);
     
     AudioRenderer* self = static_cast<AudioRenderer*>(userData);
-    if (self == nullptr) return 0;
+    if (self == nullptr) return;
     
     if (hint == AUDIOSTREAM_INTERRUPT_HINT_PAUSE) {
-        // 被系统暂停（如来电）
         OH_LOG_WARN(LOG_APP, "Audio paused by system interrupt");
         self->running_ = false;
     } else if (hint == AUDIOSTREAM_INTERRUPT_HINT_RESUME) {
-        // 系统通知可以恢复，标记重启
         OH_LOG_INFO(LOG_APP, "Audio resume hint received, scheduling restart");
         self->needRestart_ = true;
     } else if (hint == AUDIOSTREAM_INTERRUPT_HINT_STOP) {
-        // 被系统永久停止，需要重建
         OH_LOG_WARN(LOG_APP, "Audio stopped by system, scheduling restart");
         self->running_ = false;
         self->needRestart_ = true;
     }
-    
-    return 0;
 }
 
-int32_t AudioRenderer::OnError(OH_AudioRenderer* renderer, void* userData,
+void AudioRenderer::OnError(OH_AudioRenderer* renderer, void* userData,
                                 OH_AudioStream_Result error) {
     OH_LOG_ERROR(LOG_APP, "Audio renderer error: %{public}d", error);
     
     AudioRenderer* self = static_cast<AudioRenderer*>(userData);
-    if (self == nullptr) return 0;
+    if (self == nullptr) return;
     
     int errors = ++self->consecutiveErrors_;
     OH_LOG_ERROR(LOG_APP, "Audio consecutive errors: %{public}d", errors);
@@ -576,8 +602,6 @@ int32_t AudioRenderer::OnError(OH_AudioRenderer* renderer, void* userData,
         self->running_ = false;
         self->needRestart_ = true;
     }
-    
-    return 0;
 }
 
 // =============================================================================

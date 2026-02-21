@@ -9,12 +9,17 @@
  */
 
 /**
- * 鼠标事件监听器实现
+ * 鼠标事件监听器实现（绝对模式）
  *
  * 解决问题：ArkUI .onMouse 回调的投递频率受 UI 渲染帧率限制，
  * 无触摸时系统节流至 ~30Hz。本模块使用 OH_Input_AddMouseEventMonitor
  * 在系统输入管线层级监听鼠标事件（不消费事件，触摸/滚轮不受影响），
  * 以硬件轮询率直接转发给 moonlight-common-c，实现全速鼠标回报。
+ *
+ * 始终使用绝对模式（LiSendMousePositionEvent）：
+ * HarmonyOS 没有 Pointer Capture API，无法将光标锁定到窗口内，
+ * 相对模式下光标到达屏幕/窗口边缘时无法继续产生 delta，导致鼠标卡住。
+ * Android Moonlight 在没有 Pointer Capture 时同样回退到绝对模式。
  *
  * 权限: ohos.permission.INPUT_MONITORING
  */
@@ -22,7 +27,6 @@
 #include "mouse_interceptor.h"
 #include <multimodalinput/oh_input_manager.h>
 #include <hilog/log.h>
-#include <cstring>
 #include <atomic>
 
 #include "moonlight-common-c/src/Limelight.h"
@@ -36,22 +40,14 @@
 // ==================== 配置状态 ====================
 
 static std::atomic<bool> g_active{false};
-static std::atomic<bool> g_absoluteMode{false};
-static std::atomic<int32_t> g_viewWidth{1920};
-static std::atomic<int32_t> g_viewHeight{1080};
-static std::atomic<float> g_density{1.0f};
 
-// 相对模式：上一次鼠标屏幕坐标（用于计算 delta）
-static int32_t g_lastX = -1;
-static int32_t g_lastY = -1;
-
-// 相对模式：亚像素累加器（物理 px → vp 除以 density 后可能有小数，累积后取整再发送）
-static float g_accumX = 0.0f;
-static float g_accumY = 0.0f;
-
-// 绝对模式：XComponent 在屏幕上的偏移（vp 单位，用于将屏幕坐标转换为视图相对坐标）
-static std::atomic<float> g_offsetX{0.0f};
-static std::atomic<float> g_offsetY{0.0f};
+// 窗口矩形（物理 px）：用于将屏幕坐标映射到远端屏幕
+// 全屏模式：窗口=屏幕 → 整个屏幕映射到远端
+// 窗口模式：窗口区域映射到远端全屏，窗口外区域夹紧到边缘
+static std::atomic<int32_t> g_windowX{0};
+static std::atomic<int32_t> g_windowY{0};
+static std::atomic<int32_t> g_windowWidth{1080};
+static std::atomic<int32_t> g_windowHeight{2400};
 
 // ==================== 按钮映射 ====================
 
@@ -77,50 +73,31 @@ static int MapMouseButton(int32_t button)
 /**
  * 在系统输入线程中调用，不经过 ArkUI 渲染循环。
  * Monitor 不消费事件，触摸和滚轮事件完全不受影响。
+ *
+ * 绝对模式：屏幕 px → 窗口相对坐标 → 映射到远端屏幕
  */
 static void OnMouseEvent(const Input_MouseEvent *event)
 {
     if (!event) return;
 
     int32_t action = OH_Input_GetMouseEventAction(event);
-    int32_t x = OH_Input_GetMouseEventDisplayX(event);
-    int32_t y = OH_Input_GetMouseEventDisplayY(event);
 
     switch (action) {
         case MOUSE_ACTION_MOVE: {
-            if (g_absoluteMode.load(std::memory_order_relaxed)) {
-                float density = g_density.load(std::memory_order_relaxed);
-                int32_t vw = g_viewWidth.load(std::memory_order_relaxed);
-                int32_t vh = g_viewHeight.load(std::memory_order_relaxed);
-                float ofsX = g_offsetX.load(std::memory_order_relaxed);
-                float ofsY = g_offsetY.load(std::memory_order_relaxed);
+            int32_t x = OH_Input_GetMouseEventDisplayX(event);
+            int32_t y = OH_Input_GetMouseEventDisplayY(event);
+            int32_t wx = g_windowX.load(std::memory_order_relaxed);
+            int32_t wy = g_windowY.load(std::memory_order_relaxed);
+            int32_t ww = g_windowWidth.load(std::memory_order_relaxed);
+            int32_t wh = g_windowHeight.load(std::memory_order_relaxed);
 
-                // 屏幕 px → vp → 减去 XComponent 偏移 → 钳位到视图边界
-                float vpX = x / density - ofsX;
-                float vpY = y / density - ofsY;
-                if (vpX < 0) vpX = 0; else if (vpX > vw) vpX = (float)vw;
-                if (vpY < 0) vpY = 0; else if (vpY > vh) vpY = (float)vh;
-                LiSendMousePositionEvent((short)vpX, (short)vpY, (short)vw, (short)vh);
-            } else {
-                // 相对模式：将物理 px delta 转换为 vp delta（与 ArkUI .onMouse 一致）
-                // 使用浮点累加器保留亚像素精度，避免高 density 设备丢失微小移动
-                if (g_lastX >= 0 && g_lastY >= 0) {
-                    float density = g_density.load(std::memory_order_relaxed);
-                    float fdx = (float)(x - g_lastX) / density;
-                    float fdy = (float)(y - g_lastY) / density;
-                    g_accumX += fdx;
-                    g_accumY += fdy;
-                    int32_t sendX = (int32_t)g_accumX;
-                    int32_t sendY = (int32_t)g_accumY;
-                    if (sendX != 0 || sendY != 0) {
-                        g_accumX -= (float)sendX;
-                        g_accumY -= (float)sendY;
-                        LiSendMouseMoveEvent((short)sendX, (short)sendY);
-                    }
-                }
-                g_lastX = x;
-                g_lastY = y;
-            }
+            // 屏幕 px → 窗口相对坐标 → 夹紧到窗口边界
+            // 全屏时 wx=0,wy=0 → 等价于屏幕坐标直接映射
+            int32_t relX = x - wx;
+            int32_t relY = y - wy;
+            if (relX < 0) relX = 0; else if (relX > ww) relX = ww;
+            if (relY < 0) relY = 0; else if (relY > wh) relY = wh;
+            LiSendMousePositionEvent((short)relX, (short)relY, (short)ww, (short)wh);
             break;
         }
 
@@ -133,8 +110,6 @@ static void OnMouseEvent(const Input_MouseEvent *event)
                     ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE;
                 LiSendMouseButtonEvent(moonAction, moonBtn);
             }
-            g_lastX = x;
-            g_lastY = y;
             break;
         }
 
@@ -159,11 +134,7 @@ static napi_value AddMouseInterceptor(napi_env env, napi_callback_info info)
     Input_Result ret = OH_Input_AddMouseEventMonitor(OnMouseEvent);
     if (ret == INPUT_SUCCESS) {
         g_active.store(true);
-        g_lastX = -1;
-        g_lastY = -1;
-        g_accumX = 0.0f;
-        g_accumY = 0.0f;
-        LOGI("鼠标监听器已启动（全速轮询，不消费事件）");
+        LOGI("鼠标监听器已启动（绝对模式，全速轮询）");
     } else {
         LOGE("鼠标监听器启动失败: %{public}d", ret);
     }
@@ -187,10 +158,6 @@ static napi_value RemoveMouseInterceptor(napi_env env, napi_callback_info info)
             result = ret;
         }
         g_active.store(false);
-        g_lastX = -1;
-        g_lastY = -1;
-        g_accumX = 0.0f;
-        g_accumY = 0.0f;
         LOGI("鼠标监听器已停止");
     }
 
@@ -200,44 +167,35 @@ static napi_value RemoveMouseInterceptor(napi_env env, napi_callback_info info)
 }
 
 /**
- * configureMouseInterceptor(absoluteMode: boolean, viewWidth: number, viewHeight: number, density: number): void
- * 配置监听器参数（可在运行中调用）。
+ * configureMouseInterceptor(windowX: number, windowY: number,
+ *                           windowWidth: number, windowHeight: number): void
+ * 配置窗口矩形（可在运行中调用）。
+ * 全屏模式：传入 (0, 0, screenWidth, screenHeight)
+ * 窗口模式：传入实际窗口位置和尺寸
  */
 static napi_value ConfigureMouseInterceptor(napi_env env, napi_callback_info info)
 {
-    size_t argc = 6;
-    napi_value argv[6];
+    size_t argc = 4;
+    napi_value argv[4];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
 
     if (argc >= 4) {
-        bool absoluteMode;
-        int32_t viewWidth, viewHeight;
-        double density;
-        double offsetX = 0, offsetY = 0;
+        int32_t windowX, windowY, windowWidth, windowHeight;
 
-        napi_get_value_bool(env, argv[0], &absoluteMode);
-        napi_get_value_int32(env, argv[1], &viewWidth);
-        napi_get_value_int32(env, argv[2], &viewHeight);
-        napi_get_value_double(env, argv[3], &density);
-        if (argc >= 6) {
-            napi_get_value_double(env, argv[4], &offsetX);
-            napi_get_value_double(env, argv[5], &offsetY);
+        napi_get_value_int32(env, argv[0], &windowX);
+        napi_get_value_int32(env, argv[1], &windowY);
+        napi_get_value_int32(env, argv[2], &windowWidth);
+        napi_get_value_int32(env, argv[3], &windowHeight);
+
+        if (windowWidth > 0 && windowHeight > 0) {
+            g_windowX.store(windowX, std::memory_order_relaxed);
+            g_windowY.store(windowY, std::memory_order_relaxed);
+            g_windowWidth.store(windowWidth, std::memory_order_relaxed);
+            g_windowHeight.store(windowHeight, std::memory_order_relaxed);
         }
 
-        g_absoluteMode.store(absoluteMode, std::memory_order_relaxed);
-        g_viewWidth.store(viewWidth, std::memory_order_relaxed);
-        g_viewHeight.store(viewHeight, std::memory_order_relaxed);
-        g_density.store((float)density, std::memory_order_relaxed);
-        g_offsetX.store((float)offsetX, std::memory_order_relaxed);
-        g_offsetY.store((float)offsetY, std::memory_order_relaxed);
-
-        g_lastX = -1;
-        g_lastY = -1;
-        g_accumX = 0.0f;
-        g_accumY = 0.0f;
-
-        LOGI("配置更新: absolute=%{public}d, view=%{public}dx%{public}d, density=%.1f, offset=(%.1f,%.1f)",
-             absoluteMode, viewWidth, viewHeight, (float)density, (float)offsetX, (float)offsetY);
+        LOGI("配置更新: window=(%{public}d,%{public}d,%{public}dx%{public}d) px",
+             windowX, windowY, windowWidth, windowHeight);
     }
 
     napi_value undefined;

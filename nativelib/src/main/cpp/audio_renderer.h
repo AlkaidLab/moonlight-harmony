@@ -114,16 +114,16 @@ public:
     bool IsRunning() const { return running_; }
 
 private:
-    // OHAudio 回调
-    static int32_t OnWriteData(OH_AudioRenderer* renderer, void* userData,
-                               void* buffer, int32_t bufferLen);
-    static int32_t OnStreamEvent(OH_AudioRenderer* renderer, void* userData,
-                                  OH_AudioStream_Event event);
-    static int32_t OnInterruptEvent(OH_AudioRenderer* renderer, void* userData,
-                                     OH_AudioInterrupt_ForceType type,
-                                     OH_AudioInterrupt_Hint hint);
-    static int32_t OnError(OH_AudioRenderer* renderer, void* userData,
-                            OH_AudioStream_Result error);
+    // OHAudio 回调 (API 12+ 新版独立回调)
+    static OH_AudioData_Callback_Result OnWriteData(OH_AudioRenderer* renderer, void* userData,
+                                                     void* buffer, int32_t bufferLen);
+    static void OnDeviceChange(OH_AudioRenderer* renderer, void* userData,
+                                OH_AudioStream_DeviceChangeReason reason);
+    static void OnInterruptEvent(OH_AudioRenderer* renderer, void* userData,
+                                  OH_AudioInterrupt_ForceType type,
+                                  OH_AudioInterrupt_Hint hint);
+    static void OnError(OH_AudioRenderer* renderer, void* userData,
+                         OH_AudioStream_Result error);
     
     // 音频渲染器实例
     OH_AudioRenderer* renderer_ = nullptr;
@@ -158,7 +158,7 @@ private:
     std::atomic<uint32_t> underruns_{0};
     
     // Underrun 拗音消除：记录上次回调是否 underrun，用于恢复时渐入
-    bool wasUnderrun_{false};
+    std::atomic<bool> wasUnderrun_{false};
     
     // 运行状态
     std::atomic<bool> running_{false};

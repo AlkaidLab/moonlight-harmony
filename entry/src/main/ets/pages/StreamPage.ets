@@ -13,7 +13,7 @@
  * 
  * 显示远程游戏画面并处理用户输入
  */
-import { router, promptAction } from '@kit.ArkUI';
+import { router, promptAction, LengthMetrics } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { displaySync } from '@kit.ArkGraphics2D';
@@ -924,6 +924,16 @@ struct StreamPage {
           // 鼠标滚轮事件处理 → 委托给输入处理器
           this.inputHandler.handleAxisEvent(event);
         })
+        .onAreaChange((_oldArea: Area, newArea: Area) => {
+          // 获取 XComponent 在屏幕上的精确位置，用于绝对模式鼠标坐标转换
+          // 替代基于居中假设的偏移计算，解决安全区域/导航栏导致的偏差
+          const globalPos = newArea.globalPosition;
+          if (globalPos) {
+            const screenX = globalPos.x as number;
+            const screenY = globalPos.y as number;
+            this.inputHandler.updateXComponentScreenPosition(screenX, screenY);
+          }
+        })
 
       // 连接状态层
       if (this.viewModel.isConnecting) {
@@ -1007,6 +1017,7 @@ struct StreamPage {
             .height(26)
             .borderRadius(13)
             .padding({ left: 10, right: 10 })
+            .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
             .onClick(() => {
               this.viewModel.getSession()?.sendKeys([VirtualKey.VK_LWIN, VirtualKey.VK_CONTROL, VirtualKey.VK_O]);
               this.imeManager.hide();
@@ -1034,6 +1045,7 @@ struct StreamPage {
             .backgroundColor(`#50${(shortcut.color || '#9DABB2').replace('#', '')}`)
             .border({ width: 1, color: `#80${(shortcut.color || '#9DABB2').replace('#', '')}` })
             .borderRadius(13)
+            .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
             .onClick(() => {
               this.sendShortcut(shortcut);
             })
@@ -1060,18 +1072,20 @@ struct StreamPage {
               .backgroundColor('#50D97706')
               .border({ width: 1, color: '#80D97706' })
               .borderRadius(13)
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
               .onClick(() => {
                 this.sendSuperCmd(cmd.id);
               })
             }, (cmd: SuperCmd) => cmd.id)
           }
         }
-        .padding({ left: 10, right: 6 })
       }
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
       .layoutWeight(1)
       .align(Alignment.Start)
+      .padding({ left: 14, right: 16 })
+      .fadingEdge(true, { fadingEdgeLength: LengthMetrics.vp(20) })
     }
     .direction(Direction.Ltr)
     .width('100%')
@@ -1092,6 +1106,7 @@ struct StreamPage {
       .borderRadius(12)
       .backgroundColor('#661A1A2E')
       .backdropBlur(20)
+      .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.85 })
       .onClick(() => {
         this.imeManager.hide();
       })

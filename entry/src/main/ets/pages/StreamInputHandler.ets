@@ -14,7 +14,8 @@
  * 封装键盘、鼠标、滚轮、音量键、按键拦截器等所有输入处理逻辑，
  * 从 StreamPage 中解耦以降低单文件复杂度。
  */
-import { display, promptAction } from '@kit.ArkUI';
+import { display, window, promptAction } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { GamepadManager } from '../service/GamepadManager';
 
@@ -41,16 +42,13 @@ export class StreamInputHandler {
   // ── 键盘修饰键状态追踪（位掩码：Shift=0x01, Ctrl=0x02, Alt=0x04, Meta=0x08）──
   private modifierFlags: number = 0;
 
-  // ── 相对鼠标模式：追踪上一次鼠标位置来计算 delta ──
-  private lastMouseX: number = -1;
-  private lastMouseY: number = -1;
-
   // ── 鼠标拦截器（绕过 ArkUI 帧率限制，全速鼠标轮询）──
   private mouseInterceptorActive: boolean = false;
 
   // ── XComponent 实际渲染尺寸（vp，用于绝对模式坐标归一化）──
   private viewWidthVp: number = 0;
   private viewHeightVp: number = 0;
+
 
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
   private appVolume: number = 1.0;
@@ -74,8 +72,6 @@ export class StreamInputHandler {
    */
   resetState(): void {
     this.modifierFlags = 0;
-    this.lastMouseX = -1;
-    this.lastMouseY = -1;
     this.stopMouseInterceptor();
   }
 
@@ -99,28 +95,25 @@ export class StreamInputHandler {
     this.viewWidthVp = viewWidth;
     this.viewHeightVp = viewHeight;
 
-    let density = 1.0;
-    let screenWidthVp = viewWidth;
-    let screenHeightVp = viewHeight;
+    // 获取屏幕物理尺寸（全屏模式下即为窗口尺寸）
+    let screenWidthPx = 1080;
+    let screenHeightPx = 2400;
     try {
       const displayInfo = display.getDefaultDisplaySync();
-      density = displayInfo.densityPixels;
-      screenWidthVp = displayInfo.width / density;
-      screenHeightVp = displayInfo.height / density;
+      screenWidthPx = displayInfo.width;
+      screenHeightPx = displayInfo.height;
     } catch (_) {}
 
-    // showLocalCursor=true → 绝对模式（本地/远端光标对齐），否则 → 相对模式（标准鼠标体验）
-    const absoluteMode = this.viewModel?.showLocalCursor ?? false;
-
-    // XComponent 居中于全屏窗口，计算偏移以将屏幕坐标转换为视图相对坐标
-    const offsetX = (screenWidthVp - viewWidth) / 2;
-    const offsetY = (screenHeightVp - viewHeight) / 2;
-    mouseInterceptor.configure(viewWidth, viewHeight, density, absoluteMode, offsetX, offsetY);
+    // 初始使用屏幕尺寸（全屏时完全正确），窗口模式下异步获取实际窗口矩形更新
+    mouseInterceptor.configure(0, 0, screenWidthPx, screenHeightPx);
 
     const result = mouseInterceptor.start();
     if (result === 0) {
       this.mouseInterceptorActive = true;
-      console.info(`StreamInputHandler: C++ 鼠标 Monitor 已启动 (${viewWidth}x${viewHeight}, density=${density})`);
+      console.info(`StreamInputHandler: C++ 鼠标 Monitor 已启动 (${screenWidthPx}x${screenHeightPx}px)`);
+
+      // 异步获取实际窗口矩形（窗口模式下与屏幕尺寸不同）
+      this.fetchAndUpdateWindowRect();
       return true;
     }
 
@@ -130,14 +123,45 @@ export class StreamInputHandler {
   }
 
   /**
+   * 更新 XComponent 在屏幕上的精确位置（由 onAreaChange 回调触发）
+   * C++ 鼠标 Monitor 使用窗口矩形映射，onAreaChange 时重新获取窗口矩形
+   */
+  updateXComponentScreenPosition(screenX: number, screenY: number): void {
+    // 窗口大小或位置可能变化，重新获取窗口矩形
+    if (this.mouseInterceptorActive) {
+      this.fetchAndUpdateWindowRect();
+    }
+  }
+
+  /**
+   * 异步获取窗口矩形并更新到 C++ 层
+   * 全屏模式下窗口矩形=屏幕尺寸（已在初始化时设置），
+   * 窗口模式下获取实际窗口位置和尺寸
+   */
+  private fetchAndUpdateWindowRect(): void {
+    try {
+      const context = getContext() as common.UIAbilityContext;
+      window.getLastWindow(context).then((win: window.Window) => {
+        const rect = win.getWindowProperties().windowRect;
+        if (rect && this.mouseInterceptorActive) {
+          MouseInterceptorService.getInstance().configure(
+            rect.left, rect.top, rect.width, rect.height
+          );
+          console.info(`StreamInputHandler: 窗口矩形已更新 (${rect.left},${rect.top},${rect.width}x${rect.height})`);
+        }
+      }).catch((err: Error) => {
+        console.warn(`StreamInputHandler: 获取窗口矩形失败: ${err?.message}`);
+      });
+    } catch (_) {}
+  }
+
+  /**
    * 停止鼠标高速轮询
    */
   stopMouseInterceptor(): void {
     if (!this.mouseInterceptorActive) return;
     MouseInterceptorService.getInstance().stop();
     this.mouseInterceptorActive = false;
-    this.lastMouseX = -1;
-    this.lastMouseY = -1;
   }
 
   /**
@@ -163,25 +187,12 @@ export class StreamInputHandler {
     if (this.mouseInterceptorActive) return;
 
     if (event.action === MouseAction.Move) {
-      if (this.viewModel?.showLocalCursor) {
-        // 绝对模式：发送坐标位置（使本地/远端光标对齐）
-        // event.x/y 为相对于 XComponent 的 vp 坐标，用 XComponent 尺寸作为参考域
-        MoonBridge.sendMousePosition(
-          Math.round(event.x), Math.round(event.y),
-          this.viewWidthVp, this.viewHeightVp
-        );
-      } else {
-        // 相对模式：发送 delta（标准鼠标体验，支持系统鼠标加速）
-        if (this.lastMouseX >= 0 && this.lastMouseY >= 0) {
-          const deltaX = Math.round(event.x - this.lastMouseX);
-          const deltaY = Math.round(event.y - this.lastMouseY);
-          if (deltaX !== 0 || deltaY !== 0) {
-            MoonBridge.sendMouseMove(deltaX, deltaY);
-          }
-        }
-      }
-      this.lastMouseX = event.x;
-      this.lastMouseY = event.y;
+      // 绝对模式：发送坐标位置
+      // event.x/y 为相对于 XComponent 的 vp 坐标，用 XComponent 尺寸作为参考域
+      MoonBridge.sendMousePosition(
+        Math.round(event.x), Math.round(event.y),
+        this.viewWidthVp, this.viewHeightVp
+      );
     } else if (event.action === MouseAction.Press || event.action === MouseAction.Release) {
       const button = this.mapMouseButton(event.button);
       if (button > 0) {

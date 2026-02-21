@@ -46,8 +46,8 @@ interface InputInterceptorNative {
 interface MouseInterceptorNative {
   addMouseInterceptor(): number;
   removeMouseInterceptor(): number;
-  configureMouseInterceptor(absoluteMode: boolean, viewWidth: number, viewHeight: number,
-                            density: number, offsetX: number, offsetY: number): void;
+  configureMouseInterceptor(windowX: number, windowY: number,
+                            windowWidth: number, windowHeight: number): void;
   isMouseInterceptorActive(): boolean;
 }
 
@@ -133,7 +133,7 @@ export class InputInterceptorService {
 /**
  * 鼠标事件拦截器服务（单例）
  *
- * 使用 OH_Input_AddInputEventInterceptor 在系统输入管线层级拦截鼠标事件，
+ * 使用 OH_Input_AddMouseEventMonitor 在系统输入管线层级监听鼠标事件（不消费），
  * 绕过 ArkUI 渲染帧率限制（不触摸时 .onMouse 降至 ~30Hz），
  * 以硬件原始轮询率直接调用 moonlight-common-c 输入 API。
  *
@@ -160,17 +160,17 @@ export class MouseInterceptorService {
 
   /**
    * 配置拦截器参数（可在运行中调用以更新）
-   * @param viewWidth 视图宽度 (vp)，即 XComponent 实际渲染宽度
-   * @param viewHeight 视图高度 (vp)，即 XComponent 实际渲染高度
-   * @param density 显示密度 (px/vp)
-   * @param absoluteMode 是否使用绝对鼠标模式（showLocalCursor=true 时启用，使本地/远端光标对齐）
-   * @param offsetX XComponent 左上角在屏幕上的 X 偏移 (vp)
-   * @param offsetY XComponent 左上角在屏幕上的 Y 偏移 (vp)
+   * 全屏模式：传入 (0, 0, 屏幕宽, 屏幕高)
+   * 窗口模式：传入实际窗口位置和尺寸
+   * @param windowX 窗口 X 坐标 (px)
+   * @param windowY 窗口 Y 坐标 (px)
+   * @param windowWidth 窗口宽度 (px)
+   * @param windowHeight 窗口高度 (px)
    */
-  configure(viewWidth: number, viewHeight: number, density: number,
-            absoluteMode: boolean = false, offsetX: number = 0, offsetY: number = 0): void {
+  configure(windowX: number, windowY: number,
+            windowWidth: number, windowHeight: number): void {
     if (!this.native) return;
-    this.native.configureMouseInterceptor(absoluteMode, viewWidth, viewHeight, density, offsetX, offsetY);
+    this.native.configureMouseInterceptor(windowX, windowY, windowWidth, windowHeight);
   }
 
   /**
