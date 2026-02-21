@@ -28,22 +28,22 @@
 #include <cstring>
 #include <chrono>
 
-#define LOG_TAG "OpusEncoder"
+#define LOG_TAG "OhosOpusEncoder"
 
 // =============================================================================
 // OpusEncoder 类实现
 // =============================================================================
 
-OpusEncoder::OpusEncoder() {
-    OH_LOG_INFO(LOG_APP, "OpusEncoder constructor");
+OhosOpusEncoder::OhosOpusEncoder() {
+    OH_LOG_INFO(LOG_APP, "OhosOpusEncoder constructor");
 }
 
-OpusEncoder::~OpusEncoder() {
-    OH_LOG_INFO(LOG_APP, "OpusEncoder destructor");
+OhosOpusEncoder::~OhosOpusEncoder() {
+    OH_LOG_INFO(LOG_APP, "OhosOpusEncoder destructor");
     Cleanup();
 }
 
-int OpusEncoder::Init(int sampleRate, int channels, int bitrate) {
+int OhosOpusEncoder::Init(int sampleRate, int channels, int bitrate) {
     OH_LOG_INFO(LOG_APP, "Init: sampleRate=%{public}d, channels=%{public}d, bitrate=%{public}d",
                 sampleRate, channels, bitrate);
     
@@ -160,14 +160,14 @@ int OpusEncoder::Init(int sampleRate, int channels, int bitrate) {
     }
     
     // 启动编码工作线程
-    encoderThread_ = std::thread(&OpusEncoder::EncoderThreadFunc, this);
+    encoderThread_ = std::thread(&OhosOpusEncoder::EncoderThreadFunc, this);
     
     initialized_.store(true, std::memory_order_release);
     OH_LOG_INFO(LOG_APP, "Opus encoder initialized successfully");
     return 0;
 }
 
-void OpusEncoder::EncoderThreadFunc() {
+void OhosOpusEncoder::EncoderThreadFunc() {
     OH_LOG_INFO(LOG_APP, "Encoder thread started");
     
     while (!stopping_.load(std::memory_order_acquire)) {
@@ -251,7 +251,7 @@ void OpusEncoder::EncoderThreadFunc() {
     OH_LOG_INFO(LOG_APP, "Encoder thread exiting");
 }
 
-int OpusEncoder::Encode(const uint8_t* pcmData, int pcmLength, uint8_t* opusOutput, int maxOutputLen) {
+int OhosOpusEncoder::Encode(const uint8_t* pcmData, int pcmLength, uint8_t* opusOutput, int maxOutputLen) {
     // 验证输入参数
     if (pcmData == nullptr || pcmLength <= 0 || opusOutput == nullptr || maxOutputLen <= 0) {
         return -1;
@@ -306,7 +306,7 @@ int OpusEncoder::Encode(const uint8_t* pcmData, int pcmLength, uint8_t* opusOutp
     }
 }
 
-void OpusEncoder::Cleanup() {
+void OhosOpusEncoder::Cleanup() {
     OH_LOG_INFO(LOG_APP, "Cleanup starting, encodeCount=%{public}llu, inputCb=%{public}llu, outputCb=%{public}llu",
                 static_cast<unsigned long long>(encodeCount_.load()),
                 static_cast<unsigned long long>(inputCallbackCount_.load()),
@@ -372,8 +372,8 @@ void OpusEncoder::Cleanup() {
 // 因此这里只做简单的入队操作
 // =============================================================================
 
-void OpusEncoder::OnError(OH_AVCodec* codec, int32_t errorCode, void* userData) {
-    auto* self = static_cast<OpusEncoder*>(userData);
+void OhosOpusEncoder::OnError(OH_AVCodec* codec, int32_t errorCode, void* userData) {
+    auto* self = static_cast<OhosOpusEncoder*>(userData);
     if (self == nullptr) {
         return;
     }
@@ -390,13 +390,13 @@ void OpusEncoder::OnError(OH_AVCodec* codec, int32_t errorCode, void* userData) 
     self->outputBufferQueue_.Stop();
 }
 
-void OpusEncoder::OnOutputFormatChanged(OH_AVCodec* codec, OH_AVFormat* format, void* userData) {
+void OhosOpusEncoder::OnOutputFormatChanged(OH_AVCodec* codec, OH_AVFormat* format, void* userData) {
     OH_LOG_INFO(LOG_APP, "Output format changed");
     // 格式变化通常不需要特殊处理
 }
 
-void OpusEncoder::OnInputBufferAvailable(OH_AVCodec* codec, uint32_t index, OH_AVBuffer* buffer, void* userData) {
-    auto* self = static_cast<OpusEncoder*>(userData);
+void OhosOpusEncoder::OnInputBufferAvailable(OH_AVCodec* codec, uint32_t index, OH_AVBuffer* buffer, void* userData) {
+    auto* self = static_cast<OhosOpusEncoder*>(userData);
     if (self == nullptr || buffer == nullptr) {
         return;
     }
@@ -412,8 +412,8 @@ void OpusEncoder::OnInputBufferAvailable(OH_AVCodec* codec, uint32_t index, OH_A
     self->inputCallbackCount_.fetch_add(1, std::memory_order_relaxed);
 }
 
-void OpusEncoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index, OH_AVBuffer* buffer, void* userData) {
-    auto* self = static_cast<OpusEncoder*>(userData);
+void OhosOpusEncoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index, OH_AVBuffer* buffer, void* userData) {
+    auto* self = static_cast<OhosOpusEncoder*>(userData);
     if (self == nullptr || buffer == nullptr) {
         return;
     }

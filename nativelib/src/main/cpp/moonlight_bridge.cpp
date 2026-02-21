@@ -53,7 +53,7 @@ static bool g_performanceMode = false;  // 性能模式
 
 // Opus 编码器管理
 static std::mutex g_opusEncoderMutex;
-static std::unordered_map<int64_t, std::unique_ptr<OpusEncoder>> g_opusEncoders;
+static std::unordered_map<int64_t, std::unique_ptr<OhosOpusEncoder>> g_opusEncoders;
 static int64_t g_opusEncoderNextHandle = 1;
 
 // 回调结构体
@@ -821,7 +821,7 @@ napi_value MoonBridge_OpusEncoderCreate(napi_env env, napi_callback_info info) {
     OH_LOG_INFO(LOG_APP, "OpusEncoderCreate: sampleRate=%{public}d, channels=%{public}d, bitrate=%{public}d",
                 sampleRate, channels, bitrate);
     
-    auto encoder = std::make_unique<OpusEncoder>();
+    auto encoder = std::make_unique<OhosOpusEncoder>();
     int ret = encoder->Init(sampleRate, channels, bitrate);
     
     napi_value result;
@@ -862,7 +862,7 @@ napi_value MoonBridge_OpusEncoderEncode(napi_env env, napi_callback_info info) {
         return GetUndefined(env);
     }
     
-    OpusEncoder* encoder = nullptr;
+    OhosOpusEncoder* encoder = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_opusEncoderMutex);
         auto it = g_opusEncoders.find(handle);

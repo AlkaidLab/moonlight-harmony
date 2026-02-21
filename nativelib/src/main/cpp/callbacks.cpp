@@ -17,7 +17,7 @@
  */
 
 #include "callbacks.h"
-#include "opus_avcodec.h"
+#include "opus_libopus.h"
 #include "video_decoder.h"
 #include "audio_renderer.h"
 #include "bass_energy_analyzer.h"
@@ -476,7 +476,7 @@ void Callbacks_Cleanup(void) {
     memset(&g_connCallbacks, 0, sizeof(g_connCallbacks));
     
     // 清理 AVCodec Opus 解码器
-    OpusDecoder::Cleanup();
+    MoonlightOpusDecoder::Cleanup();
     
     if (g_decodedAudioBuffer) {
         free(g_decodedAudioBuffer);
@@ -647,7 +647,7 @@ int BridgeArInit(int audioConfiguration, void* opusConfigPtr, void* context, int
     memcpy(&g_opusConfig, opusConfig, sizeof(g_opusConfig));
     
     // 使用 HarmonyOS AVCodec Opus 解码器
-    int err = OpusDecoder::Init(opusConfig);
+    int err = MoonlightOpusDecoder::Init(opusConfig);
     if (err != 0) {
         OH_LOG_ERROR(LOG_APP, "Failed to create AVCodec Opus decoder: %{public}d", err);
         return -1;
@@ -708,7 +708,7 @@ void BridgeArCleanup(void) {
     AudioRendererInstance::Cleanup();
     
     // 清理 AVCodec Opus 解码器
-    OpusDecoder::Cleanup();
+    MoonlightOpusDecoder::Cleanup();
     
     if (g_decodedAudioBuffer) {
         free(g_decodedAudioBuffer);
@@ -726,8 +726,8 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     }
     
     // 使用 HarmonyOS AVCodec Opus 解码器
-    // 注意：sampleData 可能为 NULL（丢包补偿 PLC），OpusDecoder::Decode 内部会处理
-    int decodeLen = OpusDecoder::Decode(
+    // 注意：sampleData 可能为 NULL（丢包补偿 PLC），MoonlightOpusDecoder::Decode 内部会处理
+    int decodeLen = MoonlightOpusDecoder::Decode(
         (const unsigned char*)sampleData,
         sampleLength,
         g_decodedAudioBuffer,

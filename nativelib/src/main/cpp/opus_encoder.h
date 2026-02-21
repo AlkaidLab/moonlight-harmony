@@ -132,10 +132,10 @@ struct OpusOutputData {
  * - AVCodec 回调线程：将可用缓冲区送入回调队列
  * - 编码工作线程：从输入队列取数据，从回调队列取缓冲区，执行编码
  */
-class OpusEncoder {
+class OhosOpusEncoder {
 public:
-    OpusEncoder();
-    ~OpusEncoder();
+    OhosOpusEncoder();
+    ~OhosOpusEncoder();
     
     /**
      * 初始化编码器

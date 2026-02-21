@@ -497,13 +497,32 @@ struct StreamPage {
   }
   
   /**
+   * 获取 XComponent 实际渲染宽度（vp）
+   * 解析 Length 类型（'100%' 或数字）为实际 vp 值
+   */
+  private getXComponentWidthVp(): number {
+    return typeof this.xComponentWidth === 'string'
+      ? this.viewModel.displayInfo.screenWidth
+      : (this.xComponentWidth as number);
+  }
+
+  /**
+   * 获取 XComponent 实际渲染高度（vp）
+   */
+  private getXComponentHeightVp(): number {
+    return typeof this.xComponentHeight === 'string'
+      ? this.viewModel.displayInfo.screenHeight
+      : (this.xComponentHeight as number);
+  }
+
+  /**
    * 恢复鼠标全速轮询（对话框关闭后调用）
    */
   private resumeMouseInterceptor(): void {
     if (!this.viewModel.isConnected) return;
     const monitorOk = this.inputHandler.startMouseInterceptor(
-      this.viewModel.displayInfo.screenWidth,
-      this.viewModel.displayInfo.screenHeight
+      this.getXComponentWidthVp(),
+      this.getXComponentHeightVp()
     );
     if (!monitorOk) {
       this.startMouseKeepAlive();
@@ -673,8 +692,8 @@ struct StreamPage {
 
       // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底
       const monitorOk = this.inputHandler.startMouseInterceptor(
-        this.viewModel.displayInfo.screenWidth,
-        this.viewModel.displayInfo.screenHeight
+        this.getXComponentWidthVp(),
+        this.getXComponentHeightVp()
       );
       if (!monitorOk) {
         this.startMouseKeepAlive();

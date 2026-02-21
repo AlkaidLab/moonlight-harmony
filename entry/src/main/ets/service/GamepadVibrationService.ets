@@ -124,14 +124,23 @@ export class GamepadVibrationService {
   }
 
   /**
-   * 停止所有震动
+   * 停止所有震动（设备马达 + USB 控制器马达）
    */
   stopAll(): void {
+    // 停止设备马达
     if (this.isVibrating) {
       this.stopVibrationImmediate();
-      this.lastLowFreq = 0;
-      this.lastHighFreq = 0;
     }
+    this.lastLowFreq = 0;
+    this.lastHighFreq = 0;
+
+    // 停止 USB 控制器马达（发送 rumble(0,0)）
+    try {
+      const controllers = this.usbDriverService.getControllers();
+      for (const controller of controllers) {
+        controller.rumble(0, 0);
+      }
+    } catch (_) { /* ignore */ }
   }
 
   // ==================== 内部实现 ====================

@@ -137,9 +137,12 @@ private:
     // 生产者: PlaySamples() (解码线程)
     // 消费者: OnWriteData() (OHAudio 音频回调线程)
     // =========================================================================
-    // 缓冲区容量：6帧 × 最大8声道 × 240采样/帧 = 11520 采样 ≈ 30ms @48kHz
-    // 对于低延迟游戏串流，30ms 是合理的缓冲深度
-    static constexpr int MAX_BUFFER_FRAMES = 6;
+    // 缓冲区容量：16帧 × 最大8声道 × 240采样/帧 = 30720 采样
+    // 对于 stereo: 30720/2 = 15360 samples = 320ms @48kHz
+    // 对于 5.1:   30720/6 = 5120 samples = 106ms
+    // 对于 7.1:   30720/8 = 3840 samples = 80ms
+    // 较大的缓冲可吸收视频帧率波动导致的音频解码延迟抖动
+    static constexpr int MAX_BUFFER_FRAMES = 16;
     static constexpr int MAX_CHANNELS = 8;
     static constexpr int MAX_SAMPLES_PER_FRAME = 240;
     static constexpr int RING_BUFFER_CAPACITY = MAX_BUFFER_FRAMES * MAX_CHANNELS * MAX_SAMPLES_PER_FRAME;
@@ -153,6 +156,9 @@ private:
     std::atomic<uint64_t> playedSamples_{0};
     std::atomic<uint64_t> droppedSamples_{0};
     std::atomic<uint32_t> underruns_{0};
+    
+    // Underrun 拗音消除：记录上次回调是否 underrun，用于恢复时渐入
+    bool wasUnderrun_{false};
     
     // 运行状态
     std::atomic<bool> running_{false};

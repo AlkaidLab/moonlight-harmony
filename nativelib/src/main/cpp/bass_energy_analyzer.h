@@ -129,7 +129,7 @@ public:
             return false;
         }
 
-        // sampleCount 是 per-channel frame count (来自 OpusDecoder::Decode 返回值)
+        // sampleCount 是 per-channel frame count (来自 MoonlightOpusDecoder::Decode 返回值)
         const int frameCount = sampleCount;
 
         // 同时计算原始信号 RMS（绝对音量指标）

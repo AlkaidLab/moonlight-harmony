@@ -282,6 +282,7 @@ int AudioRenderer::Stop() {
     // 清空环形缓冲区
     ringHead_.store(0, std::memory_order_relaxed);
     ringTail_.store(0, std::memory_order_relaxed);
+    wasUnderrun_ = false;
     
     OH_LOG_INFO(LOG_APP, "Audio renderer stopped");
     return 0;
@@ -333,11 +334,10 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
     }
     
     if (available < dataSize) {
-        // 缓冲区空间不足，丢弃旧数据以腾出空间
-        int needToFree = dataSize - available;
-        int newHead = (head + needToFree) % RING_BUFFER_CAPACITY;
-        ringHead_.store(newHead, std::memory_order_release);
-        droppedSamples_.fetch_add(needToFree / config_.channelCount, std::memory_order_relaxed);
+        // 缓冲区空间不足 → 丢弃新数据（不移动消费者 head，维持 SPSC 约束）
+        // 这与 Android 的策略一致：当音频延迟超限时丢弃新包，避免用延迟换取全无爬音
+        droppedSamples_.fetch_add(sampleCount, std::memory_order_relaxed);
+        return 0;
     }
     
     // 写入数据到环形缓冲区
@@ -470,6 +470,10 @@ int32_t AudioRenderer::OnWriteData(OH_AudioRenderer* renderer, void* userData,
     }
     
     int toCopy = std::min(available, samplesNeeded);
+    int channelCount = std::max(self->config_.channelCount, 1);
+    // 渐变长度（按采样帧计，非采样点）：约 5ms @48kHz = 240 采样帧
+    static constexpr int FADE_FRAMES = 240;
+    int fadeSamples = FADE_FRAMES * channelCount; // 按 int16_t 计的渐变长度
     
     if (toCopy > 0) {
         // 从环形缓冲区读取
@@ -479,16 +483,36 @@ int32_t AudioRenderer::OnWriteData(OH_AudioRenderer* renderer, void* userData,
             memcpy(outBuffer + firstPart, self->ringBuffer_, (toCopy - firstPart) * sizeof(int16_t));
         }
         self->ringHead_.store((head + toCopy) % RING_BUFFER_CAPACITY, std::memory_order_release);
+        
+        // Underrun 后恢复：对开头数据施加渐入（fade-in），避免静音→有信号的波形跳变
+        if (self->wasUnderrun_) {
+            int fadeLen = std::min(toCopy, fadeSamples);
+            for (int i = 0; i < fadeLen; i++) {
+                float gain = (float)i / (float)fadeLen;
+                outBuffer[i] = (int16_t)(outBuffer[i] * gain);
+            }
+        }
     }
     
-    // 如果数据不足，填充静音
+    // 如果数据不足，填充静音（underrun）
     if (toCopy < samplesNeeded) {
+        // 对末尾有效数据施加渐出（fade-out），避免有信号→静音的波形跳变
+        if (toCopy > 0) {
+            int fadeLen = std::min(toCopy, fadeSamples);
+            int fadeStart = toCopy - fadeLen;
+            for (int i = 0; i < fadeLen; i++) {
+                float gain = 1.0f - (float)i / (float)fadeLen;
+                outBuffer[fadeStart + i] = (int16_t)(outBuffer[fadeStart + i] * gain);
+            }
+        }
         memset(outBuffer + toCopy, 0, (samplesNeeded - toCopy) * sizeof(int16_t));
         self->underruns_.fetch_add(1, std::memory_order_relaxed);
+        self->wasUnderrun_ = true;
+    } else {
+        self->wasUnderrun_ = false;
     }
     
     // 更新已播放样本数（按通道换算）
-    int channelCount = std::max(self->config_.channelCount, 1);
     self->playedSamples_.fetch_add(toCopy / channelCount, std::memory_order_relaxed);
     
     return bufferLen;

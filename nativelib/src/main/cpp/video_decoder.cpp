@@ -423,10 +423,24 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     OH_LOG_INFO(LOG_APP, "{Init} Format created, setting parameters...");
     
     // 设置帧率 - 这让解码器知道预期的输入速率
-    // 直接报告实际帧率，让系统进行适当的资源调度
-    // 注意：高帧率（如 120fps）可能触发系统特殊调度策略，这可能是期望的行为
-    OH_AVFormat_SetDoubleValue(format, OH_MD_KEY_FRAME_RATE, config_.fps);
-    OH_LOG_INFO(LOG_APP, "{Init} Reporting actual FPS %.2f to decoder", config_.fps);
+    // 报告 2 倍实际帧率，防止硬件 VPU 在静态内容时降频
+    // 类似 Android 的 KEY_OPERATING_RATE = Short.MAX_VALUE 策略：
+    // 当画面静止时，帧数据很小（可能仅几百字节），VPU 可能进入节能模式降低时钟频率。
+    // 当突然出现复杂画面（如打开动画），VPU 频率提升有延迟，导致前几帧解码变慢产生卡顿。
+    // 报告更高帧率可以让 VPU 保持较高的工作频率，避免静态↔动态切换时的"冷启动"卡顿。
+    double reportedFps = config_.fps * 2.0;
+    OH_AVFormat_SetDoubleValue(format, OH_MD_KEY_FRAME_RATE, reportedFps);
+    OH_LOG_INFO(LOG_APP, "{Init} Reporting FPS %.2f to decoder (actual=%.2f, 2x to prevent VPU throttling)",
+                reportedFps, config_.fps);
+    
+    // 预分配足够大的输入缓冲区
+    // 静态内容时帧可能仅几百字节，运动开始时帧可能达到数百 KB。
+    // 如果不预分配，解码器可能需要在运动开始时重新分配缓冲区，增加延迟。
+    // 设置 MAX_INPUT_SIZE 确保输入 buffer 一开始就足够大。
+    int maxInputSize = config_.width * config_.height * 3 / 2;  // 按 YUV420 全帧大小预估
+    if (maxInputSize < 512 * 1024) maxInputSize = 512 * 1024;   // 至少 512KB
+    OH_AVFormat_SetIntValue(format, OH_MD_KEY_MAX_INPUT_SIZE, maxInputSize);
+    OH_LOG_INFO(LOG_APP, "{Init} Max input size set to %{public}d bytes", maxInputSize);
     
     // 低延迟模式 - 关键优化，让解码器尽快输出帧
     // 文档说明：使能低时延视频编解码的键，值类型为int32_t，1表示使能

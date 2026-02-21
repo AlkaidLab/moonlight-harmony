@@ -48,6 +48,10 @@ export class StreamInputHandler {
   // ── 鼠标拦截器（绕过 ArkUI 帧率限制，全速鼠标轮询）──
   private mouseInterceptorActive: boolean = false;
 
+  // ── XComponent 实际渲染尺寸（vp，用于绝对模式坐标归一化）──
+  private viewWidthVp: number = 0;
+  private viewHeightVp: number = 0;
+
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
   private appVolume: number = 1.0;
   private preMuteVolume: number = 1.0;
@@ -91,13 +95,27 @@ export class StreamInputHandler {
   startMouseInterceptor(viewWidth: number, viewHeight: number): boolean {
     const mouseInterceptor = MouseInterceptorService.getInstance();
 
+    // 保存 XComponent 实际尺寸，供 ArkUI 回退路径绝对模式使用
+    this.viewWidthVp = viewWidth;
+    this.viewHeightVp = viewHeight;
+
     let density = 1.0;
+    let screenWidthVp = viewWidth;
+    let screenHeightVp = viewHeight;
     try {
       const displayInfo = display.getDefaultDisplaySync();
       density = displayInfo.densityPixels;
+      screenWidthVp = displayInfo.width / density;
+      screenHeightVp = displayInfo.height / density;
     } catch (_) {}
 
-    mouseInterceptor.configure(viewWidth, viewHeight, density);
+    // showLocalCursor=true → 绝对模式（本地/远端光标对齐），否则 → 相对模式（标准鼠标体验）
+    const absoluteMode = this.viewModel?.showLocalCursor ?? false;
+
+    // XComponent 居中于全屏窗口，计算偏移以将屏幕坐标转换为视图相对坐标
+    const offsetX = (screenWidthVp - viewWidth) / 2;
+    const offsetY = (screenHeightVp - viewHeight) / 2;
+    mouseInterceptor.configure(viewWidth, viewHeight, density, absoluteMode, offsetX, offsetY);
 
     const result = mouseInterceptor.start();
     if (result === 0) {
@@ -145,11 +163,21 @@ export class StreamInputHandler {
     if (this.mouseInterceptorActive) return;
 
     if (event.action === MouseAction.Move) {
-      if (this.lastMouseX >= 0 && this.lastMouseY >= 0) {
-        const deltaX = Math.round(event.x - this.lastMouseX);
-        const deltaY = Math.round(event.y - this.lastMouseY);
-        if (deltaX !== 0 || deltaY !== 0) {
-          MoonBridge.sendMouseMove(deltaX, deltaY);
+      if (this.viewModel?.showLocalCursor) {
+        // 绝对模式：发送坐标位置（使本地/远端光标对齐）
+        // event.x/y 为相对于 XComponent 的 vp 坐标，用 XComponent 尺寸作为参考域
+        MoonBridge.sendMousePosition(
+          Math.round(event.x), Math.round(event.y),
+          this.viewWidthVp, this.viewHeightVp
+        );
+      } else {
+        // 相对模式：发送 delta（标准鼠标体验，支持系统鼠标加速）
+        if (this.lastMouseX >= 0 && this.lastMouseY >= 0) {
+          const deltaX = Math.round(event.x - this.lastMouseX);
+          const deltaY = Math.round(event.y - this.lastMouseY);
+          if (deltaX !== 0 || deltaY !== 0) {
+            MoonBridge.sendMouseMove(deltaX, deltaY);
+          }
         }
       }
       this.lastMouseX = event.x;
@@ -228,11 +256,12 @@ export class StreamInputHandler {
       return true;
     }
 
-    // D-pad 方向键 (2012-2015) - GCK 活跃时消费掉，避免与 GCK Axis 路径双发
+    // D-pad 方向键 (2012-2015) - 仅在有 GCK 手柄实际连接时消费，避免与 GCK Axis 路径双发
     // 蓝牙手柄 D-pad 会同时产生 GCK Axis 事件和 KeyEvent(2012-2015)
     // GCK Axis 已发送手柄 D-pad，这里如果再翻译成键盘方向键 VK_UP 等就会"按一下走两格"
-    if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.isUsingGameControllerKit()) {
-      return true; // 消费事件，不转发
+    // 注意：仅检查 isUsingGameControllerKit() 会在无手柄时也过滤掉物理键盘方向键
+    if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.hasActiveGcGamepad()) {
+      return true; // GCK 手柄已接管 D-pad，消费事件
     }
 
     // 键盘按键 → 翻译为 Windows VK 码并发送
@@ -278,8 +307,8 @@ export class StreamInputHandler {
       //    GCK Axis 已经处理了手柄 D-pad，这里如果再翻译成键盘方向键发送
       //    会导致游戏同时收到手柄 D-pad + 键盘方向键 = "按一下走两格"
       if (keyCode >= 2012 && keyCode <= 2015) {
-        if (this.gamepadManager?.isUsingGameControllerKit()) {
-          // GCK 已接管 D-pad，丢弃拦截器中的方向键事件
+        if (this.gamepadManager?.hasActiveGcGamepad()) {
+          // GCK 手柄已接管 D-pad，丢弃拦截器中的方向键事件
           return;
         }
         // 没有 GCK 设备时，作为键盘方向键正常转发（后面的 isKeyboardKey 分支会处理）

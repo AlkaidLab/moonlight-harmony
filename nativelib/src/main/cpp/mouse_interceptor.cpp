@@ -45,6 +45,14 @@ static std::atomic<float> g_density{1.0f};
 static int32_t g_lastX = -1;
 static int32_t g_lastY = -1;
 
+// 相对模式：亚像素累加器（物理 px → vp 除以 density 后可能有小数，累积后取整再发送）
+static float g_accumX = 0.0f;
+static float g_accumY = 0.0f;
+
+// 绝对模式：XComponent 在屏幕上的偏移（vp 单位，用于将屏幕坐标转换为视图相对坐标）
+static std::atomic<float> g_offsetX{0.0f};
+static std::atomic<float> g_offsetY{0.0f};
+
 // ==================== 按钮映射 ====================
 
 /**
@@ -84,15 +92,30 @@ static void OnMouseEvent(const Input_MouseEvent *event)
                 float density = g_density.load(std::memory_order_relaxed);
                 int32_t vw = g_viewWidth.load(std::memory_order_relaxed);
                 int32_t vh = g_viewHeight.load(std::memory_order_relaxed);
-                short vpX = (short)(x / density);
-                short vpY = (short)(y / density);
-                LiSendMousePositionEvent(vpX, vpY, (short)vw, (short)vh);
+                float ofsX = g_offsetX.load(std::memory_order_relaxed);
+                float ofsY = g_offsetY.load(std::memory_order_relaxed);
+
+                // 屏幕 px → vp → 减去 XComponent 偏移 → 钳位到视图边界
+                float vpX = x / density - ofsX;
+                float vpY = y / density - ofsY;
+                if (vpX < 0) vpX = 0; else if (vpX > vw) vpX = (float)vw;
+                if (vpY < 0) vpY = 0; else if (vpY > vh) vpY = (float)vh;
+                LiSendMousePositionEvent((short)vpX, (short)vpY, (short)vw, (short)vh);
             } else {
+                // 相对模式：将物理 px delta 转换为 vp delta（与 ArkUI .onMouse 一致）
+                // 使用浮点累加器保留亚像素精度，避免高 density 设备丢失微小移动
                 if (g_lastX >= 0 && g_lastY >= 0) {
-                    int32_t dx = x - g_lastX;
-                    int32_t dy = y - g_lastY;
-                    if (dx != 0 || dy != 0) {
-                        LiSendMouseMoveEvent((short)dx, (short)dy);
+                    float density = g_density.load(std::memory_order_relaxed);
+                    float fdx = (float)(x - g_lastX) / density;
+                    float fdy = (float)(y - g_lastY) / density;
+                    g_accumX += fdx;
+                    g_accumY += fdy;
+                    int32_t sendX = (int32_t)g_accumX;
+                    int32_t sendY = (int32_t)g_accumY;
+                    if (sendX != 0 || sendY != 0) {
+                        g_accumX -= (float)sendX;
+                        g_accumY -= (float)sendY;
+                        LiSendMouseMoveEvent((short)sendX, (short)sendY);
                     }
                 }
                 g_lastX = x;
@@ -138,6 +161,8 @@ static napi_value AddMouseInterceptor(napi_env env, napi_callback_info info)
         g_active.store(true);
         g_lastX = -1;
         g_lastY = -1;
+        g_accumX = 0.0f;
+        g_accumY = 0.0f;
         LOGI("鼠标监听器已启动（全速轮询，不消费事件）");
     } else {
         LOGE("鼠标监听器启动失败: %{public}d", ret);
@@ -164,6 +189,8 @@ static napi_value RemoveMouseInterceptor(napi_env env, napi_callback_info info)
         g_active.store(false);
         g_lastX = -1;
         g_lastY = -1;
+        g_accumX = 0.0f;
+        g_accumY = 0.0f;
         LOGI("鼠标监听器已停止");
     }
 
@@ -178,30 +205,39 @@ static napi_value RemoveMouseInterceptor(napi_env env, napi_callback_info info)
  */
 static napi_value ConfigureMouseInterceptor(napi_env env, napi_callback_info info)
 {
-    size_t argc = 4;
-    napi_value argv[4];
+    size_t argc = 6;
+    napi_value argv[6];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
 
     if (argc >= 4) {
         bool absoluteMode;
         int32_t viewWidth, viewHeight;
         double density;
+        double offsetX = 0, offsetY = 0;
 
         napi_get_value_bool(env, argv[0], &absoluteMode);
         napi_get_value_int32(env, argv[1], &viewWidth);
         napi_get_value_int32(env, argv[2], &viewHeight);
         napi_get_value_double(env, argv[3], &density);
+        if (argc >= 6) {
+            napi_get_value_double(env, argv[4], &offsetX);
+            napi_get_value_double(env, argv[5], &offsetY);
+        }
 
         g_absoluteMode.store(absoluteMode, std::memory_order_relaxed);
         g_viewWidth.store(viewWidth, std::memory_order_relaxed);
         g_viewHeight.store(viewHeight, std::memory_order_relaxed);
         g_density.store((float)density, std::memory_order_relaxed);
+        g_offsetX.store((float)offsetX, std::memory_order_relaxed);
+        g_offsetY.store((float)offsetY, std::memory_order_relaxed);
 
         g_lastX = -1;
         g_lastY = -1;
+        g_accumX = 0.0f;
+        g_accumY = 0.0f;
 
-        LOGI("配置更新: absolute=%{public}d, view=%{public}dx%{public}d, density=%.1f",
-             absoluteMode, viewWidth, viewHeight, (float)density);
+        LOGI("配置更新: absolute=%{public}d, view=%{public}dx%{public}d, density=%.1f, offset=(%.1f,%.1f)",
+             absoluteMode, viewWidth, viewHeight, (float)density, (float)offsetX, (float)offsetY);
     }
 
     napi_value undefined;

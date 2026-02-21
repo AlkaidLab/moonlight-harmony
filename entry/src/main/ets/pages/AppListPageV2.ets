@@ -141,11 +141,13 @@ struct AppListPageV2 {
       this.isLoading = false;
     }
     
-    this.refreshApps();
+    // 页面重新展示时的自动刷新使用静默模式，不弹 toast
+    // （退出串流或唤醒主机时 GFE 可能还未就绪，短暂失败是正常的）
+    this.refreshApps(true);
     
     // 从串流返回时延迟刷新，等待服务器状态更新
     if (this.viewModel.hasRunningApp) {
-      setTimeout(() => this.refreshApps(), 1000);
+      setTimeout(() => this.refreshApps(true), 1000);
     }
   }
 
@@ -293,7 +295,7 @@ struct AppListPageV2 {
     }
   }
 
-  private async refreshApps(): Promise<void> {
+  private async refreshApps(silent: boolean = false): Promise<void> {
     this.isRefreshing = true;
     
     try {
@@ -344,7 +346,13 @@ struct AppListPageV2 {
         router.back();
         return;
       }
-      promptAction.showToast({ message: '刷新失败' });
+      // 静默刷新（如 onPageShow 自动触发的后台刷新）不弹 toast
+      // 已有数据时也不弹——用户仍能看到之前的列表
+      if (!silent && this.viewModel.appCount === 0) {
+        promptAction.showToast({ message: '刷新失败' });
+      } else {
+        console.warn('AppListPageV2: 刷新失败（静默）:', errMsg);
+      }
     } finally {
       this.isRefreshing = false;
     }

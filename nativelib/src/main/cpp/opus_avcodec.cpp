@@ -144,10 +144,29 @@ int OpusAVCodecDecoder::Decode(const unsigned char* opusData, int opusLength,
     
     // 处理 NULL 数据（PLC - 丢包补偿）
     // moonlight-common-c 在检测到丢包时传 NULL 表示需要 PLC
-    // AVCodec 不支持 PLC，直接输出静音
+    // AVCodec 不支持原生 PLC，使用最后一帧衰减回放代替纯静音
     if (opusData == nullptr || opusLength <= 0) {
         int silenceSamples = std::min(samplesPerFrame_, maxSamples);
-        memset(pcmOut, 0, silenceSamples * channelCount_ * sizeof(short));
+        int totalSamples = silenceSamples * channelCount_;
+        
+        if (!lastDecodedFrame_.empty() && plcConsecutiveCount_ < MAX_PLC_REPEATS) {
+            // 用上一帧数据衰减回放
+            int copyCount = std::min(totalSamples, (int)lastDecodedFrame_.size());
+            float gain = 1.0f;
+            for (int i = 0; i <= plcConsecutiveCount_; i++) {
+                gain *= PLC_DECAY;
+            }
+            for (int i = 0; i < copyCount; i++) {
+                pcmOut[i] = (short)(lastDecodedFrame_[i] * gain);
+            }
+            if (copyCount < totalSamples) {
+                memset(pcmOut + copyCount, 0, (totalSamples - copyCount) * sizeof(short));
+            }
+            plcConsecutiveCount_++;
+        } else {
+            // 超过最大重复次数或无缓存帧，输出静音
+            memset(pcmOut, 0, totalSamples * sizeof(short));
+        }
         return silenceSamples;
     }
     
@@ -221,6 +240,30 @@ int OpusAVCodecDecoder::Decode(const unsigned char* opusData, int opusLength,
     
     if (decodedSamples_ > 0) {
         consecutiveErrors_ = 0;  // 成功解码，重置错误计数
+        
+        int totalSamples = decodedSamples_ * channelCount_;
+        
+        // PLC 恢复后的首帧：与上一 PLC 帧做交叉渐变，消除波形跳变
+        if (plcConsecutiveCount_ > 0 && !lastDecodedFrame_.empty()) {
+            int crossLen = std::min(totalSamples, (int)lastDecodedFrame_.size());
+            // 交叉渐变：从旧帧（衰减后）渐出，新帧渐入
+            float plcGain = 1.0f;
+            for (int j = 0; j <= plcConsecutiveCount_; j++) {
+                plcGain *= PLC_DECAY;
+            }
+            for (int i = 0; i < crossLen; i++) {
+                float t = (float)i / (float)crossLen; // 0→1
+                float oldVal = lastDecodedFrame_[i] * plcGain;
+                float newVal = pcmOut[i];
+                pcmOut[i] = (short)(oldVal * (1.0f - t) + newVal * t);
+            }
+        }
+        
+        plcConsecutiveCount_ = 0; // 成功解码，重置 PLC 计数
+        
+        // 缓存最后一帧用于 PLC
+        lastDecodedFrame_.resize(totalSamples);
+        memcpy(lastDecodedFrame_.data(), pcmOut, totalSamples * sizeof(short));
     } else {
         int errors = ++consecutiveErrors_;
         if (errors >= MAX_DECODE_ERRORS) {
@@ -259,6 +302,10 @@ void OpusAVCodecDecoder::Cleanup() {
         while (!outputIndexQueue_.empty()) outputIndexQueue_.pop();
         while (!outputBufferQueue_.empty()) outputBufferQueue_.pop();
     }
+    
+    // 清空 PLC 缓存
+    lastDecodedFrame_.clear();
+    plcConsecutiveCount_ = 0;
     
     OH_LOG_INFO(LOG_APP, "AVCodec Opus decoder cleaned up");
 }

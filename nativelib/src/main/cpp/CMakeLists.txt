@@ -28,7 +28,11 @@ set(OPENSSL_INCLUDE_DIR ${OPENSSL_ROOT_DIR}/include)
 set(OPENSSL_CRYPTO_LIBRARY ${OPENSSL_ROOT_DIR}/lib/libcrypto.a)
 set(OPENSSL_SSL_LIBRARY ${OPENSSL_ROOT_DIR}/lib/libssl.a)
 
-# 使用 HarmonyOS AVCodec Opus 解码器 (不需要 DISABLE_OPUS_CODEC 了)
+# 使用 libopus 原生解码器（支持 PLC 丢包补偿）
+# 根据架构选择正确的 libopus 库路径
+set(LIBOPUS_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libopus)
+set(LIBOPUS_INCLUDE_DIR ${LIBOPUS_ROOT_DIR}/include)
+set(LIBOPUS_LIBRARY ${LIBOPUS_ROOT_DIR}/${OHOS_ARCH}/libopus.a)
 
 # 设置根路径
 set(NATIVERENDER_ROOT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
@@ -39,6 +43,7 @@ include_directories(
     ${NATIVERENDER_ROOT_PATH}
     ${NATIVERENDER_ROOT_PATH}/include
     ${OPENSSL_INCLUDE_DIR}
+    ${LIBOPUS_INCLUDE_DIR}
     ${MOONLIGHT_COMMON_PATH}/src
     ${MOONLIGHT_COMMON_PATH}/enet/include
     ${MOONLIGHT_COMMON_PATH}/reedsolomon
@@ -49,7 +54,7 @@ set(SOURCE_FILES
     napi_init.cpp
     moonlight_bridge.cpp
     callbacks.cpp
-    opus_avcodec.cpp
+    opus_libopus.cpp
     opus_encoder.cpp
     video_decoder.cpp
     audio_renderer.cpp
@@ -133,4 +138,5 @@ target_link_libraries(moonlight_nativelib PUBLIC
     libohinput.so
     ${OPENSSL_CRYPTO_LIBRARY}
     ${OPENSSL_SSL_LIBRARY}
+    ${LIBOPUS_LIBRARY}
 )

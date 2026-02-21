@@ -420,6 +420,15 @@ export class GamepadManager implements UsbDriverListener {
     return this.useGameControllerKit;
   }
 
+  /**
+   * 是否有活跃的 GCK 手柄连接
+   * 用于判断 D-pad 2012-2015 事件是否需要过滤
+   * 仅当 GCK 已启用 且 有手柄实际连接时返回 true
+   */
+  hasActiveGcGamepad(): boolean {
+    return this.useGameControllerKit && this.gcDeviceIdToSlot.size > 0;
+  }
+
   // ==================== 鼠标模拟（委托 MouseEmulationService） ====================
 
   /** 设置鼠标模拟回调（由 StreamPage 调用） */
@@ -1954,5 +1963,10 @@ export class GamepadManager implements UsbDriverListener {
   /** 检查是否有 USB 控制器连接 */
   hasUsbControllers(): boolean {
     return this.vibrationService.hasUsbControllers();
+  }
+
+  /** 立即停止所有振动（设备马达 + USB 控制器马达） */
+  stopAllVibration(): void {
+    this.vibrationService.stopAll();
   }
 }

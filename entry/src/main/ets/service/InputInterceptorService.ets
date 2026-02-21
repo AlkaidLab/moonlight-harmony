@@ -46,7 +46,8 @@ interface InputInterceptorNative {
 interface MouseInterceptorNative {
   addMouseInterceptor(): number;
   removeMouseInterceptor(): number;
-  configureMouseInterceptor(absoluteMode: boolean, viewWidth: number, viewHeight: number, density: number): void;
+  configureMouseInterceptor(absoluteMode: boolean, viewWidth: number, viewHeight: number,
+                            density: number, offsetX: number, offsetY: number): void;
   isMouseInterceptorActive(): boolean;
 }
 
@@ -159,13 +160,17 @@ export class MouseInterceptorService {
 
   /**
    * 配置拦截器参数（可在运行中调用以更新）
-   * @param viewWidth 视图宽度 (vp)
-   * @param viewHeight 视图高度 (vp)
+   * @param viewWidth 视图宽度 (vp)，即 XComponent 实际渲染宽度
+   * @param viewHeight 视图高度 (vp)，即 XComponent 实际渲染高度
    * @param density 显示密度 (px/vp)
+   * @param absoluteMode 是否使用绝对鼠标模式（showLocalCursor=true 时启用，使本地/远端光标对齐）
+   * @param offsetX XComponent 左上角在屏幕上的 X 偏移 (vp)
+   * @param offsetY XComponent 左上角在屏幕上的 Y 偏移 (vp)
    */
-  configure(viewWidth: number, viewHeight: number, density: number): void {
+  configure(viewWidth: number, viewHeight: number, density: number,
+            absoluteMode: boolean = false, offsetX: number = 0, offsetY: number = 0): void {
     if (!this.native) return;
-    this.native.configureMouseInterceptor(true, viewWidth, viewHeight, density);
+    this.native.configureMouseInterceptor(absoluteMode, viewWidth, viewHeight, density, offsetX, offsetY);
   }
 
   /**

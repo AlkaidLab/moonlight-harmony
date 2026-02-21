@@ -829,6 +829,9 @@ export class StreamingSession {
         console.info(`连接已终止: ${errorCode}, userInitiated=${this.userInitiatedStop}`);
         this.isRunning = false;
         GamepadManager.getInstance().stopAllSensors();
+        // 立即停止所有振动（设备马达 + USB 手柄马达 + 音频振动）
+        GamepadManager.getInstance().stopAllVibration();
+        this.audioVibrationService.stop();
         this.stopMicrophone();
         // 用户主动停止时不触发外部回调（避免弹出“连接已断开”提示）
         if (!this.userInitiatedStop && this.connectionTerminatedCallback) {

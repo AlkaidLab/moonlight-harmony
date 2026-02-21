@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <mutex>
 #include <queue>
+#include <vector>
 #include <atomic>
 #include <condition_variable>
 #include <multimedia/player_framework/native_avcodec_audiocodec.h>
@@ -119,6 +120,13 @@ private:
     
     // 是否运行中
     bool running_ = false;
+    
+    // 简易 PLC（Packet Loss Concealment）
+    // AVCodec 不支持原生 PLC，我们缓存最后一帧用于丢包时回放衰减
+    std::vector<short> lastDecodedFrame_;    // 上一帧 PCM 数据
+    int plcConsecutiveCount_ = 0;            // 连续 PLC 次数
+    static constexpr int MAX_PLC_REPEATS = 3; // 最多重复3次，之后输出静音
+    static constexpr float PLC_DECAY = 0.6f;  // 每次重复衰减到 60%
     
     // 错误恢复
     std::atomic<bool> needReset_{false};         // 解码器是否需要重置

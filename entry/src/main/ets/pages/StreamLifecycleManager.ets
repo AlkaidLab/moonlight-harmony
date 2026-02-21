@@ -46,6 +46,8 @@ export class StreamLifecycleManager {
   private wasInBackground: boolean = false;
   private backgroundService: BackgroundStreamService = BackgroundStreamService.getInstance();
   private enableBackgroundTask: boolean = true;  // 后台保活开关
+  /** 后台期间收到的连接终止错误码（延迟到前台处理） */
+  private pendingTerminationErrorCode: number | null = null;
 
   // ── 屏幕方向变化监听相关 ──
   private displayChangeCallback: ((displayId: number) => void) | null = null;
@@ -265,9 +267,20 @@ export class StreamLifecycleManager {
    * 当应用从后台切回前台时，需要检查串流状态并尝试恢复
    * - 后台保活开启：进程未被冻结，Flush+IDR 恢复解码器
    * - 后台保活关闭：进程可能被系统冻结，连接可能已断，执行重连
+   * - 如果后台期间连接已断开（pendingTerminationErrorCode），尝试重连
    */
   private handleAppResume(): void {
-    console.info(`[StreamPage] 处理应用恢复, 连接状态: ${this.viewModel?.connectionState}, 后台保活: ${this.enableBackgroundTask}`);
+    console.info(`[StreamPage] 处理应用恢复, 连接状态: ${this.viewModel?.connectionState}, ` +
+      `后台保活: ${this.enableBackgroundTask}, 待处理断连: ${this.pendingTerminationErrorCode}`);
+
+    // 后台期间连接断开 → 尝试重连而非直接弹错误对话框
+    if (this.pendingTerminationErrorCode !== null) {
+      const errorCode = this.pendingTerminationErrorCode;
+      this.pendingTerminationErrorCode = null;
+      console.info(`[StreamPage] 后台期间连接断开 (errorCode=${errorCode})，尝试重连...`);
+      this.callbacks?.reconnectStreaming();
+      return;
+    }
 
     if (this.enableBackgroundTask) {
       // 后台保活开启：进程一直在运行，只需恢复解码器
@@ -341,7 +354,7 @@ export class StreamLifecycleManager {
    *           -104 = 帧转换错误
    */
   handleConnectionTerminated(errorCode: number): void {
-    console.info(`StreamPage: 连接终止, errorCode=${errorCode}`);
+    console.info(`StreamPage: 连接终止, errorCode=${errorCode}, inBackground=${this.wasInBackground}`);
 
     const ML_ERROR_GRACEFUL_TERMINATION = 0;
     const ML_ERROR_NO_VIDEO_TRAFFIC = -100;
@@ -349,6 +362,13 @@ export class StreamLifecycleManager {
     const ML_ERROR_UNEXPECTED_EARLY_TERMINATION = -102;
     const ML_ERROR_PROTECTED_CONTENT = -103;
     const ML_ERROR_FRAME_CONVERSION = -104;
+
+    // 应用在后台时连接断开：延迟处理，等回到前台时尝试重连
+    if (this.wasInBackground) {
+      console.info(`[StreamPage] 后台期间连接断开，延迟处理 (errorCode=${errorCode})`);
+      this.pendingTerminationErrorCode = errorCode;
+      return;
+    }
 
     if (errorCode === ML_ERROR_GRACEFUL_TERMINATION) {
       // 服务器正常关闭（用户在服务器端退出游戏），stopStreaming 内部会显示延迟统计
