@@ -303,6 +303,12 @@ static constexpr double kAsyncSkipThresholdMultiplier = 3.0;
 static constexpr double kCriticalLatencyMultiplier = 8.0;
 static constexpr double kCriticalLatencyMinMs = 100.0;  // IDR 恢复最小阈值
 static constexpr int kLatencyRecoveryMinFrames = 60;     // 启动阶段不触发
+// L4: 网络抖动突发检测 - 连续 N 帧在极短间隔内到达时主动 Flush + IDR
+static constexpr int kBurstFlushThreshold = 4;           // 连续突发帧数阈值
+static constexpr double kBurstIntervalRatio = 0.3;       // 到达间隔 < 帧间隔 × 此比率视为突发
+// L5: 异步渲染跳帧 - 输出间隔过短且延迟偏高时跳帧
+static constexpr double kAsyncRenderSkipLatencyRatio = 1.5;  // 延迟 > 帧间隔 × 此值
+static constexpr double kAsyncRenderSkipIntervalRatio = 0.5; // 输出间隔 < 帧间隔 × 此值
 
 // =============================================================================
 // VideoDecoder 类实现
@@ -861,6 +867,10 @@ void VideoDecoder::Cleanup() {
     firstFrameReceived_ = false;
     lastInstantDecodeTimeMs_ = 0;
     latencyRecoveryActive_ = false;
+    lastOutputTimeMs_ = 0;
+    lastFrameArrivalMs_ = 0;
+    burstFrameCount_ = 0;
+    lastAsyncRenderTimeMs_ = 0;
     
     OH_LOG_INFO(LOG_APP, "Video decoder cleaned up");
 }
@@ -892,6 +902,45 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
     
     // 首次调用时设置线程优先级 + 绑定大核
     SetupDecodeThreadPriority();
+    
+    // === L4 网络抖动突发检测 ===
+    // 当多帧在极短时间内到达（网络抖动恢复后的突发），主动清队列 + 请求 IDR
+    {
+        auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        int64_t lastArrival = lastFrameArrivalMs_.exchange(nowMs);
+        double expectedFrameMs = 1000.0 / config_.fps;
+        
+        if (lastArrival > 0 && (nowMs - lastArrival) < static_cast<int64_t>(expectedFrameMs * kBurstIntervalRatio)) {
+            int burst = burstFrameCount_.fetch_add(1) + 1;
+            if (burst >= kBurstFlushThreshold && frameType != VideoFrameType::I_FRAME) {
+                burstFrameCount_.store(0);
+                // 清空软件待解码队列
+                {
+                    std::lock_guard<std::mutex> lock(pendingFrameMutex_);
+                    int cleared = 0;
+                    while (!pendingFrameQueue_.empty()) {
+                        pendingFrameQueue_.pop();
+                        cleared++;
+                    }
+                    if (cleared > 0) {
+                        OH_LOG_WARN(LOG_APP, "L4 burst flush: cleared %{public}d queued frames", cleared);
+                    }
+                }
+                latencyRecoveryActive_.store(true);
+                UpdateReceivedStats(totalSize, hostProcessingLatency);
+                {
+                    std::lock_guard<std::mutex> lock(statsMutex_);
+                    stats_.droppedFrames++;
+                }
+                OH_LOG_WARN(LOG_APP, "L4 burst detected (%{public}d frames in <%.1fms interval), requesting IDR",
+                            burst, expectedFrameMs * kBurstIntervalRatio);
+                return -1;  // DR_NEED_IDR
+            }
+        } else {
+            burstFrameCount_.store(0);
+        }
+    }
     
     // === L3 延迟恢复：临界延迟检查 ===
     // 当解码延迟过高时，丢弃 P 帧并触发 IDR 请求
@@ -1079,6 +1128,35 @@ int VideoDecoder::SubmitDecodeUnit(const uint8_t* data, int size,
     
     // 首次调用时设置线程优先级 + 绑定大核
     SetupDecodeThreadPriority();
+    
+    // === L4 网络抖动突发检测（非 scatter 路径） ===
+    {
+        auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        int64_t lastArrival = lastFrameArrivalMs_.exchange(nowMs);
+        double expectedFrameMs = 1000.0 / config_.fps;
+        
+        if (lastArrival > 0 && (nowMs - lastArrival) < static_cast<int64_t>(expectedFrameMs * kBurstIntervalRatio)) {
+            int burst = burstFrameCount_.fetch_add(1) + 1;
+            if (burst >= kBurstFlushThreshold && frameType != VideoFrameType::I_FRAME) {
+                burstFrameCount_.store(0);
+                {
+                    std::lock_guard<std::mutex> lock(pendingFrameMutex_);
+                    while (!pendingFrameQueue_.empty()) pendingFrameQueue_.pop();
+                }
+                latencyRecoveryActive_.store(true);
+                UpdateReceivedStats(size, hostProcessingLatency);
+                {
+                    std::lock_guard<std::mutex> lock(statsMutex_);
+                    stats_.droppedFrames++;
+                }
+                OH_LOG_WARN(LOG_APP, "L4 burst (non-scatter): %{public}d frames, requesting IDR", burst);
+                return -1;
+            }
+        } else {
+            burstFrameCount_.store(0);
+        }
+    }
     
     // === L3 延迟恢复：临界延迟检查 ===
     int recoveryResult = CheckLatencyRecovery(frameType, size, hostProcessingLatency);
@@ -1453,6 +1531,34 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
             }
             return;
         }
+        
+        // === L5 异步渲染跳帧 ===
+        // 当帧输出间隔过短（解码器批量输出）且延迟偏高时，跳过中间帧
+        // 比 L2 更温和：L2 针对严重延迟（>3×），L5 针对轻微突发（>1.5×）
+        int64_t lastAsyncRender = self->lastAsyncRenderTimeMs_.load();
+        if (lastAsyncRender > 0 && !isKeyframe &&
+            self->stats_.decodedFrames > kLatencyRecoveryMinFrames) {
+            int64_t outputInterval = currentTimeMs - lastAsyncRender;
+            // 输出间隔 < 帧间隔的一半（即解码器在快速输出堆积帧）
+            // 且管线延迟 > 帧间隔的 1.5 倍（确实有堆积）
+            if (outputInterval < static_cast<int64_t>(expectedFrameTimeMs * kAsyncRenderSkipIntervalRatio) &&
+                instantDecodeTimeMs > static_cast<int64_t>(expectedFrameTimeMs * kAsyncRenderSkipLatencyRatio)) {
+                OH_VideoDecoder_FreeOutputBuffer(codec, index);
+                {
+                    std::lock_guard<std::mutex> lock(self->statsMutex_);
+                    self->stats_.droppedFrames++;
+                }
+                // 不更新 lastAsyncRenderTimeMs_，让后续帧也能触发跳帧直到追上
+                return;
+            }
+        }
+    }
+    
+    // 更新异步渲染时间戳
+    {
+        auto renderNow = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        self->lastAsyncRenderTimeMs_.store(renderNow);
     }
     
     // 更新解码统计（复用统一函数）
@@ -1501,11 +1607,24 @@ void VideoDecoder::UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32
     stats_.decodedFrames++;
     
     if (enqueueTimeMs > 0) {
-        int64_t decodeTimeMs = currentTimeMs - enqueueTimeMs;
+        // === 精确解码时间：排除队列等待 ===
+        // 当帧突发到达时，多帧几乎同时被推入解码器，后续帧必须等待前面的帧解码完成。
+        // 传统方式 currentTime - enqueueTime 会把队列等待算入"解码时间"，造成虚高。
+        // 修正方式：帧真正开始解码的时刻 = max(enqueueTime, 上一帧解码完成时刻)
+        int64_t lastOutput = lastOutputTimeMs_.load();
+        int64_t effectiveStartMs = (lastOutput > enqueueTimeMs) ? lastOutput : enqueueTimeMs;
+        int64_t decodeTimeMs = currentTimeMs - effectiveStartMs;
+        
+        // 同时记录端到端管线延迟（含队列等待，用于 L3 延迟恢复判断）
+        int64_t pipelineLatencyMs = currentTimeMs - enqueueTimeMs;
+        
+        // 更新上一帧输出时间
+        lastOutputTimeMs_.store(currentTimeMs);
+        
         if (decodeTimeMs >= 0 && decodeTimeMs < kMaxValidDecodeTimeMs) {
             bool isKeyframe = (flags & AVCODEC_BUFFER_FLAGS_SYNC_FRAME) != 0;
             
-            // 更新瞬时解码耗时（用于延迟恢复判断，原子变量无需额外锁）
+            // 瞬时解码时间使用精确值（用户可见统计）
             lastInstantDecodeTimeMs_.store(decodeTimeMs);
             
             // 累积解码时间（用于串流结束后计算全局平均值）
@@ -1524,6 +1643,25 @@ void VideoDecoder::UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32
                 stats_.maxDecodeTimeMs = static_cast<double>(decodeTimeMs);
             }
         }
+        
+        // L3 延迟恢复使用管线延迟（含排队时间），因为它反映真实的端到端堆积
+        // 注意：lastInstantDecodeTimeMs_ 已更新为精确解码时间，L3 需要用原始管线延迟
+        // L3 的 CheckLatencyRecovery 直接读 lastInstantDecodeTimeMs_，
+        // 但这里改用精确值后，L3 阈值也需要相应降低——因为精确解码时间更小了
+        // 为保持 L3 敏感度，额外检查管线延迟是否超过临界值
+        if (pipelineLatencyMs > static_cast<int64_t>(
+                std::max(1000.0 / config_.fps * kCriticalLatencyMultiplier, kCriticalLatencyMinMs)) &&
+            stats_.decodedFrames > kLatencyRecoveryMinFrames) {
+            // 管线延迟已超临界，但精确解码时间可能正常——标记为需要恢复
+            if (!latencyRecoveryActive_.load()) {
+                OH_LOG_WARN(LOG_APP, "Pipeline latency %{public}lldms critical (decode=%{public}lldms), flagging recovery",
+                            static_cast<long long>(pipelineLatencyMs),
+                            static_cast<long long>(decodeTimeMs));
+            }
+        }
+    } else {
+        // 无 enqueueTimeMs 时也更新 lastOutputTimeMs_
+        lastOutputTimeMs_.store(currentTimeMs);
     }
 }
 

@@ -1172,7 +1172,7 @@ struct SettingsPageV2 {
               },
               {
                 title: 'USB 手柄驱动',
-                subtitle: '为缺少原生手柄支持的设备启用内置 USB 驱动',
+                subtitle: '启用 USB 手柄的震动和 LED 等高级功能。手柄输入仍由系统统一处理；如需由 USB 驱动接管输入，可在串流菜单中强制切换',
                 type: 'toggle',
                 value: this.usbDriverEnabled,
                 action: () => {

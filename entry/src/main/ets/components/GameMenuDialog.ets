@@ -325,7 +325,7 @@ export struct GameMenuDialog {
   private showUsbDriverDialog(): void {
     const config: ConfirmDialogConfig = {
       title: '强制 USB 驱动接管',
-      message: '切换到 USB 驱动模式后，将直接与手柄通信，获得更低延迟和更多功能。\n\n当前连接的手柄会短暂断开并重新连接。',
+      message: '放弃系统手柄接口 (GCK)，改由 USB 驱动直接处理手柄输入。\n\n仅在手柄输入异常或需要 USB 低延迟时使用。蓝牙手柄不受此选项影响。\n\n当前连接的 USB 手柄会短暂断开并重新连接。',
       cancelButton: { text: '取消', onClick: () => {} },
       confirmButton: {
         text: '接管',

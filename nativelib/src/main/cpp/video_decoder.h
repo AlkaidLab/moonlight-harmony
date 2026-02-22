@@ -337,6 +337,16 @@ private:
     std::atomic<int64_t> lastInstantDecodeTimeMs_{0};  // 最近一帧的实际解码耗时 (ms)
     std::atomic<bool> latencyRecoveryActive_{false};    // 是否已请求 IDR 恢复
     
+    // === 精确解码时间统计（排除队列等待） ===
+    std::atomic<int64_t> lastOutputTimeMs_{0};          // 上一帧解码输出时间 (ms)
+    
+    // === 网络抖动检测（突发帧到达 → 主动 Flush + IDR） ===
+    std::atomic<int64_t> lastFrameArrivalMs_{0};        // 上一帧到达时间 (ms)
+    std::atomic<int> burstFrameCount_{0};               // 连续突发帧计数
+    
+    // === 异步模式渲染跳帧（Render Skip） ===
+    std::atomic<int64_t> lastAsyncRenderTimeMs_{0};     // 上一次异步渲染时间 (ms)
+    
     // 解码器健康检查状态
     std::atomic<int64_t> lastHealthCheckTimeMs_{0};     // 上次健康检查时间 (ms)
     std::atomic<int> consecutiveErrors_{0};             // 连续错误计数

@@ -26,7 +26,7 @@ import {
   MoonlightButton, GCButton2313Action, GCButton2313ActionCallback,
   MoonlightControllerType, VendorId, ProductId,
   AXIS_MAX, TRIGGER_MAX, SPECIAL_KEYCODE_MIN, SPECIAL_KEYCODE_MAX,
-  buttonMap, gcButtonMap, GAMEPAD_NAME_KEYWORDS, NON_GAMEPAD_KEYWORDS
+  buttonMap, gcButtonMap, GAMEPAD_NAME_KEYWORDS, NON_GAMEPAD_KEYWORDS, isNonGamepadByName
 } from './GamepadTypes';
 
 // 重新导出公共类型，保持向后兼容
@@ -583,9 +583,9 @@ export class GamepadManager implements UsbDriverListener {
         const devices = gameControllerService.getAllDevices();
         const notifiedSlots = new Set<number>();
         for (const device of devices) {
-          // 过滤非手柄设备（如手表、手环等）
+          // 过滤非手柄设备（如手表、手环等），但同时含手柄关键词时不过滤
           const deviceNameLower = (device.name || '').toLowerCase();
-          if (NON_GAMEPAD_KEYWORDS.some(kw => deviceNameLower.includes(kw))) {
+          if (isNonGamepadByName(deviceNameLower)) {
             console.info(`GamepadManager: 跳过非手柄设备: ${device.name}`);
             continue;
           }
@@ -768,10 +768,14 @@ export class GamepadManager implements UsbDriverListener {
    * 检查是否是非手柄设备
    */
   private isNonGamepadDevice(nameLower: string, sources: inputDevice.SourceType[]): boolean {
-    const hasNonGamepadKeyword = NON_GAMEPAD_KEYWORDS.some(kw => nameLower.includes(kw));
+    // 智能判断：名称含手柄关键词时（如 "gamesir g8+ keyboard"），即使有 keyboard source 也视为手柄
+    const hasGamepadKeyword = GAMEPAD_NAME_KEYWORDS.some(kw => nameLower.includes(kw));
+    if (hasGamepadKeyword) return false;
+    // 名称或 source 匹配非手柄特征
+    if (isNonGamepadByName(nameLower)) return true;
     const hasNonGamepadSource = sources.includes('keyboard' as inputDevice.SourceType) ||
                                  sources.includes('mouse' as inputDevice.SourceType);
-    return hasNonGamepadKeyword || hasNonGamepadSource;
+    return hasNonGamepadSource;
   }
   
   /**
@@ -999,9 +1003,9 @@ export class GamepadManager implements UsbDriverListener {
         return;
       }
 
-      // 过滤非手柄设备（如手表、手环等）
+      // 过滤非手柄设备（如手表、手环等），但同时含手柄关键词时不过滤
       const deviceNameLower = (info?.name || '').toLowerCase();
-      if (NON_GAMEPAD_KEYWORDS.some(kw => deviceNameLower.includes(kw))) {
+      if (isNonGamepadByName(deviceNameLower)) {
         console.info(`[GAMEPAD-GC] 跳过非手柄设备: "${info?.name}"`);
         return;
       }

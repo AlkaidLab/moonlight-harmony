@@ -232,8 +232,31 @@ export const gcButtonMap = new Map<number, number>([
 
 /** 手柄设备名称关键词（用于识别手柄） */
 export const GAMEPAD_NAME_KEYWORDS: string[] = [
-  'controller', 'gamepad', 'joystick', 'xbox', 'playstation',
-  'dualshock', 'dualsense', 'switch', 'pro controller', 'joycon', 'joy-con'
+  // 通用关键词
+  'controller', 'gamepad', 'joystick', 'joypad',
+  'fightstick', 'fight stick', 'arcade stick',
+  // 主流主机手柄
+  'xbox', 'playstation', 'dualshock', 'dualsense',
+  'switch', 'pro controller', 'joycon', 'joy-con', 'stadia', 'ouya',
+  // 国际外设品牌
+  'gamesir', 'razer', '8bitdo', 'steelseries',
+  'logitech', 'hori', 'horipad', 'powera', 'scuf',
+  'turtle beach', 'thrustmaster', 'madcatz', 'mad catz',
+  'saitek', 'pdp', 'nvidia', 'shield',
+  'backbone', 'hyperkin', 'nacon', 'victrix',
+  'qanba', 'mayflash', 'gulikit', 'gpd',
+  'moga', 'elecom', 'gamevice', 'rotor riot',
+  'astro', 'hyperx', 'flashfire',
+  // 国产手柄品牌
+  'betop', 'beitong', '北通',
+  'flydigi', '飞智',
+  'pxn', '莱仕达',
+  'ipega',
+  'mocute', '魔操特',
+  'newgame', '新游',
+  'rapoo', '雷柏', '小鸡', '盖世小鸡',
+  'easysmx', 'bigbigwon', '谷粒',
+  'aula', '狼蛛',
 ];
 
 /** 非手柄设备关键词（用于排除） */
@@ -242,3 +265,16 @@ export const NON_GAMEPAD_KEYWORDS: string[] = [
   'watch', '手表', 'wearable', 'band', '手环', 'smartwatch', 'fitness',
   'huawei watch', 'galaxy watch', 'apple watch', 'mi band', 'amazfit'
 ];
+
+/**
+ * 检查设备名是否应被排除
+ * 当名称同时包含手柄关键词和非手柄关键词时（如 "Gamesir G8+ keyboard"），
+ * 优先视为手柄，不排除
+ */
+export function isNonGamepadByName(nameLower: string): boolean {
+  const hasNonGamepadKeyword = NON_GAMEPAD_KEYWORDS.some(kw => nameLower.includes(kw));
+  if (!hasNonGamepadKeyword) return false;
+  // 名称同时命中手柄关键词 → 不排除（如 "gamesir g8+ keyboard"）
+  const hasGamepadKeyword = GAMEPAD_NAME_KEYWORDS.some(kw => nameLower.includes(kw));
+  return !hasGamepadKeyword;
+}

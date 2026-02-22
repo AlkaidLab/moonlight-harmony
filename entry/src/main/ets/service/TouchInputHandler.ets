@@ -34,6 +34,22 @@ const BUTTON_RIGHT = 0x03;
 const TOUCH_EVENT_DOWN = 0x01;
 const TOUCH_EVENT_UP = 0x02;
 const TOUCH_EVENT_MOVE = 0x03;
+const TOUCH_EVENT_CANCEL = 0x04;
+const TOUCH_EVENT_HOVER = 0x00;
+const TOUCH_EVENT_CANCEL_ALL = 0x07;
+
+// 手写笔工具类型常量（对应 Moonlight 协议）
+const LI_TOOL_TYPE_UNKNOWN = 0x00;
+const LI_TOOL_TYPE_PEN = 0x01;
+const LI_TOOL_TYPE_ERASER = 0x02;
+
+// 手写笔按钮常量
+const LI_PEN_BUTTON_PRIMARY = 0x01;
+const LI_PEN_BUTTON_SECONDARY = 0x02;
+
+// 手写笔未知值常量
+const LI_TILT_UNKNOWN = 0xFF;
+const LI_ROT_UNKNOWN = 0xFFFF;
 
 /**
  * Native 输入模块接口
@@ -46,6 +62,10 @@ interface NativeInputModule {
   sendTouchEvent(eventType: number, pointerId: number, x: number, y: number,
     pressureOrDistance: number, contactAreaMajor: number, contactAreaMinor: number,
     rotation: number): void;
+  sendPenEvent(eventType: number, toolType: number, penButtons: number,
+    x: number, y: number, pressureOrDistance: number,
+    contactAreaMajor: number, contactAreaMinor: number,
+    rotation: number, tilt: number): number;
 }
 
 /**
@@ -83,6 +103,10 @@ export class TouchInputHandler {
   private lastForce: Map<number, number> = new Map();
   /** 每个触摸点的最后已知接触面积（从历史点追踪） */
   private lastSize: Map<number, number> = new Map();
+  /** 是否已检测到手写笔不被主机支持（sendPenEvent 返回 LI_ERR_UNSUPPORTED） */
+  private penUnsupported: boolean = false;
+  /** 手写笔首次事件日志标记 */
+  private penFirstEventLogged: boolean = false;
   
   /** HarmonyOS HistoricalPoint.force 最大值，用于归一化 */
   private static readonly FORCE_MAX = 65535.0;
@@ -195,6 +219,14 @@ export class TouchInputHandler {
   handleTouchEvent(event: TouchEvent): void {
     const touches = event.touches;
     if (touches.length === 0) {
+      return;
+    }
+
+    // 检测手写笔输入：SourceTool.Pen = 2
+    // 仅在 DIRECT 模式下发送 Pen 协议事件（带压感/倾斜），
+    // TRACKPAD/MOUSE 模式下手写笔当作手指处理（控制光标）
+    if (event.sourceTool === SourceTool.Pen && this.mode === TouchInputMode.DIRECT && !this.penUnsupported) {
+      this.handlePenEvent(event);
       return;
     }
     
@@ -654,6 +686,197 @@ export class TouchInputHandler {
     );
   }
 
+  // ====== 手写笔（Pen/Stylus）处理 ======
+
+  /**
+   * 检测手写笔的工具类型
+   * ArkUI SourceTool.Pen = 2, 这里还需要区分橡皮擦
+   * 注意：ArkUI 没有直接区分 PEN 和 ERASER 的 SourceTool，
+   * 但 InputKit 的 ToolType 有 RUBBER = 2 和 PENCIL = 4
+   * 这里我们只能通过 SourceTool 判断是否为笔类输入
+   */
+  private getPenToolType(): number {
+    // ArkUI 层面暂无橡皮擦区分，统一为 PEN
+    return LI_TOOL_TYPE_PEN;
+  }
+
+  /**
+   * 将 ArkUI 的 tiltX + tiltY（度）转换为 Moonlight 协议的单一倾斜角度
+   *
+   * ArkUI tiltX: 手写笔在 X 轴方向的投影角度 [-90, 90]
+   * ArkUI tiltY: 手写笔在 Y 轴方向的投影角度 [-90, 90]
+   * Moonlight tilt: 从垂直方向的偏离角度 [0, 90]，0 = 垂直，90 = 水平
+   */
+  private computePenTilt(tiltX: number, tiltY: number): number {
+    if (tiltX === 0 && tiltY === 0) {
+      return 0; // 垂直于屏幕
+    }
+    const tiltXRad = tiltX * Math.PI / 180;
+    const tiltYRad = tiltY * Math.PI / 180;
+    // 从 tiltX/tiltY 投影角合成总倾斜角
+    const tanTiltX = Math.tan(tiltXRad);
+    const tanTiltY = Math.tan(tiltYRad);
+    const tiltRad = Math.atan(Math.sqrt(tanTiltX * tanTiltX + tanTiltY * tanTiltY));
+    return Math.min(90, Math.round(tiltRad * 180 / Math.PI));
+  }
+
+  /**
+   * 获取手写笔旋转角度（0-359度）
+   * ArkUI BaseEvent.rollAngle 为 Z 轴旋转角（API 17+）
+   */
+  private computePenRotation(event: TouchEvent): number {
+    // rollAngle 是 API 17+ 的可选属性
+    const rollAngle = event.rollAngle;
+    if (rollAngle !== undefined && rollAngle !== null) {
+      let degrees = Math.round(rollAngle);
+      if (degrees < 0) {
+        degrees += 360;
+      }
+      return degrees % 360;
+    }
+    return LI_ROT_UNKNOWN;
+  }
+
+  /**
+   * 处理手写笔事件（仅 DIRECT 模式）
+   * 将手写笔触摸事件转化为 Moonlight 的 PenEvent
+   */
+  private handlePenEvent(event: TouchEvent): void {
+    const touches = event.touches;
+    const changedTouches = event.changedTouches;
+    const areaWidth = event.target.area.width as number;
+    const areaHeight = event.target.area.height as number;
+
+    // 从 BaseEvent 获取笔的压感和倾斜信息
+    const eventPressure = event.pressure ?? 0;
+    const tiltX = event.tiltX ?? 0;
+    const tiltY = event.tiltY ?? 0;
+    const tilt = this.computePenTilt(tiltX, tiltY);
+    const rotation = this.computePenRotation(event);
+    const toolType = this.getPenToolType();
+
+    // 首次手写笔事件诊断日志
+    if (!this.penFirstEventLogged) {
+      this.penFirstEventLogged = true;
+      console.info(`手写笔首次事件: sourceTool=${event.sourceTool}, pressure=${eventPressure}, ` +
+        `tiltX=${tiltX}, tiltY=${tiltY}, computedTilt=${tilt}, rotation=${rotation}, ` +
+        `type=${event.type}, pointers=${touches.length}`);
+    }
+
+    switch (event.type) {
+      case TouchType.Down:
+        for (let i = 0; i < changedTouches.length; i++) {
+          const touch = changedTouches[i];
+          this.touchStates.set(touch.id, {
+            startX: touch.x, startY: touch.y,
+            lastX: touch.x, lastY: touch.y,
+            startTime: Date.now()
+          });
+
+          const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
+          const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+          // 手写笔通常只有一个触点，使用 BaseEvent 上的压感
+          const pressure = eventPressure;
+          // 尝试获取 per-touch 接触面积（API 15+）
+          const contactW = touch.width ?? 0;
+          const contactH = touch.height ?? 0;
+          // 归一化接触面积到视图尺寸
+          const areaMajor = areaWidth > 0 ? Math.min(contactW, areaWidth) / areaWidth : 0;
+          const areaMinor = areaHeight > 0 ? Math.min(contactH, areaHeight) / areaHeight : 0;
+
+          const ret = this.nativeInput.sendPenEvent(
+            TOUCH_EVENT_DOWN, toolType, 0, // penButtons: ArkUI 无按钮信息
+            normalizedX, normalizedY, pressure,
+            areaMajor, areaMinor, rotation, tilt
+          );
+          // 检测主机是否支持 Pen 事件
+          if (ret === -7) { // LI_ERR_UNSUPPORTED = -7
+            console.warn('手写笔: 主机不支持 Pen 事件，回退到 Touch 事件');
+            this.penUnsupported = true;
+            // 回退：用 touch 事件重新发送
+            this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event);
+            return;
+          }
+        }
+        break;
+
+      case TouchType.Move:
+        // 处理历史点（高采样率）
+        try {
+          const historicalPoints = event.getHistoricalPoints();
+          if (historicalPoints && historicalPoints.length > 0) {
+            const now = Date.now();
+            for (let i = 0; i < historicalPoints.length; i++) {
+              const histPoint = historicalPoints[i];
+              if (histPoint.timestamp && (now - histPoint.timestamp) > 100) {
+                continue;
+              }
+              const histTouch = histPoint.touchObject;
+              const state = this.touchStates.get(histTouch.id);
+              if (state) {
+                const normalizedX = Math.max(0, Math.min(1, histTouch.x / areaWidth));
+                const normalizedY = Math.max(0, Math.min(1, histTouch.y / areaHeight));
+                // 历史点的压力
+                const histPressure = histPoint.force > 0
+                  ? this.normalizeForce(histPoint.force) : eventPressure;
+                const histSize = histPoint.size || 0;
+
+                this.nativeInput.sendPenEvent(
+                  TOUCH_EVENT_MOVE, toolType, 0,
+                  normalizedX, normalizedY, histPressure,
+                  histSize, histSize, rotation, tilt
+                );
+              }
+            }
+          }
+        } catch (_e) {
+          // 忽略不支持 getHistoricalPoints 的设备
+        }
+
+        // 处理当前触摸点
+        for (let i = 0; i < touches.length; i++) {
+          const touch = touches[i];
+          const state = this.touchStates.get(touch.id);
+          if (state) {
+            state.lastX = touch.x;
+            state.lastY = touch.y;
+
+            const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
+            const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+            const pressure = touch.pressure ?? eventPressure;
+            const contactW = touch.width ?? 0;
+            const contactH = touch.height ?? 0;
+            const areaMajor = areaWidth > 0 ? Math.min(contactW, areaWidth) / areaWidth : 0;
+            const areaMinor = areaHeight > 0 ? Math.min(contactH, areaHeight) / areaHeight : 0;
+
+            this.nativeInput.sendPenEvent(
+              TOUCH_EVENT_MOVE, toolType, 0,
+              normalizedX, normalizedY, pressure,
+              areaMajor, areaMinor, rotation, tilt
+            );
+          }
+        }
+        break;
+
+      case TouchType.Up:
+      case TouchType.Cancel:
+        for (let i = 0; i < changedTouches.length; i++) {
+          const touch = changedTouches[i];
+          const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
+          const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+
+          const upEventType = event.type === TouchType.Cancel ? TOUCH_EVENT_CANCEL : TOUCH_EVENT_UP;
+
+          this.nativeInput.sendPenEvent(
+            upEventType, toolType, 0,
+            normalizedX, normalizedY, 0, // pressure = 0 on up
+            0, 0, rotation, tilt
+          );
+          this.touchStates.delete(touch.id);
+        }
+        break;
+    }
+  }
   
   /**
    * 检测并处理点击（仅在移动距离很小时触发）
@@ -703,5 +926,7 @@ export class TouchInputHandler {
     this.touchStates.clear();
     this.lastForce.clear();
     this.lastSize.clear();
+    this.penUnsupported = false;
+    this.penFirstEventLogged = false;
   }
 }
