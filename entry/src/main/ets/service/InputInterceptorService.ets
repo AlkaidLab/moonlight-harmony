@@ -47,7 +47,9 @@ interface MouseInterceptorNative {
   addMouseInterceptor(): number;
   removeMouseInterceptor(): number;
   configureMouseInterceptor(windowX: number, windowY: number,
-                            windowWidth: number, windowHeight: number): void;
+                            windowWidth: number, windowHeight: number,
+                            screenWidth: number, screenHeight: number,
+                            relativeMode: boolean): void;
   isMouseInterceptorActive(): boolean;
 }
 
@@ -160,17 +162,21 @@ export class MouseInterceptorService {
 
   /**
    * 配置拦截器参数（可在运行中调用以更新）
-   * 全屏模式：传入 (0, 0, 屏幕宽, 屏幕高)
-   * 窗口模式：传入实际窗口位置和尺寸
    * @param windowX 窗口 X 坐标 (px)
    * @param windowY 窗口 Y 坐标 (px)
    * @param windowWidth 窗口宽度 (px)
    * @param windowHeight 窗口高度 (px)
+   * @param screenWidth 屏幕宽度 (px)
+   * @param screenHeight 屏幕高度 (px)
+   * @param relativeMode 相对模式（游戏用）
    */
   configure(windowX: number, windowY: number,
-            windowWidth: number, windowHeight: number): void {
+            windowWidth: number, windowHeight: number,
+            screenWidth: number, screenHeight: number,
+            relativeMode: boolean): void {
     if (!this.native) return;
-    this.native.configureMouseInterceptor(windowX, windowY, windowWidth, windowHeight);
+    this.native.configureMouseInterceptor(windowX, windowY, windowWidth, windowHeight,
+                                          screenWidth, screenHeight, relativeMode);
   }
 
   /**

@@ -9,17 +9,21 @@
  */
 
 /**
- * 鼠标事件监听器实现（绝对模式）
+ * 鼠标事件监听器实现（绝对/相对双模式）
  *
  * 解决问题：ArkUI .onMouse 回调的投递频率受 UI 渲染帧率限制，
  * 无触摸时系统节流至 ~30Hz。本模块使用 OH_Input_AddMouseEventMonitor
  * 在系统输入管线层级监听鼠标事件（不消费事件，触摸/滚轮不受影响），
  * 以硬件轮询率直接转发给 moonlight-common-c，实现全速鼠标回报。
  *
- * 始终使用绝对模式（LiSendMousePositionEvent）：
- * HarmonyOS 没有 Pointer Capture API，无法将光标锁定到窗口内，
- * 相对模式下光标到达屏幕/窗口边缘时无法继续产生 delta，导致鼠标卡住。
- * Android Moonlight 在没有 Pointer Capture 时同样回退到绝对模式。
+ * 绝对模式（默认，适合远程桌面）：
+ *   窗口坐标 → 比例映射到远端全屏。精确定位，无加速。
+ *
+ * 相对模式（游戏模式，适合 FPS/TPS）：
+ *   计算帧间增量 → LiSendMouseMoveEvent(dx, dy)。
+ *   使用 OH_Input_InjectMouseEvent（公开 API 12+）实现光标回弹：
+ *   当光标接近屏幕边缘时注入 MOVE 到屏幕中心，实现近乎无限行程。
+ *   通过 ActionTime 时间戳标记区分自注入事件和真实事件。
  *
  * 权限: ohos.permission.INPUT_MONITORING
  */
@@ -28,6 +32,7 @@
 #include <multimodalinput/oh_input_manager.h>
 #include <hilog/log.h>
 #include <atomic>
+#include <chrono>
 
 #include "moonlight-common-c/src/Limelight.h"
 
@@ -41,20 +46,39 @@
 
 static std::atomic<bool> g_active{false};
 
-// 窗口矩形（物理 px）：用于将屏幕坐标映射到远端屏幕
-// 全屏模式：窗口=屏幕 → 整个屏幕映射到远端
-// 窗口模式：窗口区域映射到远端全屏，窗口外区域夹紧到边缘
+// 鼠标模式：false=绝对模式（远程桌面），true=相对模式（游戏）
+static std::atomic<bool> g_relativeMode{false};
+
+// 窗口矩形（物理 px）：绝对模式下用于坐标映射
 static std::atomic<int32_t> g_windowX{0};
 static std::atomic<int32_t> g_windowY{0};
 static std::atomic<int32_t> g_windowWidth{1080};
 static std::atomic<int32_t> g_windowHeight{2400};
 
+// 屏幕尺寸（物理 px）：相对模式下用于边缘检测和光标回弹
+static std::atomic<int32_t> g_screenWidth{1080};
+static std::atomic<int32_t> g_screenHeight{2400};
+
+// ==================== 相对模式状态 ====================
+
+// 上一帧鼠标位置（用于计算增量）
+static int32_t g_lastX = -1;
+static int32_t g_lastY = -1;
+
+// 光标回弹标记：注入事件使用特殊 ActionTime 值来识别
+// 自注入的回弹事件使用 UnixEpoch 微秒时间戳 | 0x01 (确保为奇数)
+static std::atomic<int64_t> g_warpMarker{0};
+
+// 回弹注入事件对象（复用避免频繁创建/销毁）
+static Input_MouseEvent* g_injectEvent = nullptr;
+
+// 边缘检测阈值（px）：光标距屏幕边缘小于此值时触发回弹
+static constexpr int32_t EDGE_THRESHOLD = 50;
+
 // ==================== 按钮映射 ====================
 
 /**
  * HarmonyOS 鼠标按钮 → Moonlight 按钮常量
- * MOUSE_BUTTON_LEFT(0)→BUTTON_LEFT(0x01), MIDDLE(1)→0x02, RIGHT(2)→0x03,
- * FORWARD(3)→BUTTON_X2(0x05), BACK(4)→BUTTON_X1(0x04)
  */
 static int MapMouseButton(int32_t button)
 {
@@ -68,13 +92,56 @@ static int MapMouseButton(int32_t button)
     }
 }
 
+// ==================== 光标回弹 ====================
+
+/**
+ * 将光标传送到屏幕中心，实现无限行程。
+ * 使用 OH_Input_InjectMouseEvent（公开 API 12+），
+ * 通过在 ActionTime 设置唯一标记来让 OnMouseEvent 识别并跳过自注入事件。
+ */
+static void WarpCursorToCenter()
+{
+    if (!g_injectEvent) return;
+
+    int32_t sw = g_screenWidth.load(std::memory_order_relaxed);
+    int32_t sh = g_screenHeight.load(std::memory_order_relaxed);
+    int32_t centerX = sw / 2;
+    int32_t centerY = sh / 2;
+
+    // 生成唯一标记：当前微秒时间戳确保为奇数
+    auto now = std::chrono::steady_clock::now();
+    int64_t marker = std::chrono::duration_cast<std::chrono::microseconds>(
+        now.time_since_epoch()).count() | 0x01LL;
+    g_warpMarker.store(marker, std::memory_order_release);
+
+    OH_Input_SetMouseEventAction(g_injectEvent, MOUSE_ACTION_MOVE);
+    OH_Input_SetMouseEventDisplayX(g_injectEvent, centerX);
+    OH_Input_SetMouseEventDisplayY(g_injectEvent, centerY);
+    OH_Input_SetMouseEventActionTime(g_injectEvent, marker);
+
+    int32_t ret = OH_Input_InjectMouseEvent(g_injectEvent);
+    if (ret != INPUT_SUCCESS) {
+        // 注入失败，清除标记避免误跳真实事件
+        g_warpMarker.store(0, std::memory_order_release);
+    }
+}
+
+/**
+ * 检测光标是否接近屏幕边缘
+ */
+static bool IsNearEdge(int32_t x, int32_t y)
+{
+    int32_t sw = g_screenWidth.load(std::memory_order_relaxed);
+    int32_t sh = g_screenHeight.load(std::memory_order_relaxed);
+    return x < EDGE_THRESHOLD || x > sw - EDGE_THRESHOLD ||
+           y < EDGE_THRESHOLD || y > sh - EDGE_THRESHOLD;
+}
+
 // ==================== 鼠标事件监听回调 ====================
 
 /**
  * 在系统输入线程中调用，不经过 ArkUI 渲染循环。
  * Monitor 不消费事件，触摸和滚轮事件完全不受影响。
- *
- * 绝对模式：屏幕 px → 窗口相对坐标 → 映射到远端屏幕
  */
 static void OnMouseEvent(const Input_MouseEvent *event)
 {
@@ -86,18 +153,50 @@ static void OnMouseEvent(const Input_MouseEvent *event)
         case MOUSE_ACTION_MOVE: {
             int32_t x = OH_Input_GetMouseEventDisplayX(event);
             int32_t y = OH_Input_GetMouseEventDisplayY(event);
-            int32_t wx = g_windowX.load(std::memory_order_relaxed);
-            int32_t wy = g_windowY.load(std::memory_order_relaxed);
-            int32_t ww = g_windowWidth.load(std::memory_order_relaxed);
-            int32_t wh = g_windowHeight.load(std::memory_order_relaxed);
 
-            // 屏幕 px → 窗口相对坐标 → 夹紧到窗口边界
-            // 全屏时 wx=0,wy=0 → 等价于屏幕坐标直接映射
-            int32_t relX = x - wx;
-            int32_t relY = y - wy;
-            if (relX < 0) relX = 0; else if (relX > ww) relX = ww;
-            if (relY < 0) relY = 0; else if (relY > wh) relY = wh;
-            LiSendMousePositionEvent((short)relX, (short)relY, (short)ww, (short)wh);
+            if (g_relativeMode.load(std::memory_order_relaxed)) {
+                // ── 相对模式（游戏）──
+                // 检查是否为自注入的回弹事件
+                int64_t marker = g_warpMarker.load(std::memory_order_acquire);
+                if (marker != 0) {
+                    int64_t eventTime = OH_Input_GetMouseEventActionTime(event);
+                    if (eventTime == marker) {
+                        // 这是我们自己注入的回弹事件 → 更新锚点，不发送增量
+                        g_lastX = x;
+                        g_lastY = y;
+                        g_warpMarker.store(0, std::memory_order_release);
+                        return;
+                    }
+                }
+
+                // 计算增量
+                if (g_lastX >= 0 && g_lastY >= 0) {
+                    int32_t dx = x - g_lastX;
+                    int32_t dy = y - g_lastY;
+                    if (dx != 0 || dy != 0) {
+                        LiSendMouseMoveEvent((short)dx, (short)dy);
+                    }
+                }
+                g_lastX = x;
+                g_lastY = y;
+
+                // 边缘检测 → 光标回弹到屏幕中心
+                if (IsNearEdge(x, y) && g_warpMarker.load(std::memory_order_relaxed) == 0) {
+                    WarpCursorToCenter();
+                }
+            } else {
+                // ── 绝对模式（远程桌面）──
+                int32_t wx = g_windowX.load(std::memory_order_relaxed);
+                int32_t wy = g_windowY.load(std::memory_order_relaxed);
+                int32_t ww = g_windowWidth.load(std::memory_order_relaxed);
+                int32_t wh = g_windowHeight.load(std::memory_order_relaxed);
+
+                int32_t relX = x - wx;
+                int32_t relY = y - wy;
+                if (relX < 0) relX = 0; else if (relX > ww) relX = ww;
+                if (relY < 0) relY = 0; else if (relY > wh) relY = wh;
+                LiSendMousePositionEvent((short)relX, (short)relY, (short)ww, (short)wh);
+            }
             break;
         }
 
@@ -122,7 +221,6 @@ static void OnMouseEvent(const Input_MouseEvent *event)
 
 /**
  * addMouseInterceptor(): number
- * 启用鼠标事件监听器，成功返回 0。
  */
 static napi_value AddMouseInterceptor(napi_env env, napi_callback_info info)
 {
@@ -131,10 +229,21 @@ static napi_value AddMouseInterceptor(napi_env env, napi_callback_info info)
         g_active.store(false);
     }
 
+    // 创建复用的注入事件对象（相对模式光标回弹用）
+    if (!g_injectEvent) {
+        g_injectEvent = OH_Input_CreateMouseEvent();
+    }
+
+    // 重置相对模式状态
+    g_lastX = -1;
+    g_lastY = -1;
+    g_warpMarker.store(0);
+
     Input_Result ret = OH_Input_AddMouseEventMonitor(OnMouseEvent);
     if (ret == INPUT_SUCCESS) {
         g_active.store(true);
-        LOGI("鼠标监听器已启动（绝对模式，全速轮询）");
+        bool relative = g_relativeMode.load();
+        LOGI("鼠标监听器已启动（%{public}s模式，全速轮询）", relative ? "相对/游戏" : "绝对/桌面");
     } else {
         LOGE("鼠标监听器启动失败: %{public}d", ret);
     }
@@ -146,7 +255,6 @@ static napi_value AddMouseInterceptor(napi_env env, napi_callback_info info)
 
 /**
  * removeMouseInterceptor(): number
- * 移除鼠标事件监听器，成功返回 0。
  */
 static napi_value RemoveMouseInterceptor(napi_env env, napi_callback_info info)
 {
@@ -161,31 +269,40 @@ static napi_value RemoveMouseInterceptor(napi_env env, napi_callback_info info)
         LOGI("鼠标监听器已停止");
     }
 
+    // 清理注入事件对象
+    if (g_injectEvent) {
+        OH_Input_DestroyMouseEvent(&g_injectEvent);
+        g_injectEvent = nullptr;
+    }
+
     napi_value nResult;
     napi_create_int32(env, result, &nResult);
     return nResult;
 }
 
 /**
- * configureMouseInterceptor(windowX: number, windowY: number,
- *                           windowWidth: number, windowHeight: number): void
- * 配置窗口矩形（可在运行中调用）。
- * 全屏模式：传入 (0, 0, screenWidth, screenHeight)
- * 窗口模式：传入实际窗口位置和尺寸
+ * configureMouseInterceptor(windowX, windowY, windowWidth, windowHeight,
+ *                           screenWidth, screenHeight, relativeMode): void
+ * 配置参数（可在运行中调用）。
  */
 static napi_value ConfigureMouseInterceptor(napi_env env, napi_callback_info info)
 {
-    size_t argc = 4;
-    napi_value argv[4];
+    size_t argc = 7;
+    napi_value argv[7];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
 
-    if (argc >= 4) {
+    if (argc >= 7) {
         int32_t windowX, windowY, windowWidth, windowHeight;
+        int32_t screenWidth, screenHeight;
+        bool relativeMode;
 
         napi_get_value_int32(env, argv[0], &windowX);
         napi_get_value_int32(env, argv[1], &windowY);
         napi_get_value_int32(env, argv[2], &windowWidth);
         napi_get_value_int32(env, argv[3], &windowHeight);
+        napi_get_value_int32(env, argv[4], &screenWidth);
+        napi_get_value_int32(env, argv[5], &screenHeight);
+        napi_get_value_bool(env, argv[6], &relativeMode);
 
         if (windowWidth > 0 && windowHeight > 0) {
             g_windowX.store(windowX, std::memory_order_relaxed);
@@ -193,9 +310,25 @@ static napi_value ConfigureMouseInterceptor(napi_env env, napi_callback_info inf
             g_windowWidth.store(windowWidth, std::memory_order_relaxed);
             g_windowHeight.store(windowHeight, std::memory_order_relaxed);
         }
+        if (screenWidth > 0 && screenHeight > 0) {
+            g_screenWidth.store(screenWidth, std::memory_order_relaxed);
+            g_screenHeight.store(screenHeight, std::memory_order_relaxed);
+        }
 
-        LOGI("配置更新: window=(%{public}d,%{public}d,%{public}dx%{public}d) px",
-             windowX, windowY, windowWidth, windowHeight);
+        bool prevMode = g_relativeMode.load();
+        g_relativeMode.store(relativeMode, std::memory_order_relaxed);
+
+        // 模式切换时重置增量追踪状态
+        if (relativeMode != prevMode) {
+            g_lastX = -1;
+            g_lastY = -1;
+            g_warpMarker.store(0);
+        }
+
+        LOGI("配置更新: window=(%{public}d,%{public}d,%{public}dx%{public}d) screen=%{public}dx%{public}d mode=%{public}s",
+             windowX, windowY, windowWidth, windowHeight,
+             screenWidth, screenHeight,
+             relativeMode ? "相对/游戏" : "绝对/桌面");
     }
 
     napi_value undefined;

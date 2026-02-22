@@ -596,7 +596,13 @@ static void NotifyAxisEvent(const char* deviceId, int32_t axisType, double x, do
         data->x = x;
         data->y = y;
         
-        napi_call_threadsafe_function(g_tsfnAxis, data, napi_tsfn_nonblocking);
+        napi_status status = napi_call_threadsafe_function(g_tsfnAxis, data, napi_tsfn_nonblocking);
+        if (status != napi_ok) {
+            LOGE("napi_call_threadsafe_function(axis) 失败: status=%d", status);
+            delete data;
+        }
+    } else {
+        LOGW("NotifyAxisEvent: g_tsfnAxis 为空，轴事件丢失 (axisType=%d)", axisType);
     }
 }
 
@@ -1440,15 +1446,27 @@ static napi_value NapiSetDeviceCallback(napi_env env, napi_callback_info info) {
         return nullptr;
     }
     
-    // 创建 threadsafe function
+    // 先保存旧的 tsfn，创建新的后再释放旧的，避免 g_tsfnDevice 在并发读取时无效
+    napi_threadsafe_function oldTsfn = g_tsfnDevice;
+    
     napi_value resourceName;
     napi_create_string_utf8(env, "GameControllerDeviceCallback", NAPI_AUTO_LENGTH, &resourceName);
     
-    napi_create_threadsafe_function(
+    napi_status status = napi_create_threadsafe_function(
         env, args[0], nullptr, resourceName,
         0, 1, nullptr, nullptr, nullptr,
         DeviceCallbackCallJS, &g_tsfnDevice
     );
+    if (status != napi_ok) {
+        LOGE("创建 Device threadsafe function 失败: %d", status);
+        g_tsfnDevice = oldTsfn;  // 恢复旧的
+        return nullptr;
+    }
+    
+    // 释放旧的 threadsafe function，防止资源泄漏
+    if (oldTsfn) {
+        napi_release_threadsafe_function(oldTsfn, napi_tsfn_release);
+    }
     
     return nullptr;
 }
@@ -1469,14 +1487,25 @@ static napi_value NapiSetButtonCallback(napi_env env, napi_callback_info info) {
         return nullptr;
     }
     
+    napi_threadsafe_function oldTsfn = g_tsfnButton;
+    
     napi_value resourceName;
     napi_create_string_utf8(env, "GameControllerButtonCallback", NAPI_AUTO_LENGTH, &resourceName);
     
-    napi_create_threadsafe_function(
+    napi_status status = napi_create_threadsafe_function(
         env, args[0], nullptr, resourceName,
         0, 1, nullptr, nullptr, nullptr,
         ButtonCallbackCallJS, &g_tsfnButton
     );
+    if (status != napi_ok) {
+        LOGE("创建 Button threadsafe function 失败: %d", status);
+        g_tsfnButton = oldTsfn;
+        return nullptr;
+    }
+    
+    if (oldTsfn) {
+        napi_release_threadsafe_function(oldTsfn, napi_tsfn_release);
+    }
     
     return nullptr;
 }
@@ -1497,14 +1526,25 @@ static napi_value NapiSetAxisCallback(napi_env env, napi_callback_info info) {
         return nullptr;
     }
     
+    napi_threadsafe_function oldTsfn = g_tsfnAxis;
+    
     napi_value resourceName;
     napi_create_string_utf8(env, "GameControllerAxisCallback", NAPI_AUTO_LENGTH, &resourceName);
     
-    napi_create_threadsafe_function(
+    napi_status status = napi_create_threadsafe_function(
         env, args[0], nullptr, resourceName,
         0, 1, nullptr, nullptr, nullptr,
         AxisCallbackCallJS, &g_tsfnAxis
     );
+    if (status != napi_ok) {
+        LOGE("创建 Axis threadsafe function 失败: %d", status);
+        g_tsfnAxis = oldTsfn;
+        return nullptr;
+    }
+    
+    if (oldTsfn) {
+        napi_release_threadsafe_function(oldTsfn, napi_tsfn_release);
+    }
     
     return nullptr;
 }

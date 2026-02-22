@@ -117,6 +117,7 @@ class SettingsKeys {
   static readonly DOUBLE_TAP_TIME_THRESHOLD: string = 'settings_double_tap_time_threshold';
   static readonly ANALOG_SCROLLING: string = 'settings_analog_scrolling';
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
+  static readonly GAME_MOUSE_MODE: string = 'settings_game_mouse_mode';
   
   // 增强触控设置
   static readonly ENABLE_ENHANCED_TOUCH: string = 'settings_enable_enhanced_touch';
@@ -260,6 +261,7 @@ struct SettingsPageV2 {
   @State doubleTapTimeThreshold: number = 125;
   @State analogScrolling: string = '右摇杆';
   @State mouseNavButtons: boolean = false;
+  @State gameMouseMode: boolean = false;   // 游戏鼠标模式（相对模式+光标回弹）
   
   // 增强触控设置
   @State enableEnhancedTouch: boolean = true;
@@ -540,6 +542,7 @@ struct SettingsPageV2 {
       this.doubleTapTimeThreshold = await PreferencesUtil.get<number>(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125);
       this.analogScrolling = await PreferencesUtil.get<string>(SettingsKeys.ANALOG_SCROLLING, '右摇杆');
       this.mouseNavButtons = await this.loadBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false);
+      this.gameMouseMode = await this.loadBoolean(SettingsKeys.GAME_MOUSE_MODE, false);
       
       // 增强触控设置
       this.enableEnhancedTouch = await this.loadBoolean(SettingsKeys.ENABLE_ENHANCED_TOUCH, true);
@@ -1345,6 +1348,16 @@ struct SettingsPageV2 {
                 action: () => {
                   this.mouseNavButtons = !this.mouseNavButtons;
                   this.saveSetting(SettingsKeys.MOUSE_NAV_BUTTONS, this.mouseNavButtons);
+                }
+              },
+              {
+                title: '游戏鼠标模式',
+                subtitle: '相对输入+光标回弹，适合 FPS/TPS 游戏',
+                type: 'toggle',
+                value: this.gameMouseMode,
+                action: () => {
+                  this.gameMouseMode = !this.gameMouseMode;
+                  this.saveSetting(SettingsKeys.GAME_MOUSE_MODE, this.gameMouseMode);
                 }
               }
             ]

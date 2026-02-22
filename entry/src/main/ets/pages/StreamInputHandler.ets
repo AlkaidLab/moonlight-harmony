@@ -49,6 +49,10 @@ export class StreamInputHandler {
   private viewWidthVp: number = 0;
   private viewHeightVp: number = 0;
 
+  // ── 屏幕物理尺寸（px，用于相对模式边缘检测和 configure 传参）──
+  private screenWidthPx: number = 1080;
+  private screenHeightPx: number = 2400;
+
 
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
   private appVolume: number = 1.0;
@@ -95,7 +99,7 @@ export class StreamInputHandler {
     this.viewWidthVp = viewWidth;
     this.viewHeightVp = viewHeight;
 
-    // 获取屏幕物理尺寸（全屏模式下即为窗口尺寸）
+    // 获取屏幕物理尺寸
     let screenWidthPx = 1080;
     let screenHeightPx = 2400;
     try {
@@ -104,13 +108,22 @@ export class StreamInputHandler {
       screenHeightPx = displayInfo.height;
     } catch (_) {}
 
+    // 保存屏幕尺寸供后续 configure 调用使用
+    this.screenWidthPx = screenWidthPx;
+    this.screenHeightPx = screenHeightPx;
+
+    // 读取游戏鼠标模式设置
+    const relativeMode = this.viewModel?.inputSettings?.gameMouseMode ?? false;
+
     // 初始使用屏幕尺寸（全屏时完全正确），窗口模式下异步获取实际窗口矩形更新
-    mouseInterceptor.configure(0, 0, screenWidthPx, screenHeightPx);
+    mouseInterceptor.configure(0, 0, screenWidthPx, screenHeightPx,
+                                screenWidthPx, screenHeightPx, relativeMode);
 
     const result = mouseInterceptor.start();
     if (result === 0) {
       this.mouseInterceptorActive = true;
-      console.info(`StreamInputHandler: C++ 鼠标 Monitor 已启动 (${screenWidthPx}x${screenHeightPx}px)`);
+      const modeLabel = relativeMode ? '相对/游戏' : '绝对/桌面';
+      console.info(`StreamInputHandler: C++ 鼠标 Monitor 已启动 (${screenWidthPx}x${screenHeightPx}px, ${modeLabel})`);
 
       // 异步获取实际窗口矩形（窗口模式下与屏幕尺寸不同）
       this.fetchAndUpdateWindowRect();
@@ -144,8 +157,10 @@ export class StreamInputHandler {
       window.getLastWindow(context).then((win: window.Window) => {
         const rect = win.getWindowProperties().windowRect;
         if (rect && this.mouseInterceptorActive) {
+          const relativeMode = this.viewModel?.inputSettings?.gameMouseMode ?? false;
           MouseInterceptorService.getInstance().configure(
-            rect.left, rect.top, rect.width, rect.height
+            rect.left, rect.top, rect.width, rect.height,
+            this.screenWidthPx, this.screenHeightPx, relativeMode
           );
           console.info(`StreamInputHandler: 窗口矩形已更新 (${rect.left},${rect.top},${rect.width}x${rect.height})`);
         }

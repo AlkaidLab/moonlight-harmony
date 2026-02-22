@@ -1156,10 +1156,20 @@ export class GamepadManager implements UsbDriverListener {
     }
   }
   
+  /** 已记录过首次轴事件日志的设备集合（避免日志洪泛） */
+  private gcAxisFirstEventLogged = new Set<string>();
+
   /**
    * 处理 Game Controller Kit 轴事件
    */
   private handleGCAxisEvent(deviceId: string, axisType: number, x: number, y: number): void {
+    // 首次轴事件诊断日志（每设备仅一次）
+    if (!this.gcAxisFirstEventLogged.has(deviceId)) {
+      this.gcAxisFirstEventLogged.add(deviceId);
+      const registered = this.gcDeviceIdToSlot.has(deviceId);
+      const slot = this.getSlotForGCDevice(deviceId);
+      console.info(`[GAMEPAD-GC] 首次轴事件: deviceId=${deviceId}, axisType=${axisType}, registered=${registered}, slot=${slot}, listener=${!!this.listener}`);
+    }
     let state = this.gcDeviceStates.get(deviceId);
     if (!state) {
       state = this.createEmptyState();
@@ -1214,6 +1224,9 @@ export class GamepadManager implements UsbDriverListener {
 
   private flushGCAxisPending(): void {
     if (this.gcAxisFlushPending.size === 0 || !this.listener) {
+      if (this.gcAxisFlushPending.size > 0 && !this.listener) {
+        console.warn(`[GAMEPAD-GC] 轴事件丢弃: listener 为空, pending slots=${this.gcAxisFlushPending.size}`);
+      }
       this.gcAxisFlushPending.clear();
       return;
     }

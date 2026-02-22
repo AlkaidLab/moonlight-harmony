@@ -96,6 +96,7 @@ export class SettingsKeys {
   static readonly DOUBLE_TAP_TIME_THRESHOLD: string = 'settings_double_tap_time_threshold';
   static readonly ANALOG_SCROLLING: string = 'settings_analog_scrolling';
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
+  static readonly GAME_MOUSE_MODE: string = 'settings_game_mouse_mode';  // 游戏鼠标模式（相对模式）
   static readonly LAST_TOUCH_MODE: string = 'settings_last_touch_mode';  // 运行时触摸模式（菜单切换后持久化）
 
   // 增强触控设置
@@ -188,6 +189,7 @@ export interface InputSettings {
   doubleTapTimeThreshold: number;
   analogScrolling: string;
   mouseNavButtons: boolean;
+  gameMouseMode: boolean;  // 游戏鼠标模式：相对增量+光标回弹，适合 FPS/TPS
 
   // 增强触控
   enableEnhancedTouch: boolean;
@@ -693,6 +695,7 @@ export class SettingsService {
       doubleTapTimeThreshold: await this.getNumber(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125),
       analogScrolling: await this.getString(SettingsKeys.ANALOG_SCROLLING, '右摇杆'),
       mouseNavButtons: await this.getBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false),
+      gameMouseMode: await this.getBoolean(SettingsKeys.GAME_MOUSE_MODE, false),
 
       // 增强触控
       enableEnhancedTouch: await this.getBoolean(SettingsKeys.ENABLE_ENHANCED_TOUCH, true),
