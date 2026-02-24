@@ -109,6 +109,45 @@ set(RS_SOURCES
     ${MOONLIGHT_COMMON_PATH}/reedsolomon/rs.c
 )
 
+# ---- aubio 音频分析库 (onset detection 最小集) ----
+# 编译为独立静态库，避免 include 路径污染主项目
+set(AUBIO_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/aubio/src)
+
+add_library(aubio_static STATIC
+    # core
+    ${AUBIO_SRC_DIR}/fvec.c
+    ${AUBIO_SRC_DIR}/cvec.c
+    ${AUBIO_SRC_DIR}/lvec.c
+    ${AUBIO_SRC_DIR}/mathutils.c
+    ${AUBIO_SRC_DIR}/vecutils.c
+    ${AUBIO_SRC_DIR}/musicutils.c
+    # spectral (FFT + phase vocoder + spectral descriptor)
+    ${AUBIO_SRC_DIR}/spectral/ooura_fft8g.c
+    ${AUBIO_SRC_DIR}/spectral/fft.c
+    ${AUBIO_SRC_DIR}/spectral/phasevoc.c
+    ${AUBIO_SRC_DIR}/spectral/specdesc.c
+    ${AUBIO_SRC_DIR}/spectral/statistics.c
+    ${AUBIO_SRC_DIR}/spectral/awhitening.c
+    # temporal (filter, needed by peakpicker)
+    ${AUBIO_SRC_DIR}/temporal/filter.c
+    ${AUBIO_SRC_DIR}/temporal/biquad.c
+    # onset detection
+    ${AUBIO_SRC_DIR}/onset/onset.c
+    ${AUBIO_SRC_DIR}/onset/peakpicker.c
+    # utils
+    ${AUBIO_SRC_DIR}/utils/log.c
+    ${AUBIO_SRC_DIR}/utils/hist.c
+    ${AUBIO_SRC_DIR}/utils/scale.c
+    ${AUBIO_SRC_DIR}/utils/strutils.c
+)
+
+# aubio 编译配置 — 仅对 aubio 静态库生效，不污染主项目
+target_include_directories(aubio_static PRIVATE ${AUBIO_SRC_DIR})
+target_compile_definitions(aubio_static PRIVATE HAVE_CONFIG_H)
+target_compile_options(aubio_static PRIVATE
+    -Wno-sign-compare -Wno-unused-parameter -Wno-missing-field-initializers
+)
+
 # 创建共享库
 add_library(moonlight_nativelib SHARED
     ${SOURCE_FILES}
@@ -117,12 +156,18 @@ add_library(moonlight_nativelib SHARED
     ${RS_SOURCES}
 )
 
+# 主项目只需要 aubio 的公开头文件路径 (用于 aubio_onset_wrapper.h)
+target_include_directories(moonlight_nativelib PRIVATE
+    ${AUBIO_SRC_DIR}
+)
+
 # Game Controller Kit 可能不存在于所有设备 (如 HarmonyOS 5.0.5)
 # 不链接 libohgame_controller.z.so，改为运行时 dlopen 加载
 # 所有 OH_Game* 函数通过 dlsym 获取的函数指针调用
 
 # 链接库
 target_link_libraries(moonlight_nativelib PUBLIC
+    aubio_static
     libace_napi.z.so
     libace_ndk.z.so
     libhilog_ndk.z.so

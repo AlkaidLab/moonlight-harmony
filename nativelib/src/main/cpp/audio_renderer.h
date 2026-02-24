@@ -104,6 +104,12 @@ public:
     AudioRendererStats GetStats() const;
     
     /**
+     * 获取环形缓冲区中的音频延迟（毫秒）
+     * 轻量级调用，仅做两次 atomic load + 简单算术
+     */
+    double GetBufferLatencyMs() const;
+    
+    /**
      * 检查是否已初始化
      */
     bool IsInitialized() const { return renderer_ != nullptr; }
@@ -137,12 +143,12 @@ private:
     // 生产者: PlaySamples() (解码线程)
     // 消费者: OnWriteData() (OHAudio 音频回调线程)
     // =========================================================================
-    // 缓冲区容量：16帧 × 最大8声道 × 240采样/帧 = 30720 采样
-    // 对于 stereo: 30720/2 = 15360 samples = 320ms @48kHz
-    // 对于 5.1:   30720/6 = 5120 samples = 106ms
-    // 对于 7.1:   30720/8 = 3840 samples = 80ms
-    // 较大的缓冲可吸收视频帧率波动导致的音频解码延迟抖动
-    static constexpr int MAX_BUFFER_FRAMES = 16;
+    // 缓冲区容量：4帧 × 最大8声道 × 240采样/帧 = 7680 采样
+    // 对于 stereo: 7680/2 = 3840 samples = 80ms @48kHz
+    // 对于 5.1:   7680/6 = 1280 samples = 26ms
+    // 对于 7.1:   7680/8 = 960 samples = 20ms
+    // 配合 LiGetPendingAudioDuration < 40ms 检查，保持低延迟同时有抖动容忍
+    static constexpr int MAX_BUFFER_FRAMES = 4;
     static constexpr int MAX_CHANNELS = 8;
     static constexpr int MAX_SAMPLES_PER_FRAME = 240;
     static constexpr int RING_BUFFER_CAPACITY = MAX_BUFFER_FRAMES * MAX_CHANNELS * MAX_SAMPLES_PER_FRAME;
@@ -226,6 +232,12 @@ namespace AudioRendererInstance {
      * 获取统计信息
      */
     AudioRendererStats GetStats();
+    
+    /**
+     * 获取环形缓冲区中的音频延迟（毫秒）
+     * 轻量级调用，用于延迟控制决策
+     */
+    double GetBufferLatencyMs();
 }
 
 #endif // AUDIO_RENDERER_H

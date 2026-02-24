@@ -47,6 +47,7 @@ export interface StreamConfig {
   vibrateFallbackStrength: number;
   enableAudioVibration: boolean;  // 音频振动（低频驱动）
   audioVibrationStrength: number;  // 音频振动强度 (0-100)
+  audioVibrationSceneMode: string;  // 音频振动场景模式: 游戏/电影, 音乐/节奏, 自动
   deadzone: number;
   flipFaceButtons: boolean;
 
@@ -213,6 +214,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     vibrateFallbackStrength: 100,
     enableAudioVibration: false,
     audioVibrationStrength: 60,
+    audioVibrationSceneMode: '游戏/电影',
     deadzone: 7,
     flipFaceButtons: false,
 

@@ -113,7 +113,7 @@ interface NativeModule {
   setAudioVolume(volume: number): boolean;
   setPerformanceModeEnabled(enabled: boolean): void;
   getPerformanceModeEnabled(): boolean;
-  setBassVibrationConfig(enabled: boolean, sensitivity: number): void;
+  setBassVibrationConfig(enabled: boolean, sensitivity: number, sceneMode?: number): void;
   getEstimatedRttInfo(): number;
   sendMouseMove(deltaX: number, deltaY: number): void;
   sendMouseButton(buttonEvent: number, mouseButton: number): void;
@@ -768,15 +768,18 @@ export class StreamingSession {
       console.info('性能模式已启用');
     }
     this.audioVibrationService.setSettings(
-      config.enableAudioVibration, config.audioVibrationStrength, config.vibrationMode
+      config.enableAudioVibration, config.audioVibrationStrength, config.vibrationMode,
+      config.audioVibrationSceneMode
     );
   }
 
   private applyPostConnectionSettings(config: StreamConfig): void {
     // 必须在 connectToServer() 之后，因为 BridgeArInit() 会重置 enabled_=false
-    this.nativeModule.setBassVibrationConfig(config.enableAudioVibration, 1.0);
+    // 第三个参数: sceneMode (游戏/电影=0, 音乐/节奏=1, 自动=2)
+    const sceneMode = this.audioVibrationService.getSceneModeInt();
+    this.nativeModule.setBassVibrationConfig(config.enableAudioVibration, 1.0, sceneMode);
     if (config.enableAudioVibration) {
-      console.info(`音频振动已启用, 强度=${config.audioVibrationStrength}, 模式=${config.vibrationMode}`);
+      console.info(`音频振动已启用, 强度=${config.audioVibrationStrength}, 模式=${config.vibrationMode}, 场景=${config.audioVibrationSceneMode}`);
     }
   }
 

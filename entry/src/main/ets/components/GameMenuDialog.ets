@@ -12,6 +12,7 @@
  * 串流游戏菜单弹窗 - 奶油风格 + 透明玻璃效果
  */
 import { display, promptAction } from '@kit.ArkUI';
+import { ConfigurationConstant } from '@kit.AbilityKit';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { VirtualKey } from './StreamMenuManager';
@@ -134,8 +135,10 @@ export struct GameMenuDialog {
   // 关闭动画状态
   private isClosing: boolean = false;
 
-  // 屏幕方向
-  @State private isLandscape: boolean = true;
+  // 布局判断：屏幕 2/3 宽度能否放下两列卡片
+  @State private useTwoColumns: boolean = true;
+  // 深浅主题（自动跟随系统切换）
+  @StorageProp('colorMode') currentColorMode: number = ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
 
   // 弹窗控制器
   private exitDialogController?: CustomDialogController;
@@ -147,15 +150,27 @@ export struct GameMenuDialog {
     this.currentBitrate = this.viewModel.getCurrentBitrate();
     this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
     this.loadGyroSettings();
-    this.detectScreenOrientation();
+    this.detectLayoutMode();
     this.animateIn();
   }
 
-  private detectScreenOrientation(): void {
+  /**
+   * 根据屏幕宽度的 2/3 是否能容纳两列卡片来决定布局
+   * 两列所需宽度 = CARD_WIDTH * 2 + 间距 + 内边距
+   */
+  private detectLayoutMode(): void {
     try {
       const displayInfo = display.getDefaultDisplaySync();
-      this.isLandscape = displayInfo.width > displayInfo.height;
+      const vpWidth = displayInfo.width / displayInfo.densityPixels;
+      const twoColumnMinWidth = (CARD_WIDTH * 2 + 12 + 32); // 两列卡片 + 间距 + 左右内边距
+      this.useTwoColumns = (vpWidth * 2 / 3) >= twoColumnMinWidth;
     } catch (_) {}
+  }
+
+  /** 当前是否深色主题，直接在布局中使用以确保 ArkTS 响应式更新 */
+  // COLOR_MODE_LIGHT = 1; 深色时黑透卡片，浅色时白透卡片
+  isCurrentDark(): boolean {
+    return this.currentColorMode !== 1;
   }
 
   private animateIn(): void {
@@ -449,10 +464,10 @@ export struct GameMenuDialog {
       .translate({ x: '-100%', y: '-50%' })
 
       // 左侧面板
-      if (this.isLandscape) {
-        this.LandscapeLayout()
+      if (this.useTwoColumns) {
+        this.TwoColumnLayout()
       } else {
-        this.PortraitLayout()
+        this.SingleColumnLayout()
       }
 
       // 二级菜单遮罩
@@ -469,22 +484,27 @@ export struct GameMenuDialog {
   }
 
   @Builder
-  LandscapeLayout() {
-    Row({ space: 12 }) {
-      Column({ space: 12 }) {
-        if (this.shortcuts.length > 0) this.ShortcutCard()
-        if (this.superCmds.length > 0) this.SuperCmdCard()
-      }
-      .alignItems(HorizontalAlign.Start)
+  TwoColumnLayout() {
+    Scroll() {
+      Row({ space: 12 }) {
+        Column({ space: 12 }) {
+          if (this.shortcuts.length > 0) this.ShortcutCard()
+          if (this.superCmds.length > 0) this.SuperCmdCard()
+        }
+        .alignItems(HorizontalAlign.Start)
 
-      Column({ space: 12 }) {
-        this.BitrateCard()
-        if (this.hasGyroscope) this.GyroAssistCard()
-        if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
+        Column({ space: 12 }) {
+          this.BitrateCard()
+          if (this.hasGyroscope) this.GyroAssistCard()
+          if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
+        }
+        .alignItems(HorizontalAlign.Start)
       }
-      .alignItems(HorizontalAlign.Start)
+      .alignItems(VerticalAlign.Top)
     }
-    .alignItems(VerticalAlign.Top)
+    .scrollBar(BarState.Off)
+    .scrollable(ScrollDirection.Vertical)
+    .edgeEffect(EdgeEffect.Spring)
     .padding({ top: 20, bottom: 20, left: 16, right: 16 })
     .constraintSize({ maxHeight: '85%' })
     .position({ x: 16, y: '50%' })
@@ -492,15 +512,20 @@ export struct GameMenuDialog {
   }
 
   @Builder
-  PortraitLayout() {
-    Column({ space: 12 }) {
-      if (this.shortcuts.length > 0) this.ShortcutCard()
-      if (this.superCmds.length > 0) this.SuperCmdCard()
-      this.BitrateCard()
-      if (this.hasGyroscope) this.GyroAssistCard()
-      if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
+  SingleColumnLayout() {
+    Scroll() {
+      Column({ space: 12 }) {
+        if (this.shortcuts.length > 0) this.ShortcutCard()
+        if (this.superCmds.length > 0) this.SuperCmdCard()
+        this.BitrateCard()
+        if (this.hasGyroscope) this.GyroAssistCard()
+        if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
+      }
+      .alignItems(HorizontalAlign.Start)
     }
-    .alignItems(HorizontalAlign.Start)
+    .scrollBar(BarState.Off)
+    .scrollable(ScrollDirection.Vertical)
+    .edgeEffect(EdgeEffect.Spring)
     .padding({ top: 20, bottom: 20, left: 16, right: 16 })
     .constraintSize({ maxHeight: '85%' })
     .position({ x: 16, y: '50%' })
@@ -533,11 +558,11 @@ export struct GameMenuDialog {
     .width(BUTTON_CARD_SIZE)
     .height(BUTTON_CARD_SIZE)
     .padding(10)
-    .backgroundColor('#25FFFFFF')
+    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
     .backdropBlur(40)
     .borderRadius(20)
-    .border({ width: 1, color: '#20FFFFFF' })
-    .shadow({ radius: 20, color: '#20000000', offsetY: 4 })
+    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
     .onClick(() => {
       this.callbacks.onUnlockOverlay?.();
       this.callbacks.onClose?.();
@@ -605,11 +630,11 @@ export struct GameMenuDialog {
       .padding({ left: 14, right: 14, bottom: 12 })
     }
     .width(CARD_WIDTH)
-    .backgroundColor('#25FFFFFF')
+    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
     .backdropBlur(40)
     .borderRadius(20)
-    .border({ width: 1, color: '#20FFFFFF' })
-    .shadow({ radius: 20, color: '#20000000', offsetY: 4 })
+    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
   }
 
   @Builder
@@ -717,11 +742,11 @@ export struct GameMenuDialog {
       }
     }
     .width(CARD_WIDTH)
-    .backgroundColor('#25FFFFFF')
+    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
     .backdropBlur(40)
     .borderRadius(20)
-    .border({ width: 1, color: '#20FFFFFF' })
-    .shadow({ radius: 20, color: '#20000000', offsetY: 4 })
+    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
   }
 
   @Builder
@@ -745,11 +770,11 @@ export struct GameMenuDialog {
     Text(label)
       .fontSize(11)
       .fontWeight(this.gyroActivationKey === key ? FontWeight.Bold : FontWeight.Normal)
-      .fontColor(this.gyroActivationKey === key ? '#FFFFFF' : '#80FFFFFF')
+      .fontColor(this.gyroActivationKey === key ? '#FFFFFF' : (this.isCurrentDark() ? '#80000000' : '#80FFFFFF'))
       .padding({ left: 16, right: 16, top: 6, bottom: 6 })
       .borderRadius(14)
-      .backgroundColor(this.gyroActivationKey === key ? '#50A8D8EA' : '#15FFFFFF')
-      .border({ width: 1, color: this.gyroActivationKey === key ? '#A8D8EA' : '#20FFFFFF' })
+      .backgroundColor(this.gyroActivationKey === key ? '#50A8D8EA' : (this.isCurrentDark() ? '#10000000' : '#15FFFFFF'))
+      .border({ width: 1, color: this.gyroActivationKey === key ? '#A8D8EA' : (this.isCurrentDark() ? '#15000000' : '#20FFFFFF') })
       .onClick(() => {
         this.gyroActivationKey = key;
         GyroAssistService.getInstance().setActivationKey(key);
@@ -790,11 +815,11 @@ export struct GameMenuDialog {
       .padding({ left: 14, right: 14, top: 10, bottom: 14 })
     }
     .width(CARD_WIDTH)
-    .backgroundColor('#25FFFFFF')
+    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
     .backdropBlur(40)
     .borderRadius(20)
-    .border({ width: 1, color: '#20FFFFFF' })
-    .shadow({ radius: 20, color: '#20000000', offsetY: 4 })
+    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
   }
 
   @Builder
@@ -835,11 +860,11 @@ export struct GameMenuDialog {
       .padding({ left: 14, right: 14, top: 10, bottom: 14 })
     }
     .width(CARD_WIDTH)
-    .backgroundColor('#25FFFFFF')
+    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
     .backdropBlur(40)
     .borderRadius(20)
-    .border({ width: 1, color: '#20FFFFFF' })
-    .shadow({ radius: 20, color: '#20000000', offsetY: 4 })
+    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
   }
 
   @Builder
@@ -1000,8 +1025,8 @@ export struct GameMenuDialog {
       Text(cmd.name).fontSize(11).fontColor('#F0FFFFFF')
     }
     .padding({ left: 6, right: 12, top: 6, bottom: 6 })
-    .backgroundColor('#20FFFFFF')
-    .border({ width: 1, color: '#30FFFFFF' })
+    .backgroundColor(this.isCurrentDark() ? '#15000000' : '#20FFFFFF')
+    .border({ width: 1, color: this.isCurrentDark() ? '#20000000' : '#30FFFFFF' })
     .borderRadius(16)
     .margin({ right: 6, bottom: 6 })
     .focusable(true)

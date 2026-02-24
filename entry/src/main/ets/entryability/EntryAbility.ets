@@ -26,6 +26,10 @@ export default class EntryAbility extends UIAbility {
     
     // 初始化 PreferencesUtil
     PreferencesUtil.init(this.context);
+
+    // 将当前颜色模式写入 AppStorage，供全局 @StorageProp('colorMode') 使用
+    AppStorage.setOrCreate('colorMode', this.context.config.colorMode);
+    hilog.info(DOMAIN, TAG, 'AppStorage colorMode set to: %{public}d', this.context.config.colorMode);
     
     // 获取初始深色模式状态
     this.isDarkMode = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
@@ -86,6 +90,8 @@ export default class EntryAbility extends UIAbility {
     
     // 检测深色模式变化
     const newIsDarkMode = newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+    // 同步到 AppStorage，触发所有 @StorageProp('colorMode') 更新
+    AppStorage.setOrCreate('colorMode', newConfig.colorMode);
     if (this.isDarkMode !== newIsDarkMode) {
       this.isDarkMode = newIsDarkMode;
       hilog.info(DOMAIN, TAG, 'Color mode changed to: %{public}s', this.isDarkMode ? 'dark' : 'light');

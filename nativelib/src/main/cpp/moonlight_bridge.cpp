@@ -1473,12 +1473,12 @@ napi_value MoonBridge_GetPerformanceModeEnabled(napi_env env, napi_callback_info
 extern BassEnergyAnalyzer g_bassAnalyzer;
 
 napi_value MoonBridge_SetBassVibrationConfig(napi_env env, napi_callback_info info) {
-    size_t argc = 2;
-    napi_value argv[2];
+    size_t argc = 3;
+    napi_value argv[3];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
 
     if (argc < 2) {
-        OH_LOG_WARN(LOG_APP, "SetBassVibrationConfig: need 2 args (enabled, sensitivity)");
+        OH_LOG_WARN(LOG_APP, "SetBassVibrationConfig: need 2-3 args (enabled, sensitivity, [sceneMode])");
         return GetUndefined(env);
     }
 
@@ -1488,11 +1488,18 @@ napi_value MoonBridge_SetBassVibrationConfig(napi_env env, napi_callback_info in
     double sensitivity = 1.0;
     napi_get_value_double(env, argv[1], &sensitivity);
 
+    // 第三个参数可选: sceneMode (0=游戏, 1=音乐, 2=自动)
+    int sceneMode = 0;
+    if (argc >= 3) {
+        napi_get_value_int32(env, argv[2], &sceneMode);
+    }
+
     g_bassAnalyzer.SetEnabled(enabled);
     g_bassAnalyzer.SetSensitivity(static_cast<float>(sensitivity));
+    g_bassAnalyzer.SetSceneMode(sceneMode);
 
-    OH_LOG_INFO(LOG_APP, "SetBassVibrationConfig: enabled=%{public}s, sensitivity=%.2f",
-                enabled ? "true" : "false", sensitivity);
+    OH_LOG_INFO(LOG_APP, "SetBassVibrationConfig: enabled=%{public}s, sensitivity=%.2f, sceneMode=%{public}d",
+                enabled ? "true" : "false", sensitivity, sceneMode);
 
     return GetUndefined(env);
 }

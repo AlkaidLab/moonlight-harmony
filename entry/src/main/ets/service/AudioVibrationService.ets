@@ -12,18 +12,20 @@
  * 音频振动服务
  *
  * 基于游戏音频的低频能量分析驱动振动反馈，增强沉浸感。
- * 例如：爆炸、枪声、引擎轰鸣等低音场景会触发振动。
+ *
+ * 场景模式:
+ * - 游戏/电影 (sceneMode='游戏/电影'): 持续低频驱动，爆炸/枪声/引擎等
+ *   · 频率 30-50Hz，持续 300ms，强度跟随音频实时变化
+ * - 音乐/节奏 (sceneMode='音乐/节奏'): C++ onset 检测 → 短脉冲振动
+ *   · 50ms 尖锐脉冲，节拍感强，频率 40-60Hz 更有弹性
+ * - 自动 (sceneMode='自动'): C++ 层自动分析音频特征切换策略
  *
  * 架构:
  * C++ (BassEnergyAnalyzer) → TSFN → ArkTS (本服务) → 分路由
  *
  * 分路由策略（遵循 vibrationMode 振动模式设置）：
  * - 设备振动：直接调用 @ohos.vibrator HD Haptic API（保持最高精度）
- *   · 频率 30-50Hz 低沉触感，与低频音频能量匹配
- *   · 支持 intensity + frequency 精确控制
  * - USB 手柄：通过 GamepadManager 直接发送 USB HID 报告
- *   · 绕过 GamepadVibrationService 的防抖和参数变换
- *   · 保留完整的 16-bit 马达值精度
  */
 
 import { vibrator } from '@kit.SensorServiceKit';
@@ -32,7 +34,8 @@ import { GamepadManager } from './GamepadManager';
 export class AudioVibrationService {
   private enabled: boolean = false;
   private strength: number = 100; // 振动强度 (0-100)
-  private vibrationMode: string = '自动'; // 振动模式
+  private vibrationMode: string = '自动'; // 振动路由模式
+  private sceneMode: string = '游戏/电影'; // 场景模式
 
   // 状态
   private lastIntensity: number = 0;
@@ -51,13 +54,27 @@ export class AudioVibrationService {
   /**
    * 更新设置
    */
-  setSettings(enabled: boolean, strength: number, vibrationMode: string): void {
+  setSettings(enabled: boolean, strength: number, vibrationMode: string, sceneMode: string = '游戏/电影'): void {
     this.enabled = enabled;
     this.strength = strength;
     this.vibrationMode = vibrationMode;
+    this.sceneMode = sceneMode;
 
     if (!enabled) {
       this.stopAll();
+    }
+  }
+
+  /**
+   * 获取当前场景模式对应的 C++ sceneMode 整数值
+   * 游戏/电影=0, 音乐/节奏=1, 自动=2
+   */
+  getSceneModeInt(): number {
+    switch (this.sceneMode) {
+      case '音乐/节奏': return 1;
+      case '自动': return 2;
+      case '游戏/电影':
+      default: return 0;
     }
   }
 
@@ -87,13 +104,17 @@ export class AudioVibrationService {
 
     // 防抖检查
     const now = Date.now();
-    if (now - this.lastVibrationTime < AudioVibrationService.MIN_VIBRATION_INTERVAL_MS) {
+    // 音乐模式防抖间隔更短 (25ms vs 40ms)，保证节拍脉冲不丢失
+    const minInterval = this.isMusicScene()
+      ? 25 : AudioVibrationService.MIN_VIBRATION_INTERVAL_MS;
+    if (now - this.lastVibrationTime < minInterval) {
       return;
     }
 
-    // 强度变化不大，跳过
+    // 强度变化不大，跳过（音乐模式降低阈值，脉冲需要更灵敏）
+    const changeTolerance = this.isMusicScene() ? 3 : 8;
     if ((this.isDeviceVibrating || this.isUsbRumbling) &&
-        Math.abs(effectiveIntensity - this.lastIntensity) < 8) {
+        Math.abs(effectiveIntensity - this.lastIntensity) < changeTolerance) {
       return;
     }
 
@@ -105,7 +126,7 @@ export class AudioVibrationService {
     const shouldUsb = this.shouldVibrateGamepad();
 
     if (shouldDevice) {
-      this.triggerDeviceHdVibration(effectiveIntensity);
+      this.triggerDeviceVibration(effectiveIntensity);
     } else if (this.isDeviceVibrating) {
       this.stopDeviceVibration();
     }
@@ -122,6 +143,12 @@ export class AudioVibrationService {
    */
   stop(): void {
     this.stopAll();
+  }
+
+  // ==================== 场景判断 ====================
+
+  private isMusicScene(): boolean {
+    return this.sceneMode === '音乐/节奏' || this.sceneMode === '自动';
   }
 
   // ==================== 路由判断 ====================
@@ -148,15 +175,12 @@ export class AudioVibrationService {
     }
   }
 
-  // ==================== 设备 HD Haptic 振动（最高精度路径） ====================
+  // ==================== 设备振动（场景感知） ====================
 
   /**
-   * 直接使用 @ohos.vibrator HD Haptic API
-   * - 频率 30-50Hz：匹配低频音频能量的低沉触感
-   * - 强度跟随音频实时变化
-   * - 持续 300ms 短脉冲，快速响应能量变化
+   * 根据场景模式选择不同的振动策略
    */
-  private triggerDeviceHdVibration(intensity: number): void {
+  private triggerDeviceVibration(intensity: number): void {
     // 检查 HD Haptic 支持（首次缓存）
     if (this.hdHapticSupported === null) {
       try {
@@ -173,21 +197,35 @@ export class AudioVibrationService {
 
     try {
       if (this.hdHapticSupported) {
-        this.triggerHdHaptic(intensity);
+        if (this.sceneMode === '音乐/节奏') {
+          this.triggerMusicHdHaptic(intensity);
+        } else {
+          this.triggerGameHdHaptic(intensity);
+        }
       } else {
-        this.triggerTimeVibration(intensity);
+        if (this.sceneMode === '音乐/节奏') {
+          this.triggerMusicTimeVibration(intensity);
+        } else {
+          this.triggerGameTimeVibration(intensity);
+        }
       }
       this.isDeviceVibrating = true;
     } catch (_) {
-      this.triggerTimeVibration(intensity);
+      if (this.sceneMode === '音乐/节奏') {
+        this.triggerMusicTimeVibration(intensity);
+      } else {
+        this.triggerGameTimeVibration(intensity);
+      }
     }
   }
 
+  // ==================== 游戏/电影模式振动 ====================
+
   /**
-   * HD Haptic continuous 振动 (API 18+)
-   * 频率 30-50Hz 对应低频音频的低沉触感
+   * 游戏模式 HD Haptic: 持续低沉振动
+   * 频率 30-50Hz, 持续 300ms, 强度跟随音频
    */
-  private triggerHdHaptic(intensity: number): void {
+  private triggerGameHdHaptic(intensity: number): void {
     try {
       const builder = new vibrator.VibratorPatternBuilder();
       const frequency = Math.floor(30 + (intensity / 100) * 20); // 30-50Hz
@@ -205,17 +243,17 @@ export class AudioVibrationService {
         id: 0,
         usage: 'physicalFeedback'
       }).catch((_: Error) => {
-        this.triggerTimeVibration(intensity);
+        this.triggerGameTimeVibration(intensity);
       });
     } catch (_) {
-      this.triggerTimeVibration(intensity);
+      this.triggerGameTimeVibration(intensity);
     }
   }
 
   /**
-   * 时长模式振动（兼容所有设备）
+   * 游戏模式时长振动（兼容）: 50-300ms 持续
    */
-  private triggerTimeVibration(intensity: number): void {
+  private triggerGameTimeVibration(intensity: number): void {
     if (intensity < 5) return;
     const duration = Math.floor(50 + intensity * 2.5); // 50-300ms
 
@@ -229,16 +267,78 @@ export class AudioVibrationService {
     this.isDeviceVibrating = true;
   }
 
-  // ==================== USB 手柄振动（直达路径） ====================
+  // ==================== 音乐/节奏模式振动 ====================
 
   /**
-   * 直接通过 GamepadManager 发送 USB HID 报告
-   * 绕过 GamepadVibrationService 的防抖和模式路由
-   * lowFreq 为主（低沉触感），highFreq 给 25% 增加质感
+   * 音乐模式 HD Haptic: 短脉冲节拍振动
+   * 频率 40-60Hz 更有弹性, 持续 60ms 尖锐脉冲, 模拟鼓点触感
+   */
+  private triggerMusicHdHaptic(intensity: number): void {
+    try {
+      const builder = new vibrator.VibratorPatternBuilder();
+      // 音乐模式频率更高 (40-60Hz)，触感更有弹性/敲击感
+      const frequency = Math.floor(40 + (intensity / 100) * 20); // 40-60Hz
+
+      builder.addContinuousEvent(0, 60, {
+        intensity: Math.min(100, intensity),
+        frequency: frequency,
+        index: 0
+      });
+
+      vibrator.startVibration({
+        type: 'pattern',
+        pattern: builder.build()
+      }, {
+        id: 0,
+        usage: 'physicalFeedback'
+      }).catch((_: Error) => {
+        this.triggerMusicTimeVibration(intensity);
+      });
+    } catch (_) {
+      this.triggerMusicTimeVibration(intensity);
+    }
+  }
+
+  /**
+   * 音乐模式时长振动（兼容）: 30-80ms 短脉冲
+   */
+  private triggerMusicTimeVibration(intensity: number): void {
+    if (intensity < 5) return;
+    // 音乐模式: 短脉冲 30-80ms，模拟鼓点
+    const duration = Math.floor(30 + intensity * 0.5); // 30-80ms
+
+    vibrator.startVibration({
+      type: 'time',
+      duration: duration
+    }, {
+      id: 0,
+      usage: 'physicalFeedback'
+    }).catch((_: Error) => { /* 忽略 */ });
+    this.isDeviceVibrating = true;
+  }
+
+  // ==================== USB 手柄振动（场景感知） ====================
+
+  /**
+   * USB 手柄振动 — 根据场景调整 low/high freq 比例
+   * 游戏模式: lowFreq 为主（低沉触感），highFreq 25%
+   * 音乐模式: highFreq 更高（60%），更有弹性敲击感
    */
   private triggerUsbRumble(intensity: number): void {
-    const lowFreq = Math.floor(intensity * 65535 / 100);
-    const highFreq = Math.floor(lowFreq * 0.25);
+    const base = Math.floor(intensity * 65535 / 100);
+    let lowFreq: number;
+    let highFreq: number;
+
+    if (this.sceneMode === '音乐/节奏') {
+      // 音乐模式: highFreq 占 60%，节拍感更强
+      lowFreq = Math.floor(base * 0.4);
+      highFreq = Math.floor(base * 0.6);
+    } else {
+      // 游戏模式: lowFreq 为主
+      lowFreq = base;
+      highFreq = Math.floor(base * 0.25);
+    }
+
     GamepadManager.getInstance().rumbleUsbControllers(0, lowFreq, highFreq);
     this.isUsbRumbling = true;
   }

@@ -1769,6 +1769,8 @@ void VideoDecoder::SyncDecodeLoop() {
     
     int consecutiveOutputErrors = 0;
     const int maxConsecutiveErrors = 50;
+    int consecutiveNoOutput = 0;           // 连续无输出计数（包括 TRY_AGAIN_LATER）
+    const int maxConsecutiveNoOutput = 100; // ~500ms-1s 无输出后触发恢复
     bool firstFrameRendered = false;
     int totalQueueInputSuccess = 0;  // 从后备队列提交的帧数
     int totalOutputSuccess = 0;
@@ -1812,14 +1814,52 @@ void VideoDecoder::SyncDecodeLoop() {
         if (outputResult > 0) {
             totalOutputSuccess++;
             consecutiveOutputErrors = 0;
+            consecutiveNoOutput = 0;
             if (!firstFrameRendered) {
                 firstFrameRendered = true;
                 OH_LOG_INFO(LOG_APP, "Sync decode: first frame rendered!");
             }
         } else if (outputResult < 0) {
             consecutiveOutputErrors++;
+            consecutiveNoOutput++;
         } else {
-            // outputResult == 0, 无输出帧，短暂让出 CPU
+            // outputResult == 0, 无输出帧
+            consecutiveNoOutput++;
+            
+            // 长时间无输出检测：解码器可能进入了无产出的"僵死"状态
+            // 此时音频继续播放但画面冻结，需要主动恢复
+            if (firstFrameRendered && consecutiveNoOutput >= maxConsecutiveNoOutput) {
+                OH_LOG_WARN(LOG_APP, "Sync decode: no output for %{public}d cycles, flushing decoder + requesting IDR",
+                            consecutiveNoOutput);
+                
+                // Flush 清空解码器内部缓冲 + 请求 IDR 关键帧
+                OH_AVErrCode flushRet = OH_VideoDecoder_Flush(decoder_);
+                if (flushRet == AV_ERR_OK) {
+                    // Flush 后必须重新 Start
+                    OH_AVErrCode startRet = OH_VideoDecoder_Start(decoder_);
+                    if (startRet == AV_ERR_OK) {
+                        OH_LOG_INFO(LOG_APP, "Sync decode: decoder flushed and restarted, requesting IDR");
+                    } else {
+                        OH_LOG_ERROR(LOG_APP, "Sync decode: restart after flush failed: %{public}d", startRet);
+                    }
+                } else {
+                    OH_LOG_ERROR(LOG_APP, "Sync decode: flush failed: %{public}d", flushRet);
+                }
+                
+                // 清空软件队列
+                {
+                    std::lock_guard<std::mutex> lock(pendingFrameMutex_);
+                    while (!pendingFrameQueue_.empty()) pendingFrameQueue_.pop();
+                }
+                
+                // 请求 IDR 关键帧
+                LiRequestIdrFrame();
+                
+                consecutiveNoOutput = 0;
+                consecutiveOutputErrors = 0;
+            }
+            
+            // 短暂让出 CPU
             // 使用条件变量等待，或在收到新帧时被唤醒
             std::unique_lock<std::mutex> lock(pendingFrameMutex_);
             if (pendingFrameQueue_.empty() && syncDecodeRunning_) {

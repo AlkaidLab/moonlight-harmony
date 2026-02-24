@@ -735,8 +735,15 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     );
     
     if (decodeLen > 0) {
-        // 直接播放到音频播放器
-        AudioRendererInstance::PlaySamples(g_decodedAudioBuffer, decodeLen);
+        // 检查环形缓冲区中已有的音频延迟（毫秒）
+        // 注意：LiGetPendingAudioDuration() 在我们的架构下几乎总是 0，
+        // 因为 PlaySamples() 是非阻塞的，解码队列会瞬间排空到环形缓冲区。
+        // 真正的延迟累积发生在我们的环形缓冲区中，所以必须检查它。
+        double bufferLatencyMs = AudioRendererInstance::GetBufferLatencyMs();
+        if (bufferLatencyMs < 40.0) {
+            AudioRendererInstance::PlaySamples(g_decodedAudioBuffer, decodeLen);
+        }
+        // else: 丢弃这帧音频，避免延迟过大
         
         // 低频能量分析（音频振动）
         int bassIntensity = 0;

@@ -89,6 +89,7 @@ class SettingsKeys {
   static readonly VIBRATE_FALLBACK_STRENGTH: string = 'settings_vibrate_fallback_strength';
   static readonly ENABLE_AUDIO_VIBRATION: string = 'settings_enable_audio_vibration';
   static readonly AUDIO_VIBRATION_STRENGTH: string = 'settings_audio_vibration_strength';
+  static readonly AUDIO_VIBRATION_SCENE_MODE: string = 'settings_audio_vibration_scene_mode';
   static readonly MULTI_CONTROLLER: string = 'settings_multi_controller';
   static readonly FLIP_FACE_BUTTONS: string = 'settings_flip_face_buttons';
   static readonly DEADZONE: string = 'settings_deadzone';
@@ -232,6 +233,7 @@ struct SettingsPageV2 {
   @State vibrateFallbackStrength: number = 100;
   @State enableAudioVibration: boolean = false;
   @State audioVibrationStrength: number = 60;
+  @State audioVibrationSceneMode: string = '游戏/电影';
   @State multiController: boolean = true;
   @State flipFaceButtons: boolean = false;
   @State deadzone: number = 7;
@@ -508,6 +510,7 @@ struct SettingsPageV2 {
       this.vibrateFallbackStrength = await PreferencesUtil.get<number>(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100);
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
+      this.audioVibrationSceneMode = await PreferencesUtil.get<string>(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, '游戏/电影');
       this.multiController = await this.loadBoolean(SettingsKeys.MULTI_CONTROLLER, true);
       this.flipFaceButtons = await this.loadBoolean(SettingsKeys.FLIP_FACE_BUTTONS, false);
       this.deadzone = await PreferencesUtil.get<number>(SettingsKeys.DEADZONE, 7);
@@ -1021,6 +1024,15 @@ struct SettingsPageV2 {
                   this.audioVibrationStrength = value;
                   this.saveSetting(SettingsKeys.AUDIO_VIBRATION_STRENGTH, value);
                 }
+              },
+              {
+                title: '音频振动场景',
+                subtitle: this.audioVibrationSceneMode,
+                type: 'select',
+                visible: this.enableAudioVibration,
+                action: () => {
+                  this.showAudioVibrationSceneModePicker();
+                }
               }
             ]
           })
@@ -1363,11 +1375,11 @@ struct SettingsPageV2 {
             ]
           })
           
-          // 增强触控设置
+          // 增强触控设置 (TODO: 功能未实现，设置值已保存但尚未接入 TouchInputHandler)
           this.SettingsGroup({
             id: 'enhanced_touch',
             icon: $r('app.media.ic_enhance'),
-            title: '增强触控',
+            title: '增强触控 (TODO)',
             items: [
               {
                 title: '启用增强触控',
@@ -1509,7 +1521,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '同步解码模式 (实验性)',
-                subtitle: 'API 20+，可能导致黑屏',
+                subtitle: 'API 20+，理论上帧率输出更稳定',
                 type: 'toggle',
                 value: this.enableSyncDecode,
                 action: () => {
@@ -2632,6 +2644,24 @@ struct SettingsPageV2 {
       onSelect: (option: PickerOption) => {
         this.vibrationMode = option.value as string;
         this.saveSetting(SettingsKeys.VIBRATION_MODE, option.value as string);
+      }
+    };
+    this.showPicker(config);
+  }
+  private showAudioVibrationSceneModePicker(): void {
+    const options: PickerOption[] = [
+      { title: '游戏/电影', subtitle: '持续低频驱动，适合爆炸、枪声、引擎等场景', value: '游戏/电影' } as PickerOption,
+      { title: '音乐/节奏', subtitle: '鼓点节拍检测，按节奏脉冲振动', value: '音乐/节奏' } as PickerOption,
+      { title: '自动', subtitle: '根据音频特征自动切换振动策略', value: '自动' } as PickerOption
+    ];
+    const config: PickerConfig = {
+      title: '选择音频振动场景',
+      subtitle: '不同场景使用不同的振动策略',
+      selectedValue: this.audioVibrationSceneMode,
+      options: options,
+      onSelect: (option: PickerOption) => {
+        this.audioVibrationSceneMode = option.value as string;
+        this.saveSetting(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, option.value as string);
       }
     };
     this.showPicker(config);

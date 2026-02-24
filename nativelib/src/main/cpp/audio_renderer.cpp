@@ -191,6 +191,16 @@ int AudioRenderer::Init(const AudioRendererConfig& config) {
                     latencyMode == AUDIOSTREAM_LATENCY_MODE_FAST ? "FAST" : "NORMAL (spatial audio)");
     }
     
+    // 设置回调帧大小（API 12+）
+    // 匹配 Opus 解码帧大小（通常 240 samples = 5ms @48kHz），
+    // 减少 OHAudio 内部缓冲，降低音频管线延迟
+    result = OH_AudioStreamBuilder_SetFrameSizeInCallback(builder_, config_.samplesPerFrame);
+    if (result == AUDIOSTREAM_SUCCESS) {
+        OH_LOG_INFO(LOG_APP, "Audio callback frame size set to %{public}d samples", config_.samplesPerFrame);
+    } else {
+        OH_LOG_WARN(LOG_APP, "Failed to set callback frame size: %{public}d (using system default)", result);
+    }
+    
     // 尝试启用空间音频（HarmonyOS 5.0+ API 20）
     if (config_.enableSpatialAudio && CheckAndLoadSpatialAudioApi() && g_pfnSetSpatializationEnabled != nullptr) {
         result = g_pfnSetSpatializationEnabled(builder_, true);
@@ -280,6 +290,14 @@ int AudioRenderer::Start() {
         OH_LOG_ERROR(LOG_APP, "Renderer not configured");
         return -1;
     }
+    
+    // 清空 OHAudio 内部缓冲，避免播放旧数据导致初始延迟
+    OH_AudioRenderer_Flush(renderer_);
+    
+    // 清空环形缓冲区
+    ringHead_.store(0, std::memory_order_relaxed);
+    ringTail_.store(0, std::memory_order_relaxed);
+    wasUnderrun_.store(false, std::memory_order_relaxed);
     
     OH_AudioStream_Result result = OH_AudioRenderer_Start(renderer_);
     if (result != AUDIOSTREAM_SUCCESS) {
@@ -387,9 +405,11 @@ int AudioRenderer::TryRestart() {
     // 先停止当前渲染器
     OH_AudioRenderer_Stop(renderer_);
     
-    // 清空环形缓冲区，避免播放过时数据
+    // 清空环形缓冲区 + OHAudio 内部缓冲，避免播放过时数据
     ringHead_.store(0, std::memory_order_relaxed);
     ringTail_.store(0, std::memory_order_relaxed);
+    wasUnderrun_.store(false, std::memory_order_relaxed);
+    OH_AudioRenderer_Flush(renderer_);
     
     // 尝试重新启动
     OH_AudioStream_Result result = OH_AudioRenderer_Start(renderer_);
@@ -452,6 +472,16 @@ AudioRendererStats AudioRenderer::GetStats() const {
         : 0.0;
     
     return stats;
+}
+
+double AudioRenderer::GetBufferLatencyMs() const {
+    int head = ringHead_.load(std::memory_order_relaxed);
+    int tail = ringTail_.load(std::memory_order_relaxed);
+    int buffered = (tail >= head) ? (tail - head) : (RING_BUFFER_CAPACITY - head + tail);
+    int channelCount = std::max(config_.channelCount, 1);
+    return (config_.sampleRate > 0)
+        ? ((double)(buffered / channelCount) * 1000.0 / config_.sampleRate)
+        : 0.0;
 }
 
 // =============================================================================
@@ -703,6 +733,14 @@ AudioRendererStats GetStats() {
         return renderer->GetStats();
     }
     return AudioRendererStats{};
+}
+
+double GetBufferLatencyMs() {
+    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    if (renderer != nullptr) {
+        return renderer->GetBufferLatencyMs();
+    }
+    return 0.0;
 }
 
 } // namespace AudioRendererInstance

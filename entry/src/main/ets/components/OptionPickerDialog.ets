@@ -309,7 +309,6 @@ export struct OptionPickerDialog {
         .width('100%')
       }
       .scrollBar(BarState.Auto)
-      .layoutWeight(1)
       .constraintSize({ maxHeight: '60%' })
       
     }
