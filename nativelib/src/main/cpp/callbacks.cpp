@@ -25,6 +25,11 @@
 #include <cstring>
 #include <cstdarg>
 #include <mutex>
+#include <qos/qos.h>
+#include <sched.h>
+#include <unistd.h>
+#include <fstream>
+#include <vector>
 
 extern "C" {
 #include "moonlight-common-c/src/Limelight.h"
@@ -721,6 +726,65 @@ void BridgeArCleanup(void) {
 }
 
 void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
+    // DIRECT_SUBMIT 模式下，此函数运行在 AudioRecv 线程
+    // 设置 QoS 和大核绑定以降低调度延迟（thread_local 确保每线程只执行一次）
+    static thread_local bool audioThreadSetup = false;
+    if (!audioThreadSetup) {
+        audioThreadSetup = true;
+        
+        // 设置 QoS：优先 USER_INTERACTIVE（最高等级）
+        int qosRet = OH_QoS_SetThreadQoS(QOS_USER_INTERACTIVE);
+        if (qosRet == 0) {
+            OH_LOG_INFO(LOG_APP, "AudioRecv thread QoS: USER_INTERACTIVE (highest)");
+        } else {
+            qosRet = OH_QoS_SetThreadQoS(QOS_USER_INITIATED);
+            if (qosRet == 0) {
+                OH_LOG_INFO(LOG_APP, "AudioRecv thread QoS: USER_INITIATED (fallback)");
+            } else {
+                OH_LOG_WARN(LOG_APP, "AudioRecv thread: failed to set QoS (ret=%{public}d)", qosRet);
+            }
+        }
+        
+        // 尝试绑定大核 — 读取 cpufreq 检测高频核心
+        int numCpus = sysconf(_SC_NPROCESSORS_CONF);
+        if (numCpus > 1) {
+            long maxFreq = 0;
+            std::vector<std::pair<int, long>> cpuFreqs;
+            for (int i = 0; i < numCpus; i++) {
+                char path[128];
+                snprintf(path, sizeof(path),
+                    "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", i);
+                std::ifstream ifs(path);
+                long freq = 0;
+                if (ifs >> freq) {
+                    cpuFreqs.push_back({i, freq});
+                    if (freq > maxFreq) maxFreq = freq;
+                }
+            }
+            
+            // 将最高频率 80% 以上的核心视为大核
+            if (maxFreq > 0) {
+                long threshold = maxFreq * 80 / 100;
+                cpu_set_t cpuset;
+                CPU_ZERO(&cpuset);
+                int bigCount = 0;
+                for (auto& [cpu, freq] : cpuFreqs) {
+                    if (freq >= threshold) {
+                        CPU_SET(cpu, &cpuset);
+                        bigCount++;
+                    }
+                }
+                if (bigCount > 0 && bigCount < numCpus) {
+                    int ret = sched_setaffinity(0, sizeof(cpuset), &cpuset);
+                    if (ret == 0) {
+                        OH_LOG_INFO(LOG_APP, "AudioRecv thread bound to %{public}d big cores", bigCount);
+                    }
+                    // 失败也不要紧，QoS 已暗示调度器优先使用大核
+                }
+            }
+        }
+    }
+    
     if (g_decodedAudioBuffer == nullptr) {
         return;
     }
@@ -735,15 +799,10 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     );
     
     if (decodeLen > 0) {
-        // 检查环形缓冲区中已有的音频延迟（毫秒）
-        // 注意：LiGetPendingAudioDuration() 在我们的架构下几乎总是 0，
-        // 因为 PlaySamples() 是非阻塞的，解码队列会瞬间排空到环形缓冲区。
-        // 真正的延迟累积发生在我们的环形缓冲区中，所以必须检查它。
-        double bufferLatencyMs = AudioRendererInstance::GetBufferLatencyMs();
-        if (bufferLatencyMs < 40.0) {
-            AudioRendererInstance::PlaySamples(g_decodedAudioBuffer, decodeLen);
-        }
-        // else: 丢弃这帧音频，避免延迟过大
+        // 始终写入解码后的音频，不在解码层丢帧
+        // 延迟控制由环形缓冲区内部处理：满时丢弃旧数据、写入新数据
+        // 这样波形始终连续，避免丢帧导致的电流滋啦声
+        AudioRendererInstance::PlaySamples(g_decodedAudioBuffer, decodeLen);
         
         // 低频能量分析（音频振动）
         int bassIntensity = 0;

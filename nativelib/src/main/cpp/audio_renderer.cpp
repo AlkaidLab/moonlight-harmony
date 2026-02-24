@@ -375,8 +375,10 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
     }
     
     if (available < dataSize) {
-        // 缓冲区空间不足 → 丢弃新数据（不移动消费者 head，维持 SPSC 约束）
-        // 这与 Android 的策略一致：当音频延迟超限时丢弃新包，避免用延迟换取全无爬音
+        // 缓冲区空间不足 → 丢弃新数据
+        // 注意：不能在此推进 head（消费者的写变量），否则违反 SPSC 无锁约定
+        // 缓冲区最大 60ms (stereo)，满时丢新帧极少发生（仅在网络突发时）
+        // 如果频繁触发，OnWriteData 的 fade-out/fade-in 会平滑处理后续恢复
         droppedSamples_.fetch_add(sampleCount, std::memory_order_relaxed);
         return 0;
     }

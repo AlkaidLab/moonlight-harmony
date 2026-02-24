@@ -46,7 +46,9 @@ include_directories(
     ${LIBOPUS_INCLUDE_DIR}
     ${MOONLIGHT_COMMON_PATH}/src
     ${MOONLIGHT_COMMON_PATH}/enet/include
-    ${MOONLIGHT_COMMON_PATH}/reedsolomon
+    ${MOONLIGHT_COMMON_PATH}/nanors
+    ${MOONLIGHT_COMMON_PATH}/nanors/deps
+    ${MOONLIGHT_COMMON_PATH}/nanors/deps/obl
 )
 
 # 主要源文件 - NAPI 桥接层
@@ -90,6 +92,7 @@ set(MOONLIGHT_COMMON_SOURCES
     ${MOONLIGHT_COMMON_PATH}/src/ConnectionTester.c
     ${MOONLIGHT_COMMON_PATH}/src/MicrophoneStream.c
     ${MOONLIGHT_COMMON_PATH}/src/FakeCallbacks.c
+    ${MOONLIGHT_COMMON_PATH}/src/rswrapper.c
 )
 
 # ENet 网络库源文件
@@ -104,10 +107,7 @@ set(ENET_SOURCES
     ${MOONLIGHT_COMMON_PATH}/enet/unix.c
 )
 
-# Reed-Solomon 纠错源文件
-set(RS_SOURCES
-    ${MOONLIGHT_COMMON_PATH}/reedsolomon/rs.c
-)
+
 
 # ---- aubio 音频分析库 (onset detection 最小集) ----
 # 编译为独立静态库，避免 include 路径污染主项目
@@ -153,8 +153,13 @@ add_library(moonlight_nativelib SHARED
     ${SOURCE_FILES}
     ${MOONLIGHT_COMMON_SOURCES}
     ${ENET_SOURCES}
-    ${RS_SOURCES}
 )
+
+# rswrapper.c 需要优化标志以获得最佳 Reed-Solomon 性能
+# 使用 ohos_shim/assert.h 避免 OHOS assert.h 的 __assert_fail 与 Clang target
+# multiversioning 冲突 (尤其是 x86_64 模拟器构建)
+set_source_files_properties(${MOONLIGHT_COMMON_PATH}/src/rswrapper.c
+    PROPERTIES COMPILE_FLAGS "-ftree-vectorize -funroll-loops -isystem ${CMAKE_CURRENT_SOURCE_DIR}/ohos_shim")
 
 # 主项目只需要 aubio 的公开头文件路径 (用于 aubio_onset_wrapper.h)
 target_include_directories(moonlight_nativelib PRIVATE
