@@ -110,7 +110,7 @@ private:
     // 配置 NativeWindow
     void ConfigureNativeWindow();
     
-    // 应用帧率范围（通过 NativeVSync）
+    // 应用帧率范围（通过 NativeVSync，API 20+）
     void ApplyFrameRateRange();
     
     // 初始化 NativeVSync
@@ -136,12 +136,15 @@ private:
     // VSync 模式
     std::atomic<bool> vsyncEnabled_{false};
     
+    // 帧率范围已经应用过（NativeVSync）
+    bool frameRateApplied_ = false;
+    
     // 时间同步基准（用于 VSync 模式）
     mutable int64_t baseSystemTimeNs_ = 0;  // 系统时间基准（纳秒）
     mutable int64_t basePtsUs_ = 0;         // PTS 基准（微秒）
     mutable bool timeBaseInitialized_ = false;
     
-    // NativeVSync（用于设置期望帧率范围）
+    // NativeVSync（用于设置期望帧率范围，API 20+）
     OH_NativeVSync* nativeVSync_ = nullptr;
     
     // 上一帧渲染时间（用于帧率控制）

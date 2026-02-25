@@ -114,6 +114,16 @@ napi_value MoonBridge_OpusEncoderEncode(napi_env env, napi_callback_info info);
 napi_value MoonBridge_OpusEncoderDestroy(napi_env env, napi_callback_info info);
 
 // =============================================================================
+// Native 低时延麦克风
+// =============================================================================
+
+napi_value MoonBridge_NativeMicStart(napi_env env, napi_callback_info info);
+napi_value MoonBridge_NativeMicStop(napi_env env, napi_callback_info info);
+napi_value MoonBridge_NativeMicPause(napi_env env, napi_callback_info info);
+napi_value MoonBridge_NativeMicResume(napi_env env, napi_callback_info info);
+napi_value MoonBridge_NativeMicGetStats(napi_env env, napi_callback_info info);
+
+// =============================================================================
 // 状态和统计
 // =============================================================================
 
@@ -269,6 +279,18 @@ napi_value MoonBridge_GetPerformanceModeEnabled(napi_env env, napi_callback_info
  * @param sensitivity number 灵敏度 (0.1 - 3.0, 默认 1.0)
  */
 napi_value MoonBridge_SetBassVibrationConfig(napi_env env, napi_callback_info info);
+
+// =============================================================================
+// XComponent 帧率设置
+// =============================================================================
+
+/**
+ * 设置 XComponent 期望帧率范围（通过 FrameNode → ArkUI_NodeHandle）
+ * 无需在 XComponent 上设置 libraryname，避免触摸事件丢失
+ * @param frameNode FrameNode 对象（从 ArkTS getFrameNodeById 获取）
+ * @param fps number 期望帧率
+ */
+napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info info);
 
 // =============================================================================
 // 常量定义

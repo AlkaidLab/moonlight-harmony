@@ -125,6 +125,18 @@ export interface RttInfo {
   variance: number;
 }
 
+/**
+ * Native 麦克风统计信息
+ */
+export interface NativeMicStats {
+  running: boolean;
+  paused: boolean;
+  captured: number;
+  encoded: number;
+  sent: number;
+  dropped: number;
+}
+
 // 音频配置
 export const AUDIO_CONFIGURATION_STEREO = 0;
 export const AUDIO_CONFIGURATION_51_SURROUND = 1;
@@ -532,6 +544,65 @@ class MoonBridgeClass {
    */
   opusEncoderDestroy(handle: number): void {
     nativeLib.opusEncoderDestroy(handle);
+  }
+
+  // ==========================================================================
+  // Native 低时延麦克风
+  // ==========================================================================
+
+  /**
+   * 启动 native 低时延麦克风采集
+   * 使用 OHAudio C API + AUDIOSTREAM_LATENCY_MODE_FAST，
+   * 在 native 回调线程中直接完成 Opus 编码和网络发送。
+   * @param sampleRate 采样率 (默认 48000)
+   * @param channels 声道数 (默认 1)
+   * @param bitrate Opus 比特率 bps (默认 64000)
+   * @return 0 成功，负数失败
+   */
+  nativeMicStart(sampleRate: number = 48000, channels: number = 1, bitrate: number = 64000): number {
+    return nativeLib.nativeMicStart(sampleRate, channels, bitrate);
+  }
+
+  /**
+   * 停止 native 麦克风采集
+   */
+  nativeMicStop(): void {
+    nativeLib.nativeMicStop();
+  }
+
+  /**
+   * 暂停 native 麦克风采集
+   */
+  nativeMicPause(): void {
+    nativeLib.nativeMicPause();
+  }
+
+  /**
+   * 恢复 native 麦克风采集
+   */
+  nativeMicResume(): void {
+    nativeLib.nativeMicResume();
+  }
+
+  /**
+   * 获取 native 麦克风统计信息
+   */
+  nativeMicGetStats(): NativeMicStats {
+    return nativeLib.nativeMicGetStats();
+  }
+
+  // ==========================================================================
+  // XComponent 帧率设置
+  // ==========================================================================
+
+  /**
+   * 设置 XComponent 期望帧率（通过 FrameNode → ArkUI_NodeHandle）
+   * 无需在 XComponent 上设置 libraryname，避免触摸事件丢失
+   * @param frameNode XComponent 的 FrameNode 对象
+   * @param fps 期望帧率
+   */
+  setXComponentFrameRate(frameNode: object, fps: number): void {
+    nativeLib.setXComponentFrameRate(frameNode, fps);
   }
 
   // ==========================================================================

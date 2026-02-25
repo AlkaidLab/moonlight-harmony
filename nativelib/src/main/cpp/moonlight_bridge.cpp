@@ -32,12 +32,14 @@ bool isMicrophoneEncryptionEnabled(void);
 #include "bass_energy_analyzer.h"
 #include "native_render.h"
 #include "opus_encoder.h"
+#include "mic_capturer.h"
 #include <hilog/log.h>
 #include <cstring>
 #include <arpa/inet.h>
 #include <native_window/external_window.h>
 #include <unordered_map>
 #include <memory>
+#include <dlfcn.h>
 
 #define LOG_TAG "MoonlightBridge"
 
@@ -55,6 +57,9 @@ static bool g_performanceMode = false;  // 性能模式
 static std::mutex g_opusEncoderMutex;
 static std::unordered_map<int64_t, std::unique_ptr<OhosOpusEncoder>> g_opusEncoders;
 static int64_t g_opusEncoderNextHandle = 1;
+
+// Native 麦克风采集器 (低时延)
+static std::unique_ptr<MicCapturer> g_micCapturer;
 
 // 回调结构体
 static DECODER_RENDERER_CALLBACKS g_videoCallbacksStruct = {
@@ -926,6 +931,130 @@ napi_value MoonBridge_OpusEncoderDestroy(napi_env env, napi_callback_info info) 
 }
 
 // =============================================================================
+// Native 低时延麦克风采集器
+// =============================================================================
+
+/**
+ * 启动 native 低时延麦克风采集
+ * @param sampleRate 采样率 (默认 48000)
+ * @param channels 声道数 (默认 1)
+ * @param bitrate Opus 比特率 bps (默认 64000)
+ * @return 0 成功，负数失败
+ */
+napi_value MoonBridge_NativeMicStart(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    MicCapturerConfig cfg;
+    if (argc >= 1) napi_get_value_int32(env, args[0], &cfg.sampleRate);
+    if (argc >= 2) napi_get_value_int32(env, args[1], &cfg.channels);
+    if (argc >= 3) napi_get_value_int32(env, args[2], &cfg.opusBitrate);
+
+    OH_LOG_INFO(LOG_APP, "NativeMicStart: rate=%{public}d ch=%{public}d bitrate=%{public}d",
+                cfg.sampleRate, cfg.channels, cfg.opusBitrate);
+
+    // 先清理旧的
+    if (g_micCapturer) {
+        g_micCapturer->Cleanup();
+        g_micCapturer.reset();
+    }
+
+    g_micCapturer = std::make_unique<MicCapturer>();
+    int ret = g_micCapturer->Init(cfg);
+    if (ret != 0) {
+        OH_LOG_ERROR(LOG_APP, "NativeMicStart Init failed: %{public}d", ret);
+        g_micCapturer.reset();
+        napi_value result;
+        napi_create_int32(env, ret, &result);
+        return result;
+    }
+
+    ret = g_micCapturer->Start();
+    if (ret != 0) {
+        OH_LOG_ERROR(LOG_APP, "NativeMicStart Start failed: %{public}d", ret);
+        g_micCapturer->Cleanup();
+        g_micCapturer.reset();
+    }
+
+    napi_value result;
+    napi_create_int32(env, ret, &result);
+    return result;
+}
+
+/**
+ * 停止 native 麦克风采集
+ */
+napi_value MoonBridge_NativeMicStop(napi_env env, napi_callback_info info) {
+    if (g_micCapturer) {
+        g_micCapturer->Cleanup();
+        g_micCapturer.reset();
+        OH_LOG_INFO(LOG_APP, "NativeMicStop: done");
+    }
+    return GetUndefined(env);
+}
+
+/**
+ * 暂停 native 麦克风采集
+ */
+napi_value MoonBridge_NativeMicPause(napi_env env, napi_callback_info info) {
+    if (g_micCapturer) {
+        g_micCapturer->Pause();
+    }
+    return GetUndefined(env);
+}
+
+/**
+ * 恢复 native 麦克风采集
+ */
+napi_value MoonBridge_NativeMicResume(napi_env env, napi_callback_info info) {
+    if (g_micCapturer) {
+        g_micCapturer->Resume();
+    }
+    return GetUndefined(env);
+}
+
+/**
+ * 获取 native 麦克风状态
+ * @return {running: boolean, paused: boolean, captured: number, encoded: number, sent: number, dropped: number}
+ */
+napi_value MoonBridge_NativeMicGetStats(napi_env env, napi_callback_info info) {
+    napi_value result;
+    napi_create_object(env, &result);
+
+    bool running = false;
+    bool paused = false;
+    MicCapturerStats stats = {};
+
+    if (g_micCapturer) {
+        running = g_micCapturer->IsRunning();
+        paused = g_micCapturer->IsPaused();
+        stats = g_micCapturer->GetStats();
+    }
+
+    napi_value val;
+    napi_get_boolean(env, running, &val);
+    napi_set_named_property(env, result, "running", val);
+
+    napi_get_boolean(env, paused, &val);
+    napi_set_named_property(env, result, "paused", val);
+
+    napi_create_int64(env, (int64_t)stats.framesCapture, &val);
+    napi_set_named_property(env, result, "captured", val);
+
+    napi_create_int64(env, (int64_t)stats.framesEncoded, &val);
+    napi_set_named_property(env, result, "encoded", val);
+
+    napi_create_int64(env, (int64_t)stats.framesSent, &val);
+    napi_set_named_property(env, result, "sent", val);
+
+    napi_create_int64(env, (int64_t)stats.framesDropped, &val);
+    napi_set_named_property(env, result, "dropped", val);
+
+    return result;
+}
+
+// =============================================================================
 // 状态和统计
 // =============================================================================
 
@@ -1207,9 +1336,6 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     
     auto stats = VideoDecoderInstance::GetStats();
     
-    OH_LOG_INFO(LOG_APP, "[MoonBridge] GetVideoStats - frames: %{public}llu, rxFps: %.2f, rdFps: %.2f, bitrate: %.2f, hostLatency: %.2f",
-                stats.decodedFrames, stats.currentFps, stats.renderedFps, stats.currentBitrate, stats.avgHostProcessingLatency);
-    
     napi_value framesDecoded, framesDropped, avgDecodeTime;
     napi_value fps, renderedFps, bitrate, hostLatency;
     napi_value totalDecodeTime, validDecodeFrames, totalHostLatency, framesWithHostLat;
@@ -1244,6 +1370,23 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     napi_set_named_property(env, result, "totalHostLatencyMs", totalHostLatency);
     napi_set_named_property(env, result, "framesWithHostLatency", framesWithHostLat);
     napi_set_named_property(env, result, "globalAvgFps", globalAvgFps);
+    
+    // 分类丢帧统计（用于诊断性能问题）
+    napi_value dropL1, dropL2, dropL3, dropL4, dropL5, dropQueue, dropTimeout;
+    napi_create_uint32(env, static_cast<uint32_t>(stats.droppedByL1), &dropL1);
+    napi_create_uint32(env, static_cast<uint32_t>(stats.droppedByL2), &dropL2);
+    napi_create_uint32(env, static_cast<uint32_t>(stats.droppedByL3), &dropL3);
+    napi_create_uint32(env, static_cast<uint32_t>(stats.droppedByL4), &dropL4);
+    napi_create_uint32(env, static_cast<uint32_t>(stats.droppedByL5), &dropL5);
+    napi_create_uint32(env, static_cast<uint32_t>(stats.droppedByQueueOverflow), &dropQueue);
+    napi_create_uint32(env, static_cast<uint32_t>(stats.droppedByTimeout), &dropTimeout);
+    napi_set_named_property(env, result, "droppedByL1", dropL1);
+    napi_set_named_property(env, result, "droppedByL2", dropL2);
+    napi_set_named_property(env, result, "droppedByL3", dropL3);
+    napi_set_named_property(env, result, "droppedByL4", dropL4);
+    napi_set_named_property(env, result, "droppedByL5", dropL5);
+    napi_set_named_property(env, result, "droppedByQueueOverflow", dropQueue);
+    napi_set_named_property(env, result, "droppedByTimeout", dropTimeout);
     
     return result;
 }
@@ -1501,5 +1644,144 @@ napi_value MoonBridge_SetBassVibrationConfig(napi_env env, napi_callback_info in
     OH_LOG_INFO(LOG_APP, "SetBassVibrationConfig: enabled=%{public}s, sensitivity=%.2f, sceneMode=%{public}d",
                 enabled ? "true" : "false", sensitivity, sceneMode);
 
+    return GetUndefined(env);
+}
+
+// =============================================================================
+// XComponent 帧率设置（通过 FrameNode → ArkUI_NodeHandle，无需 libraryname）
+// =============================================================================
+
+// 动态加载的函数指针（API 12/20，运行时检测可用性）
+// 帧率范围结构体（与 OH_NativeXComponent_ExpectedRateRange 布局一致）
+struct XCFrameRateRange {
+    int32_t min;
+    int32_t max;
+    int32_t expected;
+};
+
+typedef int32_t (*PFN_GetNodeHandleFromNapiValue)(napi_env, napi_value, void** /* ArkUI_NodeHandle* */);
+typedef void* (*PFN_GetNativeXComponent)(void* /* ArkUI_NodeHandle */);
+typedef int32_t (*PFN_XCSetFrameRateOld)(void* /* OH_NativeXComponent* */, XCFrameRateRange* /* range* */);
+typedef int32_t (*PFN_XCSetFrameRateNew)(void* /* ArkUI_NodeHandle */, XCFrameRateRange /* range */);
+
+static PFN_GetNodeHandleFromNapiValue g_pfnGetNodeHandle = nullptr;
+static PFN_GetNativeXComponent g_pfnGetNativeXC = nullptr;
+static PFN_XCSetFrameRateOld g_pfnXCSetFrameRateOld = nullptr;
+static PFN_XCSetFrameRateNew g_pfnXCSetFrameRateNew = nullptr;
+static bool g_xcFrameRateChecked = false;
+
+static void CheckAndLoadXCFrameRateApis() {
+    if (g_xcFrameRateChecked) return;
+    g_xcFrameRateChecked = true;
+    
+    // OH_ArkUI_GetNodeHandleFromNapiValue (API 12) — libace_ndk.z.so
+    g_pfnGetNodeHandle = (PFN_GetNodeHandleFromNapiValue)dlsym(RTLD_DEFAULT, 
+        "OH_ArkUI_GetNodeHandleFromNapiValue");
+    if (!g_pfnGetNodeHandle) {
+        // RTLD_DEFAULT 可能在某些设备上找不到，回退到显式 dlopen
+        void* aceHandle = dlopen("libace_ndk.z.so", RTLD_NOW);
+        if (aceHandle) {
+            g_pfnGetNodeHandle = (PFN_GetNodeHandleFromNapiValue)dlsym(aceHandle,
+                "OH_ArkUI_GetNodeHandleFromNapiValue");
+        }
+    }
+    if (!g_pfnGetNodeHandle) {
+        OH_LOG_WARN(LOG_APP, "XCFrameRate: OH_ArkUI_GetNodeHandleFromNapiValue not found (need API 12+)");
+        return;
+    }
+    
+    // 方式1 (API 20): OH_ArkUI_XComponent_SetExpectedFrameRateRange — 直接通过 NodeHandle
+    g_pfnXCSetFrameRateNew = (PFN_XCSetFrameRateNew)dlsym(RTLD_DEFAULT, 
+        "OH_ArkUI_XComponent_SetExpectedFrameRateRange");
+    if (!g_pfnXCSetFrameRateNew) {
+        void* aceHandle = dlopen("libace_ndk.z.so", RTLD_NOW);
+        if (aceHandle) {
+            g_pfnXCSetFrameRateNew = (PFN_XCSetFrameRateNew)dlsym(aceHandle,
+                "OH_ArkUI_XComponent_SetExpectedFrameRateRange");
+        }
+    }
+    if (g_pfnXCSetFrameRateNew) {
+        OH_LOG_INFO(LOG_APP, "XCFrameRate: API 20 OH_ArkUI_XComponent_SetExpectedFrameRateRange available");
+        return;  // 优先方式，不需要继续查找
+    }
+    
+    // 方式2 (API 12+11): OH_NativeXComponent_GetNativeXComponent + SetExpectedFrameRateRange
+    g_pfnGetNativeXC = (PFN_GetNativeXComponent)dlsym(RTLD_DEFAULT, 
+        "OH_NativeXComponent_GetNativeXComponent");
+    g_pfnXCSetFrameRateOld = (PFN_XCSetFrameRateOld)dlsym(RTLD_DEFAULT, 
+        "OH_NativeXComponent_SetExpectedFrameRateRange");
+    // 回退 dlopen
+    if (!g_pfnGetNativeXC || !g_pfnXCSetFrameRateOld) {
+        void* aceHandle = dlopen("libace_ndk.z.so", RTLD_NOW);
+        if (aceHandle) {
+            if (!g_pfnGetNativeXC)
+                g_pfnGetNativeXC = (PFN_GetNativeXComponent)dlsym(aceHandle,
+                    "OH_NativeXComponent_GetNativeXComponent");
+            if (!g_pfnXCSetFrameRateOld)
+                g_pfnXCSetFrameRateOld = (PFN_XCSetFrameRateOld)dlsym(aceHandle,
+                    "OH_NativeXComponent_SetExpectedFrameRateRange");
+        }
+    }
+    
+    if (g_pfnGetNativeXC && g_pfnXCSetFrameRateOld) {
+        OH_LOG_INFO(LOG_APP, "XCFrameRate: API 12 GetNativeXComponent + API 11 SetExpectedFrameRateRange available");
+    } else {
+        OH_LOG_WARN(LOG_APP, "XCFrameRate: No XComponent frame rate API available");
+    }
+}
+
+napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value argv[2];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    
+    if (argc < 2) {
+        OH_LOG_ERROR(LOG_APP, "SetXComponentFrameRate: need 2 args (frameNode, fps)");
+        return GetUndefined(env);
+    }
+    
+    int32_t fps = 60;
+    napi_get_value_int32(env, argv[1], &fps);
+    
+    // 加载 API
+    CheckAndLoadXCFrameRateApis();
+    
+    if (!g_pfnGetNodeHandle) {
+        OH_LOG_WARN(LOG_APP, "SetXComponentFrameRate: API not available (need API 12+)");
+        return GetUndefined(env);
+    }
+    
+    // FrameNode → ArkUI_NodeHandle
+    void* nodeHandle = nullptr;
+    int32_t ret = g_pfnGetNodeHandle(env, argv[0], &nodeHandle);
+    if (ret != 0 || !nodeHandle) {
+        OH_LOG_ERROR(LOG_APP, "SetXComponentFrameRate: GetNodeHandle failed: ret=%{public}d", ret);
+        return GetUndefined(env);
+    }
+    
+    // 方式1 (API 20): 直接通过 ArkUI_NodeHandle 设置
+    if (g_pfnXCSetFrameRateNew) {
+        XCFrameRateRange range = { fps, fps, fps };
+        int32_t xcRet = g_pfnXCSetFrameRateNew(nodeHandle, range);
+        OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via ArkUI_NodeHandle (API 20): ret=%{public}d",
+                    fps, xcRet);
+        return GetUndefined(env);
+    }
+    
+    // 方式2 (API 12+11): NodeHandle → OH_NativeXComponent → SetExpectedFrameRateRange
+    if (g_pfnGetNativeXC && g_pfnXCSetFrameRateOld) {
+        void* xComp = g_pfnGetNativeXC(nodeHandle);
+        if (xComp) {
+            XCFrameRateRange range = { fps, fps, fps };
+            int32_t xcRet = g_pfnXCSetFrameRateOld(xComp, &range);
+            OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via NativeXComponent (API 12+11): ret=%{public}d",
+                        fps, xcRet);
+        } else {
+            OH_LOG_ERROR(LOG_APP, "SetXComponentFrameRate: GetNativeXComponent returned null");
+        }
+        return GetUndefined(env);
+    }
+    
+    OH_LOG_WARN(LOG_APP, "SetXComponentFrameRate: No API path available for fps=%{public}d", fps);
     return GetUndefined(env);
 }

@@ -61,6 +61,12 @@ export class PerformanceStats {
   globalAvgFps: number = 0;
   batteryLevel: number = 100;
   isCharging: boolean = false;
+  // 分级丢帧统计
+  droppedByL1: number = 0;
+  droppedByL2: number = 0;
+  droppedByL3: number = 0;
+  droppedByL4: number = 0;
+  droppedByL5: number = 0;
 }
 
 /**

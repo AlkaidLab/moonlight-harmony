@@ -90,6 +90,13 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "opusEncoderEncode", nullptr, MoonBridge_OpusEncoderEncode, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "opusEncoderDestroy", nullptr, MoonBridge_OpusEncoderDestroy, nullptr, nullptr, nullptr, napi_default, nullptr },
         
+        // Native 低时延麦克风
+        { "nativeMicStart", nullptr, MoonBridge_NativeMicStart, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "nativeMicStop", nullptr, MoonBridge_NativeMicStop, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "nativeMicPause", nullptr, MoonBridge_NativeMicPause, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "nativeMicResume", nullptr, MoonBridge_NativeMicResume, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "nativeMicGetStats", nullptr, MoonBridge_NativeMicGetStats, nullptr, nullptr, nullptr, napi_default, nullptr },
+        
         // 状态和统计
         { "getStageName", nullptr, MoonBridge_GetStageName, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getPendingAudioDuration", nullptr, MoonBridge_GetPendingAudioDuration, nullptr, nullptr, nullptr, napi_default, nullptr },
@@ -131,6 +138,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         
         // 音频振动
         { "setBassVibrationConfig", nullptr, MoonBridge_SetBassVibrationConfig, nullptr, nullptr, nullptr, napi_default, nullptr },
+        
+        // XComponent 帧率设置（通过 FrameNode → ArkUI_NodeHandle，无需 libraryname）
+        { "setXComponentFrameRate", nullptr, MoonBridge_SetXComponentFrameRate, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
     
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);

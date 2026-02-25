@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <shared_mutex>
 #include <queue>
 #include <thread>
 #include <atomic>
@@ -149,6 +150,14 @@ struct VideoDecoderStats {
     uint64_t framesWithHostLatency;      // 有主机延迟数据的帧数
     double totalHostProcessingLatency;   // 累计主机处理延迟（ms）
     double avgHostProcessingLatency;     // 平均主机处理延迟（ms）
+    // 分类丢帧统计（按丢弃机制分类，用于诊断性能问题）
+    uint64_t droppedByL1;                // L1: sync drain-to-latest 跳过的中间帧
+    uint64_t droppedByL2;                // L2: async 模式延迟过高跳帧
+    uint64_t droppedByL3;                // L3: 临界延迟 IDR 恢复丢弃
+    uint64_t droppedByL4;                // L4: 网络抖动突发检测丢弃
+    uint64_t droppedByL5;                // L5: async 渲染跳帧（输出间隔过短+延迟偏高）
+    uint64_t droppedByQueueOverflow;     // pending queue 溢出丢弃
+    uint64_t droppedByTimeout;           // 输入 buffer 超时丢弃
 };
 
 /**
@@ -282,6 +291,11 @@ private:
     
     // 解码器实例
     OH_AVCodec* decoder_ = nullptr;
+    
+    // 解码器操作互斥锁（参考官方文档：shared_lock 用于解码线程，unique_lock 用于 Flush/Stop）
+    // DecoderInput/DecoderOutput 使用 shared_lock 允许并发
+    // Flush/Stop 使用 unique_lock 独占，确保解码线程不会在清理期间操作解码器
+    mutable std::shared_mutex codecMutex_;
     
     // 渲染窗口
     OHNativeWindow* window_ = nullptr;

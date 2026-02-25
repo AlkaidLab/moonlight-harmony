@@ -52,6 +52,12 @@ export interface StreamStats {
   globalAvgDecodeLatency: number;  // 全局平均解码延迟 ms
   globalAvgHostLatency: number;    // 全局平均主机延迟 ms
   globalAvgFps: number;            // 全局平均帧率
+  // 分级丢帧统计
+  droppedByL1: number;     // L1: sync drain-to-latest
+  droppedByL2: number;     // L2: async 延迟过高跳帧
+  droppedByL3: number;     // L3: 临界延迟 IDR 恢复
+  droppedByL4: number;     // L4: 网络突发检测
+  droppedByL5: number;     // L5: async 渲染跳帧
 }
 
 /**
@@ -172,6 +178,14 @@ interface VideoStats {
   totalHostLatencyMs: number;
   framesWithHostLatency: number;
   globalAvgFps: number;
+  // 分级丢帧统计
+  droppedByL1: number;
+  droppedByL2: number;
+  droppedByL3: number;
+  droppedByL4: number;
+  droppedByL5: number;
+  droppedByQueueOverflow: number;
+  droppedByTimeout: number;
 }
 
 interface ControllerState {
@@ -349,7 +363,8 @@ export class StreamingSession {
     fps: 0, renderedFps: 0, bitrate: 0, latency: 0,
     hostLatency: 0, networkLatency: 0, packetLoss: 0,
     decodedFrames: 0, droppedFrames: 0,
-    globalAvgDecodeLatency: 0, globalAvgHostLatency: 0, globalAvgFps: 0
+    globalAvgDecodeLatency: 0, globalAvgHostLatency: 0, globalAvgFps: 0,
+    droppedByL1: 0, droppedByL2: 0, droppedByL3: 0, droppedByL4: 0, droppedByL5: 0
   };
   private lastValidStats: StreamStats | null = null;
 
@@ -669,6 +684,12 @@ export class StreamingSession {
       this.stats.bitrate = vs.bitrate || 0;
       this.stats.latency = vs.avgDecodeTimeMs || 0;
       this.stats.hostLatency = vs.hostLatency || 0;
+      // 分级丢帧统计
+      this.stats.droppedByL1 = vs.droppedByL1 || 0;
+      this.stats.droppedByL2 = vs.droppedByL2 || 0;
+      this.stats.droppedByL3 = vs.droppedByL3 || 0;
+      this.stats.droppedByL4 = vs.droppedByL4 || 0;
+      this.stats.droppedByL5 = vs.droppedByL5 || 0;
 
       if ((vs.validDecodeFrames || 0) > 0) {
         this.stats.globalAvgDecodeLatency = (vs.totalDecodeTimeMs || 0) / vs.validDecodeFrames;
@@ -699,6 +720,11 @@ export class StreamingSession {
       globalAvgDecodeLatency: this.stats.globalAvgDecodeLatency,
       globalAvgHostLatency: this.stats.globalAvgHostLatency,
       globalAvgFps: this.stats.globalAvgFps,
+      droppedByL1: this.stats.droppedByL1,
+      droppedByL2: this.stats.droppedByL2,
+      droppedByL3: this.stats.droppedByL3,
+      droppedByL4: this.stats.droppedByL4,
+      droppedByL5: this.stats.droppedByL5,
     };
     copy.fps = Math.round(copy.fps);
     copy.renderedFps = Math.round(copy.renderedFps);

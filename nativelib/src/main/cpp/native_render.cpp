@@ -38,6 +38,14 @@ static PFN_RenderOutputBufferAtTime GetRenderAtTimeFunc() {
         g_renderAtTimeChecked = true;
         g_pfnRenderAtTime = (PFN_RenderOutputBufferAtTime)
             dlsym(RTLD_DEFAULT, "OH_VideoDecoder_RenderOutputBufferAtTime");
+        // RTLD_DEFAULT 可能在某些设备上找不到（如 API 22），回退到显式 dlopen
+        if (!g_pfnRenderAtTime) {
+            void* handle = dlopen("libnative_media_vdec.so", RTLD_NOW);
+            if (handle) {
+                g_pfnRenderAtTime = (PFN_RenderOutputBufferAtTime)
+                    dlsym(handle, "OH_VideoDecoder_RenderOutputBufferAtTime");
+            }
+        }
     }
     return g_pfnRenderAtTime;
 }
@@ -186,10 +194,8 @@ void NativeRender::SetConfiguredFps(int fps) {
     // 重置时间基准
     timeBaseInitialized_ = false;
     
-    // 如果 NativeVSync 已就绪，立即应用帧率
-    if (nativeVSync_ != nullptr) {
-        ApplyFrameRateRange();
-    }
+    // 应用帧率范围
+    ApplyFrameRateRange();
 }
 
 void NativeRender::SetVsyncEnabled(bool enable) {
@@ -214,33 +220,23 @@ void NativeRender::ConfigureNativeWindow() {
 }
 
 void NativeRender::ApplyFrameRateRange() {
-    if (nativeVSync_ == nullptr) {
-        OH_LOG_WARN(LOG_APP, "ApplyFrameRateRange: NativeVSync not initialized");
-        return;
-    }
-    
-    // 检查 API 20 是否可用
-    if (!CheckAndLoadApi20()) {
-        OH_LOG_WARN(LOG_APP, "ApplyFrameRateRange: API 20 not available, fps=%{public}d", configuredFps_);
-        return;
-    }
-    
-    // 设置帧率范围
-    // 策略：将 min/max/expected 都设置为目标帧率
-    // 这样系统会尝试切换到最接近的刷新率（如 120Hz）
-    // 参考 Android Surface.setFrameRate(FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
-    OH_NativeVSync_ExpectedRateRange range;
-    range.min = configuredFps_;
-    range.max = configuredFps_;
-    range.expected = configuredFps_;
-    
-    int32_t ret = g_pfnSetExpectedFrameRateRange(nativeVSync_, &range);
-    if (ret == 0) {
-        OH_LOG_INFO(LOG_APP, "NativeVSync FrameRateRange set to fixed %{public}d fps (min=%{public}d, max=%{public}d)",
-                    configuredFps_, range.min, range.max);
-    } else {
-        OH_LOG_WARN(LOG_APP, "Failed to set NativeVSync FrameRateRange to %{public}d: ret=%{public}d", 
-                    configuredFps_, ret);
+    // NativeVSync SetExpectedFrameRateRange (API 20+)
+    // 设置 VSync 回调的期望帧率，影响 VSync 信号频率
+    // 注意：XComponent 帧率提示由 MoonBridge_SetXComponentFrameRate 通过 ArkUI_NodeHandle 独立设置
+    if (nativeVSync_ != nullptr && CheckAndLoadApi20()) {
+        OH_NativeVSync_ExpectedRateRange range;
+        range.min = configuredFps_;
+        range.max = configuredFps_;
+        range.expected = configuredFps_;
+        
+        int32_t ret = g_pfnSetExpectedFrameRateRange(nativeVSync_, &range);
+        if (ret == 0) {
+            OH_LOG_INFO(LOG_APP, "NativeVSync FrameRateRange set to fixed %{public}d fps",
+                        configuredFps_);
+        } else {
+            OH_LOG_WARN(LOG_APP, "Failed to set NativeVSync FrameRateRange to %{public}d: ret=%{public}d", 
+                        configuredFps_, ret);
+        }
     }
 }
 

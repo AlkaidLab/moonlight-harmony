@@ -60,6 +60,7 @@ set(SOURCE_FILES
     opus_encoder.cpp
     video_decoder.cpp
     audio_renderer.cpp
+    mic_capturer.cpp
     gamepad_napi.cpp
     game_controller_native.cpp
     input_interceptor.cpp

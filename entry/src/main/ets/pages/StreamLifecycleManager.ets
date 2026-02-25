@@ -334,6 +334,17 @@ export class StreamLifecycleManager {
     if (avgFps > 0) {
       parts.push(`帧率: ${avgFps}fps`);
     }
+    // 丢帧统计 - 仅在有丢帧时显示各级别明细
+    if (stats.droppedFrames > 0) {
+      const dropDetails: string[] = [];
+      if (stats.droppedByL1 > 0) dropDetails.push(`L1:${stats.droppedByL1}`);
+      if (stats.droppedByL2 > 0) dropDetails.push(`L2:${stats.droppedByL2}`);
+      if (stats.droppedByL3 > 0) dropDetails.push(`L3:${stats.droppedByL3}`);
+      if (stats.droppedByL4 > 0) dropDetails.push(`L4:${stats.droppedByL4}`);
+      if (stats.droppedByL5 > 0) dropDetails.push(`L5:${stats.droppedByL5}`);
+      const detail = dropDetails.length > 0 ? ` (${dropDetails.join(' ')})` : '';
+      parts.push(`丢帧: ${stats.droppedFrames}${detail}`);
+    }
 
     const message = parts.length > 0 ? parts.join(' | ') : '串流已结束';
     promptAction.showToast({

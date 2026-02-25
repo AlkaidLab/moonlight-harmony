@@ -678,6 +678,21 @@ struct StreamPage {
 
       // 获取 surfaceId 并开始串流
       const surfaceId = this.xComponentController.getXComponentSurfaceId();
+      
+      // 设置 XComponent 期望帧率（通过 FrameNode → ArkUI_NodeHandle，无需 libraryname）
+      // 解决 MatePad 等设备渲染帧率被锁定在 60fps 的问题
+      if (streamConfig && streamConfig.fps > 60) {
+        try {
+          const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
+          if (frameNode) {
+            MoonBridge.setXComponentFrameRate(frameNode, streamConfig.fps);
+            console.info(`XComponent 帧率已设置为 ${streamConfig.fps} fps`);
+          }
+        } catch (e) {
+          console.warn(`设置 XComponent 帧率失败: ${e}`);
+        }
+      }
+      
       await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
 
       // 启动后台保活（AVSession + 长时任务），防止退到后台时进程被冻结
@@ -780,6 +795,18 @@ struct StreamPage {
 
       // 用相同参数重新启动串流
       const surfaceId = this.xComponentController.getXComponentSurfaceId();
+      
+      // 重新设置 XComponent 帧率
+      const streamConfig = this.viewModel.streamConfig;
+      if (streamConfig && streamConfig.fps > 60) {
+        try {
+          const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
+          if (frameNode) {
+            MoonBridge.setXComponentFrameRate(frameNode, streamConfig.fps);
+          }
+        } catch (_e) { /* ignore */ }
+      }
+      
       await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
       console.info('[StreamPage] 重连串流成功');
 

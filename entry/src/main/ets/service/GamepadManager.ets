@@ -1029,7 +1029,10 @@ export class GamepadManager implements UsbDriverListener {
       }
 
       // 去重检查 2：同名同 product 的设备视为同一物理设备的不同 HID 接口
-      // 始终执行（不仅限于物理地址为空时），因为多接口 USB 手柄可能报告不同的物理地址
+      // 仅在无法通过物理地址区分时执行：
+      //   - 当前设备或已有设备物理地址为空 → 无法确认是否同一设备，按名称去重
+      //   - 两者物理地址相同 → 同一物理设备的不同接口
+      //   - 两者物理地址不同 → 跳过，说明是独立的物理设备（如两个同型号蓝牙手柄）
       {
         const slotEntries = Array.from(this.gcDeviceIdToSlot.entries());
         for (let i = 0; i < slotEntries.length; i++) {
@@ -1038,6 +1041,11 @@ export class GamepadManager implements UsbDriverListener {
           if (existId === deviceId) continue;
           const existInfo = this.getGCDeviceInfoCached(existId);
           if (existInfo && existInfo.name === info?.name && existInfo.product === info?.product) {
+            // 如果两个设备都有非空物理地址且不同，则视为独立设备，不去重
+            const existPhysAddr = existInfo.physicalAddress || '';
+            if (physAddr.length > 0 && existPhysAddr.length > 0 && physAddr !== existPhysAddr) {
+              continue;  // 不同物理地址 = 不同物理设备
+            }
             console.info(`[GAMEPAD-GC] 跳过重复设备(名称+产品ID): deviceId=${deviceId} -> 已有设备 ${existId} (name=${info?.name}, product=${info?.product})`);
             this.gcDeviceIdToSlot.set(deviceId, existSlot);
             this.gcDeviceStates.set(deviceId, this.gcDeviceStates.get(existId) || this.createEmptyState());
