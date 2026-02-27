@@ -289,6 +289,9 @@ private:
     // 返回 -1 表示应丢弃（需要 IDR），0 表示正常处理
     int CheckLatencyRecovery(VideoFrameType frameType, int size, uint16_t hostProcessingLatency);
     
+    // 记录帧入队时间戳（用于计算解码延迟）
+    void RecordEnqueueTimestamp(int64_t timestamp);
+    
     // 解码器实例
     OH_AVCodec* decoder_ = nullptr;
     

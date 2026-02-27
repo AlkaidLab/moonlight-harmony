@@ -18,6 +18,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractDualSenseController } from './AbstractDualSenseController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, DualShock4, DPadDirection, UsbClass } from './ControllerConstants';
+import { readShortLE, TRIGGER_MAX } from '../GamepadTypes';
 
 const TAG = '[USB-DS4]';
 
@@ -62,22 +63,14 @@ export class Dualshock4Controller extends AbstractDualSenseController {
    * 标准化摇杆轴值
    */
   private normalizeThumbStickAxis(value: number): number {
-    return (2.0 * value / 255.0) - 1.0;
+    return (2.0 * value / TRIGGER_MAX) - 1.0;
   }
   
   /**
    * 标准化扳机轴值
    */
   private normalizeTriggerAxis(value: number): number {
-    return value / 255.0;
-  }
-  
-  /**
-   * 读取小端序 short
-   */
-  private readShortLE(buffer: Uint8Array, offset: number): number {
-    const value = buffer[offset] | (buffer[offset + 1] << 8);
-    return value > 32767 ? value - 65536 : value;
+    return value / TRIGGER_MAX;
   }
   
   /**
@@ -144,13 +137,13 @@ export class Dualshock4Controller extends AbstractDualSenseController {
       const ACCEL_SCALE = 4.0 / 32768.0;
       const G_TO_MS2 = 9.81;
       
-      const gyrox = this.readShortLE(buffer, 13);
-      const gyroy = this.readShortLE(buffer, 15);
-      const gyroz = this.readShortLE(buffer, 17);
-      
-      const accelx = this.readShortLE(buffer, 19);
-      const accely = this.readShortLE(buffer, 21);
-      const accelz = this.readShortLE(buffer, 23);
+const gyrox = readShortLE(buffer, 13);
+      const gyroy = readShortLE(buffer, 15);
+      const gyroz = readShortLE(buffer, 17);
+
+      const accelx = readShortLE(buffer, 19);
+      const accely = readShortLE(buffer, 21);
+      const accelz = readShortLE(buffer, 23);
       
       this.gyroX = gyrox * GYRO_SCALE;
       this.gyroY = gyroy * GYRO_SCALE;

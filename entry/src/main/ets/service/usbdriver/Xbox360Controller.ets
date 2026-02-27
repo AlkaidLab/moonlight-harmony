@@ -18,6 +18,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractXboxController } from './AbstractXboxController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, Xbox360, UsbClass } from './ControllerConstants';
+import { readShortLE, AXIS_MAX, TRIGGER_MAX } from '../GamepadTypes';
 
 const TAG = '[USB-X360]';
 
@@ -75,15 +76,6 @@ export class Xbox360Controller extends AbstractXboxController {
   }
   
   /**
-   * 读取小端序 short
-   */
-  private readShortLE(buffer: Uint8Array, offset: number): number {
-    const value = buffer[offset] | (buffer[offset + 1] << 8);
-    // 转换为有符号 short
-    return value > 32767 ? value - 65536 : value;
-  }
-  
-  /**
    * 处理输入报告
    */
   protected handleRead(buffer: Uint8Array): boolean {
@@ -117,20 +109,20 @@ export class Xbox360Controller extends AbstractXboxController {
     this.setButtonFlag(ButtonFlags.SPECIAL_BUTTON_FLAG, b2 & 0x04);
     
     // 扳机 (0-255 -> 0.0-1.0)
-    this.leftTrigger = this.unsignByte(buffer[offset++]) / 255.0;
-    this.rightTrigger = this.unsignByte(buffer[offset++]) / 255.0;
+    this.leftTrigger = this.unsignByte(buffer[offset++]) / TRIGGER_MAX;
+    this.rightTrigger = this.unsignByte(buffer[offset++]) / TRIGGER_MAX;
     
     // 左摇杆 (-32768 到 32767 -> -1.0 到 1.0)
     // Y 轴使用 -value 来反转 (不使用 ~ 因为 JavaScript 的 ~ 作用于 32 位整数)
-    this.leftStickX = this.readShortLE(buffer, offset) / 32767.0;
+    this.leftStickX = readShortLE(buffer, offset) / AXIS_MAX;
     offset += 2;
-    this.leftStickY = -this.readShortLE(buffer, offset) / 32767.0;
+    this.leftStickY = -readShortLE(buffer, offset) / AXIS_MAX;
     offset += 2;
     
     // 右摇杆
-    this.rightStickX = this.readShortLE(buffer, offset) / 32767.0;
+    this.rightStickX = readShortLE(buffer, offset) / AXIS_MAX;
     offset += 2;
-    this.rightStickY = -this.readShortLE(buffer, offset) / 32767.0;
+    this.rightStickY = -readShortLE(buffer, offset) / AXIS_MAX;
     
     return true;
   }

@@ -959,7 +959,7 @@ struct PcListPageV2 {
           .borderRadius(AppSizes.RadiusMedium)
           .layoutWeight(1)
           .onClick(() => {
-            this.openUrl('https://github.com/qiin2333/moonlight-vplus');
+            this.openUrl('https://github.com/AlkaidLab/moonlight-harmony');
           })
         
         Button('加入QQ群')

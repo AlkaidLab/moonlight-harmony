@@ -151,44 +151,57 @@ export class GamepadManager implements UsbDriverListener {
   /**
    * 加载 USB 驱动设置并决定输入模式
    * 
-   * 混合模式设计：
-   * - GCK 始终作为主要输入源（处理 USB + 蓝牙手柄的按键/摇杆/扳机）
-   * - 当 USB 驱动启用时，UsbDriverService 额外提供 USB 手柄的震动/LED 等高级功能
-   * - 当 GCK 不可用时，回退到纯传统模式（InputKit + USB 驱动）
+   * 三种模式：
+   * 1. 纯 GCK 模式（默认）：仅使用 Game Controller Kit，支持 USB + 蓝牙手柄
+   * 2. 混合模式（USB_DRIVER_ENABLED=true）：GCK 处理输入 + USB 驱动提供震动/LED
+   * 3. 强制 USB 模式（FORCE_USB_DRIVER_ONLY=true）：禁用 GCK，USB 驱动接管全部功能
    * 
-   * 这确保蓝牙手柄始终通过 GCK 获得完整支持，不受 USB 驱动设置影响。
+   * 优先级：FORCE_USB_DRIVER_ONLY > USB_DRIVER_ENABLED > 默认 GCK
    */
   private loadUsbDriverSetting(): void {
-    PreferencesUtil.get<boolean>(SettingsKeys.USB_DRIVER_ENABLED, false).then(usbEnabled => {
-      // 始终优先尝试 GCK（为蓝牙手柄提供完整轴数据支持）
-      this.initializeGameControllerKit();
-
-      if (usbEnabled && this.useGameControllerKit) {
-        // 混合模式：GCK 处理所有手柄输入，UsbDriverService 提供 USB 震动/附加功能
-        console.info('[GAMEPAD] 混合模式：GCK(输入) + USB驱动(震动/高级功能)');
-        this.useUsbDriverMode = true;
-        this.initializeUsbDriver();
-      } else if (usbEnabled && !this.useGameControllerKit) {
-        // GCK 不可用，纯传统模式
-        console.info('[GAMEPAD] GCK 不可用，回退到纯 USB 驱动 + InputKit 模式');
+    Promise.all([
+      PreferencesUtil.get<boolean>(SettingsKeys.USB_DRIVER_ENABLED, false),
+      PreferencesUtil.get<boolean>(SettingsKeys.FORCE_USB_DRIVER_ONLY, false)
+    ]).then((results: boolean[]) => {
+      const usbEnabled = results[0];
+      const forceUsbOnly = results[1];
+      
+      if (forceUsbOnly) {
+        // 模式 3：强制纯 USB 驱动模式（不启动 GCK）
+        console.info('[GAMEPAD] 强制 USB 驱动模式：跳过 GCK，USB 驱动接管全部输入');
+        this.useGameControllerKit = false;
         this.useUsbDriverMode = true;
         this.initializeDeviceListener();
         this.initializeUsbDriver();
-      } else if (!this.useGameControllerKit) {
-        // GCK 不可用且 USB 驱动未启用，仅用 InputKit
-        console.info('[GAMEPAD] GCK 不可用，使用 InputKit 传统模式');
-        this.initializeDeviceListener();
+      } else {
+        // 始终优先尝试 GCK（为蓝牙手柄提供完整轴数据支持）
+        this.initializeGameControllerKit();
+        
+        if (usbEnabled && this.useGameControllerKit) {
+          // 模式 2：混合模式 - GCK 处理所有手柄输入，USB 驱动提供震动/LED
+          console.info('[GAMEPAD] 混合模式：GCK(输入) + USB驱动(震动/高级功能)');
+          this.useUsbDriverMode = true;
+          this.initializeUsbDriver();
+        } else if (usbEnabled && !this.useGameControllerKit) {
+          // GCK 不可用，回退到纯 USB 驱动
+          console.info('[GAMEPAD] GCK 不可用，回退到纯 USB 驱动 + InputKit 模式');
+          this.useUsbDriverMode = true;
+          this.initializeDeviceListener();
+          this.initializeUsbDriver();
+        } else if (!this.useGameControllerKit) {
+          // GCK 不可用且 USB 驱动未启用
+          console.info('[GAMEPAD] GCK 不可用，使用 InputKit 传统模式');
+          this.initializeDeviceListener();
+        }
+        // else: 模式 1 - 纯 GCK 模式（默认）
       }
-      // else: 纯 GCK 模式（默认）
 
       this.modeInitialized = true;
       console.info(`[GAMEPAD] 最终输入模式: ${this.getInputModeDescription()}`);
-      // 输入模式已确定，如果 listener 在此之前已设置，补发设备通知
       this.notifyListenerOfExistingDevices();
     }).catch(() => {
       // 读取设置失败，使用默认行为（尝试 GCK）
       this.initializeGameControllerKit();
-      // GCK 失败时回退到 InputKit
       if (!this.useGameControllerKit) {
         this.initializeDeviceListener();
       }
@@ -375,15 +388,20 @@ export class GamepadManager implements UsbDriverListener {
       gameControllerService.setAxisCallback(null);
       
       // 清理 GC Kit 相关状态
-      // 先通知所有 GC Kit 设备断开
+      // 先通知所有 GC Kit 设备断开，并释放槽位
       this.gcDeviceIdToSlot.forEach((slot, deviceId) => {
         if (this.listener) {
           this.listener.onGamepadDisconnected(slot);
         }
+        // 释放 slotOccupied，防止后续 USB 设备无法分配到该槽位
+        this.slotOccupied[slot] = false;
       });
       this.gcDeviceIdToSlot.clear();
       this.gcDeviceStates.clear();
       this.gcDpadAxisActive.clear();
+      this.gcAxisFlushPending.clear();
+      this.gcPhysicalAddressToDeviceId.clear();
+      this.gcDeviceInfoCache.clear();
       
       console.info('[GAMEPAD] Game Controller Kit 已停止');
     } catch (err) {
@@ -408,7 +426,15 @@ export class GamepadManager implements UsbDriverListener {
       this.initializeUsbDriver();
     }
     
-    console.info('[GAMEPAD] 已切换到纯 USB 驱动模式');
+    // 持久化状态，下次串流启动时自动使用强制 USB 驱动模式
+    Promise.all([
+      PreferencesUtil.put(SettingsKeys.USB_DRIVER_ENABLED, true),
+      PreferencesUtil.put(SettingsKeys.FORCE_USB_DRIVER_ONLY, true)
+    ]).catch((err: Error) => {
+      console.error('[GAMEPAD] 持久化 USB 驱动设置失败:', err);
+    });
+    
+    console.info('[GAMEPAD] 已切换到纯 USB 驱动模式（已保存设置）');
     return true;
   }
   
@@ -458,7 +484,7 @@ export class GamepadManager implements UsbDriverListener {
       this.loadGCButtonMappingSettings(),
       this.loadSensorSettings()
     ]);
-    // 注意：USB_DRIVER_ENABLED 不在这里重新加载，因为切换需要完全重初始化手柄驱动
+    // 注意：USB_DRIVER_ENABLED 和 FORCE_USB_DRIVER_ONLY 不在这里重新加载，因为切换需要完全重初始化手柄驱动
   }
 
   /**

@@ -82,22 +82,69 @@ export class StreamWindowManager {
   }
   
   /**
-   * 配置窗口（全屏、保持常亮）
+   * 配置窗口（全屏、保持常亮、沉浸式）
    */
   async configureWindow(): Promise<void> {
     try {
       const win = await window.getLastWindow(this.context);
       // 保持屏幕常亮
       win.setWindowKeepScreenOn(true);
-      // 隐藏状态栏和导航栏
-      win.setWindowSystemBarEnable([]);
-      // 隐藏窗口装饰栏（2in1/平板最大化时的标题栏）
+
+      // 确保窗口最大化（2in1/平板设备上消除自由窗口模式）
+      try {
+        await win.maximize();
+      } catch (_e) {
+        console.info('StreamWindowManager: maximize() 不适用或已是全屏');
+      }
+
+      // 全屏布局（内容延伸到系统栏区域）
+      try {
+        await win.setWindowLayoutFullScreen(true);
+      } catch (_e) {
+        console.warn('StreamWindowManager: setWindowLayoutFullScreen 失败');
+      }
+
+      // 隐藏状态栏、导航栏、导航指示器 (API 12+ 新 API，替代旧 setWindowSystemBarEnable)
+      try {
+        await win.setSpecificSystemBarEnabled('status', false);
+        await win.setSpecificSystemBarEnabled('navigation', false);
+        await win.setSpecificSystemBarEnabled('navigationIndicator', false);
+      } catch (_e) {
+        // 回退旧 API
+        try { win.setWindowSystemBarEnable([]); } catch (_e2) {}
+      }
+
+      // 隐藏窗口装饰栏（2in1/平板设备的标题栏：放大/缩小/关闭按钮）
+      // 注：module.json5 已配置 supportWindowMode: ["fullscreen"]，
+      // 从系统层面确保不进入自由窗口/分屏模式，此处为双重保障
       try {
         win.setWindowDecorVisible(false);
-      } catch (decorErr) {
-        console.warn('StreamWindowManager: setWindowDecorVisible 不可用（非 2in1 设备或 API 不支持）:', decorErr);
+      } catch (_e) {
+        console.info('StreamWindowManager: setWindowDecorVisible 不支持（非 2in1 设备）');
       }
-      console.info('StreamWindowManager: 已配置窗口基本设置');
+
+      // 尝试隐藏标题栏和 Dock 悬停显示 (API 14+)
+      try {
+        win.setTitleAndDockHoverShown(false);
+      } catch (_e) {
+        // API 不可用，忽略
+      }
+
+      // 沉浸式模式：抑制系统导航手势，需两次手势才能退出 (API 12+)
+      try {
+        win.setImmersiveModeEnabledState(true);
+      } catch (_e) {}
+
+      // 横屏多窗支持（参考 moonlight-ohos）
+      if (this.streamWidth > this.streamHeight) {
+        try {
+          await win.enableLandscapeMultiWindow();
+        } catch (_e) {}
+      }
+      // 注：不禁用返回手势（setGestureBackEnabled），
+      // 返回手势需要到达 onBackPress() 以打开游戏菜单。
+      // 沉浸式模式已足够防止误触退出。
+      console.info('StreamWindowManager: 已配置窗口基本设置（全屏+沉浸式+装饰栏隐藏）');
     } catch (err) {
       console.error('配置窗口失败:', err);
     }
@@ -166,13 +213,21 @@ export class StreamWindowManager {
       // 恢复屏幕常亮设置
       win.setWindowKeepScreenOn(false);
       // 恢复系统栏
-      win.setWindowSystemBarEnable(['status', 'navigation']);
-      // 恢复窗口装饰栏
       try {
-        win.setWindowDecorVisible(true);
-      } catch (decorErr) {
-        console.warn('StreamWindowManager: restoreWindow - setWindowDecorVisible 不可用:', decorErr);
+        await win.setSpecificSystemBarEnabled('status', true);
+        await win.setSpecificSystemBarEnabled('navigation', true);
+        await win.setSpecificSystemBarEnabled('navigationIndicator', true);
+      } catch (_e) {
+        try { win.setWindowSystemBarEnable(['status', 'navigation']); } catch (_e2) {}
       }
+      // 恢复窗口装饰栏
+      try { win.setWindowDecorVisible(true); } catch (_e) {}
+      // 恢复标题栏和 Dock 悬停显示
+      try { win.setTitleAndDockHoverShown(true); } catch (_e) {}
+      // 退出沉浸式模式
+      try { win.setImmersiveModeEnabledState(false); } catch (_e) {}
+      // 退出横屏多窗模式
+      try { await win.disableLandscapeMultiWindow(); } catch (_e) {}
       // 恢复自动旋转
       await win.setPreferredOrientation(window.Orientation.UNSPECIFIED);
       // 恢复屏幕亮度为系统默认

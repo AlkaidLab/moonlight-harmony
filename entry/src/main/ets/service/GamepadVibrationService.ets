@@ -19,6 +19,7 @@
 
 import { vibrator } from '@kit.SensorServiceKit';
 import { UsbDriverService, AbstractController } from './usbdriver/index';
+import { RUMBLE_MAX } from './GamepadTypes';
 
 // ==================== 震动服务 ====================
 
@@ -209,8 +210,8 @@ export class GamepadVibrationService {
     const userStrength = this.deviceVibrateStrength / 100;
 
     // 计算低频和高频马达的强度 (0-100)
-    const lowIntensity = Math.floor((lowFreqMotor / 65535) * userStrength * 100);
-    const highIntensity = Math.floor((highFreqMotor / 65535) * userStrength * 100);
+    const lowIntensity = Math.floor((lowFreqMotor / RUMBLE_MAX) * userStrength * 100);
+    const highIntensity = Math.floor((highFreqMotor / RUMBLE_MAX) * userStrength * 100);
 
     // 检查是否支持高清振动（首次检查后缓存）
     if (this.hdHapticSupported === null) {

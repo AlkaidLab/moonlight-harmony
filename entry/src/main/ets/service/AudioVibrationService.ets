@@ -30,6 +30,7 @@
 
 import { vibrator } from '@kit.SensorServiceKit';
 import { GamepadManager } from './GamepadManager';
+import { RUMBLE_MAX } from './GamepadTypes';
 
 export class AudioVibrationService {
   private enabled: boolean = false;
@@ -325,7 +326,7 @@ export class AudioVibrationService {
    * 音乐模式: highFreq 更高（60%），更有弹性敲击感
    */
   private triggerUsbRumble(intensity: number): void {
-    const base = Math.floor(intensity * 65535 / 100);
+    const base = Math.floor(intensity * RUMBLE_MAX / 100);
     let lowFreq: number;
     let highFreq: number;
 

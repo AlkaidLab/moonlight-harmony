@@ -14,7 +14,7 @@ import { ComputerManager } from './ComputerManager';
 import { ComputerInfo, selectBestAddress } from '../model/ComputerInfo';
 import { NvHttp, LaunchConfig } from './NvHttp';
 import { CryptoUtil } from '../utils/CryptoUtil';
-import { common } from '@kit.AbilityKit';
+import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
 import { GamepadManager } from './GamepadManager';
 import { MoonlightButton } from './GamepadTypes';
@@ -28,7 +28,17 @@ import {
   LI_CCAP_ANALOG_TRIGGERS,
   LI_CCAP_RUMBLE,
   LI_CCAP_ACCEL,
-  LI_CCAP_GYRO
+  LI_CCAP_GYRO,
+  MODIFIER_SHIFT,
+  MODIFIER_CTRL,
+  MODIFIER_ALT,
+  MODIFIER_META,
+  VK_SHIFT,
+  VK_CONTROL,
+  VK_MENU,
+  VK_LWIN,
+  KEY_ACTION_DOWN,
+  KEY_ACTION_UP
 } from './MoonBridge';
 import nativeLib from 'libmoonlight_nativelib.so';
 
@@ -226,22 +236,6 @@ const STAGE_NAMES: Record<number, string> = {
   11: '正在启动输入流...'
 };
 
-/** 键盘动作常量 */
-const KEY_DOWN = 0x03;
-const KEY_UP = 0x04;
-
-/** 修饰键虚拟键码 */
-const VK_SHIFT = 0x10;
-const VK_CONTROL = 0x11;
-const VK_MENU = 0x12;
-const VK_LWIN = 0x5B;
-
-/** 修饰键掩码 */
-const MODIFIER_SHIFT = 0x01;
-const MODIFIER_CTRL = 0x02;
-const MODIFIER_ALT = 0x04;
-const MODIFIER_META = 0x08;
-
 /** 标准 Xbox 手柄支持的按钮集合 */
 const STANDARD_BUTTON_FLAGS =
   MoonlightButton.A | MoonlightButton.B | MoonlightButton.X | MoonlightButton.Y |
@@ -374,6 +368,7 @@ export class StreamingSession {
 
   private audioVibrationService: AudioVibrationService = new AudioVibrationService();
   private microphoneStream: MicrophoneStream | null = null;
+  private abilityContext: common.UIAbilityContext | undefined = undefined;
 
   // ---------------------------------------------------------------------------
   // 构造函数
@@ -433,6 +428,7 @@ export class StreamingSession {
     this.surfaceId = surfaceId;
     this.displayGuid = displayGuid || '';
     this.useVdd = useVdd || false;
+    this.abilityContext = context;
 
     console.info(`开始串流: computer=${computerId}, app=${appId}`);
     console.info(`配置: ${config.width}x${config.height}@${config.fps}fps, ${config.bitrate}kbps, ${config.codec}`);
@@ -604,14 +600,14 @@ export class StreamingSession {
 
     let modifier = 0;
     for (const key of keyCodes) {
-      this.nativeModule.sendKeyboardInput(key, KEY_DOWN, modifier, 0);
+      this.nativeModule.sendKeyboardInput(key, KEY_ACTION_DOWN, modifier, 0);
       modifier |= StreamingSession.getModifierForKey(key);
     }
 
     setTimeout(() => {
       for (let i = keyCodes.length - 1; i >= 0; i--) {
         modifier &= ~StreamingSession.getModifierForKey(keyCodes[i]);
-        this.nativeModule.sendKeyboardInput(keyCodes[i], KEY_UP, modifier, 0);
+        this.nativeModule.sendKeyboardInput(keyCodes[i], KEY_ACTION_UP, modifier, 0);
       }
     }, 25);
   }
@@ -1177,16 +1173,47 @@ export class StreamingSession {
     }
 
     console.info('启动麦克风...');
-    this.microphoneStream = new MicrophoneStream(MoonBridge);
-    this.microphoneStream.start().then((success: boolean) => {
+    this.ensureMicPermissionAndStart();
+  }
+
+  /**
+   * 检查/请求麦克风权限后启动
+   */
+  private async ensureMicPermissionAndStart(): Promise<void> {
+    try {
+      const atManager = abilityAccessCtrl.createAtManager();
+      const bundleInfo = await bundleManager.getBundleInfoForSelf(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION
+      );
+      const tokenId = bundleInfo.appInfo.accessTokenId;
+      const permission: Permissions = 'ohos.permission.MICROPHONE';
+
+      let granted = atManager.checkAccessTokenSync(tokenId, permission)
+        === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+
+      if (!granted && this.abilityContext) {
+        console.info('请求麦克风权限...');
+        const result = await atManager.requestPermissionsFromUser(
+          this.abilityContext, [permission]
+        );
+        granted = result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+      }
+
+      if (!granted) {
+        console.error('麦克风权限被拒绝');
+        return;
+      }
+
+      this.microphoneStream = new MicrophoneStream(MoonBridge);
+      const success = await this.microphoneStream.start();
       if (!success) {
         console.error('麦克风启动失败');
         this.microphoneStream = null;
       }
-    }).catch((error: Error) => {
-      console.error(`麦克风启动异常: ${error.message}`);
+    } catch (error) {
+      console.error(`麦克风启动异常: ${(error as Error).message}`);
       this.microphoneStream = null;
-    });
+    }
   }
 
   private stopMicrophone(): void {

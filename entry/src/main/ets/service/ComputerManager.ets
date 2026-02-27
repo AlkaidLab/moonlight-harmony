@@ -18,6 +18,7 @@ import { CryptoUtil } from '../utils/CryptoUtil';
 import { WakeOnLan } from './WakeOnLan';
 import { isLanAddress } from '../utils/NetHelper';
 import { connection } from '@kit.NetworkKit';
+import { MAX_PORT } from '../common/NetworkConstants';
 import { common } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
 
@@ -158,7 +159,7 @@ export class ComputerManager {
     if (discovered.ipv6Address && existing.ipv6Address !== discovered.ipv6Address) {
       existing.ipv6Address = discovered.ipv6Address;
     }
-    if (discovered.port && discovered.port !== 47989) {
+    if (discovered.port && discovered.port !== NvHttp.DEFAULT_HTTP_PORT) {
       existing.httpPort = discovered.port;
     }
   }
@@ -327,7 +328,7 @@ export class ComputerManager {
           if (closeBracket < trimmed.length - 1 && trimmed.charAt(closeBracket + 1) === ':') {
             const portStr = trimmed.substring(closeBracket + 2);
             const port = parseInt(portStr);
-            if (port > 0 && port <= 65535) {
+            if (port > 0 && port <= MAX_PORT) {
               result.port = port;
             }
           }
@@ -349,7 +350,7 @@ export class ComputerManager {
         const host = trimmed.substring(0, colonIndex);
         const portStr = trimmed.substring(colonIndex + 1);
         const port = parseInt(portStr);
-        if (port > 0 && port <= 65535) {
+        if (port > 0 && port <= MAX_PORT) {
           result.host = host;
           result.port = port;
           return result;
@@ -916,7 +917,7 @@ export class ComputerManager {
     await WakeOnLan.sendWolToAddresses(
       computer.macAddress,
       this.collectAddresses(computer),
-      computer.httpPort || 47989
+      computer.httpPort || NvHttp.DEFAULT_HTTP_PORT
     );
   }
 

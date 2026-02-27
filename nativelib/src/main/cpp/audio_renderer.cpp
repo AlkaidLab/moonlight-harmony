@@ -28,41 +28,76 @@
 #define LOG_TAG "AudioRenderer"
 
 // =============================================================================
-// API 20+ 空间音频支持（动态加载）
+// OHAudio 新式回调 API 动态加载（兼容旧设备缺失符号）
+// =============================================================================
+// 某些 OHAudio 回调设置函数在部分 HarmonyOS 5.0.x (API 12) 设备的
+// libohaudio.so 中不存在（如 SetRendererInterruptCallback）。
+// 若直接链接，.so 加载时 linker 会因 "symbol not found" 而拒绝加载整个模块，
+// 导致所有页面（包括 SettingsPageV2）因 native 模块不可用而崩溃。
+// 使用 dlsym 运行时加载这些可选 API，缺失时静默跳过。
 // =============================================================================
 
-// 函数指针类型定义
-typedef OH_AudioStream_Result (*PFN_OH_AudioStreamBuilder_SetSpatializationEnabled)(
+// 函数指针类型定义 — Renderer
+typedef OH_AudioStream_Result (*PFN_SetRendererWriteDataCb)(
+    OH_AudioStreamBuilder*, OH_AudioRenderer_OnWriteDataCallback, void*);
+typedef OH_AudioStream_Result (*PFN_SetRendererInterruptCb)(
+    OH_AudioStreamBuilder*, OH_AudioRenderer_OnInterruptCallback, void*);
+typedef OH_AudioStream_Result (*PFN_SetRendererErrorCb)(
+    OH_AudioStreamBuilder*, OH_AudioRenderer_OnErrorCallback, void*);
+typedef OH_AudioStream_Result (*PFN_SetRendererOutputDeviceChangeCb)(
+    OH_AudioStreamBuilder*, OH_AudioRenderer_OutputDeviceChangeCallback, void*);
+
+// 函数指针类型定义 — 空间音频 (API 20+)
+typedef OH_AudioStream_Result (*PFN_SetSpatializationEnabled)(
     OH_AudioStreamBuilder* builder, bool spatializationEnabled);
 
 // 全局函数指针
-static PFN_OH_AudioStreamBuilder_SetSpatializationEnabled g_pfnSetSpatializationEnabled = nullptr;
-static bool g_spatialAudioChecked = false;
+static PFN_SetRendererWriteDataCb       g_pfnSetRendererWriteDataCb = nullptr;
+static PFN_SetRendererInterruptCb       g_pfnSetRendererInterruptCb = nullptr;
+static PFN_SetRendererErrorCb           g_pfnSetRendererErrorCb = nullptr;
+static PFN_SetRendererOutputDeviceChangeCb g_pfnSetRendererDeviceChangeCb = nullptr;
+static PFN_SetSpatializationEnabled     g_pfnSetSpatializationEnabled = nullptr;
+
+static bool g_audioApisChecked = false;
+static bool g_writeDataCbAvailable = false;
 static bool g_spatialAudioAvailable = false;
 
-// 检查并加载空间音频 API
-static bool CheckAndLoadSpatialAudioApi() {
-    if (g_spatialAudioChecked) {
-        return g_spatialAudioAvailable;
-    }
-    g_spatialAudioChecked = true;
+// 一次性加载所有 OHAudio 可选 API
+static void LoadAudioApis() {
+    if (g_audioApisChecked) return;
+    g_audioApisChecked = true;
     
     void* handle = dlopen("libohaudio.so", RTLD_NOW);
-    if (handle != nullptr) {
-        g_pfnSetSpatializationEnabled = (PFN_OH_AudioStreamBuilder_SetSpatializationEnabled)
-            dlsym(handle, "OH_AudioStreamBuilder_SetSpatializationEnabled");
-        if (g_pfnSetSpatializationEnabled != nullptr) {
-            g_spatialAudioAvailable = true;
-            OH_LOG_INFO(LOG_APP, "API 20+ Spatial Audio API available");
-        } else {
-            OH_LOG_WARN(LOG_APP, "Spatial Audio API not found (API < 20)");
-        }
-        // 不要 dlclose，保持库加载
-    } else {
-        OH_LOG_WARN(LOG_APP, "Failed to load libohaudio.so for spatial audio check");
+    if (!handle) {
+        OH_LOG_ERROR(LOG_APP, "Failed to dlopen libohaudio.so");
+        return;
     }
-    
-    return g_spatialAudioAvailable;
+
+    // Renderer 新式回调
+    g_pfnSetRendererWriteDataCb = (PFN_SetRendererWriteDataCb)
+        dlsym(handle, "OH_AudioStreamBuilder_SetRendererWriteDataCallback");
+    g_pfnSetRendererInterruptCb = (PFN_SetRendererInterruptCb)
+        dlsym(handle, "OH_AudioStreamBuilder_SetRendererInterruptCallback");
+    g_pfnSetRendererErrorCb = (PFN_SetRendererErrorCb)
+        dlsym(handle, "OH_AudioStreamBuilder_SetRendererErrorCallback");
+    g_pfnSetRendererDeviceChangeCb = (PFN_SetRendererOutputDeviceChangeCb)
+        dlsym(handle, "OH_AudioStreamBuilder_SetRendererOutputDeviceChangeCallback");
+
+    // 空间音频 (API 20+)
+    g_pfnSetSpatializationEnabled = (PFN_SetSpatializationEnabled)
+        dlsym(handle, "OH_AudioStreamBuilder_SetSpatializationEnabled");
+
+    g_writeDataCbAvailable = (g_pfnSetRendererWriteDataCb != nullptr);
+    g_spatialAudioAvailable = (g_pfnSetSpatializationEnabled != nullptr);
+
+    OH_LOG_INFO(LOG_APP, "OHAudio API probe: WriteDataCb=%{public}s InterruptCb=%{public}s "
+                "ErrorCb=%{public}s DeviceChangeCb=%{public}s SpatialAudio=%{public}s",
+                g_pfnSetRendererWriteDataCb ? "Y" : "N",
+                g_pfnSetRendererInterruptCb ? "Y" : "N",
+                g_pfnSetRendererErrorCb ? "Y" : "N",
+                g_pfnSetRendererDeviceChangeCb ? "Y" : "N",
+                g_pfnSetSpatializationEnabled ? "Y" : "N");
+    // 不 dlclose，保持库加载
 }
 
 // =============================================================================
@@ -202,7 +237,8 @@ int AudioRenderer::Init(const AudioRendererConfig& config) {
     }
     
     // 尝试启用空间音频（HarmonyOS 5.0+ API 20）
-    if (config_.enableSpatialAudio && CheckAndLoadSpatialAudioApi() && g_pfnSetSpatializationEnabled != nullptr) {
+    LoadAudioApis();
+    if (config_.enableSpatialAudio && g_spatialAudioAvailable && g_pfnSetSpatializationEnabled != nullptr) {
         result = g_pfnSetSpatializationEnabled(builder_, true);
         if (result == AUDIOSTREAM_SUCCESS) {
             OH_LOG_INFO(LOG_APP, "Spatial audio enabled successfully");
@@ -213,36 +249,57 @@ int AudioRenderer::Init(const AudioRendererConfig& config) {
         OH_LOG_INFO(LOG_APP, "Spatial audio not available on this device/API level");
     }
     
-    // 设置回调 (API 12+ 新版独立回调设置)
-    // 数据写入回调
-    result = OH_AudioStreamBuilder_SetRendererWriteDataCallback(builder_,
-        (OH_AudioRenderer_OnWriteDataCallback)OnWriteData, this);
-    if (result != AUDIOSTREAM_SUCCESS) {
-        OH_LOG_ERROR(LOG_APP, "Failed to set write data callback: %{public}d", result);
+    // 设置回调 — 通过 dlsym 动态加载的函数指针设置（兼容旧设备）
+    LoadAudioApis();
+
+    // 数据写入回调（必需）
+    if (g_pfnSetRendererWriteDataCb) {
+        result = g_pfnSetRendererWriteDataCb(builder_,
+            (OH_AudioRenderer_OnWriteDataCallback)OnWriteData, this);
+        if (result != AUDIOSTREAM_SUCCESS) {
+            OH_LOG_ERROR(LOG_APP, "Failed to set write data callback: %{public}d", result);
+            OH_AudioStreamBuilder_Destroy(builder_);
+            builder_ = nullptr;
+            return -1;
+        }
+    } else {
+        OH_LOG_ERROR(LOG_APP, "SetRendererWriteDataCallback not available on this device!");
         OH_AudioStreamBuilder_Destroy(builder_);
         builder_ = nullptr;
         return -1;
     }
     
-    // 中断事件回调
-    result = OH_AudioStreamBuilder_SetRendererInterruptCallback(builder_,
-        (OH_AudioRenderer_OnInterruptCallback)OnInterruptEvent, this);
-    if (result != AUDIOSTREAM_SUCCESS) {
-        OH_LOG_WARN(LOG_APP, "Failed to set interrupt callback: %{public}d", result);
+    // 中断事件回调（可选 — 部分 API 12 设备不存在此符号）
+    if (g_pfnSetRendererInterruptCb) {
+        result = g_pfnSetRendererInterruptCb(builder_,
+            (OH_AudioRenderer_OnInterruptCallback)OnInterruptEvent, this);
+        if (result != AUDIOSTREAM_SUCCESS) {
+            OH_LOG_WARN(LOG_APP, "Failed to set interrupt callback: %{public}d", result);
+        }
+    } else {
+        OH_LOG_INFO(LOG_APP, "SetRendererInterruptCallback not available, skipping");
     }
     
-    // 错误回调
-    result = OH_AudioStreamBuilder_SetRendererErrorCallback(builder_,
-        (OH_AudioRenderer_OnErrorCallback)OnError, this);
-    if (result != AUDIOSTREAM_SUCCESS) {
-        OH_LOG_WARN(LOG_APP, "Failed to set error callback: %{public}d", result);
+    // 错误回调（可选）
+    if (g_pfnSetRendererErrorCb) {
+        result = g_pfnSetRendererErrorCb(builder_,
+            (OH_AudioRenderer_OnErrorCallback)OnError, this);
+        if (result != AUDIOSTREAM_SUCCESS) {
+            OH_LOG_WARN(LOG_APP, "Failed to set error callback: %{public}d", result);
+        }
+    } else {
+        OH_LOG_INFO(LOG_APP, "SetRendererErrorCallback not available, skipping");
     }
     
-    // 设备变更回调（替代旧版 OnStreamEvent）
-    result = OH_AudioStreamBuilder_SetRendererOutputDeviceChangeCallback(builder_,
-        (OH_AudioRenderer_OutputDeviceChangeCallback)OnDeviceChange, this);
-    if (result != AUDIOSTREAM_SUCCESS) {
-        OH_LOG_WARN(LOG_APP, "Failed to set device change callback: %{public}d", result);
+    // 设备变更回调（可选）
+    if (g_pfnSetRendererDeviceChangeCb) {
+        result = g_pfnSetRendererDeviceChangeCb(builder_,
+            (OH_AudioRenderer_OutputDeviceChangeCallback)OnDeviceChange, this);
+        if (result != AUDIOSTREAM_SUCCESS) {
+            OH_LOG_WARN(LOG_APP, "Failed to set device change callback: %{public}d", result);
+        }
+    } else {
+        OH_LOG_INFO(LOG_APP, "SetRendererOutputDeviceChangeCallback not available, skipping");
     }
     
     // 创建渲染器

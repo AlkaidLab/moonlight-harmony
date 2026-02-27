@@ -16,6 +16,8 @@
  */
 import { ComputerInfo, ComputerState, PairState, ComputerInfoBuilder } from '../model/ComputerInfo';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { NvHttp } from './NvHttp';
+import { MAX_PORT } from '../common/NetworkConstants';
 
 // =============================================================================
 // 类型定义
@@ -231,7 +233,7 @@ export class ComputerPersistence {
     if (colonIndex > 0 && address.indexOf(':', colonIndex + 1) === -1) {
       const portStr = address.substring(colonIndex + 1);
       const port = parseInt(portStr);
-      if (port > 0 && port <= 65535 && port !== 47989) {
+      if (port > 0 && port <= MAX_PORT && port !== NvHttp.DEFAULT_HTTP_PORT) {
         const result: ExtractedHostPort = { host: address.substring(0, colonIndex), port: port };
         return result;
       }

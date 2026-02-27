@@ -17,17 +17,17 @@ import { router, promptAction, LengthMetrics } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { displaySync } from '@kit.ArkGraphics2D';
-import { VirtualControllerV2, VirtualControllerConfig } from '../components/VirtualControllerV2';
+import { VirtualControllerOverlay } from '../components/VirtualController';
 import { PerformanceOverlay } from '../components/PerformanceOverlay';
 import { OptionPickerDialog, OptionPickerDialogConfig } from '../components/OptionPickerDialog';
-import { GameMenuDialog, GameMenuCallbacks } from '../components/GameMenuDialog';
+import { GameMenuDialog } from '../components/GameMenuDialog';
 import { StreamMenuManager } from '../components/StreamMenuManager';
-import { StreamViewModel, StreamConnectionState, TouchMode } from '../viewmodel/StreamViewModel';
+import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { TouchInputHandler, TouchInputMode } from '../service/TouchInputHandler';
 import { StreamWindowManager } from '../service/StreamWindowManager';
 import { ShortcutManager, Shortcut } from '../components/ShortcutManager';
-import { ShortcutEditorDialog, ShortcutEditorCallbacks, ShortcutEditData } from '../components/ShortcutEditorDialog';
-import { GamepadManager, GamepadInputListener, GamepadState, MoonlightControllerType, MouseEmulationCallback } from '../service/GamepadManager';
+import { ShortcutEditorDialog, ShortcutEditData } from '../components/ShortcutEditorDialog';
+import { GamepadManager, GamepadState, MoonlightControllerType, MouseEmulationCallback } from '../service/GamepadManager';
 import { GyroAssistService } from '../service/GyroAssistService';
 import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../service/MoonBridge';
 import { SuperCmd } from '../service/NvHttp';
@@ -39,6 +39,7 @@ import { SettingsKeys } from '../service/SettingsService';
 import { StreamInputHandler } from './StreamInputHandler';
 import { StreamLifecycleManager } from './StreamLifecycleManager';
 import { StreamIMEManager } from './StreamIMEManager';
+import { VirtualKeyboard } from '../components/VirtualKeyboard';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -79,6 +80,17 @@ struct StreamPage {
   @State xComponentHeight: Length = '100%';
   @State showKeyboardPanel: boolean = false;  // 系统键盘输入面板
   @State keyboardHeight: number = 0;  // IME 键盘高度 (vp)
+  @State showVirtualKeyboard: boolean = false;  // PC 虚拟键盘
+  /** 用户设置：优先使用虚拟键盘 */
+  private useVirtualKeyboard: boolean = false;
+  /** 待对话框关闭后显示 IME */
+  private pendingShowIME: boolean = false;
+  /** 虚拟手柄+触摸共存 */
+  @State touchPassthrough: boolean = false;
+  /** 虚拟手柄缩放比例 */
+  @State controllerScaleValue: number = 1.0;
+  /** 虚拟手柄透明度 */
+  @State controllerOpacityValue: number = 0.75;
   
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
@@ -383,9 +395,18 @@ struct StreamPage {
    * @returns true 表示已处理返回事件，阻止默认行为
    */
   onBackPress(): boolean {
+    // 释放所有通过 onKeyEvent 按下但未释放的物理键（防止 ESC 等键卡住）
+    this.inputHandler.releaseAllKeys();
+
     // 如果正在连接中，允许直接返回
     if (this.viewModel.isConnecting) {
       return false;
+    }
+
+    // 虚拟 PC 键盘正在显示时，优先收起
+    if (this.showVirtualKeyboard) {
+      this.showVirtualKeyboard = false;
+      return true;
     }
 
     // IME 键盘正在显示时，优先收起键盘（排除弹出瞬间的误触发）
@@ -414,7 +435,6 @@ struct StreamPage {
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
     
-    this.optionPickerDialogConfig = this.menuManager.getStreamMenuConfig();
     // 使用新的游戏菜单对话框
     this.gameMenuDialogController = new CustomDialogController({
       builder: GameMenuDialog({
@@ -424,6 +444,9 @@ struct StreamPage {
         hasUsbGamepad: this.gamepadManager.hasUsbGamepad(),
         isMouseEmulationActive: this.gamepadManager.isMouseEmulationActive(),
         hasConnectedGamepad: this.gamepadManager.getConnectedGamepads().length > 0,
+        controllerOpacity: this.controllerOpacityValue,
+        controllerScale: this.controllerScaleValue,
+        touchPassthrough: this.touchPassthrough,
         callbacks: {
           onDismiss: () => {
             // 对话框关闭后恢复鼠标拦截器
@@ -466,7 +489,12 @@ struct StreamPage {
             this.forceUsbDriverMode();
           },
           onToggleKeyboard: () => {
-            this.imeManager.show();
+            if (this.useVirtualKeyboard) {
+              this.showVirtualKeyboard = !this.showVirtualKeyboard;
+            } else {
+              // 标记待显示 IME，等对话框关闭后再调用
+              this.pendingShowIME = true;
+            }
           },
           onToggleMouseEmulation: () => {
             this.gamepadManager.toggleMouseEmulation();
@@ -476,8 +504,24 @@ struct StreamPage {
               duration: 2000
             });
           },
+          onControllerOpacityChange: (opacity: number) => {
+            this.controllerOpacityValue = opacity;
+            VirtualControllerOverlay.saveOpacity(opacity);
+          },
+          onControllerScaleChange: (scale: number) => {
+            this.controllerScaleValue = scale;
+            VirtualControllerOverlay.saveScale(scale);
+          },
+          onTouchPassthroughChange: (enabled: boolean) => {
+            this.touchPassthrough = enabled;
+          },
           onClose: () => {
             this.gameMenuDialogController?.close();
+            // 对话框关闭后执行待处理的 IME 显示
+            if (this.pendingShowIME) {
+              this.pendingShowIME = false;
+              this.imeManager.show();
+            }
           },
           onUnlockOverlay: () => {
             this.viewModel.overlayState.config.isLocked = false;
@@ -631,6 +675,9 @@ struct StreamPage {
       );
       this.enableBackgroundTask = await PreferencesUtil.get<boolean>(SettingsKeys.ENABLE_BACKGROUND_TASK, true);
       this.lifecycleManager.setEnableBackgroundTask(this.enableBackgroundTask);
+      this.useVirtualKeyboard = await PreferencesUtil.get<boolean>(SettingsKeys.ENABLE_ONSCREEN_KEYBOARD, false);
+      this.controllerScaleValue = await VirtualControllerOverlay.loadScale();
+      this.controllerOpacityValue = await VirtualControllerOverlay.loadOpacity();
       await this.gamepadManager.reloadSettings();
       
       // 设置串流分辨率
@@ -875,8 +922,9 @@ struct StreamPage {
     if (!this.viewModel.isConnected) {
       return;
     }
-    // 虚拟手柄显示时不处理触摸输入，避免与虚拟按键手势竞争
-    if (this.viewModel.showController) {
+    // 虚拟手柄显示时，默认不处理触摸输入（避免与虚拟按键手势竞争）
+    // touchPassthrough 开启时允许共存
+    if (this.viewModel.showController && !this.touchPassthrough) {
       return;
     }
     this.touchInputHandler.handleTouchEvent(event);
@@ -936,7 +984,7 @@ struct StreamPage {
         })
         .width(this.xComponentWidth)
         .height(this.xComponentHeight)
-        .hitTestBehavior(this.viewModel.showController ? HitTestMode.None : HitTestMode.Default)
+        .hitTestBehavior((this.viewModel.showController && !this.touchPassthrough) ? HitTestMode.None : HitTestMode.Default)
         .onTouch((event: TouchEvent) => {
           // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
           // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
@@ -982,22 +1030,11 @@ struct StreamPage {
       }
 
       // 虚拟控制器层
-      // 使用 flex 布局 (Column+Row)，HitTestMode.Default 阻塞 XComponent 兄弟节点的触摸
       if (this.viewModel.isConnected && this.viewModel.showController) {
-        VirtualControllerV2({
-          config: {
-            opacity: 0.75,
-            scale: 1.0,
-            deadzone: 0.15,
-            showLeftStick: true,
-            showRightStick: true,
-            showDpad: true,
-            showButtons: true,
-            showShoulder: true,
-            showCenter: true,
-            showL3R3: false,
-            enableVibration: true
-          } as VirtualControllerConfig,
+        VirtualControllerOverlay({
+          touchPassthrough: $touchPassthrough,
+          controllerScale: $controllerScaleValue,
+          controllerOpacity: $controllerOpacityValue,
           onInput: (input) => {
             this.viewModel.sendInput(input);
           }
@@ -1011,6 +1048,22 @@ struct StreamPage {
         this.KeyboardInputPanel()
       }
 
+      // PC 虚拟键盘
+      if (this.showVirtualKeyboard && this.viewModel.isConnected) {
+        VirtualKeyboard({
+          onVirtualKeyEvent: (vk: number, isDown: boolean): void => {
+            const session = this.viewModel.getSession();
+            if (session) {
+              session.sendKeyboardInput(vk, isDown ? 0x03 : 0x04);
+            }
+          },
+          onClose: (): void => {
+            this.showVirtualKeyboard = false;
+          },
+        })
+          .position({ left: 0, bottom: 0 })
+          .width('100%')
+      }
 
     }
     .width('100%')
@@ -1048,6 +1101,20 @@ struct StreamPage {
             .onClick(() => {
               this.viewModel.getSession()?.sendKeys([VirtualKey.VK_LWIN, VirtualKey.VK_CONTROL, VirtualKey.VK_O]);
               this.imeManager.hide();
+            })
+
+          // ── 切换到虚拟键盘 ──
+          Button('虚拟键盘')
+            .fontSize(11)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#8B5CF6')
+            .height(26)
+            .borderRadius(13)
+            .padding({ left: 10, right: 10 })
+            .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+            .onClick(() => {
+              this.imeManager.hide();
+              this.showVirtualKeyboard = true;
             })
 
           Divider()

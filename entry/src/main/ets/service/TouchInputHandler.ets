@@ -14,6 +14,25 @@
  * 处理触摸事件并转换为相应的输入指令
  */
 import nativeLib from 'libmoonlight_nativelib.so';
+import {
+  BUTTON_ACTION_PRESS,
+  BUTTON_ACTION_RELEASE,
+  BUTTON_LEFT,
+  BUTTON_RIGHT,
+  TOUCH_EVENT_DOWN,
+  TOUCH_EVENT_UP,
+  TOUCH_EVENT_MOVE,
+  TOUCH_EVENT_CANCEL,
+  TOUCH_EVENT_HOVER,
+  TOUCH_EVENT_CANCEL_ALL,
+  LI_TOOL_TYPE_UNKNOWN,
+  LI_TOOL_TYPE_PEN,
+  LI_TOOL_TYPE_ERASER,
+  LI_PEN_BUTTON_PRIMARY,
+  LI_PEN_BUTTON_SECONDARY,
+  LI_TILT_UNKNOWN,
+  LI_ROT_UNKNOWN
+} from './MoonBridge';
 
 /**
  * 触摸输入模式
@@ -23,33 +42,6 @@ export enum TouchInputMode {
   DIRECT = 'direct',      // 直接触摸模式：绝对坐标
   MOUSE = 'mouse'         // 鼠标模式：相对移动 + 按键
 }
-
-// 鼠标按钮常量
-const BUTTON_ACTION_PRESS = 0x07;
-const BUTTON_ACTION_RELEASE = 0x08;
-const BUTTON_LEFT = 0x01;
-const BUTTON_RIGHT = 0x03;
-
-// 触摸事件常量
-const TOUCH_EVENT_DOWN = 0x01;
-const TOUCH_EVENT_UP = 0x02;
-const TOUCH_EVENT_MOVE = 0x03;
-const TOUCH_EVENT_CANCEL = 0x04;
-const TOUCH_EVENT_HOVER = 0x00;
-const TOUCH_EVENT_CANCEL_ALL = 0x07;
-
-// 手写笔工具类型常量（对应 Moonlight 协议）
-const LI_TOOL_TYPE_UNKNOWN = 0x00;
-const LI_TOOL_TYPE_PEN = 0x01;
-const LI_TOOL_TYPE_ERASER = 0x02;
-
-// 手写笔按钮常量
-const LI_PEN_BUTTON_PRIMARY = 0x01;
-const LI_PEN_BUTTON_SECONDARY = 0x02;
-
-// 手写笔未知值常量
-const LI_TILT_UNKNOWN = 0xFF;
-const LI_ROT_UNKNOWN = 0xFFFF;
 
 /**
  * Native 输入模块接口

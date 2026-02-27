@@ -41,6 +41,8 @@ import { InputInterceptorService, MouseInterceptorService } from '../service/Inp
 export class StreamInputHandler {
   // ── 键盘修饰键状态追踪（位掩码：Shift=0x01, Ctrl=0x02, Alt=0x04, Meta=0x08）──
   private modifierFlags: number = 0;
+  // ── 当前通过 ArkUI onKeyEvent 按下的 VK 键集合（用于焦点丢失时释放残留键）──
+  private activeVkKeys: Set<number> = new Set<number>();
 
   // ── 鼠标拦截器（绕过 ArkUI 帧率限制，全速鼠标轮询）──
   private mouseInterceptorActive: boolean = false;
@@ -75,8 +77,24 @@ export class StreamInputHandler {
    * 重置所有输入状态（串流停止时调用）
    */
   resetState(): void {
+    this.releaseAllKeys();
     this.modifierFlags = 0;
     this.stopMouseInterceptor();
+  }
+
+  /**
+   * 释放所有通过 ArkUI onKeyEvent 按下但未释放的键
+   * 在焦点丢失（如 onBackPress 弹出对话框）时调用，防止键卡住
+   */
+  releaseAllKeys(): void {
+    if (this.activeVkKeys.size === 0) return;
+    const session = this.viewModel?.getSession();
+    if (session) {
+      this.activeVkKeys.forEach((vkCode: number) => {
+        session.sendKeyboardInput(vkCode, KEY_ACTION_UP, 0);
+      });
+    }
+    this.activeVkKeys.clear();
   }
 
   // ==================== 鼠标高速轮询 ====================
@@ -299,6 +317,12 @@ export class StreamInputHandler {
         if (session) {
           const keyAction = event.type === KeyType.Down ? KEY_ACTION_DOWN : KEY_ACTION_UP;
           session.sendKeyboardInput(vkCode, keyAction, this.modifierFlags);
+          // 跟踪按下的键，便于焦点丢失时释放
+          if (event.type === KeyType.Down) {
+            this.activeVkKeys.add(vkCode);
+          } else {
+            this.activeVkKeys.delete(vkCode);
+          }
         }
       }
       return true;

@@ -107,6 +107,24 @@ export interface GCButton2313ActionCallback {
 /** 摇杆轴值范围 */
 export const AXIS_MAX = 32767;
 export const TRIGGER_MAX = 255;
+export const RUMBLE_MAX = 65535;
+
+/**
+ * 将无符号 16-bit 值转换为有符号 16-bit 值
+ * USB HID 报告中轴数据通常以 uint16 传输，需转换为 int16
+ */
+export function toSigned16(value: number): number {
+  return value > 32767 ? value - 65536 : value;
+}
+
+/**
+ * 从 Uint8Array 中读取小端序有符号 16-bit 整数
+ * 用于解析 USB HID 输入报告中的轴/传感器数据
+ */
+export function readShortLE(buffer: Uint8Array, offset: number): number {
+  const value = buffer[offset] | (buffer[offset + 1] << 8);
+  return toSigned16(value);
+}
 
 /** 特殊按键码范围（2311-2315）- 仅用于传统 InputKit 路径的设备路由判断 */
 export const SPECIAL_KEYCODE_MIN = 2311;

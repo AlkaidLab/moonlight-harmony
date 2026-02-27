@@ -21,6 +21,7 @@ import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem as DialogOptio
 import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem as DialogMultiOptionItem } from '../components/MultiOptionPickerDialog';
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { InputInterceptorService } from '../service/InputInterceptorService';
+import { SettingsKeys } from '../service/SettingsService';
 
 /**
  * 选择器选项接口
@@ -53,112 +54,6 @@ interface PickerConfig {
   options: PickerOption[];
   selectedValue: string | number;
   onSelect: (option: PickerOption) => void;
-}
-
-/**
- * 设置键名常量类
- */
-class SettingsKeys {
-  // 视频设置
-  static readonly RESOLUTION: string = 'settings_resolution';
-  static readonly CUSTOM_RESOLUTIONS: string = 'settings_custom_resolutions';
-  static readonly FPS: string = 'settings_fps';
-  static readonly CUSTOM_FPS: string = 'settings_custom_fps';  // 自定义帧率值
-  static readonly BITRATE: string = 'settings_bitrate';
-  static readonly HOST_SCALE: string = 'settings_host_scale';
-  static readonly ENABLE_HDR: string = 'settings_enable_hdr';
-  static readonly HDR_MODE: string = 'settings_hdr_mode';  // 0=HDR10, 1=HLG (for Sunshine HLG support)
-  static readonly ENABLE_HDR_HIGH_BRIGHTNESS: string = 'settings_enable_hdr_high_brightness';
-  static readonly VIDEO_FORMAT: string = 'settings_video_format';
-  static readonly STRETCH_VIDEO: string = 'settings_stretch_video';
-  static readonly FULL_RANGE: string = 'settings_full_range';
-  static readonly REVERSE_RESOLUTION: string = 'settings_reverse_resolution';
-  static readonly ROTABLE_SCREEN: string = 'settings_rotable_screen';
-  
-  // 音频设置
-  static readonly AUDIO_CONFIG: string = 'settings_audio_config';
-  static readonly ENABLE_LOCAL_AUDIO: string = 'settings_enable_local_audio';
-  static readonly ENABLE_SPATIALIZER: string = 'settings_enable_spatializer';
-  static readonly CONTROL_ONLY: string = 'settings_control_only';
-  static readonly ENABLE_MIC: string = 'settings_enable_mic';
-  static readonly MIC_BITRATE: string = 'settings_mic_bitrate';
-  
-  // 输入 - 手柄设置
-  static readonly ENABLE_VIBRATION: string = 'settings_enable_vibration';
-  static readonly VIBRATION_MODE: string = 'settings_vibration_mode';  // 震动模式：自动/仅手柄/仅设备/同时
-  static readonly VIBRATE_FALLBACK_STRENGTH: string = 'settings_vibrate_fallback_strength';
-  static readonly ENABLE_AUDIO_VIBRATION: string = 'settings_enable_audio_vibration';
-  static readonly AUDIO_VIBRATION_STRENGTH: string = 'settings_audio_vibration_strength';
-  static readonly AUDIO_VIBRATION_SCENE_MODE: string = 'settings_audio_vibration_scene_mode';
-  static readonly MULTI_CONTROLLER: string = 'settings_multi_controller';
-  static readonly FLIP_FACE_BUTTONS: string = 'settings_flip_face_buttons';
-  static readonly DEADZONE: string = 'settings_deadzone';
-  static readonly GAMEPAD_MOTION_SENSORS: string = 'settings_gamepad_motion_sensors';
-  static readonly GAMEPAD_MOTION_FALLBACK: string = 'settings_gamepad_motion_fallback';
-  static readonly GAMEPAD_TOUCHPAD_MOUSE: string = 'settings_gamepad_touchpad_mouse';
-  static readonly ENABLE_START_KEY_MENU: string = 'settings_enable_start_key_menu';
-  static readonly IGNORE_DEVICE_DISCONNECT: string = 'settings_ignore_device_disconnect';
-  static readonly GC_BUTTON_HOME_MAPPING: string = 'settings_gc_button_home_mapping';
-  static readonly ENABLE_KEY_INTERCEPTOR: string = 'settings_enable_key_interceptor';
-  static readonly USB_DRIVER_ENABLED: string = 'settings_usb_driver_enabled';
-  
-  // 输入 - 屏幕控制器
-  static readonly ENABLE_ONSCREEN_CONTROLS: string = 'settings_enable_onscreen_controls';
-  static readonly ENABLE_ONSCREEN_KEYBOARD: string = 'settings_enable_onscreen_keyboard';
-  static readonly ONLY_L3_R3: string = 'settings_only_l3_r3';
-  static readonly SHOW_GUIDE_BUTTON: string = 'settings_show_guide_button';
-  static readonly HALF_HEIGHT_OSC_PORTRAIT: string = 'settings_half_height_osc_portrait';
-  static readonly OSC_OPACITY: string = 'settings_osc_opacity';
-  static readonly VIBRATE_OSC: string = 'settings_vibrate_osc';
-  
-  // 输入 - 鼠标/触控
-  static readonly SHOW_LOCAL_CURSOR: string = 'settings_show_local_cursor';
-  static readonly TOUCHSCREEN_TRACKPAD: string = 'settings_touchscreen_trackpad';
-  static readonly ENABLE_DOUBLE_CLICK_DRAG: string = 'settings_enable_double_click_drag';
-  static readonly DOUBLE_TAP_TIME_THRESHOLD: string = 'settings_double_tap_time_threshold';
-  static readonly ANALOG_SCROLLING: string = 'settings_analog_scrolling';
-  static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
-  static readonly GAME_MOUSE_MODE: string = 'settings_game_mouse_mode';
-  
-  // 增强触控设置
-  static readonly ENABLE_ENHANCED_TOUCH: string = 'settings_enable_enhanced_touch';
-  static readonly ENHANCED_TOUCH_ON_RIGHT: string = 'settings_enhanced_touch_on_right';
-  static readonly ENHANCED_TOUCH_ZONE_DIVIDER: string = 'settings_enhanced_touch_zone_divider';
-  static readonly POINTER_VELOCITY_FACTOR: string = 'settings_pointer_velocity_factor';
-  static readonly LONG_PRESS_FLAT_REGION: string = 'settings_long_press_flat_region';
-  
-  // 主机设置
-  static readonly ENABLE_SOPS: string = 'settings_enable_sops';
-  static readonly SCREEN_COMBINATION_MODE: string = 'settings_screen_combination_mode';
-  static readonly LOCK_SCREEN_AFTER_DISCONNECT: string = 'settings_lock_screen_after_disconnect';
-  static readonly SWAP_QUIT_AND_DISCONNECT: string = 'settings_swap_quit_and_disconnect';
-  
-  // 高级设置
-  static readonly DECODER_BUFFER_COUNT: string = 'settings_decoder_buffer_count';
-  static readonly ENABLE_SYNC_DECODE: string = 'settings_enable_sync_decode';  // 同步解码模式
-  static readonly ENABLE_VRR: string = 'settings_enable_vrr';  // VRR 可变刷新率模式
-  static readonly ENABLE_VSYNC: string = 'settings_enable_vsync';
-  static readonly PERFORMANCE_MODE: string = 'settings_performance_mode';  // 性能模式
-  static readonly ENABLE_PERF_OVERLAY: string = 'settings_enable_perf_overlay';
-  static readonly PERF_OVERLAY_ORIENTATION: string = 'settings_perf_overlay_orientation';
-  static readonly PERF_OVERLAY_POSITION: string = 'settings_perf_overlay_position';
-  static readonly PERF_OVERLAY_LOCKED: string = 'settings_perf_overlay_locked';
-  static readonly PERF_OVERLAY_ITEMS: string = 'settings_perf_overlay_items';
-  static readonly LATENCY_TOAST: string = 'settings_latency_toast';
-  static readonly DISABLE_WARNINGS: string = 'settings_disable_warnings';
-  static readonly REDUCE_REFRESH_RATE: string = 'settings_reduce_refresh_rate';
-  static readonly ENABLE_STUN: string = 'settings_enable_stun';
-  static readonly ENABLE_ESC_MENU: string = 'settings_enable_esc_menu';
-  static readonly ESC_MENU_KEY: string = 'settings_esc_menu_key';
-  static readonly ENABLE_BACKGROUND_TASK: string = 'settings_enable_background_task';  // 后台保活
-  
-  // UI 设置
-  static readonly SMALL_ICON_MODE: string = 'settings_small_icon_mode';
-  static readonly LANGUAGE: string = 'settings_language';
-  static readonly BACKGROUND_IMAGE_TYPE: string = 'settings_background_image_type';
-  static readonly BACKGROUND_IMAGE_URL: string = 'settings_background_image_url';
-  static readonly RESUME_STREAM: string = 'settings_resume_stream';
-  static readonly DEVELOPER_MODE: string = 'settings_developer_mode';
 }
 
 /**
@@ -246,6 +141,7 @@ struct SettingsPageV2 {
   @State keyInterceptorAvailable: boolean = false;  // 按键注入 API 是否可用（API 13+ 才支持反劫持）
   @State gcButtonHomeMapping: string = 'guide';  // 2313键（Home键）动作映射
   @State usbDriverEnabled: boolean = false;  // 默认关闭 USB 手柄驱动
+  @State forceUsbDriverOnly: boolean = false;  // 强制纯 USB 驱动模式
   
   // 输入 - 屏幕控制器
   @State enableOnscreenControls: boolean = false;
@@ -528,6 +424,7 @@ struct SettingsPageV2 {
       }
       this.gcButtonHomeMapping = await PreferencesUtil.get<string>(SettingsKeys.GC_BUTTON_HOME_MAPPING, 'guide');
       this.usbDriverEnabled = await this.loadBoolean(SettingsKeys.USB_DRIVER_ENABLED, false);
+      this.forceUsbDriverOnly = await this.loadBoolean(SettingsKeys.FORCE_USB_DRIVER_ONLY, false);
       
       // 输入 - 屏幕控制器
       this.enableOnscreenControls = await this.loadBoolean(SettingsKeys.ENABLE_ONSCREEN_CONTROLS, false);
@@ -1184,14 +1081,34 @@ struct SettingsPageV2 {
               },
               {
                 title: 'USB 手柄驱动',
-                subtitle: '启用 USB 手柄的震动和 LED 等高级功能。手柄输入仍由系统统一处理；如需由 USB 驱动接管输入，可在串流菜单中强制切换',
+                subtitle: '启用 USB 手柄的震动和 LED 等高级功能。手柄输入仍由系统统一处理',
                 type: 'toggle',
                 value: this.usbDriverEnabled,
                 action: () => {
                   this.usbDriverEnabled = !this.usbDriverEnabled;
                   this.saveSetting(SettingsKeys.USB_DRIVER_ENABLED, this.usbDriverEnabled);
+                  // 关闭 USB 驱动时，同步关闭强制模式
+                  if (!this.usbDriverEnabled && this.forceUsbDriverOnly) {
+                    this.forceUsbDriverOnly = false;
+                    this.saveSetting(SettingsKeys.FORCE_USB_DRIVER_ONLY, false);
+                  }
                   promptAction.showToast({
-                    message: '重启应用后生效',
+                    message: '下次串流时生效',
+                    duration: 2500
+                  });
+                }
+              },
+              {
+                title: '强制 USB 驱动接管输入',
+                subtitle: '禁用系统手柄服务（GCK），由 USB 驱动直接处理输入。适用于 GCK 兼容性差的手柄，也可在串流菜单中临时切换',
+                type: 'toggle',
+                value: this.forceUsbDriverOnly,
+                visible: this.usbDriverEnabled,
+                action: () => {
+                  this.forceUsbDriverOnly = !this.forceUsbDriverOnly;
+                  this.saveSetting(SettingsKeys.FORCE_USB_DRIVER_ONLY, this.forceUsbDriverOnly);
+                  promptAction.showToast({
+                    message: '下次串流时生效',
                     duration: 2500
                   });
                 }

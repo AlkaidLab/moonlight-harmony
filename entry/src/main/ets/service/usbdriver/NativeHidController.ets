@@ -19,6 +19,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, UsbClass, ControllerType, ControllerCapabilities } from './ControllerConstants';
+import { AXIS_MAX, TRIGGER_MAX, RUMBLE_MAX } from '../GamepadTypes';
 import { NativeHidParserService, NativeGamepadState, NativeGamepadType, NativeButtonFlags } from './NativeHidParserService';
 import { isHardwareError, createUsbError, UsbError } from './UsbErrorCodes';
 
@@ -530,14 +531,14 @@ export class NativeHidController extends AbstractController {
     this.buttonFlags = this.convertNativeButtons(state.buttons);
 
     // 转换摇杆值（原生层返回 -32768 到 32767，需要转换为 -1.0 到 1.0）
-    this.leftStickX = state.leftStickX / 32767.0;
-    this.leftStickY = state.leftStickY / 32767.0;
-    this.rightStickX = state.rightStickX / 32767.0;
-    this.rightStickY = state.rightStickY / 32767.0;
+    this.leftStickX = state.leftStickX / AXIS_MAX;
+    this.leftStickY = state.leftStickY / AXIS_MAX;
+    this.rightStickX = state.rightStickX / AXIS_MAX;
+    this.rightStickY = state.rightStickY / AXIS_MAX;
 
-    // 转换扳机值（原生层返回 0-255，需要转换为 0.0 到 1.0）
-    this.leftTrigger = state.leftTrigger / 255.0;
-    this.rightTrigger = state.rightTrigger / 255.0;
+    // 转换扣机值（原生层返回 0-255，需要转换为 0.0 到 1.0）
+    this.leftTrigger = state.leftTrigger / TRIGGER_MAX;
+    this.rightTrigger = state.rightTrigger / TRIGGER_MAX;
 
     // 报告输入
     this.reportInput();
@@ -703,8 +704,8 @@ export class NativeHidController extends AbstractController {
     const cmd = this.nativeParser.createRumbleCommand(
       this.vendorId,
       this.productId,
-      Math.round(lowFreqMotor * 65535),
-      Math.round(highFreqMotor * 65535)
+      Math.round(lowFreqMotor * RUMBLE_MAX),
+      Math.round(highFreqMotor * RUMBLE_MAX)
     );
 
     if (cmd) {

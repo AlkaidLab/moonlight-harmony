@@ -18,6 +18,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractDualSenseController } from './AbstractDualSenseController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, DualSense, DPadDirection, ControllerCapabilities } from './ControllerConstants';
+import { readShortLE, TRIGGER_MAX } from '../GamepadTypes';
 
 const TAG = '[USB-DS5]';
 
@@ -64,22 +65,14 @@ export class DualSenseController extends AbstractDualSenseController {
    * 标准化摇杆轴值
    */
   private normalizeThumbStickAxis(value: number): number {
-    return (2.0 * value / 255.0) - 1.0;
+    return (2.0 * value / TRIGGER_MAX) - 1.0;
   }
   
   /**
    * 标准化扳机轴值
    */
   private normalizeTriggerAxis(value: number): number {
-    return value / 255.0;
-  }
-  
-  /**
-   * 读取小端序 short
-   */
-  private readShortLE(buffer: Uint8Array, offset: number): number {
-    const value = buffer[offset] | (buffer[offset + 1] << 8);
-    return value > 32767 ? value - 65536 : value;
+    return value / TRIGGER_MAX;
   }
   
   /**
@@ -168,13 +161,13 @@ export class DualSenseController extends AbstractDualSenseController {
       const imuOffset = 16;  // 根据实际报告格式调整
       
       if (buffer.length >= imuOffset + 12) {
-        const gyrox = this.readShortLE(buffer, imuOffset);
-        const gyroy = this.readShortLE(buffer, imuOffset + 2);
-        const gyroz = this.readShortLE(buffer, imuOffset + 4);
-        
-        const accelx = this.readShortLE(buffer, imuOffset + 6);
-        const accely = this.readShortLE(buffer, imuOffset + 8);
-        const accelz = this.readShortLE(buffer, imuOffset + 10);
+const gyrox = readShortLE(buffer, imuOffset);
+        const gyroy = readShortLE(buffer, imuOffset + 2);
+        const gyroz = readShortLE(buffer, imuOffset + 4);
+
+        const accelx = readShortLE(buffer, imuOffset + 6);
+        const accely = readShortLE(buffer, imuOffset + 8);
+        const accelz = readShortLE(buffer, imuOffset + 10);
         
         this.gyroX = gyrox * GYRO_SCALE;
         this.gyroY = gyroy * GYRO_SCALE;

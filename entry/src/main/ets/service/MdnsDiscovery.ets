@@ -11,6 +11,7 @@
 import { mdns } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { NvHttp } from './NvHttp';
 
 /**
  * 发现的计算机信息
@@ -151,7 +152,7 @@ export class MdnsDiscovery {
     }
 
     // 确保端口有效
-    const port = host.port ?? 47989;  // 默认 HTTP 端口
+    const port = host.port ?? NvHttp.DEFAULT_HTTP_PORT;  // 默认 HTTP 端口
 
     console.info(`MdnsDiscovery: 发现服务器 ${resolvedInfo.serviceName} @ ${externalAddr}`);
 
@@ -185,7 +186,7 @@ export class MdnsDiscovery {
 
       if (resolvedService.host?.address) {
         // 优先使用 host.port（参考 moonlight-ohos 实现）
-        const port = resolvedService.host?.port || resolvedService.port || 47984;
+        const port = resolvedService.host?.port || resolvedService.port || NvHttp.DEFAULT_HTTP_PORT;
         
         const computer: DiscoveredComputer = {
           name: resolvedService.serviceName,

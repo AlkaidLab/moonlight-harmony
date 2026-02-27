@@ -42,6 +42,12 @@ export const MODIFIER_CTRL = 0x02;
 export const MODIFIER_ALT = 0x04;
 export const MODIFIER_META = 0x08;
 
+// Windows 虚拟键码（用于 Ctrl+Alt+Del / Ctrl+Alt+Shift 等组合键）
+export const VK_SHIFT = 0x10;
+export const VK_CONTROL = 0x11;
+export const VK_MENU = 0x12;    // Alt
+export const VK_LWIN = 0x5B;
+
 // 触摸事件类型
 export const TOUCH_EVENT_HOVER = 0x00;
 export const TOUCH_EVENT_DOWN = 0x01;

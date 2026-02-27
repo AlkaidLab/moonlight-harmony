@@ -37,6 +37,9 @@ export interface GameMenuCallbacks {
   onForceUsbDriver?: () => void;
   onToggleKeyboard?: () => void;
   onToggleMouseEmulation?: () => void;
+  onControllerOpacityChange?: (opacity: number) => void;
+  onControllerScaleChange?: (scale: number) => void;
+  onTouchPassthroughChange?: (enabled: boolean) => void;
   onClose?: () => void;
   onUnlockOverlay?: () => void;
 }
@@ -106,6 +109,9 @@ export struct GameMenuDialog {
   hasUsbGamepad: boolean = false;
   isMouseEmulationActive: boolean = false;
   hasConnectedGamepad: boolean = false;
+  controllerOpacity: number = 0.75;
+  controllerScale: number = 1.0;
+  touchPassthrough: boolean = false;
 
   // 动画状态
   @State private positions: number[] = Array(MENU_ITEM_COUNT).fill(200);
@@ -140,6 +146,11 @@ export struct GameMenuDialog {
   // 深浅主题（自动跟随系统切换）
   @StorageProp('colorMode') currentColorMode: number = ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
 
+  // 虚拟手柄设置本地状态（拖动 Slider 时实时回调）
+  @State private controllerOpacityLocal: number = 0.75;
+  @State private controllerScaleLocal: number = 1.0;
+  @State private touchPassthroughLocal: boolean = false;
+
   // 弹窗控制器
   private exitDialogController?: CustomDialogController;
   private touchModeDialogController?: CustomDialogController;
@@ -149,6 +160,9 @@ export struct GameMenuDialog {
     this.shortcuts = this.shortcutManager.getShortcuts();
     this.currentBitrate = this.viewModel.getCurrentBitrate();
     this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
+    this.controllerOpacityLocal = this.controllerOpacity;
+    this.controllerScaleLocal = this.controllerScale;
+    this.touchPassthroughLocal = this.touchPassthrough;
     this.loadGyroSettings();
     this.detectLayoutMode();
     this.animateIn();
@@ -495,6 +509,7 @@ export struct GameMenuDialog {
 
         Column({ space: 12 }) {
           this.BitrateCard()
+          if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
           if (this.hasGyroscope) this.GyroAssistCard()
           if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
         }
@@ -518,6 +533,7 @@ export struct GameMenuDialog {
         if (this.shortcuts.length > 0) this.ShortcutCard()
         if (this.superCmds.length > 0) this.SuperCmdCard()
         this.BitrateCard()
+        if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
         if (this.hasGyroscope) this.GyroAssistCard()
         if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
       }
@@ -567,6 +583,159 @@ export struct GameMenuDialog {
       this.callbacks.onUnlockOverlay?.();
       this.callbacks.onClose?.();
     })
+  }
+
+  @Builder
+  VirtualControllerCard() {
+    Column() {
+      Row() {
+        Text('🎮').fontSize(13)
+        Text(' 虚拟手柄')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#E0FFFFFF')
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.viewModel.showController })
+          .selectedColor('#A8D8EA')
+          .switchPointColor('#FFFFFF')
+          .width(40)
+          .height(22)
+          .onChange((isOn: boolean) => {
+            if (isOn !== this.viewModel.showController) {
+              this.viewModel.toggleController();
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 12, top: 14, bottom: 4 })
+
+      Text('屏幕虚拟手柄叠加层')
+        .fontSize(10)
+        .fontColor('#60FFFFFF')
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: this.viewModel.showController ? 8 : 14 })
+
+      if (this.viewModel.showController) {
+        Row().width('85%').height(1).backgroundColor('#15FFFFFF')
+
+        // 触摸穿透开关
+        Row() {
+          Text('触摸穿透').fontSize(11).fontColor('#B0FFFFFF')
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.touchPassthroughLocal })
+            .selectedColor('#A8D8EA')
+            .switchPointColor('#FFFFFF')
+            .width(36)
+            .height(20)
+            .onChange((isOn: boolean) => {
+              this.touchPassthroughLocal = isOn;
+              this.callbacks.onTouchPassthroughChange?.(isOn);
+            })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 12, top: 10, bottom: 4 })
+
+        Text('允许触摸穿透手柄操控画面')
+          .fontSize(9)
+          .fontColor('#50FFFFFF')
+          .width('100%')
+          .padding({ left: 16, right: 16, bottom: 4 })
+
+        Row().width('85%').height(1).backgroundColor('#15FFFFFF')
+
+        // 透明度
+        Column() {
+          Row() {
+            Text('透明度').fontSize(11).fontColor('#B0FFFFFF')
+            Blank()
+            Text(`${Math.round(this.controllerOpacityLocal * 100)}%`)
+              .fontSize(11)
+              .fontColor('#A8D8EA')
+              .fontWeight(FontWeight.Medium)
+          }
+          .width('100%')
+          .padding({ bottom: 4 })
+
+          Slider({
+            value: this.controllerOpacityLocal * 100,
+            min: 20,
+            max: 100,
+            step: 5,
+            style: SliderStyle.OutSet
+          })
+            .width('100%')
+            .blockColor('#A8D8EA')
+            .blockSize({ width: 12, height: 12 })
+            .trackColor('#30FFFFFF')
+            .selectedColor('#A8D8EA')
+            .showSteps(false)
+            .showTips(false)
+            .onChange((value: number, mode: SliderChangeMode) => {
+              this.controllerOpacityLocal = value / 100;
+              this.callbacks.onControllerOpacityChange?.(this.controllerOpacityLocal);
+            })
+
+          Row() {
+            Text('20%').fontSize(9).fontColor('#60FFFFFF')
+            Blank()
+            Text('100%').fontSize(9).fontColor('#60FFFFFF')
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ left: 14, right: 14, top: 10, bottom: 4 })
+
+        Row().width('85%').height(1).backgroundColor('#15FFFFFF')
+
+        // 大小调整
+        Column() {
+          Row() {
+            Text('大小').fontSize(11).fontColor('#B0FFFFFF')
+            Blank()
+            Text(`${Math.round(this.controllerScaleLocal * 100)}%`)
+              .fontSize(11)
+              .fontColor('#A8D8EA')
+              .fontWeight(FontWeight.Medium)
+          }
+          .width('100%')
+          .padding({ bottom: 4 })
+
+          Slider({
+            value: this.controllerScaleLocal * 100,
+            min: 50,
+            max: 200,
+            step: 10,
+            style: SliderStyle.OutSet
+          })
+            .width('100%')
+            .blockColor('#A8D8EA')
+            .blockSize({ width: 12, height: 12 })
+            .trackColor('#30FFFFFF')
+            .selectedColor('#A8D8EA')
+            .showSteps(false)
+            .showTips(false)
+            .onChange((value: number, mode: SliderChangeMode) => {
+              this.controllerScaleLocal = Math.round(value) / 100;
+              this.callbacks.onControllerScaleChange?.(this.controllerScaleLocal);
+            })
+
+          Row() {
+            Text('50%').fontSize(9).fontColor('#60FFFFFF')
+            Blank()
+            Text('200%').fontSize(9).fontColor('#60FFFFFF')
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ left: 14, right: 14, top: 10, bottom: 12 })
+      }
+    }
+    .width(CARD_WIDTH)
+    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
+    .backdropBlur(40)
+    .borderRadius(20)
+    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
   }
 
   @Builder

@@ -9,12 +9,16 @@
  */
 
 /**
- * 虚拟控制器组件 V2
+ * 虚拟控制器组件
  * 现代化设计，支持完整的游戏手柄功能
  */
 import { InputEvent, InputType, ControllerButton, ControllerButtonEvent, ControllerAxis, ControllerAxisEvent } from '../model/InputEvent';
 import { AnalogStick, AnalogStickConfig } from './AnalogStick';
 import { vibrator } from '@kit.SensorServiceKit';
+import { PreferencesUtil } from '../utils/PreferencesUtil';
+
+const SCALE_KEY = 'virtual_controller_scale';
+const OPACITY_KEY = 'virtual_controller_opacity';
 
 /**
  * 虚拟控制器配置
@@ -45,32 +49,27 @@ export interface VirtualControllerConfig {
 }
 
 @Component
-export struct VirtualControllerV2 {
-  // 配置
-  @Prop config: VirtualControllerConfig = {};
-  
+export struct VirtualController {
+  // 配置（普通属性，不使用 @Prop，避免父组件重渲染时因新对象引用触发子组件不必要的更新）
+  config: VirtualControllerConfig = {};
+
   // 回调
   onInput: (input: InputEvent) => void = () => {};
-  
+
+  /** 触摸穿透模式 */
+  touchPassthrough: boolean = false;
+
+  /** 按钮缩放比例（由父组件驱动） */
+  @Prop controllerScale: number = 1.0;
+
   // 计算后的配置值
   private controllerOpacity: number = 0.75;
-  private controllerScale: number = 1.0;
   private controllerDeadzone: number = 0.15;
-  
-  // 按钮状态（用于多点触控）
-  @State pressedButtons: Set<ControllerButton> = new Set();
-  
-  // 扳机状态
-  @State leftTriggerActive: boolean = false;
-  @State rightTriggerActive: boolean = false;
 
   aboutToAppear(): void {
     // 应用配置
     if (this.config.opacity !== undefined) {
       this.controllerOpacity = this.config.opacity;
-    }
-    if (this.config.scale !== undefined) {
-      this.controllerScale = this.config.scale;
     }
     if (this.config.deadzone !== undefined) {
       this.controllerDeadzone = this.config.deadzone;
@@ -93,32 +92,36 @@ export struct VirtualControllerV2 {
           // 左侧肩键组
           Column({ space: 6 }) {
             // LT
-            Button() {
+            Column() {
               Text('LT')
                 .fontSize(12 * this.controllerScale)
-                .fontColor(this.leftTriggerActive ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+                .fontColor(this.withAlpha('#FFFFFF', 0.5))
                 .fontWeight(FontWeight.Bold)
             }
             .width(60 * this.controllerScale)
             .height(44 * this.controllerScale)
-            .backgroundColor(this.leftTriggerActive ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(Color.Transparent)
             .borderRadius(12)
-            .border({ width: 1, color: this.leftTriggerActive ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.15) })
-            .onTouch((event) => this.handleTriggerTouch(true, event))
+            .border({ width: 1, color: this.withAlpha('#FFFFFF', 0.15) })
+            .hitTestBehavior(HitTestMode.Block)
+            .onTouch((event: TouchEvent) => this.handleTriggerTouch(true, event))
 
             // LB
-            Button() {
+            Column() {
               Text('LB')
                 .fontSize(12 * this.controllerScale)
-                .fontColor(this.pressedButtons.has(ControllerButton.LB) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+                .fontColor(this.withAlpha('#FFFFFF', 0.5))
                 .fontWeight(FontWeight.Medium)
             }
             .width(64 * this.controllerScale)
             .height(34 * this.controllerScale)
-            .backgroundColor(this.pressedButtons.has(ControllerButton.LB) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(Color.Transparent)
             .borderRadius(17 * this.controllerScale)
-            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.LB) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.15) })
-            .onTouch((event) => this.handleButtonTouch(ControllerButton.LB, event))
+            .border({ width: 1, color: this.withAlpha('#FFFFFF', 0.15) })
+            .hitTestBehavior(HitTestMode.Block)
+            .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.LB, event))
           }
           .alignItems(HorizontalAlign.Start)
 
@@ -127,32 +130,36 @@ export struct VirtualControllerV2 {
           // 右侧肩键组
           Column({ space: 6 }) {
             // RT
-            Button() {
+            Column() {
               Text('RT')
                 .fontSize(12 * this.controllerScale)
-                .fontColor(this.rightTriggerActive ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+                .fontColor(this.withAlpha('#FFFFFF', 0.5))
                 .fontWeight(FontWeight.Bold)
             }
             .width(60 * this.controllerScale)
             .height(44 * this.controllerScale)
-            .backgroundColor(this.rightTriggerActive ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(Color.Transparent)
             .borderRadius(12)
-            .border({ width: 1, color: this.rightTriggerActive ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.15) })
-            .onTouch((event) => this.handleTriggerTouch(false, event))
+            .border({ width: 1, color: this.withAlpha('#FFFFFF', 0.15) })
+            .hitTestBehavior(HitTestMode.Block)
+            .onTouch((event: TouchEvent) => this.handleTriggerTouch(false, event))
 
             // RB
-            Button() {
+            Column() {
               Text('RB')
                 .fontSize(12 * this.controllerScale)
-                .fontColor(this.pressedButtons.has(ControllerButton.RB) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+                .fontColor(this.withAlpha('#FFFFFF', 0.5))
                 .fontWeight(FontWeight.Medium)
             }
             .width(64 * this.controllerScale)
             .height(34 * this.controllerScale)
-            .backgroundColor(this.pressedButtons.has(ControllerButton.RB) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(Color.Transparent)
             .borderRadius(17 * this.controllerScale)
-            .border({ width: 1, color: this.pressedButtons.has(ControllerButton.RB) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.15) })
-            .onTouch((event) => this.handleButtonTouch(ControllerButton.RB, event))
+            .border({ width: 1, color: this.withAlpha('#FFFFFF', 0.15) })
+            .hitTestBehavior(HitTestMode.Block)
+            .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.RB, event))
           }
           .alignItems(HorizontalAlign.End)
         }
@@ -238,7 +245,6 @@ export struct VirtualControllerV2 {
         .padding({ right: 24 })
       }
       .width('100%')
-      .layoutWeight(1)
 
       // ===== 底部 - Start/Back/Guide =====
       if (this.config.showCenter !== false) {
@@ -247,17 +253,19 @@ export struct VirtualControllerV2 {
           this.buildCenterButton('◂', 'BACK', ControllerButton.BACK)
 
           // Guide
-          Button() {
+          Column() {
             Text('◉')
               .fontSize(18 * this.controllerScale)
-              .fontColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? '#FFFFFF' : this.withAlpha('#7EB8E0', 0.6))
+              .fontColor(this.withAlpha('#7EB8E0', 0.6))
           }
           .width(42 * this.controllerScale)
           .height(42 * this.controllerScale)
-          .backgroundColor(this.pressedButtons.has(ControllerButton.SPECIAL) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(Color.Transparent)
           .borderRadius(21 * this.controllerScale)
-          .border({ width: 1.5, color: this.pressedButtons.has(ControllerButton.SPECIAL) ? '#5090FF' : this.withAlpha('#7EB8E0', 0.25) })
-          .onTouch((event) => this.handleButtonTouch(ControllerButton.SPECIAL, event))
+          .border({ width: 1.5, color: this.withAlpha('#7EB8E0', 0.25) })
+          .hitTestBehavior(HitTestMode.Block)
+          .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.SPECIAL, event))
 
           // Start
           this.buildCenterButton('▸', 'START', ControllerButton.START)
@@ -279,32 +287,26 @@ export struct VirtualControllerV2 {
       }
     }
     .width('100%')
-    .height('100%')
-    .hitTestBehavior(HitTestMode.Default)
-    .onTouch(() => {})
+    .justifyContent(FlexAlign.End)
   }
 
   // ==================== ABXY 按钮（全透明 + 彩色边框）====================
   @Builder
   buildActionButton(label: string, button: ControllerButton, color: string) {
-    Button() {
+    Column() {
       Text(label)
         .fontSize(17 * this.controllerScale)
-        .fontColor(this.pressedButtons.has(button) ? '#FFFFFF' : this.withAlpha(color, 0.7))
+        .fontColor(this.withAlpha(color, 0.7))
         .fontWeight(FontWeight.Bold)
     }
     .width(48 * this.controllerScale)
     .height(48 * this.controllerScale)
-    .backgroundColor(this.pressedButtons.has(button) ? this.withAlpha(color, 0.35) : Color.Transparent)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(Color.Transparent)
     .borderRadius(24 * this.controllerScale)
-    .border({ width: 1.5, color: this.pressedButtons.has(button) ? color : this.withAlpha(color, 0.35) })
-    .shadow({
-      radius: this.pressedButtons.has(button) ? 8 : 0,
-      color: this.pressedButtons.has(button) ? this.withAlpha(color, 0.3) : 'transparent',
-      offsetX: 0,
-      offsetY: 0
-    })
-    .onTouch((event) => this.handleButtonTouch(button, event))
+    .border({ width: 1.5, color: this.withAlpha(color, 0.35) })
+    .hitTestBehavior(HitTestMode.Block)
+    .onTouch((event: TouchEvent) => this.handleButtonTouch(button, event))
   }
 
   // ==================== 十字键（Cross D-Pad）====================
@@ -319,19 +321,20 @@ export struct VirtualControllerV2 {
         Column() {
           Text('▴')
             .fontSize(14 * this.controllerScale)
-            .fontColor(this.pressedButtons.has(ControllerButton.UP) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+            .fontColor(this.withAlpha('#FFFFFF', 0.5))
             .fontWeight(FontWeight.Bold)
         }
         .width(36 * this.controllerScale)
         .height(36 * this.controllerScale)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.pressedButtons.has(ControllerButton.UP) ? this.withAlpha('#5090FF', 0.35) : Color.Transparent)
+        .backgroundColor(Color.Transparent)
         .borderRadius({ topLeft: 14, topRight: 14, bottomLeft: 0, bottomRight: 0 })
         .border({
           width: { top: 1, left: 1, right: 1, bottom: 0 },
-          color: this.pressedButtons.has(ControllerButton.UP) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.18)
+          color: this.withAlpha('#FFFFFF', 0.18)
         })
-        .onTouch((event) => this.handleButtonTouch(ControllerButton.UP, event))
+        .hitTestBehavior(HitTestMode.Block)
+        .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.UP, event))
 
         Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
       }
@@ -341,19 +344,20 @@ export struct VirtualControllerV2 {
         Column() {
           Text('◂')
             .fontSize(14 * this.controllerScale)
-            .fontColor(this.pressedButtons.has(ControllerButton.LEFT) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+            .fontColor(this.withAlpha('#FFFFFF', 0.5))
             .fontWeight(FontWeight.Bold)
         }
         .width(36 * this.controllerScale)
         .height(36 * this.controllerScale)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.pressedButtons.has(ControllerButton.LEFT) ? this.withAlpha('#5090FF', 0.35) : Color.Transparent)
+        .backgroundColor(Color.Transparent)
         .borderRadius({ topLeft: 14, topRight: 0, bottomLeft: 14, bottomRight: 0 })
         .border({
           width: { top: 1, left: 1, right: 0, bottom: 1 },
-          color: this.pressedButtons.has(ControllerButton.LEFT) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.18)
+          color: this.withAlpha('#FFFFFF', 0.18)
         })
-        .onTouch((event) => this.handleButtonTouch(ControllerButton.LEFT, event))
+        .hitTestBehavior(HitTestMode.Block)
+        .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.LEFT, event))
 
         // 中心格（十字交叉点）
         Column() {
@@ -374,19 +378,20 @@ export struct VirtualControllerV2 {
         Column() {
           Text('▸')
             .fontSize(14 * this.controllerScale)
-            .fontColor(this.pressedButtons.has(ControllerButton.RIGHT) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+            .fontColor(this.withAlpha('#FFFFFF', 0.5))
             .fontWeight(FontWeight.Bold)
         }
         .width(36 * this.controllerScale)
         .height(36 * this.controllerScale)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.pressedButtons.has(ControllerButton.RIGHT) ? this.withAlpha('#5090FF', 0.35) : Color.Transparent)
+        .backgroundColor(Color.Transparent)
         .borderRadius({ topLeft: 0, topRight: 14, bottomLeft: 0, bottomRight: 14 })
         .border({
           width: { top: 1, left: 0, right: 1, bottom: 1 },
-          color: this.pressedButtons.has(ControllerButton.RIGHT) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.18)
+          color: this.withAlpha('#FFFFFF', 0.18)
         })
-        .onTouch((event) => this.handleButtonTouch(ControllerButton.RIGHT, event))
+        .hitTestBehavior(HitTestMode.Block)
+        .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.RIGHT, event))
       }
 
       // 第三行：空 | 下 | 空
@@ -395,19 +400,20 @@ export struct VirtualControllerV2 {
         Column() {
           Text('▾')
             .fontSize(14 * this.controllerScale)
-            .fontColor(this.pressedButtons.has(ControllerButton.DOWN) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.5))
+            .fontColor(this.withAlpha('#FFFFFF', 0.5))
             .fontWeight(FontWeight.Bold)
         }
         .width(36 * this.controllerScale)
         .height(36 * this.controllerScale)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.pressedButtons.has(ControllerButton.DOWN) ? this.withAlpha('#5090FF', 0.35) : Color.Transparent)
+        .backgroundColor(Color.Transparent)
         .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 14, bottomRight: 14 })
         .border({
           width: { top: 0, left: 1, right: 1, bottom: 1 },
-          color: this.pressedButtons.has(ControllerButton.DOWN) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.18)
+          color: this.withAlpha('#FFFFFF', 0.18)
         })
-        .onTouch((event) => this.handleButtonTouch(ControllerButton.DOWN, event))
+        .hitTestBehavior(HitTestMode.Block)
+        .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.DOWN, event))
 
         Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
       }
@@ -417,58 +423,57 @@ export struct VirtualControllerV2 {
   // ==================== 中间功能键（Back/Start）====================
   @Builder
   buildCenterButton(icon: string, label: string, button: ControllerButton) {
-    Button() {
+    Column() {
       Row({ space: 4 }) {
         Text(icon)
           .fontSize(13 * this.controllerScale)
-          .fontColor(this.pressedButtons.has(button) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.4))
+          .fontColor(this.withAlpha('#FFFFFF', 0.4))
         Text(label)
           .fontSize(8 * this.controllerScale)
-          .fontColor(this.pressedButtons.has(button) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.4))
+          .fontColor(this.withAlpha('#FFFFFF', 0.4))
           .fontWeight(FontWeight.Medium)
       }
     }
     .height(34 * this.controllerScale)
     .padding({ left: 10, right: 10 })
-    .backgroundColor(this.pressedButtons.has(button) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(Color.Transparent)
     .borderRadius(17 * this.controllerScale)
-    .border({ width: 1, color: this.pressedButtons.has(button) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.12) })
-    .onTouch((event) => this.handleButtonTouch(button, event))
+    .border({ width: 1, color: this.withAlpha('#FFFFFF', 0.12) })
+    .hitTestBehavior(HitTestMode.Block)
+    .onTouch((event: TouchEvent) => this.handleButtonTouch(button, event))
   }
 
   // ==================== L3/R3 小按钮 ====================
   @Builder
   buildSmallButton(label: string, button: ControllerButton) {
-    Button() {
+    Column() {
       Text(label)
         .fontSize(11 * this.controllerScale)
-        .fontColor(this.pressedButtons.has(button) ? '#FFFFFF' : this.withAlpha('#FFFFFF', 0.4))
+        .fontColor(this.withAlpha('#FFFFFF', 0.4))
         .fontWeight(FontWeight.Medium)
     }
     .width(44 * this.controllerScale)
     .height(30 * this.controllerScale)
-    .backgroundColor(this.pressedButtons.has(button) ? this.withAlpha('#5090FF', 0.4) : Color.Transparent)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(Color.Transparent)
     .borderRadius(15 * this.controllerScale)
-    .border({ width: 1, color: this.pressedButtons.has(button) ? this.withAlpha('#5090FF', 0.6) : this.withAlpha('#FFFFFF', 0.12) })
-    .onTouch((event) => this.handleButtonTouch(button, event))
+    .border({ width: 1, color: this.withAlpha('#FFFFFF', 0.12) })
+    .hitTestBehavior(HitTestMode.Block)
+    .onTouch((event: TouchEvent) => this.handleButtonTouch(button, event))
   }
 
   // ==================== 事件处理 ====================
   private handleButtonTouch(button: ControllerButton, event: TouchEvent): void {
+    event.stopPropagation();
     const isPressed = event.type === TouchType.Down;
     const isReleased = event.type === TouchType.Up || event.type === TouchType.Cancel;
     
-    if (isPressed) {
-      this.pressedButtons.add(button);
-    } else if (isReleased) {
-      this.pressedButtons.delete(button);
-    } else {
+    if (!isPressed && !isReleased) {
       return; // Move 事件不处理
     }
     
-    // 触发状态更新
-    this.pressedButtons = new Set(this.pressedButtons);
-    
+    // 先发送事件（不修改 @State，避免重渲染导致 Up 事件丢失）
     const inputEvent: ControllerButtonEvent = {
       type: InputType.CONTROLLER_BUTTON,
       timestamp: Date.now(),
@@ -476,7 +481,6 @@ export struct VirtualControllerV2 {
       button: button,
       isPressed: isPressed
     };
-
     this.onInput(inputEvent);
     
     // 震动反馈
@@ -486,26 +490,15 @@ export struct VirtualControllerV2 {
   }
   
   private handleTriggerTouch(isLeft: boolean, event: TouchEvent): void {
+    event.stopPropagation();
     const isPressed = event.type === TouchType.Down;
     const isReleased = event.type === TouchType.Up || event.type === TouchType.Cancel;
     
-    if (isPressed) {
-      if (isLeft) {
-        this.leftTriggerActive = true;
-      } else {
-        this.rightTriggerActive = true;
-      }
-    } else if (isReleased) {
-      if (isLeft) {
-        this.leftTriggerActive = false;
-      } else {
-        this.rightTriggerActive = false;
-      }
-    } else {
+    if (!isPressed && !isReleased) {
       return;
     }
     
-    // 发送扳机轴事件（完全按下 = 255，释放 = 0）
+    // 先发送扳机轴事件（不修改 @State，避免重渲染导致 Up 丢失）
     const axis = isLeft ? ControllerAxis.LEFT_TRIGGER : ControllerAxis.RIGHT_TRIGGER;
     const value = isPressed ? 255 : 0;
     
@@ -516,7 +509,6 @@ export struct VirtualControllerV2 {
       axis: axis,
       value: value
     };
-    
     this.onInput(axisEvent);
     
     // 震动反馈
@@ -538,5 +530,103 @@ export struct VirtualControllerV2 {
       // 忽略震动错误
     }
   }
-  
+
+}
+
+// =============================================================================
+// 虚拟控制器叠加层
+// 封装 VirtualController，设置通过 GameMenuDialog 卡片调整
+// =============================================================================
+
+@Component
+export struct VirtualControllerOverlay {
+  /** 输入事件回调 */
+  onInput: (input: InputEvent) => void = () => {};
+
+  /** 触摸穿透状态（双向 — 外部需读取来控制 XComponent hitTest） */
+  @Link touchPassthrough: boolean;
+
+  /** 控制器缩放值（双向 — 外部需读取传递给 config） */
+  @Link controllerScale: number;
+
+  /** 控制器整体透明度（双向 — 外部菜单可调节） */
+  @Link controllerOpacity: number;
+
+  /**
+   * 触摸注册修复触发器。ArkUI 首次渲染时按钮的命中测试区域可能未正确建立，
+   * 通过在父容器（而非 VirtualController）触发一次重渲染来刷新命中测试树。
+   * 父容器重渲染不会导致 V2 重渲染（@Prop 值不变），但 ArkUI 会重算整棵树的命中区域。
+   */
+  @State private hitTestReady: number = 0;
+
+  aboutToAppear(): void {
+    // 延迟 100ms 在父层触发一次重渲染，刷新整个 Stack 的命中测试区域
+    setTimeout(() => {
+      this.hitTestReady = 1;
+    }, 100);
+  }
+
+  build() {
+    Stack() {
+      // 控制器主体 — 底部对齐
+      Column() {
+        VirtualController({
+          touchPassthrough: this.touchPassthrough,
+          controllerScale: this.controllerScale,
+          config: {
+            opacity: 1.0,
+            deadzone: 0.15,
+            showLeftStick: true,
+            showRightStick: true,
+            showDpad: true,
+            showButtons: true,
+            showShoulder: true,
+            showCenter: true,
+            showL3R3: false,
+            enableVibration: true
+          } as VirtualControllerConfig,
+          onInput: (input: InputEvent) => {
+            this.onInput(input);
+          }
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.End)
+      .opacity(this.controllerOpacity)
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(this.touchPassthrough ? HitTestMode.Transparent : HitTestMode.Default)
+    // hitTestReady: 父层重渲染触发 ArkUI 重算命中测试区域（opacity 微变不可见）
+    .opacity(this.hitTestReady > 0 ? 1 : 0.99)
+  }
+
+  /**
+   * 静态方法：加载持久化的缩放值
+   */
+  static async loadScale(): Promise<number> {
+    return await PreferencesUtil.get<number>(SCALE_KEY, 1.0);
+  }
+
+  /**
+   * 静态方法：保存缩放值
+   */
+  static saveScale(value: number): void {
+    PreferencesUtil.put(SCALE_KEY, value);
+  }
+
+  /**
+   * 静态方法：加载持久化的透明度值
+   */
+  static async loadOpacity(): Promise<number> {
+    return await PreferencesUtil.get<number>(OPACITY_KEY, 0.75);
+  }
+
+  /**
+   * 静态方法：保存透明度值
+   */
+  static saveOpacity(value: number): void {
+    PreferencesUtil.put(OPACITY_KEY, value);
+  }
 }

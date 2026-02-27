@@ -17,6 +17,7 @@ import { HttpClient } from '../utils/HttpClient';
 import { XmlUtil } from '../utils/XmlUtil';
 import { StringUtil } from '../utils/StringUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
+import { DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT } from '../common/NetworkConstants';
 
 /**
  * NvHTTP - 与 NVIDIA GameStream / Sunshine 服务器通信
@@ -83,9 +84,9 @@ export class NvHttp {
   private certFilePath: string = '';
   private keyFilePath: string = '';
 
-  // 端口常量
-  static readonly DEFAULT_HTTPS_PORT = 47984;
-  static readonly DEFAULT_HTTP_PORT = 47989;
+  // 端口常量（来源于 NetworkConstants）
+  static readonly DEFAULT_HTTPS_PORT = DEFAULT_HTTPS_PORT;
+  static readonly DEFAULT_HTTP_PORT = DEFAULT_HTTP_PORT;
   // 缩短超时时间以加快离线主机的检测（从 5 秒减少到 3 秒）
   static readonly CONNECTION_TIMEOUT = 3000;
   static readonly LONG_CONNECTION_TIMEOUT = 5000;

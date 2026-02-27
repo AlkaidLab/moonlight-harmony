@@ -19,8 +19,52 @@
 #include "mic_capturer.h"
 #include <hilog/log.h>
 #include <cstring>
+#include <dlfcn.h>
 
 #define LOG_TAG "MicCapturer"
+
+// =============================================================================
+// OHAudio Capturer 新式回调 API 动态加载（兼容旧设备缺失符号）
+// 与 audio_renderer.cpp 同理：部分 API 12 设备的 libohaudio.so 缺少
+// SetCapturerReadDataCallback / SetCapturerErrorCallback / SetCapturerInterruptCallback，
+// 直接链接会导致整个 .so 加载失败。
+// =============================================================================
+
+typedef OH_AudioStream_Result (*PFN_SetCapturerReadDataCb)(
+    OH_AudioStreamBuilder*, OH_AudioCapturer_OnReadDataCallback, void*);
+typedef OH_AudioStream_Result (*PFN_SetCapturerErrorCb)(
+    OH_AudioStreamBuilder*, OH_AudioCapturer_OnErrorCallback, void*);
+typedef OH_AudioStream_Result (*PFN_SetCapturerInterruptCb)(
+    OH_AudioStreamBuilder*, OH_AudioCapturer_OnInterruptCallback, void*);
+
+static PFN_SetCapturerReadDataCb   g_pfnSetCapturerReadDataCb = nullptr;
+static PFN_SetCapturerErrorCb      g_pfnSetCapturerErrorCb = nullptr;
+static PFN_SetCapturerInterruptCb  g_pfnSetCapturerInterruptCb = nullptr;
+static bool g_capturerApisChecked = false;
+
+static void LoadCapturerApis() {
+    if (g_capturerApisChecked) return;
+    g_capturerApisChecked = true;
+
+    void* handle = dlopen("libohaudio.so", RTLD_NOW);
+    if (!handle) {
+        OH_LOG_ERROR(LOG_APP, "Failed to dlopen libohaudio.so for capturer APIs");
+        return;
+    }
+
+    g_pfnSetCapturerReadDataCb = (PFN_SetCapturerReadDataCb)
+        dlsym(handle, "OH_AudioStreamBuilder_SetCapturerReadDataCallback");
+    g_pfnSetCapturerErrorCb = (PFN_SetCapturerErrorCb)
+        dlsym(handle, "OH_AudioStreamBuilder_SetCapturerErrorCallback");
+    g_pfnSetCapturerInterruptCb = (PFN_SetCapturerInterruptCb)
+        dlsym(handle, "OH_AudioStreamBuilder_SetCapturerInterruptCallback");
+
+    OH_LOG_INFO(LOG_APP, "Capturer API probe: ReadDataCb=%{public}s ErrorCb=%{public}s InterruptCb=%{public}s",
+                g_pfnSetCapturerReadDataCb ? "Y" : "N",
+                g_pfnSetCapturerErrorCb ? "Y" : "N",
+                g_pfnSetCapturerInterruptCb ? "Y" : "N");
+    // 不 dlclose
+}
 
 // moonlight-common-c 的麦克风发送函数
 extern "C" {
@@ -101,24 +145,41 @@ int MicCapturer::Init(const MicCapturerConfig& config) {
         OH_LOG_WARN(LOG_APP, "SetFrameSizeInCallback failed: %{public}d (using system default)", result);
     }
 
-    // 数据读入回调
-    result = OH_AudioStreamBuilder_SetCapturerReadDataCallback(builder_,
-        reinterpret_cast<OH_AudioCapturer_OnReadDataCallback>(OnReadData), this);
-    if (result != AUDIOSTREAM_SUCCESS) {
-        OH_LOG_ERROR(LOG_APP, "Failed to set read data callback: %{public}d", result);
+    // 数据读入回调（通过 dlsym 动态加载，兼容旧设备）
+    LoadCapturerApis();
+    if (g_pfnSetCapturerReadDataCb) {
+        result = g_pfnSetCapturerReadDataCb(builder_,
+            reinterpret_cast<OH_AudioCapturer_OnReadDataCallback>(OnReadData), this);
+        if (result != AUDIOSTREAM_SUCCESS) {
+            OH_LOG_ERROR(LOG_APP, "Failed to set read data callback: %{public}d", result);
+            OH_AudioStreamBuilder_Destroy(builder_);
+            builder_ = nullptr;
+            encoder_.Cleanup();
+            return -3;
+        }
+    } else {
+        OH_LOG_ERROR(LOG_APP, "SetCapturerReadDataCallback not available on this device!");
         OH_AudioStreamBuilder_Destroy(builder_);
         builder_ = nullptr;
         encoder_.Cleanup();
         return -3;
     }
 
-    // 错误回调
-    OH_AudioStreamBuilder_SetCapturerErrorCallback(builder_,
-        reinterpret_cast<OH_AudioCapturer_OnErrorCallback>(OnError), this);
+    // 错误回调（可选 — 部分 API 12 设备不存在此符号）
+    if (g_pfnSetCapturerErrorCb) {
+        g_pfnSetCapturerErrorCb(builder_,
+            reinterpret_cast<OH_AudioCapturer_OnErrorCallback>(OnError), this);
+    } else {
+        OH_LOG_INFO(LOG_APP, "SetCapturerErrorCallback not available, skipping");
+    }
 
-    // 中断回调
-    OH_AudioStreamBuilder_SetCapturerInterruptCallback(builder_,
-        reinterpret_cast<OH_AudioCapturer_OnInterruptCallback>(OnInterruptEvent), this);
+    // 中断回调（可选）
+    if (g_pfnSetCapturerInterruptCb) {
+        g_pfnSetCapturerInterruptCb(builder_,
+            reinterpret_cast<OH_AudioCapturer_OnInterruptCallback>(OnInterruptEvent), this);
+    } else {
+        OH_LOG_INFO(LOG_APP, "SetCapturerInterruptCallback not available, skipping");
+    }
 
     // 生成 capturer
     result = OH_AudioStreamBuilder_GenerateCapturer(builder_, &capturer_);

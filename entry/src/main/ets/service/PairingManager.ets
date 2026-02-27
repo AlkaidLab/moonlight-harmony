@@ -16,6 +16,7 @@ import { CryptoUtil } from '../utils/CryptoUtil';
 import { common } from '@kit.AbilityKit';
 import { HttpClient } from '../utils/HttpClient';
 import { XmlUtil } from '../utils/XmlUtil';
+import { NvHttp } from './NvHttp';
 
 /**
  * 配对状态
@@ -63,9 +64,9 @@ export class PairingManager {
   private keyFilePath: string = '';
   private context: common.Context | null = null;
 
-  // 默认端口
-  static readonly DEFAULT_HTTP_PORT = 47989;
-  static readonly DEFAULT_HTTPS_PORT = 47984;
+  // 端口常量引用自 NvHttp（单一来源）
+  static readonly DEFAULT_HTTP_PORT = NvHttp.DEFAULT_HTTP_PORT;
+  static readonly DEFAULT_HTTPS_PORT = NvHttp.DEFAULT_HTTPS_PORT;
 
   // 全局客户端名称缓存（使用设备名称）
   private static cachedClientName: string | null = null;

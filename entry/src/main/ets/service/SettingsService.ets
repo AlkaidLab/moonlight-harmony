@@ -33,7 +33,9 @@ import {
 export class SettingsKeys {
   // 视频设置
   static readonly RESOLUTION: string = 'settings_resolution';
+  static readonly CUSTOM_RESOLUTIONS: string = 'settings_custom_resolutions';
   static readonly FPS: string = 'settings_fps';
+  static readonly CUSTOM_FPS: string = 'settings_custom_fps';
   static readonly BITRATE: string = 'settings_bitrate';
   static readonly HOST_SCALE: string = 'settings_host_scale';
   static readonly ENABLE_HDR: string = 'settings_enable_hdr';
@@ -80,6 +82,7 @@ export class SettingsKeys {
   static readonly GC_BUTTON_HOME_MAPPING: string = 'settings_gc_button_home_mapping';  // Game Controller Kit 2313按键映射
   static readonly ENABLE_KEY_INTERCEPTOR: string = 'settings_enable_key_interceptor';  // 按键反劫持（拦截系统劫持的手柄按键）
   static readonly USB_DRIVER_ENABLED: string = 'settings_usb_driver_enabled';  // 默认启用 USB 手柄驱动
+  static readonly FORCE_USB_DRIVER_ONLY: string = 'settings_force_usb_driver_only';  // 强制纯 USB 驱动模式（禁用 GCK）
 
   // 输入 - 屏幕控制器
   static readonly ENABLE_ONSCREEN_CONTROLS: string = 'settings_enable_onscreen_controls';
@@ -136,6 +139,7 @@ export class SettingsKeys {
   static readonly SMALL_ICON_MODE: string = 'settings_small_icon_mode';
   static readonly LANGUAGE: string = 'settings_language';
   static readonly BACKGROUND_IMAGE_URL: string = 'settings_background_image_url';
+  static readonly BACKGROUND_IMAGE_TYPE: string = 'settings_background_image_type';
   static readonly RESUME_STREAM: string = 'settings_resume_stream';
   
   // 开发者模式
@@ -166,6 +170,7 @@ export interface InputSettings {
   ignoreDeviceDisconnect: boolean;  // 忽略手柄断开信号
   enableKeyInterceptor: boolean;  // 按键反劫持
   usbDriverEnabled: boolean;  // 默认启用 USB 手柄驱动
+  forceUsbDriverOnly: boolean;  // 强制纯 USB 驱动模式
 
   // 体感助手
   gyroAssistEnabled: boolean;
@@ -675,6 +680,7 @@ export class SettingsService {
       ignoreDeviceDisconnect: await this.getBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false),
       enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false),
       usbDriverEnabled: await this.getBoolean(SettingsKeys.USB_DRIVER_ENABLED, false),
+      forceUsbDriverOnly: await this.getBoolean(SettingsKeys.FORCE_USB_DRIVER_ONLY, false),
 
       // 体感助手
       gyroAssistEnabled: await this.getBoolean(SettingsKeys.GYRO_ASSIST_ENABLED, false),

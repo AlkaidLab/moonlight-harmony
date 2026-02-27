@@ -36,6 +36,9 @@
         "backgroundModes": [
           "dataTransfer",
           "audioPlayback"
+        ],
+        "supportWindowMode": [
+          "fullscreen"
         ]
       }
     ],

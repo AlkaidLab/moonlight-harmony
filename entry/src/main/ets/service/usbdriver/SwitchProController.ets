@@ -18,6 +18,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, SwitchPro, UsbClass, ControllerType, ControllerCapabilities, MotionType } from './ControllerConstants';
+import { readShortLE } from '../GamepadTypes';
 import { isHardwareError, UsbError } from './UsbErrorCodes';
 
 const TAG = '[USB-SWITCH]';
@@ -450,23 +451,15 @@ export class SwitchProController extends AbstractController {
       const ACCEL_SCALE = 0.000244;  // g per LSB
       
       // 读取 IMU 数据
-      this.accelX = this.readShortLE(buffer, 13) * ACCEL_SCALE;
-      this.accelY = this.readShortLE(buffer, 15) * ACCEL_SCALE;
-      this.accelZ = this.readShortLE(buffer, 17) * ACCEL_SCALE;
-      this.gyroX = this.readShortLE(buffer, 19) * GYRO_SCALE;
-      this.gyroY = this.readShortLE(buffer, 21) * GYRO_SCALE;
-      this.gyroZ = this.readShortLE(buffer, 23) * GYRO_SCALE;
+      this.accelX = readShortLE(buffer, 13) * ACCEL_SCALE;
+      this.accelY = readShortLE(buffer, 15) * ACCEL_SCALE;
+      this.accelZ = readShortLE(buffer, 17) * ACCEL_SCALE;
+      this.gyroX = readShortLE(buffer, 19) * GYRO_SCALE;
+      this.gyroY = readShortLE(buffer, 21) * GYRO_SCALE;
+      this.gyroZ = readShortLE(buffer, 23) * GYRO_SCALE;
     }
     
     return true;
-  }
-  
-  /**
-   * 读取小端序 short
-   */
-  private readShortLE(buffer: Uint8Array, offset: number): number {
-    const value = buffer[offset] | (buffer[offset + 1] << 8);
-    return value > 32767 ? value - 65536 : value;
   }
   
   /**

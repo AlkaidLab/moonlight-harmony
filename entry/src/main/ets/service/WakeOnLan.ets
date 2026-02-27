@@ -9,6 +9,7 @@
  */
 
 import { socket } from '@kit.NetworkKit';
+import { NvHttp } from './NvHttp';
 
 /**
  * 发送结果统计
@@ -36,7 +37,7 @@ export class WakeOnLan {
     47998, 47999, 48000, 48002, 48010,  // GFE 打开的端口
   ];
   
-  private static readonly DEFAULT_HTTP_PORT = 47989;
+  private static readonly DEFAULT_HTTP_PORT = NvHttp.DEFAULT_HTTP_PORT;
   private static readonly MAGIC_PACKET_SIZE = 102;  // 6 + 16 * 6
   private static readonly MAC_BYTES = 6;
   private static readonly MAC_REPETITIONS = 16;

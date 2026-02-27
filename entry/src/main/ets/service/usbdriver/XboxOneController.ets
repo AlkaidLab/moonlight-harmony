@@ -18,6 +18,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractXboxController } from './AbstractXboxController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, XboxOne, UsbClass, ControllerCapabilities } from './ControllerConstants';
+import { readShortLE, AXIS_MAX } from '../GamepadTypes';
 
 const TAG = '[USB-XONE]';
 
@@ -118,14 +119,6 @@ export class XboxOneController extends AbstractXboxController {
   }
   
   /**
-   * 读取小端序 short
-   */
-  private readShortLE(buffer: Uint8Array, offset: number): number {
-    const value = buffer[offset] | (buffer[offset + 1] << 8);
-    return value > 32767 ? value - 65536 : value;
-  }
-  
-  /**
    * 处理按钮数据
    */
   private processButtons(buffer: Uint8Array, offset: number): void {
@@ -149,20 +142,20 @@ export class XboxOneController extends AbstractXboxController {
     this.setButtonFlag(ButtonFlags.RS_CLK_FLAG, b & 0x80);
     
     // 扳机 (0-1023 -> 0.0-1.0)
-    this.leftTrigger = this.readShortLE(buffer, offset) / 1023.0;
+    this.leftTrigger = readShortLE(buffer, offset) / 1023.0;
     offset += 2;
-    this.rightTrigger = this.readShortLE(buffer, offset) / 1023.0;
+    this.rightTrigger = readShortLE(buffer, offset) / 1023.0;
     offset += 2;
     
     // 摇杆 (Y 轴需要取反，使用 -value 而不是 ~value 避免 JavaScript 32位整数问题)
-    this.leftStickX = this.readShortLE(buffer, offset) / 32767.0;
+    this.leftStickX = readShortLE(buffer, offset) / AXIS_MAX;
     offset += 2;
-    this.leftStickY = -this.readShortLE(buffer, offset) / 32767.0;
+    this.leftStickY = -readShortLE(buffer, offset) / AXIS_MAX;
     offset += 2;
     
-    this.rightStickX = this.readShortLE(buffer, offset) / 32767.0;
+    this.rightStickX = readShortLE(buffer, offset) / AXIS_MAX;
     offset += 2;
-    this.rightStickY = -this.readShortLE(buffer, offset) / 32767.0;
+    this.rightStickY = -readShortLE(buffer, offset) / AXIS_MAX;
   }
   
   /**
