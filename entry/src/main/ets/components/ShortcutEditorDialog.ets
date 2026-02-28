@@ -10,10 +10,11 @@
 
 /**
  * 快捷键编辑对话框
- * 
+ *
  * 用于添加或编辑自定义快捷键
  */
 import { ShortcutManager, Shortcut, KeyOption } from './ShortcutManager';
+import { AppAnimation } from '../common/Theme';
 
 /**
  * 快捷键编辑数据（不包含 id 和 isBuiltin）
@@ -431,8 +432,10 @@ export struct ShortcutEditorDialog {
     .padding(16)
     .backgroundColor('#1A1A1A')
     .borderRadius(14)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
-  
+
   @Builder
   KeyPicker() {
     Column() {

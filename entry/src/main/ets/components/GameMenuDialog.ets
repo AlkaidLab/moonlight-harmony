@@ -495,6 +495,8 @@ export struct GameMenuDialog {
     }
     .width('100%')
     .height('100%')
+    .transition(TransitionEffect.OPACITY.animation({ duration: ANIMATION_DURATION_IN, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: ANIMATION_DURATION_IN, curve: Curve.EaseOut })))
   }
 
   @Builder

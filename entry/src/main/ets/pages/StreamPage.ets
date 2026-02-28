@@ -518,9 +518,13 @@ struct StreamPage {
           onClose: () => {
             this.gameMenuDialogController?.close();
             // 对话框关闭后执行待处理的 IME 显示
+            // 延迟 300ms 确保对话框关闭动画完成、焦点转换稳定，
+            // 避免部分设备上 IME 闪现后因焦点丢失立即被系统收回
             if (this.pendingShowIME) {
               this.pendingShowIME = false;
-              this.imeManager.show();
+              setTimeout(() => {
+                this.imeManager.show();
+              }, 300);
             }
           },
           onUnlockOverlay: () => {
@@ -783,50 +787,36 @@ struct StreamPage {
     }
   }
   
+  /**
+   * 收归的退出串流并返回：恢复窗口、延迟、router.back()。
+   * 供 stopStreaming / quitGameAndReturn 复用，避免重复逻辑。
+   */
+  private async exitStreamAndReturn(): Promise<void> {
+    await this.windowManager?.restoreWindow();
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    router.back();
+  }
+
   async stopStreaming(): Promise<void> {
-    // 显示延迟统计 toast（在停止串流之前获取数据）
     this.lifecycleManager.showLatencyToastIfEnabled();
-
-    // 停止后台保活
     await this.lifecycleManager.stopBackgroundTask();
-
-    // 重置输入状态并停止 DisplaySync
     this.inputHandler.resetState();
     this.stopMouseKeepAlive();
-
-    // 恢复系统鼠标光标显示
     try {
       pointer.setPointerVisibleSync(true);
     } catch (_) {}
-
-    // 先恢复窗口设置并返回菜单（立即响应）
-    await this.windowManager?.restoreWindow();
-    router.back();
-    
-    // 后台停止串流
+    await this.exitStreamAndReturn();
     this.viewModel.stopStreaming();
   }
-  
+
   /**
-   * 退出游戏并返回
-   * 与断开连接不同，这会请求服务器退出当前游戏
-   * 优化：先返回菜单立即响应用户，后台处理退出请求
+   * 退出游戏并返回（请求服务器退出当前游戏，先返回菜单再后台发退出请求）
    */
   async quitGameAndReturn(): Promise<void> {
-    // 显示延迟统计 toast（在退出前获取数据）
     this.lifecycleManager.showLatencyToastIfEnabled();
-
-    // 停止后台保活
     await this.lifecycleManager.stopBackgroundTask();
-    
-    // 先恢复窗口设置并返回菜单（立即响应）
-    await this.windowManager?.restoreWindow();
-    router.back();
-    
-    // 后台退出游戏（不阻塞 UI）
-    this.viewModel.quitGame().then(()=> {
-    }).catch((err: Error) => {
-    });
+    await this.exitStreamAndReturn();
+    this.viewModel.quitGame().then(() => {}).catch((_err: Error) => {});
   }
 
   /**

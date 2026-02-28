@@ -106,6 +106,8 @@ export struct ConfirmDialog {
     .padding(AppSpacing.Large)
     .backgroundColor(AppColors.Background)
     .borderRadius(16)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
 }
 
@@ -174,6 +176,8 @@ export struct InfoDialog {
     .padding(AppSpacing.Large)
     .backgroundColor(AppColors.Background)
     .borderRadius(16)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
 }
 
@@ -286,5 +290,7 @@ export struct ActionDialog {
     .padding(AppSpacing.Large)
     .backgroundColor(AppColors.Background)
     .borderRadius(16)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
 }

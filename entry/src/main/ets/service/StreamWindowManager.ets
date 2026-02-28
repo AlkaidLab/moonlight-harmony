@@ -212,7 +212,11 @@ export class StreamWindowManager {
       const win = await window.getLastWindow(this.context);
       // 恢复屏幕常亮设置
       win.setWindowKeepScreenOn(false);
-      // 恢复系统栏
+
+      // 退出沉浸式模式
+      try { win.setImmersiveModeEnabledState(false); } catch (_e) {}
+
+      // 恢复系统栏显示
       try {
         await win.setSpecificSystemBarEnabled('status', true);
         await win.setSpecificSystemBarEnabled('navigation', true);
@@ -220,12 +224,25 @@ export class StreamWindowManager {
       } catch (_e) {
         try { win.setWindowSystemBarEnable(['status', 'navigation']); } catch (_e2) {}
       }
-      // 恢复窗口装饰栏
-      try { win.setWindowDecorVisible(true); } catch (_e) {}
+
+      // 恢复系统栏透明样式（与 EntryAbility 初始化一致）
+      try {
+        const barProperties: window.SystemBarProperties = {
+          statusBarColor: '#00000000',
+          navigationBarColor: '#00000000',
+          statusBarContentColor: '#1A3A4A',
+          navigationBarContentColor: '#1A3A4A'
+        };
+        win.setWindowSystemBarProperties(barProperties);
+      } catch (_e) {}
+
+      // 恢复全屏布局：重新显示系统栏后系统可能收回了全屏布局，导致内容区被缩进出现黑边，此处再次设为 true 使内容延伸到系统栏下
+      try {
+        await win.setWindowLayoutFullScreen(true);
+      } catch (_e) {}
+
       // 恢复标题栏和 Dock 悬停显示
       try { win.setTitleAndDockHoverShown(true); } catch (_e) {}
-      // 退出沉浸式模式
-      try { win.setImmersiveModeEnabledState(false); } catch (_e) {}
       // 退出横屏多窗模式
       try { await win.disableLandscapeMultiWindow(); } catch (_e) {}
       // 恢复自动旋转

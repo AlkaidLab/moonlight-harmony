@@ -837,6 +837,7 @@ struct PcListPageV2 {
     .height('100%')
     .position({ x: 0, y: 0 })
     .zIndex(100)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut }))
     
     // 对话框
     Column() {
@@ -894,6 +895,8 @@ struct PcListPageV2 {
     .borderRadius(AppSizes.RadiusXLarge)
     .position({ x: '7.5%', y: '30%' })
     .zIndex(101)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
   
   @Builder
@@ -912,6 +915,7 @@ struct PcListPageV2 {
     .height('100%')
     .position({ x: 0, y: 0 })
     .zIndex(100)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut }))
     
     // 对话框
     Column() {
@@ -995,6 +999,8 @@ struct PcListPageV2 {
     .alignItems(HorizontalAlign.Center)
     .position({ x: '7.5%', y: '20%' })
     .zIndex(101)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
 
   // ==================== 业务逻辑 ====================

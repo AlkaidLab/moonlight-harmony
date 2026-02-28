@@ -23,7 +23,8 @@
  *   计算帧间增量 → LiSendMouseMoveEvent(dx, dy)。
  *   使用 OH_Input_InjectMouseEvent（公开 API 12+）实现光标回弹：
  *   当光标接近屏幕边缘时注入 MOVE 到屏幕中心，实现近乎无限行程。
- *   通过 ActionTime 时间戳标记区分自注入事件和真实事件。
+ *   采用状态机 + 位置匹配识别回弹事件：发起回弹后进入 pending 状态，
+ *   期间暂停增量发送，直到收到坐标匹配中心的事件或超时恢复。
  *
  * 权限: ohos.permission.INPUT_MONITORING
  */
@@ -65,9 +66,21 @@ static std::atomic<int32_t> g_screenHeight{2400};
 static int32_t g_lastX = -1;
 static int32_t g_lastY = -1;
 
-// 光标回弹标记：注入事件使用特殊 ActionTime 值来识别
-// 自注入的回弹事件使用 UnixEpoch 微秒时间戳 | 0x01 (确保为奇数)
-static std::atomic<int64_t> g_warpMarker{0};
+// 回弹状态机：
+//   false = 正常状态，正常计算增量并发送
+//   true  = 已发起回弹注入，等待光标到达中心；期间所有事件仅更新锚点，不发送增量
+static std::atomic<bool> g_warpPending{false};
+
+// 回弹目标坐标（注入时写入，回调中用于位置匹配）
+static int32_t g_warpTargetX = 0;
+static int32_t g_warpTargetY = 0;
+
+// 位置匹配容差（px）：系统可能对注入坐标做微小调整
+static constexpr int32_t WARP_TOLERANCE = 2;
+
+// 回弹超时保护：如果注入事件丢失，超时后自动恢复正常状态
+static int64_t g_warpTimestampMs = 0;
+static constexpr int64_t WARP_TIMEOUT_MS = 100;
 
 // 回弹注入事件对象（复用避免频繁创建/销毁）
 static Input_MouseEvent* g_injectEvent = nullptr;
@@ -96,8 +109,10 @@ static int MapMouseButton(int32_t button)
 
 /**
  * 将光标传送到屏幕中心，实现无限行程。
- * 使用 OH_Input_InjectMouseEvent（公开 API 12+），
- * 通过在 ActionTime 设置唯一标记来让 OnMouseEvent 识别并跳过自注入事件。
+ *
+ * 进入 warpPending 状态后，OnMouseEvent 会暂停发送增量，
+ * 直到收到坐标匹配中心的事件（回弹到达）或超时恢复。
+ * 这彻底避免了回弹产生的巨大虚假增量。
  */
 static void WarpCursorToCenter()
 {
@@ -108,21 +123,23 @@ static void WarpCursorToCenter()
     int32_t centerX = sw / 2;
     int32_t centerY = sh / 2;
 
-    // 生成唯一标记：当前微秒时间戳确保为奇数
+    g_warpTargetX = centerX;
+    g_warpTargetY = centerY;
+
     auto now = std::chrono::steady_clock::now();
-    int64_t marker = std::chrono::duration_cast<std::chrono::microseconds>(
-        now.time_since_epoch()).count() | 0x01LL;
-    g_warpMarker.store(marker, std::memory_order_release);
+    g_warpTimestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count();
+    g_warpPending.store(true, std::memory_order_release);
 
     OH_Input_SetMouseEventAction(g_injectEvent, MOUSE_ACTION_MOVE);
     OH_Input_SetMouseEventDisplayX(g_injectEvent, centerX);
     OH_Input_SetMouseEventDisplayY(g_injectEvent, centerY);
-    OH_Input_SetMouseEventActionTime(g_injectEvent, marker);
+    OH_Input_SetMouseEventActionTime(g_injectEvent, -1);
 
     int32_t ret = OH_Input_InjectMouseEvent(g_injectEvent);
     if (ret != INPUT_SUCCESS) {
-        // 注入失败，清除标记避免误跳真实事件
-        g_warpMarker.store(0, std::memory_order_release);
+        g_warpPending.store(false, std::memory_order_release);
+        LOGW("光标回弹注入失败: %{public}d", ret);
     }
 }
 
@@ -156,20 +173,39 @@ static void OnMouseEvent(const Input_MouseEvent *event)
 
             if (g_relativeMode.load(std::memory_order_relaxed)) {
                 // ── 相对模式（游戏）──
-                // 检查是否为自注入的回弹事件
-                int64_t marker = g_warpMarker.load(std::memory_order_acquire);
-                if (marker != 0) {
-                    int64_t eventTime = OH_Input_GetMouseEventActionTime(event);
-                    if (eventTime == marker) {
-                        // 这是我们自己注入的回弹事件 → 更新锚点，不发送增量
+
+                if (g_warpPending.load(std::memory_order_acquire)) {
+                    // 回弹进行中：检查是否为回弹到达事件（位置匹配中心）
+                    int32_t diffX = x - g_warpTargetX;
+                    int32_t diffY = y - g_warpTargetY;
+                    if (diffX >= -WARP_TOLERANCE && diffX <= WARP_TOLERANCE &&
+                        diffY >= -WARP_TOLERANCE && diffY <= WARP_TOLERANCE) {
+                        // 回弹到达：重置锚点到当前位置，恢复正常状态
                         g_lastX = x;
                         g_lastY = y;
-                        g_warpMarker.store(0, std::memory_order_release);
+                        g_warpPending.store(false, std::memory_order_release);
                         return;
                     }
+
+                    // 超时保护：注入事件可能丢失，避免永久卡在 pending 状态
+                    auto now = std::chrono::steady_clock::now();
+                    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now.time_since_epoch()).count();
+                    if (nowMs - g_warpTimestampMs > WARP_TIMEOUT_MS) {
+                        g_warpPending.store(false, std::memory_order_release);
+                        g_lastX = x;
+                        g_lastY = y;
+                        LOGW("回弹超时，恢复正常状态 pos=(%{public}d,%{public}d)", x, y);
+                        return;
+                    }
+
+                    // 仍在等待回弹到达：仅更新锚点，不发送增量
+                    g_lastX = x;
+                    g_lastY = y;
+                    return;
                 }
 
-                // 计算增量
+                // 正常状态：计算并发送增量
                 if (g_lastX >= 0 && g_lastY >= 0) {
                     int32_t dx = x - g_lastX;
                     int32_t dy = y - g_lastY;
@@ -181,7 +217,7 @@ static void OnMouseEvent(const Input_MouseEvent *event)
                 g_lastY = y;
 
                 // 边缘检测 → 光标回弹到屏幕中心
-                if (IsNearEdge(x, y) && g_warpMarker.load(std::memory_order_relaxed) == 0) {
+                if (IsNearEdge(x, y)) {
                     WarpCursorToCenter();
                 }
             } else {
@@ -237,7 +273,7 @@ static napi_value AddMouseInterceptor(napi_env env, napi_callback_info info)
     // 重置相对模式状态
     g_lastX = -1;
     g_lastY = -1;
-    g_warpMarker.store(0);
+    g_warpPending.store(false);
 
     Input_Result ret = OH_Input_AddMouseEventMonitor(OnMouseEvent);
     if (ret == INPUT_SUCCESS) {
@@ -322,7 +358,7 @@ static napi_value ConfigureMouseInterceptor(napi_env env, napi_callback_info inf
         if (relativeMode != prevMode) {
             g_lastX = -1;
             g_lastY = -1;
-            g_warpMarker.store(0);
+            g_warpPending.store(false);
         }
 
         LOGI("配置更新: window=(%{public}d,%{public}d,%{public}dx%{public}d) screen=%{public}dx%{public}d mode=%{public}s",

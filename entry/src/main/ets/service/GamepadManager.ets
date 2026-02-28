@@ -767,6 +767,17 @@ export class GamepadManager implements UsbDriverListener {
     try {
       const deviceInfo = await inputDevice.getDeviceInfo(deviceId);
       const deviceNameLower = deviceInfo.name.toLowerCase();
+      const isUsbInForceUsbMode =
+        !this.useGameControllerKit &&
+        this.useUsbDriverMode &&
+        deviceInfo.bus === DeviceBusType.BUS_USB;
+      
+      // 强制 USB 模式下，USB 手柄由 UsbDriverService 统一注册和上报；
+      // 跳过 InputKit 的 USB 注册，避免同一物理手柄被重复识别为多个设备。
+      if (isUsbInForceUsbMode) {
+        console.info(`[GAMEPAD] 强制 USB 模式下跳过 InputKit USB 设备注册: "${deviceInfo.name}" (ID: ${deviceId})`);
+        return;
+      }
       
       // 检查是否应排除（键盘/鼠标等）
       if (this.isNonGamepadDevice(deviceNameLower, deviceInfo.sources)) {
@@ -1562,8 +1573,8 @@ export class GamepadManager implements UsbDriverListener {
   
   /**
    * 重置会话状态（串流结束时调用）
-   * 与 cleanup() 不同，此方法保留单例和设备连接，只重置会话相关状态
-   * 防止重复进入串流时出现槽位分配错误或状态累积
+   * 与 cleanup() 不同，此方法保留单例和驱动生命周期，只重置会话相关状态
+   * 同时清理设备缓存，避免下次进入串流时先重放旧连接再扫描导致重复识别
    */
   resetSession(): void {
     console.info('[GAMEPAD] 重置会话状态');
@@ -1587,16 +1598,11 @@ export class GamepadManager implements UsbDriverListener {
     this.controllerIdToDeviceKey.clear();
     this.usbDeviceKeyToId.clear();
     
-    // 重置设备状态（但保留连接信息，以便重新设置监听器时可以重新通知）
-    this.deviceStates.forEach((state, _deviceId) => {
-      state.buttons = 0;
-      state.leftStickX = 0;
-      state.leftStickY = 0;
-      state.rightStickX = 0;
-      state.rightStickY = 0;
-      state.leftTrigger = 0;
-      state.rightTrigger = 0;
-    });
+    // 清空传统路径设备缓存，下一会话由真实扫描/驱动事件重建
+    this.connectedDevices.clear();
+    this.deviceStates.clear();
+    this.deviceInfoMap.clear();
+    this.dpadAxisActive.clear();
     
     // 重置 GC Kit 设备状态
     this.gcDeviceStates.forEach((state, _deviceId) => {

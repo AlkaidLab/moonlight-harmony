@@ -229,5 +229,7 @@ export struct MultiOptionPickerDialog {
     .padding({ left: AppSpacing.Large, right: AppSpacing.Large, bottom: AppSpacing.Large })
     .backgroundColor(AppColors.Background)
     .borderRadius({ topLeft: 16, topRight: 16 })
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.translate({ y: 150 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
 }

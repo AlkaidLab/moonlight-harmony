@@ -15,6 +15,7 @@
 
 import { gameControllerService, GameControllerService, ButtonCode } from '../service/GameControllerService';
 import { GamepadManager } from '../service/GamepadManager';
+import { UsbDriverService } from '../service/usbdriver';
 import { gcButtonMap, AXIS_MAX, TRIGGER_MAX } from '../service/GamepadTypes';
 import { AppColors } from '../common/Theme';
 
@@ -244,6 +245,15 @@ export struct GameControllerTestView {
     if (this.isMonitoring) {
       this.addLog('已在监听中');
       return;
+    }
+
+    // 优先释放 USB 驱动独占，避免 GC Kit 测试时抓不到设备
+    // （例如当前是强制 USB 模式，或刚从 USB 测试页切换过来）
+    try {
+      UsbDriverService.getInstance().stop();
+      this.addLog('已释放 USB 驱动独占，等待 GC Kit 重新识别设备...');
+    } catch (err) {
+      this.addLog(`释放 USB 驱动独占失败（可忽略）: ${err}`);
     }
     
     // 初始化

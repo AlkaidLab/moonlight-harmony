@@ -27,8 +27,18 @@ import { wantAgent, WantAgent } from '@kit.AbilityKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { notificationManager } from '@kit.NotificationKit';
+import { image } from '@kit.ImageKit';
 
 const TAG = '[BackgroundStreamService]';
+
+/**
+ * 播控中心控制回调
+ * 由 StreamPage 提供具体实现
+ */
+export interface BroadcastControlCallbacks {
+  /** 播控中心点击"停止" → 断开串流 */
+  onStop?: () => void;
+}
 
 export class BackgroundStreamService {
   private static instance: BackgroundStreamService;
@@ -37,6 +47,7 @@ export class BackgroundStreamService {
   private context: common.UIAbilityContext | null = null;
   private notificationId: number = 0;  // 长时任务通知 ID（用于更新通知内容）
   private gameName: string = 'Moonlight 串流';
+  private controlCallbacks: BroadcastControlCallbacks | null = null;
 
   private constructor() {}
 
@@ -52,8 +63,9 @@ export class BackgroundStreamService {
    * 在串流连接建立后调用，防止进入后台时被系统冻结
    * @param context UIAbilityContext
    * @param gameName 当前串流的游戏名称（用于播控中心展示）
+   * @param callbacks 播控中心操作回调（stop → 断开串流）
    */
-  async start(context: common.UIAbilityContext, gameName?: string): Promise<void> {
+  async start(context: common.UIAbilityContext, gameName?: string, callbacks?: BroadcastControlCallbacks): Promise<void> {
     if (this.isRunning) {
       console.info(`${TAG} 已在运行，跳过重复启动`);
       return;
@@ -61,6 +73,7 @@ export class BackgroundStreamService {
 
     this.context = context;
     this.gameName = gameName || 'Moonlight 串流';
+    this.controlCallbacks = callbacks || null;
 
     try {
       // 0. 监听长时任务被系统取消事件（用于诊断）
@@ -132,7 +145,7 @@ export class BackgroundStreamService {
 
   /**
    * 创建并激活 AVSession
-   * 使用 'audio' 类型，设置最小化的元数据以满足系统要求
+   * 设置封面图片、元数据、播控命令以满足播控中心规范
    */
   private async createAVSession(gameName: string): Promise<void> {
     try {
@@ -144,32 +157,50 @@ export class BackgroundStreamService {
       );
       console.info(`${TAG} AVSession 已创建, sessionId=${this.session.sessionId}`);
 
-      // 设置元数据（必须设置，否则系统可能不认可）
+      // 加载应用图标作为封面 (800x800 方形，符合播控中心规范)
+      let coverImage: image.PixelMap | undefined = undefined;
+      try {
+        const resourceManager = this.context!.resourceManager;
+        const iconData: Uint8Array = resourceManager.getMediaContentSync($r('app.media.app_icon').id);
+        const imageSource: image.ImageSource = image.createImageSource(iconData.buffer as ArrayBuffer);
+        coverImage = await imageSource.createPixelMap({
+          desiredSize: { width: 800, height: 800 }
+        });
+        imageSource.release();
+      } catch (imgErr) {
+        console.warn(`${TAG} 加载封面图片失败:`, imgErr);
+      }
+
+      // 设置元数据（标题 + 副标题 + 封面）
       const metadata: AVSessionManager.AVMetadata = {
         assetId: 'moonlight_streaming',
         title: gameName,
-        artist: 'Moonlight',
-      };
+        artist: 'Moonlight 游戏串流',
+        mediaImage: coverImage,
+      } as AVSessionManager.AVMetadata;
       await this.session.setAVMetadata(metadata);
 
-      // 注册最基本的控制命令（播放/暂停/停止）
-      // 不注册的命令会在播控中心置灰
+      // 注册播控命令（不注册的命令在播控中心自动置灰）
+      // play: 串流持续运行，仅切换播控状态指示
       this.session.on('play', () => {
         console.info(`${TAG} 播控中心: play`);
+        this.setPlaybackState(AVSessionManager.PlaybackState.PLAYBACK_STATE_PLAY);
       });
+      // pause: 切换播控状态，实际串流不暂停（游戏无法暂停）
       this.session.on('pause', () => {
         console.info(`${TAG} 播控中心: pause`);
+        this.setPlaybackState(AVSessionManager.PlaybackState.PLAYBACK_STATE_PAUSE);
       });
+      // stop: 断开串流
       this.session.on('stop', () => {
-        console.info(`${TAG} 播控中心: stop`);
+        console.info(`${TAG} 播控中心: stop → 断开串流`);
+        if (this.controlCallbacks?.onStop) {
+          this.controlCallbacks.onStop();
+        }
       });
 
       // 设置播放状态为"播放中"
-      const playbackState: AVSessionManager.AVPlaybackState = {
-        state: AVSessionManager.PlaybackState.PLAYBACK_STATE_PLAY,
-        speed: 1.0,
-      };
-      await this.session.setAVPlaybackState(playbackState);
+      await this.setPlaybackState(AVSessionManager.PlaybackState.PLAYBACK_STATE_PLAY);
 
       // 激活 AVSession（必须在元数据和控制命令注册后）
       await this.session.activate();
@@ -178,6 +209,22 @@ export class BackgroundStreamService {
       const error = err as BusinessError;
       console.error(`${TAG} 创建 AVSession 失败: code=${error.code}, msg=${error.message}`);
       throw new Error(`创建 AVSession 失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 更新 AVSession 播放状态
+   */
+  private async setPlaybackState(state: AVSessionManager.PlaybackState): Promise<void> {
+    if (!this.session) return;
+    try {
+      const playbackState: AVSessionManager.AVPlaybackState = {
+        state: state,
+        speed: 1.0,
+      };
+      await this.session.setAVPlaybackState(playbackState);
+    } catch (err) {
+      console.warn(`${TAG} 设置播放状态失败:`, err);
     }
   }
 
@@ -280,5 +327,6 @@ export class BackgroundStreamService {
     }
 
     this.context = null;
+    this.controlCallbacks = null;
   }
 }

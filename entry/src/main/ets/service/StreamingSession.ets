@@ -1054,8 +1054,8 @@ export class StreamingSession {
       this.serverCodecModeSupport,
       this.config.width, this.config.height, this.config.fps,
       this.config.bitrate,
-      1392, // packetSize
-      0,    // streamingRemotely
+      1392, // packetSize (will be capped by moonlight-common-c for remote)
+      2,    // streamingRemotely: STREAM_CFG_AUTO - let moonlight-common-c auto-detect
       this.config.audioConfig,
       supportedVideoFormats,
       this.config.clientRefreshRateX100,

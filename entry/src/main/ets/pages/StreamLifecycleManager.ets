@@ -18,7 +18,7 @@ import { display, promptAction } from '@kit.ArkUI';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { StreamWindowManager } from '../service/StreamWindowManager';
 import { AppStateService, AppState } from '../service/AppStateService';
-import { BackgroundStreamService } from '../service/BackgroundStreamService';
+import { BackgroundStreamService, BroadcastControlCallbacks } from '../service/BackgroundStreamService';
 import { common } from '@kit.AbilityKit';
 
 /**
@@ -240,7 +240,16 @@ export class StreamLifecycleManager {
    */
   async startBackgroundTask(context: common.UIAbilityContext, gameName?: string): Promise<void> {
     try {
-      await this.backgroundService.start(context, gameName);
+      // 播控中心"停止"按钮 → 断开串流
+      const broadcastCallbacks: BroadcastControlCallbacks = {
+        onStop: () => {
+          console.info('[StreamPage] 播控中心请求停止串流');
+          if (this.callbacks) {
+            this.callbacks.stopStreaming();
+          }
+        }
+      } as BroadcastControlCallbacks;
+      await this.backgroundService.start(context, gameName, broadcastCallbacks);
       console.info('[StreamPage] 后台保活已启动');
     } catch (err) {
       console.warn('[StreamPage] 启动后台保活失败（不影响串流）:', err);

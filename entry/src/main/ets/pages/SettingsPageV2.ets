@@ -22,6 +22,7 @@ import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { InputInterceptorService } from '../service/InputInterceptorService';
 import { SettingsKeys } from '../service/SettingsService';
+import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
 
 /**
  * 选择器选项接口
@@ -62,7 +63,7 @@ interface PickerConfig {
 interface SettingItem {
   title: string;
   subtitle?: string;
-  type: 'toggle' | 'select' | 'input' | 'action' | 'slider';
+  type: 'toggle' | 'select' | 'input' | 'action' | 'slider' | 'segment';
   key?: string;
   value?: string | boolean | number;
   options?: string[];
@@ -80,6 +81,10 @@ interface SettingItem {
   snapThreshold?: number; // 吸附阈值，默认为 step 的一半
   isLogarithmic?: boolean; // 是否使用对数刻度（适用于大范围值如码率）
   formatValue?: (value: number) => string;  // 自定义值格式化函数
+  // Segment 分段按钮专用属性
+  segmentLabels?: string[];   // 分段按钮显示文字
+  segmentValues?: string[];   // 分段按钮对应的实际值（可选，默认与 labels 相同）
+  onSegmentChange?: (value: string) => void;  // 选择变化回调
 }
 
 /**
@@ -88,8 +93,19 @@ interface SettingItem {
 interface SettingGroup {
   id: string;      // 分组唯一标识
   icon: Resource;  // 分组图标
+  useSymbol?: boolean;  // 是否使用 HarmonyOS Symbol，默认 true
   title: string;
   items: SettingItem[];
+}
+
+/**
+ * 侧边栏分组元数据（用于宽屏侧边导航）
+ */
+interface SidebarGroupMeta {
+  id: string;
+  icon: Resource;
+  title: string;
+  useSymbol: boolean;
 }
 
 /**
@@ -209,6 +225,23 @@ struct SettingsPageV2 {
   
   // 当前展开的分组（默认展开视频分组）
   @State expandedGroup: string = 'video';
+  
+  // 宽屏模式（横屏时使用左导航+右内容布局）
+  @State isWideScreen: boolean = false;
+  
+  // 侧边栏分组元数据
+  private sidebarGroups: SidebarGroupMeta[] = [
+    { id: 'video', icon: $r('sys.symbol.video_fill'), title: '视频', useSymbol: true } as SidebarGroupMeta,
+    { id: 'audio', icon: $r('sys.symbol.speaker_wave_2_fill'), title: '音频', useSymbol: true } as SidebarGroupMeta,
+    { id: 'gamepad', icon: $r('sys.symbol.gamecontroller_fill'), title: '手柄', useSymbol: true } as SidebarGroupMeta,
+    { id: 'osc', icon: $r('sys.symbol.gamecontroller'), title: '屏幕控制器', useSymbol: true } as SidebarGroupMeta,
+    { id: 'mouse', icon: $r('app.media.ic_mouse'), title: '鼠标触控', useSymbol: false } as SidebarGroupMeta,
+    { id: 'enhanced_touch', icon: $r('sys.symbol.bolt_fill'), title: '增强触控', useSymbol: true } as SidebarGroupMeta,
+    { id: 'host', icon: $r('app.media.ic_host'), title: '主机', useSymbol: false } as SidebarGroupMeta,
+    { id: 'advanced', icon: $r('sys.symbol.gearshape_fill'), title: '高级', useSymbol: true } as SidebarGroupMeta,
+    { id: 'ui', icon: $r('sys.symbol.display'), title: '界面', useSymbol: true } as SidebarGroupMeta,
+    { id: 'about', icon: $r('sys.symbol.info_circle_fill'), title: '关于', useSymbol: true } as SidebarGroupMeta,
+  ];
   
   // 解码器能力
   @State decoderCapabilities: DecoderCapabilities | null = null;
@@ -648,15 +681,34 @@ struct SettingsPageV2 {
   build() {
     Column() {
       // 标题栏
-      this.TitleBar()
+      if (this.isWideScreen) {
+        this.TitleBar()
+      } else {
+        GridRow({ columns: 12 }) {
+          GridCol({ span: { sm: 12, md: 10, lg: 8 }, offset: { sm: 0, md: 1, lg: 2 } }) {
+            this.TitleBar()
+          }
+        }
+      }
       
-      // 设置列表
-      Scroll() {
-        Column() {
+      // 宽屏：左导航 + 右内容 ；窄屏：垂直滚动列表
+      Row() {
+        if (this.isWideScreen) {
+          this.SettingsSidebar()
+        }
+        
+        // 设置列表
+        Scroll() {
+          GridRow({ columns: 12 }) {
+            GridCol({
+              span: this.isWideScreen ? 12 : { sm: 12, md: 10, lg: 8 },
+              offset: this.isWideScreen ? 0 : { sm: 0, md: 1, lg: 2 }
+            }) {
+              Column() {
           // 视频设置
           this.SettingsGroup({
             id: 'video',
-            icon: $r('app.media.ic_video'),
+            icon: $r('sys.symbol.video_fill'),
             title: '视频',
             items: [
               {
@@ -694,7 +746,7 @@ struct SettingsPageV2 {
                 isLogarithmic: true,  // 使用对数刻度，低码率精细调整，高码率粗调
                 // 常用码率吸附值（会自动在对数转换后应用）
                 snapValues: [5, 10, 15, 20, 30, 40, 50, 60, 80, 100, 120, 150, 200, 300, 400, 500],
-                snapThreshold: 3,  // 在关键值附近自动吸附
+                snapThreshold: 8,  // 比例阈值 8%（对数滑块自动按比例计算吸附范围）
                 formatValue: (v: number) => v === 0 ? '自动' : `${Math.round(v)} Mbps`,
                 onSliderChange: (value: number) => {
                   this.bitrate = value;
@@ -721,9 +773,23 @@ struct SettingsPageV2 {
               },
               {
                 title: '视频格式',
-                subtitle: this.videoFormat,
-                type: 'select',
-                action: () => this.showVideoFormatPicker()
+                type: 'segment',
+                value: this.videoFormat,
+                segmentLabels: ['自动', 'H.264', 'HEVC', 'AV1'],
+                onSegmentChange: (value: string) => {
+                  if ((value === 'HEVC' && !(this.decoderCapabilities?.supportsHEVC)) ||
+                      (value === 'AV1' && !(this.decoderCapabilities?.supportsAV1)) ||
+                      (value === 'H.264' && !(this.decoderCapabilities?.supportsH264 ?? true))) {
+                    this.showToast(`警告: 设备不支持 ${value}，串流可能失败`, 3000);
+                  }
+                  this.videoFormat = value;
+                  this.saveSetting(SettingsKeys.VIDEO_FORMAT, value);
+                  if (value === 'H.264' && this.enableHdr) {
+                    this.enableHdr = false;
+                    this.saveSetting(SettingsKeys.ENABLE_HDR, false);
+                    this.showToast('H.264 不支持 HDR，已自动关闭');
+                  }
+                }
               },
               {
                 title: 'HDR',
@@ -744,21 +810,16 @@ struct SettingsPageV2 {
               },
               {
                 title: 'HDR 模式',
-                subtitle: this.videoFormat === 'H.264' 
-                  ? '❌ 需要 HEVC/AV1' 
-                  : (this.hdrMode === 'HLG' ? 'HLG (需要 Sunshine Foundation)' : 'HDR10 (PQ)'),
-                type: 'select',
+                subtitle: this.hdrMode === 'HLG' ? '需要 Sunshine Foundation' : undefined,
+                type: 'segment',
+                value: this.hdrMode,
                 visible: this.enableHdr,
                 disabled: this.videoFormat === 'H.264' || !this.enableHdr,
-                action: () => {
-                  if (this.videoFormat === 'H.264') {
-                    promptAction.showToast({
-                      message: 'H.264 编码不支持 HDR',
-                      duration: 2000
-                    });
-                    return;
-                  }
-                  this.showHdrModePicker();
+                segmentLabels: ['HDR10 (PQ)', 'HLG'],
+                segmentValues: ['HDR10', 'HLG'],
+                onSegmentChange: (value: string) => {
+                  this.hdrMode = value;
+                  this.saveSetting(SettingsKeys.HDR_MODE, value);
                 }
               },
               {
@@ -825,14 +886,18 @@ struct SettingsPageV2 {
           // 音频设置
           this.SettingsGroup({
             id: 'audio',
-            icon: $r('app.media.ic_audio'),
+            icon: $r('sys.symbol.speaker_wave_2_fill'),
             title: '音频',
             items: [
               {
                 title: '音频配置',
-                subtitle: this.audioConfig,
-                type: 'select',
-                action: () => this.showAudioConfigPicker()
+                type: 'segment',
+                value: this.audioConfig,
+                segmentLabels: ['立体声', '5.1 环绕', '7.1 环绕'],
+                onSegmentChange: (value: string) => {
+                  this.audioConfig = value;
+                  this.saveSetting(SettingsKeys.AUDIO_CONFIG, value);
+                }
               },
               {
                 title: '本地音频',
@@ -924,11 +989,13 @@ struct SettingsPageV2 {
               },
               {
                 title: '音频振动场景',
-                subtitle: this.audioVibrationSceneMode,
-                type: 'select',
+                type: 'segment',
+                value: this.audioVibrationSceneMode,
                 visible: this.enableAudioVibration,
-                action: () => {
-                  this.showAudioVibrationSceneModePicker();
+                segmentLabels: ['游戏/电影', '音乐/节奏', '自动'],
+                onSegmentChange: (value: string) => {
+                  this.audioVibrationSceneMode = value;
+                  this.saveSetting(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, value);
                 }
               }
             ]
@@ -937,7 +1004,7 @@ struct SettingsPageV2 {
           // 手柄设置
           this.SettingsGroup({
             id: 'gamepad',
-            icon: $r('app.media.ic_gamepad'),
+            icon: $r('sys.symbol.gamecontroller_fill'),
             title: '手柄',
             items: [
               {
@@ -952,11 +1019,13 @@ struct SettingsPageV2 {
               },
               {
                 title: '震动模式',
-                subtitle: this.vibrationMode,
-                type: 'select',
+                type: 'segment',
+                value: this.vibrationMode,
                 visible: this.enableVibration,
-                action: () => {
-                  this.showVibrationModePicker();
+                segmentLabels: ['自动', '仅手柄', '仅设备', '同时'],
+                onSegmentChange: (value: string) => {
+                  this.vibrationMode = value;
+                  this.saveSetting(SettingsKeys.VIBRATION_MODE, value);
                 }
               },
               {
@@ -1127,7 +1196,7 @@ struct SettingsPageV2 {
           // 屏幕控制器设置
           this.SettingsGroup({
             id: 'osc',
-            icon: $r('app.media.ic_controller'),
+            icon: $r('sys.symbol.gamecontroller'),
             title: '屏幕控制器',
             items: [
               {
@@ -1216,6 +1285,7 @@ struct SettingsPageV2 {
           this.SettingsGroup({
             id: 'mouse',
             icon: $r('app.media.ic_mouse'),
+            useSymbol: false,
             title: '鼠标和触控',
             items: [
               {
@@ -1265,9 +1335,13 @@ struct SettingsPageV2 {
               },
               {
                 title: '摇杆滚动',
-                subtitle: this.analogScrolling,
-                type: 'select',
-                action: () => this.showAnalogScrollingPicker()
+                type: 'segment',
+                value: this.analogScrolling,
+                segmentLabels: ['禁用', '左摇杆', '右摇杆'],
+                onSegmentChange: (value: string) => {
+                  this.analogScrolling = value;
+                  this.saveSetting(SettingsKeys.ANALOG_SCROLLING, value);
+                }
               },
               {
                 title: '鼠标导航按钮',
@@ -1295,7 +1369,7 @@ struct SettingsPageV2 {
           // 增强触控设置 (TODO: 功能未实现，设置值已保存但尚未接入 TouchInputHandler)
           this.SettingsGroup({
             id: 'enhanced_touch',
-            icon: $r('app.media.ic_enhance'),
+            icon: $r('sys.symbol.bolt_fill'),
             title: '增强触控 (TODO)',
             items: [
               {
@@ -1371,6 +1445,7 @@ struct SettingsPageV2 {
           this.SettingsGroup({
             id: 'host',
             icon: $r('app.media.ic_host'),
+            useSymbol: false,
             title: '主机',
             items: [
               {
@@ -1385,9 +1460,14 @@ struct SettingsPageV2 {
               },
               {
                 title: '屏幕组合模式',
-                subtitle: this.screenCombinationMode,
-                type: 'select',
-                action: () => this.showScreenCombinationModePicker()
+                type: 'segment',
+                value: this.screenCombinationMode,
+                segmentLabels: ['自动', '仅主显示器', '扩展', '复制'],
+                segmentValues: ['自动', '仅主显示器', '扩展模式', '复制模式'],
+                onSegmentChange: (value: string) => {
+                  this.screenCombinationMode = value;
+                  this.saveSetting(SettingsKeys.SCREEN_COMBINATION_MODE, value);
+                }
               },
               {
                 title: '断开后锁定屏幕',
@@ -1415,7 +1495,7 @@ struct SettingsPageV2 {
           // 高级设置
           this.SettingsGroup({
             id: 'advanced',
-            icon: $r('app.media.ic_advanced'),
+            icon: $r('sys.symbol.gearshape_fill'),
             title: '高级',
             items: [
               {
@@ -1488,10 +1568,14 @@ struct SettingsPageV2 {
               },
               {
                 title: '性能覆盖层方向',
-                subtitle: this.perfOverlayOrientation,
-                type: 'select',
+                type: 'segment',
+                value: this.perfOverlayOrientation,
                 visible: this.enablePerfOverlay,
-                action: () => this.showPerfOverlayOrientationPicker()
+                segmentLabels: ['水平', '垂直'],
+                onSegmentChange: (value: string) => {
+                  this.perfOverlayOrientation = value;
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_ORIENTATION, value);
+                }
               },
               {
                 title: '性能覆盖层位置',
@@ -1570,10 +1654,14 @@ struct SettingsPageV2 {
               },
               {
                 title: 'ESC 菜单按键',
-                subtitle: this.escMenuKey,
-                type: 'select',
+                type: 'segment',
+                value: this.escMenuKey,
                 visible: this.enableEscMenu,
-                action: () => this.showEscMenuKeyPicker()
+                segmentLabels: ['ESC', 'F1', 'F12', '~'],
+                onSegmentChange: (value: string) => {
+                  this.escMenuKey = value;
+                  this.saveSetting(SettingsKeys.ESC_MENU_KEY, value);
+                }
               },
               {
                 title: '后台保活',
@@ -1591,7 +1679,7 @@ struct SettingsPageV2 {
           // UI 设置
           this.SettingsGroup({
             id: 'ui',
-            icon: $r('app.media.ic_display'),
+            icon: $r('sys.symbol.display'),
             title: '界面',
             items: [
               {
@@ -1651,7 +1739,7 @@ struct SettingsPageV2 {
           // 关于
           this.SettingsGroup({
             id: 'about',
-            icon: $r('app.media.ic_apps'),
+            icon: $r('sys.symbol.info_circle_fill'),
             title: '关于',
             items: [
               {
@@ -1666,14 +1754,6 @@ struct SettingsPageV2 {
                 type: 'action',
                 action: () => {
                   this.openUrl('https://github.com/AlkaidLab/moonlight-harmony');
-                }
-              },
-              {
-                title: 'Moonlight V+ Android',
-                subtitle: 'Android 增强版客户端',
-                type: 'action',
-                action: () => {
-                  this.openUrl('https://github.com/qiin2333/moonlight-vplus');
                 }
               },
               {
@@ -1714,16 +1794,26 @@ struct SettingsPageV2 {
           // 底部间距
           Column()
             .height(AppSpacing.XXLarge)
+              }
+              .width('100%')
+              .padding({ left: AppSpacing.Large, right: AppSpacing.Large })
+            }
+          }
         }
-        .width('100%')
-        .padding({ left: AppSpacing.Large, right: AppSpacing.Large })
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+        .align(Alignment.Top)
       }
       .layoutWeight(1)
-      .scrollBar(BarState.Off)
+      .alignItems(VerticalAlign.Top)
     }
     .width('100%')
     .height('100%')
     .backgroundColor(AppColors.Background)
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      const width = newValue.width as number;
+      this.isWideScreen = width > 840;
+    })
     .bindSheet($$this.showTextInputDialog, this.TextInputSheet(), {
       height: SheetSize.FIT_CONTENT,
       backgroundColor: Color.Transparent,
@@ -1774,111 +1864,199 @@ struct SettingsPageV2 {
   }
 
   @Builder
-  SettingsGroup(group: SettingGroup) {
-    Column() {
-      // 分组标题 - 带图标的霍虹风格（可点击展开/折叠）
-      Row() {
-        // 分组图标
-        Column() {
-          Image(group.icon)
-            .width(18)
-            .height(18)
-            .fillColor(AppColors.Primary)
-        }
-        .width(28)
-        .height(28)
-        .borderRadius(8)
-        .backgroundColor(AppColors.Surface)
-        .borderWidth(1)
-        .borderColor(AppColors.CardBorder)
-        .justifyContent(FlexAlign.Center)
-        .margin({ right: AppSpacing.Small })
+  SettingsSidebar() {
+    Scroll() {
+      Column({ space: 4 }) {
+        ForEach(this.sidebarGroups, (meta: SidebarGroupMeta) => {
+          Row() {
+            // 分组图标
+            Column() {
+              if (meta.useSymbol) {
+                SymbolGlyph(meta.icon)
+                  .fontSize(16)
+                  .fontColor([this.expandedGroup === meta.id ? AppColors.Primary : AppColors.TextSecondary])
+                  .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+              } else {
+                Image(meta.icon)
+                  .width(16)
+                  .height(16)
+                  .fillColor(this.expandedGroup === meta.id ? AppColors.Primary : AppColors.TextSecondary)
+              }
+            }
+            .width(24)
+            .height(24)
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
 
-        Text(group.title.toUpperCase())
-          .fontSize(AppSizes.FontCaption)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(AppColors.Primary)
-        
-        Blank()
-        
-        // 展开/折叠箭头
-        Image($r('app.media.ic_arrow_right'))
-          .width(16)
-          .height(16)
-          .fillColor(AppColors.Primary)
-          .rotate({ angle: this.expandedGroup === group.id ? 90 : 0 })
-          .animation({ duration: AppAnimation.Fast, curve: Curve.EaseInOut })
+            Text(meta.title)
+              .fontSize(AppSizes.FontCaption)
+              .fontWeight(this.expandedGroup === meta.id ? FontWeight.Bold : FontWeight.Normal)
+              .fontColor(this.expandedGroup === meta.id ? AppColors.Primary : AppColors.TextPrimary)
+              .margin({ left: AppSpacing.Small })
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+          .height(44)
+          .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
+          .borderRadius(AppSizes.RadiusMedium)
+          .backgroundColor(this.expandedGroup === meta.id ? AppColors.Surface : Color.Transparent)
+          .borderWidth(this.expandedGroup === meta.id ? 1 : 0)
+          .borderColor(this.expandedGroup === meta.id ? AppColors.CardBorder : Color.Transparent)
+          .onClick(() => {
+            this.expandedGroup = meta.id;
+          })
+        })
       }
       .width('100%')
-      .height(40)
-      .padding({ left: AppSpacing.Small, right: AppSpacing.Medium })
-      .backgroundColor(this.expandedGroup === group.id ? AppColors.Surface : Color.Transparent)
-      .borderRadius(AppSizes.RadiusMedium)
-      .focusable(true)
-      .focusOnTouch(true)
-      .focusBox({
-        margin: LengthMetrics.vp(1),
-        strokeColor: ColorMetrics.rgba(0, 212, 255, 0.8),
-        strokeWidth: LengthMetrics.vp(1.5)
-      })
-      .onKeyEvent((event: KeyEvent) => {
-        if (event.type === KeyType.Down && (event.keyCode === 2054 || event.keyCode === 2050)) {
+      .padding({ left: AppSpacing.Medium, right: AppSpacing.Small, top: AppSpacing.Medium })
+    }
+    .width(180)
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .align(Alignment.Top)
+  }
+
+  @Builder
+  SettingsGroup(group: SettingGroup) {
+    // 宽屏模式：仅渲染当前选中的分组（侧边栏负责导航），不显示分组标题
+    if (this.isWideScreen) {
+      if (this.expandedGroup === group.id) {
+        Column() {
+          // 设置项列表 - 直接展示
+          Column() {
+            ForEach(group.items.filter((item: SettingItem) => item.visible !== false), (item: SettingItem, index: number) => {
+              this.SettingItemView(item)
+
+              if (index < group.items.filter((i: SettingItem) => i.visible !== false).length - 1) {
+                Divider()
+                  .color(AppColors.CardBorder)
+                  .margin({ left: AppSpacing.Medium, right: AppSpacing.Medium })
+              }
+            }, (item: SettingItem) => `${item.title}_${item.value}_${item.subtitle}_${item.disabled}_${item.visible}`)
+          }
+          .width('100%')
+          .backgroundColor(AppColors.CardBackground)
+          .borderRadius(AppSizes.RadiusLarge)
+          .borderWidth(1)
+          .borderColor(AppColors.CardBorder)
+        }
+        .width('100%')
+      }
+    } else {
+      // 窄屏模式：分组标题 + 可折叠内容
+      Column() {
+        // 分组标题 - 带图标的霍虹风格（可点击展开/折叠）
+        Row() {
+          // 分组图标
+          Column() {
+            if (group.useSymbol !== false) {
+              SymbolGlyph(group.icon)
+                .fontSize(18)
+                .fontColor([AppColors.Primary])
+                .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+            } else {
+              Image(group.icon)
+                .width(18)
+                .height(18)
+                .fillColor(AppColors.Primary)
+            }
+          }
+          .width(28)
+          .height(28)
+          .borderRadius(8)
+          .backgroundColor(AppColors.Surface)
+          .borderWidth(1)
+          .borderColor(AppColors.CardBorder)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+          .margin({ right: AppSpacing.Small })
+
+          Text(group.title.toUpperCase())
+            .fontSize(AppSizes.FontCaption)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(AppColors.Primary)
+          
+          Blank()
+          
+          // 展开/折叠箭头
+          Image($r('app.media.ic_arrow_right'))
+            .width(16)
+            .height(16)
+            .fillColor(AppColors.Primary)
+            .rotate({ angle: this.expandedGroup === group.id ? 90 : 0 })
+            .animation({ duration: AppAnimation.Fast, curve: Curve.EaseInOut })
+        }
+        .width('100%')
+        .height(40)
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: AppSpacing.Small, right: AppSpacing.Medium })
+        .backgroundColor(this.expandedGroup === group.id ? AppColors.Surface : Color.Transparent)
+        .borderRadius(AppSizes.RadiusMedium)
+        .focusable(true)
+        .focusOnTouch(true)
+        .focusBox({
+          margin: LengthMetrics.vp(1),
+          strokeColor: ColorMetrics.rgba(0, 212, 255, 0.8),
+          strokeWidth: LengthMetrics.vp(1.5)
+        })
+        .onKeyEvent((event: KeyEvent) => {
+          if (event.type === KeyType.Down && (event.keyCode === 2054 || event.keyCode === 2050)) {
+            if (this.expandedGroup === group.id) {
+              this.expandedGroup = '';
+            } else {
+              this.expandedGroup = group.id;
+            }
+            return true;
+          }
+          return false;
+        })
+        .onClick(() => {
           if (this.expandedGroup === group.id) {
             this.expandedGroup = '';
           } else {
             this.expandedGroup = group.id;
           }
-          return true;
-        }
-        return false;
-      })
-      .onClick(() => {
-        // 点击切换展开/折叠状态
+        })
+
+        // 设置项容器 - 深色卡片（可折叠）
         if (this.expandedGroup === group.id) {
-          this.expandedGroup = '';  // 折叠当前分组
-        } else {
-          this.expandedGroup = group.id;  // 展开新分组
-        }
-      })
+          Column() {
+            ForEach(group.items.filter((item: SettingItem) => item.visible !== false), (item: SettingItem, index: number) => {
+              this.SettingItemView(item)
 
-      // 设置项容器 - 深色卡片（可折叠）
-      if (this.expandedGroup === group.id) {
-        Column() {
-          // 过滤掉 visible === false 的项（用于条件显示子选项）
-          ForEach(group.items.filter((item: SettingItem) => item.visible !== false), (item: SettingItem, index: number) => {
-            this.SettingItemView(item)
-
-            // 分割线
-            if (index < group.items.filter((i: SettingItem) => i.visible !== false).length - 1) {
-              Divider()
-                .color(AppColors.CardBorder)
-                .margin({ left: AppSpacing.Medium, right: AppSpacing.Medium })
-            }
-          })
+              if (index < group.items.filter((i: SettingItem) => i.visible !== false).length - 1) {
+                Divider()
+                  .color(AppColors.CardBorder)
+                  .margin({ left: AppSpacing.Medium, right: AppSpacing.Medium })
+              }
+            }, (item: SettingItem) => `${item.title}_${item.value}_${item.subtitle}_${item.disabled}_${item.visible}`)
+          }
+          .width('100%')
+          .backgroundColor(AppColors.CardBackground)
+          .borderRadius(AppSizes.RadiusLarge)
+          .borderWidth(1)
+          .borderColor(AppColors.CardBorder)
+          .margin({ top: AppSpacing.Small })
+          .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Fast }))
         }
-        .width('100%')
-        .backgroundColor(AppColors.CardBackground)
-        .borderRadius(AppSizes.RadiusLarge)
-        .borderWidth(1)
-        .borderColor(AppColors.CardBorder)
-        .margin({ top: AppSpacing.Small })
-        .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Fast }))
       }
+      .width('100%')
+      .margin({ bottom: AppSpacing.Medium })
     }
-    .width('100%')
-    .margin({ bottom: AppSpacing.Medium })
   }
 
   @Builder
   SettingItemView(item: SettingItem) {
-    Row() {
-      // 文字内容
+    if (item.type === 'segment') {
+      // 分段按钮布局 - 参考系统设置风格：标题 + 居中分段按钮 + 辅助说明
       Column() {
+        // 标题行
         Row() {
           Text(item.title)
             .fontSize(AppSizes.FontBody)
             .fontColor(item.disabled ? AppColors.TextSecondary : AppColors.TextPrimary)
-          
+
           // Pro 标记
           if (item.isPro) {
             Text('Pro')
@@ -1891,88 +2069,140 @@ struct SettingsPageV2 {
           }
         }
         .alignItems(VerticalAlign.Center)
+        .width('100%')
 
-        if (item.subtitle) {
-          Text(item.subtitle)
-            .fontSize(AppSizes.FontCaption)
-            .fontColor(AppColors.TextSecondary)
-            .margin({ top: 2 })
-        }
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-
-      // 右侧控件
-      if (item.type === 'toggle') {
-        Toggle({ type: ToggleType.Switch, isOn: item.value as boolean })
-          .selectedColor(AppColors.Primary)
-          .enabled(!item.disabled)
-          .onChange(() => {
-            if (item.action && !item.disabled) {
-              item.action();
-            }
-          })
-      } else if (item.type === 'slider') {
-        // 使用公共滑块组件
-        SettingSlider({
-          config: {
-            value: item.value as number,
-            min: item.min ?? 0,
-            max: item.max ?? 100,
-            step: item.step,
-            unit: item.unit,
-            isLogarithmic: item.isLogarithmic,
-            snapValues: item.snapValues,
-            snapThreshold: item.snapThreshold,
-            formatValue: item.formatValue,
-            onChange: (value: number) => {
-              if (item.onSliderChange) {
-                item.onSliderChange(value);
-              }
+        // 分段选择器 - 居中显示，宽屏下受 maxWidth 448vp 约束
+        InlineSegmentPicker({
+          labels: item.segmentLabels ?? [],
+          selectedValue: item.value as string ?? '',
+          values: item.segmentValues ?? [],
+          disabled: item.disabled ?? false,
+          onValueChange: (value: string) => {
+            if (item.onSegmentChange) {
+              item.onSegmentChange(value);
             }
           }
         })
-          .width(210)
-      } else if (item.type === 'select' || item.type === 'action') {
-        Image($r('app.media.ic_arrow_right'))
-          .width(16)
-          .height(16)
-          .fillColor(item.disabled ? AppColors.TextSecondary : AppColors.Primary)
-      }
-    }
-    .width('100%')
-    .height(item.type === 'slider' ? 70 : 60)
-    .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
-    .opacity(item.disabled ? 0.5 : 1.0)
-    .focusable(!item.disabled)
-    .focusOnTouch(true)
-    .focusBox({
-      margin: LengthMetrics.vp(1),
-      strokeColor: ColorMetrics.rgba(74, 222, 128, 0.8),
-      strokeWidth: LengthMetrics.vp(1.5)
-    })
-    .onKeyEvent((event: KeyEvent) => {
-      if (event.type === KeyType.Down && !item.disabled) {
-        // A键/回车 → 触发操作
-        if (event.keyCode === 2054 || event.keyCode === 2050) {
-          if (item.type === 'toggle' && item.action) {
-            item.action();
-          } else if (item.action) {
-            item.action();
-          }
-          return true;
+          .margin({ top: AppSpacing.Medium })
+
+        // 辅助说明文字（置于分段按钮下方，作为脚注）
+        if (item.subtitle) {
+          Text(item.subtitle)
+            .fontSize(AppSizes.FontCaption)
+            .fontColor(AppColors.TextTertiary)
+            .margin({ top: AppSpacing.XSmall })
+            .width('100%')
         }
       }
-      return false;
-    })
-    .onClick(() => {
-      if (item.disabled) return;
-      console.info(`SettingsPageV2: 点击设置项 ${item.title}, type=${item.type}, hasAction=${!!item.action}`);
-      if (item.type !== 'toggle' && item.action) {
-        console.info(`SettingsPageV2: 执行 action`);
-        item.action();
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: AppSpacing.Large, right: AppSpacing.Large, top: AppSpacing.Medium, bottom: AppSpacing.Medium })
+      .opacity(item.disabled ? 0.5 : 1.0)
+    } else {
+      // 原有布局：标题左侧 + 控件右侧
+      Row() {
+        // 文字内容
+        Column() {
+          Row() {
+            Text(item.title)
+              .fontSize(AppSizes.FontBody)
+              .fontColor(item.disabled ? AppColors.TextSecondary : AppColors.TextPrimary)
+            
+            // Pro 标记
+            if (item.isPro) {
+              Text('Pro')
+                .fontSize(10)
+                .fontColor(Color.White)
+                .backgroundColor('#FF6B35')
+                .borderRadius(4)
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                .margin({ left: 6 })
+            }
+          }
+          .alignItems(VerticalAlign.Center)
+
+          if (item.subtitle) {
+            Text(item.subtitle)
+              .fontSize(AppSizes.FontCaption)
+              .fontColor(AppColors.TextSecondary)
+              .margin({ top: 2 })
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        // 右侧控件
+        if (item.type === 'toggle') {
+          Toggle({ type: ToggleType.Switch, isOn: item.value as boolean })
+            .selectedColor(AppColors.Primary)
+            .enabled(!item.disabled)
+            .onChange(() => {
+              if (item.action && !item.disabled) {
+                item.action();
+              }
+            })
+        } else if (item.type === 'slider') {
+          // 使用公共滑块组件
+          SettingSlider({
+            config: {
+              value: item.value as number,
+              min: item.min ?? 0,
+              max: item.max ?? 100,
+              step: item.step,
+              unit: item.unit,
+              isLogarithmic: item.isLogarithmic,
+              snapValues: item.snapValues,
+              snapThreshold: item.snapThreshold,
+              formatValue: item.formatValue,
+              onChange: (value: number) => {
+                if (item.onSliderChange) {
+                  item.onSliderChange(value);
+                }
+              }
+            }
+          })
+            .width(210)
+        } else if (item.type === 'select' || item.type === 'action') {
+          Image($r('app.media.ic_arrow_right'))
+            .width(16)
+            .height(16)
+            .fillColor(item.disabled ? AppColors.TextSecondary : AppColors.Primary)
+        }
       }
-    })
+      .width('100%')
+      .height(item.type === 'slider' ? 70 : 60)
+      .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
+      .opacity(item.disabled ? 0.5 : 1.0)
+      .focusable(!item.disabled)
+      .focusOnTouch(true)
+      .focusBox({
+        margin: LengthMetrics.vp(1),
+        strokeColor: ColorMetrics.rgba(74, 222, 128, 0.8),
+        strokeWidth: LengthMetrics.vp(1.5)
+      })
+      .onKeyEvent((event: KeyEvent) => {
+        if (event.type === KeyType.Down && !item.disabled) {
+          // A键/回车 → 触发操作
+          if (event.keyCode === 2054 || event.keyCode === 2050) {
+            if (item.type === 'toggle' && item.action) {
+              item.action();
+            } else if (item.action) {
+              item.action();
+            }
+            return true;
+          }
+        }
+        return false;
+      })
+      .onClick(() => {
+        if (item.disabled) return;
+        console.info(`SettingsPageV2: 点击设置项 ${item.title}, type=${item.type}, hasAction=${!!item.action}`);
+        if (item.type !== 'toggle' && item.action) {
+          console.info(`SettingsPageV2: 执行 action`);
+          item.action();
+        }
+      })
+    }
   }
 
   private showResolutionPicker(): void {
@@ -2893,6 +3123,8 @@ struct OpenSourceLicensesDialog {
     .height('70%')
     .backgroundColor(AppColors.Background)
     .borderRadius(16)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
 }
 
@@ -2994,5 +3226,7 @@ struct PrivacyPolicyDialog {
     .height('70%')
     .backgroundColor(AppColors.Background)
     .borderRadius(16)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
 }

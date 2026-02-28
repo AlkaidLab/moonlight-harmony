@@ -111,7 +111,9 @@ export class StreamIMEManager {
       });
 
       controller.on('sendKeyboardStatus', (status: inputMethod.KeyboardStatus) => {
-        if (status === inputMethod.KeyboardStatus.HIDE) {
+        // 只响应用户主动关闭键盘的 HIDE 事件
+        // 忽略 attach 初始化阶段的假 HIDE（部分设备会在显示前先发一次 HIDE）
+        if (status === inputMethod.KeyboardStatus.HIDE && Date.now() - this.imeReadyTime > 300) {
           this.hide();
         }
       });
