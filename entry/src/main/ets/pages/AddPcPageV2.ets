@@ -426,7 +426,8 @@ struct AddPcPageV2 {
           .combine(TransitionEffect.translate({ y: -4 })))
       }
 
-      // 添加按钮
+      // 添加按钮 — 遵循 HarmonyOS 强调按钮规范：
+      // 始终使用主色背景，禁用态通过降低不透明度表达，保证文字对比度 ≥ 4.5:1
       Button({ type: ButtonType.Normal }) {
         Row() {
           if (this.isAdding) {
@@ -451,14 +452,15 @@ struct AddPcPageV2 {
       .width('100%')
       .height(50)
       .borderRadius(AppSizes.RadiusXLarge)
-      .backgroundColor(
-        this.showSuccess ? AppColors.Success :
-          (this.isValidInput && !this.isAdding ? AppColors.Primary : AppColors.TextTertiary)
-      )
+      .backgroundColor(this.showSuccess ? AppColors.Success : AppColors.Primary)
+      .opacity(this.isValidInput && !this.isAdding || this.showSuccess ? 1.0 : 0.4)
       .shadow(this.isValidInput && !this.isAdding ? AppShadows.Medium : AppShadows.Small)
-      .enabled(this.isValidInput && !this.isAdding)
       .margin({ top: AppSpacing.XLarge })
-      .onClick(() => this.addComputer())
+      .onClick(() => {
+        if (this.isValidInput && !this.isAdding) {
+          this.addComputer();
+        }
+      })
       .animation({ duration: AppAnimation.Normal })
     }
     .width('100%')

@@ -2061,8 +2061,8 @@ struct SettingsPageV2 {
           if (item.isPro) {
             Text('Pro')
               .fontSize(10)
-              .fontColor(Color.White)
-              .backgroundColor('#FF6B35')
+              .fontColor(AppColors.TextOnPrimary)
+              .backgroundColor(AppColors.PrimaryDark)
               .borderRadius(4)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               .margin({ left: 6 })
@@ -2097,7 +2097,6 @@ struct SettingsPageV2 {
       .width('100%')
       .alignItems(HorizontalAlign.Center)
       .padding({ left: AppSpacing.Large, right: AppSpacing.Large, top: AppSpacing.Medium, bottom: AppSpacing.Medium })
-      .opacity(item.disabled ? 0.5 : 1.0)
     } else {
       // 原有布局：标题左侧 + 控件右侧
       Row() {
@@ -2112,8 +2111,8 @@ struct SettingsPageV2 {
             if (item.isPro) {
               Text('Pro')
                 .fontSize(10)
-                .fontColor(Color.White)
-                .backgroundColor('#FF6B35')
+                .fontColor(AppColors.TextOnPrimary)
+                .backgroundColor(AppColors.PrimaryDark)
                 .borderRadius(4)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                 .margin({ left: 6 })
@@ -2162,6 +2161,7 @@ struct SettingsPageV2 {
             }
           })
             .width(210)
+            .opacity(item.disabled ? 0.5 : 1.0)
         } else if (item.type === 'select' || item.type === 'action') {
           Image($r('app.media.ic_arrow_right'))
             .width(16)
@@ -2172,7 +2172,6 @@ struct SettingsPageV2 {
       .width('100%')
       .height(item.type === 'slider' ? 70 : 60)
       .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
-      .opacity(item.disabled ? 0.5 : 1.0)
       .focusable(!item.disabled)
       .focusOnTouch(true)
       .focusBox({

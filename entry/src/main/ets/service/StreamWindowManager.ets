@@ -216,25 +216,14 @@ export class StreamWindowManager {
       // 退出沉浸式模式
       try { win.setImmersiveModeEnabledState(false); } catch (_e) {}
 
-      // 恢复系统栏显示
+      // 恢复系统栏显示（不恢复 navigationIndicator：EntryAbility 未显式管理它，
+      // 恢复会让导航指示器以系统默认的白色不透明样式出现）
       try {
         await win.setSpecificSystemBarEnabled('status', true);
         await win.setSpecificSystemBarEnabled('navigation', true);
-        await win.setSpecificSystemBarEnabled('navigationIndicator', true);
       } catch (_e) {
         try { win.setWindowSystemBarEnable(['status', 'navigation']); } catch (_e2) {}
       }
-
-      // 恢复系统栏透明样式（与 EntryAbility 初始化一致）
-      try {
-        const barProperties: window.SystemBarProperties = {
-          statusBarColor: '#00000000',
-          navigationBarColor: '#00000000',
-          statusBarContentColor: '#1A3A4A',
-          navigationBarContentColor: '#1A3A4A'
-        };
-        win.setWindowSystemBarProperties(barProperties);
-      } catch (_e) {}
 
       // 恢复全屏布局：重新显示系统栏后系统可能收回了全屏布局，导致内容区被缩进出现黑边，此处再次设为 true 使内容延伸到系统栏下
       try {

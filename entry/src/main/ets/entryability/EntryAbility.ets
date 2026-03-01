@@ -144,6 +144,12 @@ export default class EntryAbility extends UIAbility {
       } catch (e) {
         hilog.info(DOMAIN, TAG, 'setWindowDecorVisible not available (non-2in1 device or unsupported API)');
       }
+      // 隐藏底部导航指示器（白色横线），避免遮挡沉浸式 UI
+      try {
+        win.setSpecificSystemBarEnabled('navigationIndicator', false);
+      } catch (e) {
+        hilog.info(DOMAIN, TAG, 'setSpecificSystemBarEnabled(navigationIndicator) not available');
+      }
       // 根据当前深色模式设置状态栏和导航栏颜色
       const contentColor = this.isDarkMode ? '#F5F0EB' : '#1A3A4A';
       const barProperties: window.SystemBarProperties = {
