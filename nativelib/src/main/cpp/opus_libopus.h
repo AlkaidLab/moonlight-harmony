@@ -12,7 +12,7 @@
  * @file opus_libopus.h
  * @brief libopus 直接调用的 Opus 解码器
  * 
- * 使用 libopus 原生 API 进行 Opus 解码，替代 AVCodec 包装
+ * 使用 libopus 原生 API 进行 Opus 解码
  * 优势：原生 PLC（丢包补偿）、同步调用零延迟、代码简洁
  */
 
@@ -24,8 +24,7 @@ extern "C" {
 }
 
 /**
- * 全局 Opus 解码器实例（简化接口）
- * 接口与原 opus_avcodec.h 完全兼容
+ * 全局 Opus 解码器实例
  */
 namespace MoonlightOpusDecoder {
     /**
