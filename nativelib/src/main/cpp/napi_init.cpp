@@ -25,6 +25,7 @@
 #include "input_interceptor.h"
 #include "mouse_interceptor.h"
 #include "usb_helper.h"
+#include "usb_ddk_poller.h"
 // SDL3 库尚未移植到 HarmonyOS，暂时禁用
 // #include "sdl3/sdl3_gamepad_napi.h"
 
@@ -159,6 +160,9 @@ static napi_value Init(napi_env env, napi_value exports) {
     
     // 初始化 USB Helper NAPI (内核 HID 驱动重绑定)
     UsbHelper_Init(env, exports);
+    
+    // 初始化 USB DDK Poller NAPI (DDK 高速轮询)
+    UsbDdkPoller_Init(env, exports);
     
     // SDL3 库尚未移植到 HarmonyOS，SDL3 NAPI 暂时禁用
     // 当前使用内置的 SDL GameControllerDB 映射数据替代

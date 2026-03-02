@@ -107,6 +107,14 @@
           "abilities": ["EntryAbility"],
           "when": "always"
         }
+      },
+      {
+        "name": "ohos.permission.ACCESS_DDK_USB",
+        "reason": "$string:permission_usb_ddk_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       }
     ]
   }

@@ -22,6 +22,7 @@ import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { InputInterceptorService } from '../service/InputInterceptorService';
 import { SettingsKeys } from '../service/SettingsService';
+import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
 
 /**
@@ -275,6 +276,7 @@ struct SettingsPageV2 {
   private multiOptionPickerDialogController: CustomDialogController | null = null;
   private licensesDialogController: CustomDialogController | null = null;
   private privacyDialogController: CustomDialogController | null = null;
+  private changelogDialogController: CustomDialogController | null = null;
   
   // 本地分辨率
   private nativeWidth: number = 0;
@@ -1750,6 +1752,14 @@ struct SettingsPageV2 {
                 action: () => {}
               },
               {
+                title: '更新日志',
+                subtitle: '查看版本更新历史',
+                type: 'action',
+                action: () => {
+                  this.showChangelog();
+                }
+              },
+              {
                 title: '开源项目',
                 subtitle: 'github.com/AlkaidLab/moonlight-harmony',
                 type: 'action',
@@ -2691,6 +2701,21 @@ struct SettingsPageV2 {
   }
 
   /**
+   * 显示更新日志对话框
+   */
+  private async showChangelog(): Promise<void> {
+    const context = getContext(this) as common.Context;
+    const entries = await loadChangelog(context);
+    this.changelogDialogController = new CustomDialogController({
+      builder: ChangelogDialog({ entries: entries }),
+      alignment: DialogAlignment.Center,
+      customStyle: true,
+      backgroundColor: Color.Transparent
+    });
+    this.changelogDialogController.open();
+  }
+
+  /**
    * 显示隐私政策对话框
    */
   private showPrivacyPolicy(): void {
@@ -3216,6 +3241,119 @@ struct PrivacyPolicyDialog {
 
       // 底部说明
       Text('完整隐私政策请查看项目仓库中的 PRIVACY_POLICY.md\n最后更新：2025年1月')
+        .fontSize(12)
+        .fontColor(AppColors.TextTertiary)
+        .padding(20)
+        .width('100%')
+        .textAlign(TextAlign.Center)
+    }
+    .width('90%')
+    .height('70%')
+    .backgroundColor(AppColors.Background)
+    .borderRadius(16)
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
+  }
+}
+
+/**
+ * 更新日志对话框
+ */
+@CustomDialog
+struct ChangelogDialog {
+  controller: CustomDialogController;
+  entries: ChangelogEntry[] = [];
+
+  build() {
+    Column() {
+      // 标题栏
+      Row() {
+        Text('更新日志')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.TextPrimary)
+        Blank()
+        Text('关闭')
+          .fontSize(14)
+          .fontColor(AppColors.Primary)
+          .onClick(() => {
+            this.controller.close();
+          })
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, top: 20, bottom: 12 })
+
+      // 版本列表
+      List({ space: 16 }) {
+        ForEach(this.entries, (entry: ChangelogEntry, index: number) => {
+          ListItem() {
+            Column({ space: 8 }) {
+              // 版本号 + 日期 + 标记
+              Row() {
+                Text(`v${entry.version}`)
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(AppColors.TextPrimary)
+                if (index === 0) {
+                  Text('最新')
+                    .fontSize(11)
+                    .fontColor(AppColors.Primary)
+                    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                    .backgroundColor(AppColors.PrimaryGlow)
+                    .borderRadius(4)
+                    .margin({ left: 8 })
+                }
+                Blank()
+                Text(entry.date)
+                  .fontSize(13)
+                  .fontColor(AppColors.TextTertiary)
+              }
+              .width('100%')
+
+              // 版本摘要
+              if (entry.summary !== undefined && entry.summary!.length > 0) {
+                Text(entry.summary!)
+                  .fontSize(14)
+                  .fontColor(AppColors.TextSecondary)
+                  .width('100%')
+              }
+
+              // 变更列表
+              Column({ space: 6 }) {
+                ForEach(entry.changes, (change: ChangeItem) => {
+                  Row({ space: 8 }) {
+                    Text(getChangeTypeConfig(change.type).label)
+                      .fontSize(11)
+                      .fontColor('#FFFFFF')
+                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                      .backgroundColor(getChangeTypeConfig(change.type).color)
+                      .borderRadius(4)
+                      .flexShrink(0)
+                    Text(change.text)
+                      .fontSize(14)
+                      .fontColor(AppColors.TextPrimary)
+                      .layoutWeight(1)
+                  }
+                  .width('100%')
+                  .alignItems(VerticalAlign.Top)
+                })
+              }
+              .width('100%')
+            }
+            .width('100%')
+            .padding(12)
+            .backgroundColor(AppColors.CardBackground)
+            .borderRadius(8)
+          }
+        })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .padding({ left: 20, right: 20 })
+      .scrollBar(BarState.Off)
+
+      // 底部提示
+      Text('在 GitHub 发布页查看完整更新历史')
         .fontSize(12)
         .fontColor(AppColors.TextTertiary)
         .padding(20)

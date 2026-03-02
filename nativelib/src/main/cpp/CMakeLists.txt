@@ -66,6 +66,7 @@ set(SOURCE_FILES
     input_interceptor.cpp
     mouse_interceptor.cpp
     usb_helper.cpp
+    usb_ddk_poller.cpp
     native_render.cpp
     sdl_gamecontrollerdb.cpp
 )

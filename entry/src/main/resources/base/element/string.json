@@ -119,6 +119,10 @@
     {
       "name": "permission_network_info_reason",
       "value": "用于检测网络变化，自动切换连接地址"
+    },
+    {
+      "name": "permission_usb_ddk_reason",
+      "value": "用于通过原生接口直接访问USB手柄设备，实现高速轮询"
     }
   ]
 }

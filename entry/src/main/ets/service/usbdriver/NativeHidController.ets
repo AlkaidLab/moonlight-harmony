@@ -35,6 +35,7 @@ export class NativeHidController extends AbstractController {
   private inputEndpoint: number = 0;
   private outputEndpoint: number = 0;
   private inputMaxPacketSize: number = 64;
+  private interfaceId: number = 0;
   private nativeParser: NativeHidParserService;
   private forceProtocolType: number = 0;  // 0=自动, 1=Xbox, 2=DS4, 3=Switch, 5=DualSense
   
@@ -216,10 +217,12 @@ export class NativeHidController extends AbstractController {
           }
         }
 
+        this.interfaceId = iface.id;
+
         try {
           const ret = usbManager.claimInterface(this.pipe, iface, true);
           if (ret === 0) {
-            console.info(`${TAG} 成功声明 HID 接口`);
+            console.info(`${TAG} 成功声明 HID 接口 (id=${iface.id})`);
           }
         } catch (err) {
           console.error(`${TAG} 声明接口失败:`, err);
@@ -243,10 +246,13 @@ export class NativeHidController extends AbstractController {
     }
 
     this.running = true;
+    this.lastActivityTime = Date.now();
     this.notifyDeviceAdded();
+
+    // ArkTS async 轮询
     this.inputLoop();
 
-    console.info(`${TAG} 控制器已启动: ${this.deviceName}`);
+    console.info(`${TAG} 控制器已启动 (ArkTS 轮询): ${this.deviceName}`);
     return true;
   }
 
@@ -256,6 +262,7 @@ export class NativeHidController extends AbstractController {
     }
 
     this.running = false;
+
     this.notifyDeviceRemoved();
 
     // 释放 USB 接口，确保系统 HID 驱动能重新接管设备
@@ -320,6 +327,37 @@ export class NativeHidController extends AbstractController {
     return (now - this.lastActivityTime) > inactivityThresholdMs;
   }
 
+  /**
+   * 处理 Native Poller 错误回调
+   */
+  private handlePollerError(errorCode: number): void {
+    if (errorCode === -4) {
+      // USB_ERROR_NO_DEVICE - 设备断开
+      if (this.ignoreDisconnect) {
+        console.warn(`${TAG} Native 轮询: 设备不可达但忽略断开信号已启用`);
+        return;
+      }
+      console.warn(`${TAG} Native 轮询: 设备断开 (code=${errorCode})`);
+      this.stop();
+    } else if (errorCode === -1 || errorCode === -9) {
+      // USB_ERROR_IO / USB_ERROR_PIPE
+      if (this.ignoreDisconnect) {
+        console.warn(`${TAG} Native 轮询: 硬件错误但忽略断开信号已启用`);
+        return;
+      }
+      console.error(`${TAG} Native 轮询: 硬件错误 (code=${errorCode})`);
+      this.stop();
+    } else {
+      console.warn(`${TAG} Native 轮询: 未知错误 (code=${errorCode})`);
+      if (!this.ignoreDisconnect) {
+        this.stop();
+      }
+    }
+  }
+
+  /**
+   * ArkTS 后备轮询循环（当 Native Poller 不可用时使用）
+   */
   private async inputLoop(): Promise<void> {
     const buffer = new Uint8Array(this.inputMaxPacketSize);
     let isSleepMode = false;
