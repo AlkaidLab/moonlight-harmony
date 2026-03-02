@@ -55,6 +55,12 @@ export class StreamInputHandler {
   private screenWidthPx: number = 1080;
   private screenHeightPx: number = 2400;
 
+  // ── ESC 双击检测（2in1 物理键盘用 ESC 代替返回手势打开串流菜单）──
+  private lastEscUpTime: number = 0;
+  private hasShownEscHint: boolean = false;
+  private static readonly ESC_DOUBLE_TAP_INTERVAL: number = 500; // ms
+  private static readonly KEYCODE_ESCAPE: number = 2070;
+  private onShowStreamMenu: (() => void) | null = null;
 
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
   private appVolume: number = 1.0;
@@ -74,11 +80,20 @@ export class StreamInputHandler {
   }
 
   /**
+   * 设置打开串流菜单的回调（由 StreamPage 注入）
+   */
+  setOnShowStreamMenu(callback: () => void): void {
+    this.onShowStreamMenu = callback;
+  }
+
+  /**
    * 重置所有输入状态（串流停止时调用）
    */
   resetState(): void {
     this.releaseAllKeys();
     this.modifierFlags = 0;
+    this.lastEscUpTime = 0;
+    this.hasShownEscHint = false;
     this.stopMouseInterceptor();
   }
 
@@ -151,6 +166,15 @@ export class StreamInputHandler {
     this.mouseInterceptorActive = false;
     console.info(`StreamInputHandler: C++ Monitor 不可用 (${result})，将使用 keepalive 动画保持 .onMouse 全速`);
     return false;
+  }
+
+  /**
+   * 更新 XComponent 实际渲染尺寸（由 onAreaChange 回调触发）
+   * 窗口模式下 XComponent 为 '100%'，实际 vp 尺寸需从 onAreaChange 获取
+   */
+  updateXComponentActualSize(widthVp: number, heightVp: number): void {
+    this.viewWidthVp = widthVp;
+    this.viewHeightVp = heightVp;
   }
 
   /**
@@ -308,6 +332,14 @@ export class StreamInputHandler {
       return true; // GCK 手柄已接管 D-pad，消费事件
     }
 
+    // ESC 双击检测（2in1 物理键盘用 ESC 代替返回手势打开串流菜单）
+    if (keyCode === StreamInputHandler.KEYCODE_ESCAPE) {
+      if (this.checkEscDoubleTap(event.type === KeyType.Down)) {
+        return true; // 事件被消费（第二次 ESC）
+      }
+      // 第一次 ESC 或超时 → fall through 正常透传给主机
+    }
+
     // 键盘按键 → 翻译为 Windows VK 码并发送
     if (KeyboardTranslator.isKeyboardKey(keyCode)) {
       const vkCode = KeyboardTranslator.translate(keyCode);
@@ -371,6 +403,14 @@ export class StreamInputHandler {
           this.handleVolumeKey(keyCode);
         }
         return;
+      }
+
+      // 3.5 ESC 双击检测（同 handleKeyEvent 中的逻辑，拦截器路径也需要处理）
+      if (keyCode === StreamInputHandler.KEYCODE_ESCAPE) {
+        if (this.checkEscDoubleTap(isPressed)) {
+          return; // 事件被消费（第二次 ESC）
+        }
+        // 第一次 ESC 或超时 → fall through 正常透传给主机
       }
 
       // 4. 键盘按键（2000-2120）— 翻译为 Windows VK 码后发送
@@ -482,6 +522,45 @@ export class StreamInputHandler {
         this.modifierFlags &= ~mask;
       }
     }
+  }
+
+  // ==================== ESC 双击检测 ====================
+
+  /**
+   * ESC 双击检测（2in1 设备通过物理键盘 ESC 键打开串流菜单）
+   *
+   * 参照 Android 版 Game.java 的 ESC 双击菜单逻辑：
+   * - 第一次 ESC：正常透传给主机 + 显示 Toast 提示
+   * - 第二次 ESC（500ms 内）：消费事件，释放所有键，打开串流菜单
+   *
+   * @param isDown true=按下, false=抬起
+   * @returns true 表示事件应被消费（不发送给主机），false 表示正常透传
+   */
+  private checkEscDoubleTap(isDown: boolean): boolean {
+    if (isDown) {
+      // ESC DOWN: 双击窗口内的第二次按下 → 消费，不发送给主机
+      if (this.hasShownEscHint && Date.now() - this.lastEscUpTime <= StreamInputHandler.ESC_DOUBLE_TAP_INTERVAL) {
+        return true;
+      }
+      return false;
+    }
+
+    // ESC UP
+    const now = Date.now();
+    if (this.hasShownEscHint && now - this.lastEscUpTime <= StreamInputHandler.ESC_DOUBLE_TAP_INTERVAL) {
+      // 第二次 ESC UP → 打开串流菜单
+      this.lastEscUpTime = 0;
+      this.hasShownEscHint = false;
+      this.releaseAllKeys();
+      this.onShowStreamMenu?.();
+      return true;
+    }
+
+    // 第一次 ESC UP → 显示提示，正常透传
+    this.lastEscUpTime = now;
+    this.hasShownEscHint = true;
+    promptAction.showToast({ message: '再次按 ESC 打开串流菜单', duration: 1500 });
+    return false;
   }
 
   // ==================== 音量键 ====================

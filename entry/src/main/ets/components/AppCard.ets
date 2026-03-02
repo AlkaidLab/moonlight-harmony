@@ -55,7 +55,7 @@ export struct AppCard {
           .width('100%')
           .height(CARD_ICON_HEIGHT)
           .justifyContent(FlexAlign.Center)
-          .backgroundColor('#1E1E2E')
+          .backgroundColor(AppColors.SurfaceDark)
           .borderRadius({ topLeft: AppSizes.RadiusMedium, topRight: AppSizes.RadiusMedium })
         } else {
           Column() {
@@ -66,7 +66,7 @@ export struct AppCard {
           .width('100%')
           .height(CARD_ICON_HEIGHT)
           .justifyContent(FlexAlign.Center)
-          .backgroundColor('#1E1E2E')
+          .backgroundColor(AppColors.SurfaceDark)
           .borderRadius({ topLeft: AppSizes.RadiusMedium, topRight: AppSizes.RadiusMedium })
         }
 
@@ -76,11 +76,11 @@ export struct AppCard {
             Circle()
               .width(6)
               .height(6)
-              .fill('#4ADE80')
+              .fill(AppColors.Online)
             Text('运行中')
               .fontSize(10)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#4ADE80')
+              .fontColor(AppColors.Online)
               .margin({ left: 4 })
           }
           .padding({ left: 8, right: 10, top: 4, bottom: 4 })
@@ -109,7 +109,7 @@ export struct AppCard {
     .backgroundColor(AppColors.CardBackground)
     .borderRadius(AppSizes.RadiusMedium)
     .borderWidth(this.app.isRunning ? 2 : 1)
-    .borderColor(this.app.isRunning ? '#4ADE80' : AppColors.CardBorder)
+    .borderColor(this.app.isRunning ? AppColors.Online : AppColors.CardBorder)
     .shadow({
       radius: this.isFocused ? 16 : 8,
       color: this.app.isRunning ? 'rgba(74, 222, 128, 0.25)' : 'rgba(0, 0, 0, 0.3)',

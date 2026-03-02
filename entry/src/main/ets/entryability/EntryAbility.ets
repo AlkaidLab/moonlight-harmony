@@ -10,7 +10,7 @@
 
 import { AbilityConstant, ApplicationStateChangeCallback, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { window } from '@kit.ArkUI';
+import { window, display } from '@kit.ArkUI';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppStateService } from '../service/AppStateService';
 
@@ -136,14 +136,43 @@ export default class EntryAbility extends UIAbility {
 
     // 设置窗口属性
     windowStage.getMainWindow().then((win) => {
-      // 设置全屏显示
+      // 设置全屏布局（内容延伸到系统栏区域）
       win.setWindowLayoutFullScreen(true);
-      // 隐藏窗口装饰栏（2in1/平板设备最大化时的标题栏）
+
+      // 动态获取系统避让区域高度，供所有页面使用
+      // 2in1 设备有窗口装饰栏时，状态栏高度可能为 0，避免硬编码浪费空间
+      // 但保留最小间距 16vp，确保 2in1 设备上内容不紧贴装饰栏
+      const MIN_TOP_SAFE_HEIGHT = 16;
       try {
-        win.setWindowDecorVisible(false);
+        const avoidArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+        const displayInfo = display.getDefaultDisplaySync();
+        const density = displayInfo.densityPixels;
+        // 将像素转换为 vp，并保证最小值
+        const topSafeHeight = Math.max(avoidArea.topRect.height / density, MIN_TOP_SAFE_HEIGHT);
+        const bottomSafeHeight = avoidArea.bottomRect.height / density;
+        AppStorage.setOrCreate('topSafeHeight', topSafeHeight);
+        AppStorage.setOrCreate('bottomSafeHeight', bottomSafeHeight);
+        hilog.info(DOMAIN, TAG, 'Safe area: top=%{public}d vp, bottom=%{public}d vp', topSafeHeight, bottomSafeHeight);
+
+        // 监听避让区域变化（窗口模式切换、装饰栏显隐时动态更新）
+        win.on('avoidAreaChange', (data) => {
+          if (data.type === window.AvoidAreaType.TYPE_SYSTEM) {
+            const newTopHeight = Math.max(data.area.topRect.height / density, MIN_TOP_SAFE_HEIGHT);
+            const newBottomHeight = data.area.bottomRect.height / density;
+            AppStorage.setOrCreate('topSafeHeight', newTopHeight);
+            AppStorage.setOrCreate('bottomSafeHeight', newBottomHeight);
+            hilog.info(DOMAIN, TAG, 'Safe area updated: top=%{public}d vp, bottom=%{public}d vp',
+              newTopHeight, newBottomHeight);
+          }
+        });
       } catch (e) {
-        hilog.info(DOMAIN, TAG, 'setWindowDecorVisible not available (non-2in1 device or unsupported API)');
+        // 获取失败时使用默认值 56（适用于手机）
+        AppStorage.setOrCreate('topSafeHeight', 56);
+        AppStorage.setOrCreate('bottomSafeHeight', 0);
+        hilog.warn(DOMAIN, TAG, 'Failed to get avoid area, using default: %{public}s', String(e));
       }
+
+      // 主界面保留窗口装饰栏（2in1/平板设备可拖拽、缩放、最小化），串流时再隐藏
       // 隐藏底部导航指示器（白色横线），避免遮挡沉浸式 UI
       try {
         win.setSpecificSystemBarEnabled('navigationIndicator', false);

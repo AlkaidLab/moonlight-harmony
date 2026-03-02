@@ -54,6 +54,7 @@ struct PcListPageV2 {
   @State showAboutDialog: boolean = false;
   @State isLandscape: boolean = false;  // 横屏检测
   @State screenWidth: number = 0;       // 屏幕宽度
+  @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
   
   // LazyForEach 数据源
   private computerDataSource: ComputerDataSource = new ComputerDataSource();
@@ -518,7 +519,7 @@ struct PcListPageV2 {
     .padding({
       left: AppSpacing.Large,
       right: AppSpacing.Large,
-      top: 56,
+      top: this.topSafeHeight,
       bottom: AppSpacing.Large
     })
   }
@@ -864,7 +865,7 @@ struct PcListPageV2 {
             .width(56)
             .height(72)
             .textAlign(TextAlign.Center)
-            .backgroundColor('#E8F2FF')
+            .backgroundColor(AppColors.PrimaryGlow)
             .borderRadius(AppSizes.RadiusMedium)
         })
       }

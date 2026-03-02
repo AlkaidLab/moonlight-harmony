@@ -26,6 +26,7 @@ class AddressPortResult {
 @Entry
 @Component
 struct AddPcPageV2 {
+  @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
   @State ipAddress: string = '';
   @State isAdding: boolean = false;
   @State errorMessage: string = '';
@@ -130,7 +131,7 @@ struct AddPcPageV2 {
     .width('100%')
     .height(56)
     .padding({ left: AppSpacing.Large, right: AppSpacing.Large })
-    .margin({ top: 44 })
+    .margin({ top: this.topSafeHeight - 12 })
   }
 
   @Builder

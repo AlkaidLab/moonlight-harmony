@@ -38,7 +38,8 @@
           "audioPlayback"
         ],
         "supportWindowMode": [
-          "fullscreen"
+          "fullscreen",
+          "floating"
         ]
       }
     ],

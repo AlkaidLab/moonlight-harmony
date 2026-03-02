@@ -88,10 +88,11 @@ export class DarkThemeColors {
  */
 export class LightThemeColors {
   // 主色调 - Gura 蓝 (海蓝/鲨鱼蓝)
-  static readonly Primary = '#3D8ECF';           // 主色 - Gura 蓝
-  static readonly PrimaryDark = '#2D6FA8';       // 深色主色
-  static readonly PrimaryLight = '#5FAEE8';      // 浅色主色
-  static readonly PrimaryGlow = '#3D8ECF40';     // 发光效果
+  // 对比度已优化：主色 vs 白色背景 ≥ 4.5:1，白色文字 vs 主色按钮 ≥ 4.5:1
+  static readonly Primary = '#2873B3';           // 主色 - 深海蓝 (原 #3D8ECF)
+  static readonly PrimaryDark = '#1A5A8A';       // 深色主色
+  static readonly PrimaryLight = '#4A98D0';      // 浅色主色
+  static readonly PrimaryGlow = '#2873B340';     // 发光效果
 
   // 强调色 - 白蓝色
   static readonly Accent = '#A8D5E8';            // 浅蓝强调色
@@ -112,12 +113,12 @@ export class LightThemeColors {
   static readonly CardBackgroundActive = '#E8F1F7'; // 激活状态
   static readonly CardBorder = '#D4E6F0';        // 卡片边框
 
-  // 文字颜色
-  static readonly TextPrimary = '#1A3A4A';       // 主文字 - 深蓝灰
-  static readonly TextSecondary = '#5A7A8A';     // 次要文字 - 中蓝灰
-  static readonly TextTertiary = '#8AA0AA';      // 第三级文字
+  // 文字颜色 - 对比度优化
+  static readonly TextPrimary = '#1A3A4A';       // 主文字 - 深蓝灰 (11.3:1)
+  static readonly TextSecondary = '#506A7A';     // 次要文字 - 深蓝灰 (原 #5A7A8A, 5.4:1)
+  static readonly TextTertiary = '#6E8894';      // 第三级文字 (原 #8AA0AA, 3.5:1)
   static readonly TextOnPrimary = '#FFFFFF';     // 主色上的文字
-  static readonly TextGlow = '#3D8ECF';          // 发光文字
+  static readonly TextGlow = '#2873B3';          // 发光文字
 
   // 状态颜色
   static readonly Success = '#4CAF50';           // 成功 - 绿色
@@ -127,17 +128,17 @@ export class LightThemeColors {
 
   // 边框和分割线
   static readonly Border = '#D4E6F0';            // 边框
-  static readonly BorderGlow = '#3D8ECF60';      // 发光边框
+  static readonly BorderGlow = '#2873B360';      // 发光边框
   static readonly Divider = '#E8F1F7';           // 分割线
 
   // 在线/离线状态
   static readonly Online = '#4CAF50';            // 在线 - 绿色
   static readonly Offline = '#9E9E9E';           // 离线 - 灰色
-  static readonly Paired = '#3D8ECF';            // 已配对 - Gura蓝
+  static readonly Paired = '#2873B3';            // 已配对 - 深海蓝
   static readonly Unpaired = '#FF9800';          // 未配对 - 橙色
 
   // 特效色
-  static readonly GlowPrimary = '#3D8ECF40';     // 主色发光
+  static readonly GlowPrimary = '#2873B340';     // 主色发光
   static readonly GlowAccent = '#A8D5E840';      // 强调色发光
 }
 

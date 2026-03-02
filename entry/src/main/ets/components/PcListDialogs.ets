@@ -96,7 +96,7 @@ export struct PinDialog {
                 .width(56)
                 .height(72)
                 .textAlign(TextAlign.Center)
-                .backgroundColor('#E8F2FF')
+                .backgroundColor(AppColors.PrimaryGlow)
                 .borderRadius(AppSizes.RadiusMedium)
             })
           }

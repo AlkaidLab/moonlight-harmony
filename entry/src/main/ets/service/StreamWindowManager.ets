@@ -41,9 +41,27 @@ export class StreamWindowManager {
   private streamHeight: number = 1080;
   private screenWidth: number = 1920;
   private screenHeight: number = 1080;
+  /** 当前是否处于全屏沉浸模式（串流开始时默认进入全屏） */
+  private _isFullscreen: boolean = true;
+  /** 窗口大小变化回调（窗口模式拖拽缩放时触发） */
+  private onWindowSizeChanged: (() => void) | null = null;
+  /** windowSizeChange 监听器回调引用（用于 off 取消注册） */
+  private windowSizeChangeHandler: ((size: window.Size) => void) | null = null;
+
+  /** 查询当前是否全屏 */
+  get isFullscreen(): boolean {
+    return this._isFullscreen;
+  }
   
   constructor(context: common.UIAbilityContext) {
     this.context = context;
+  }
+
+  /**
+   * 设置窗口大小变化回调（窗口模式下用户拖拽缩放时触发 XComponent 重算）
+   */
+  setOnWindowSizeChanged(callback: (() => void) | null): void {
+    this.onWindowSizeChanged = callback;
   }
   
   /**
@@ -80,70 +98,24 @@ export class StreamWindowManager {
     
     return this.getScreenSize();
   }
+
+  // ==================== 窗口配置核心方法 ====================
   
   /**
-   * 配置窗口（全屏、保持常亮、沉浸式）
+   * 配置窗口进入串流模式（全屏+常亮+沉浸式）
    */
   async configureWindow(): Promise<void> {
     try {
       const win = await window.getLastWindow(this.context);
-      // 保持屏幕常亮
       win.setWindowKeepScreenOn(true);
+      await this.enterImmersiveFullscreen(win);
 
-      // 确保窗口最大化（2in1/平板设备上消除自由窗口模式）
-      try {
-        await win.maximize();
-      } catch (_e) {
-        console.info('StreamWindowManager: maximize() 不适用或已是全屏');
-      }
-
-      // 全屏布局（内容延伸到系统栏区域）
-      try {
-        await win.setWindowLayoutFullScreen(true);
-      } catch (_e) {
-        console.warn('StreamWindowManager: setWindowLayoutFullScreen 失败');
-      }
-
-      // 隐藏状态栏、导航栏、导航指示器 (API 12+ 新 API，替代旧 setWindowSystemBarEnable)
-      try {
-        await win.setSpecificSystemBarEnabled('status', false);
-        await win.setSpecificSystemBarEnabled('navigation', false);
-        await win.setSpecificSystemBarEnabled('navigationIndicator', false);
-      } catch (_e) {
-        // 回退旧 API
-        try { win.setWindowSystemBarEnable([]); } catch (_e2) {}
-      }
-
-      // 隐藏窗口装饰栏（2in1/平板设备的标题栏：放大/缩小/关闭按钮）
-      // 注：module.json5 已配置 supportWindowMode: ["fullscreen"]，
-      // 从系统层面确保不进入自由窗口/分屏模式，此处为双重保障
-      try {
-        win.setWindowDecorVisible(false);
-      } catch (_e) {
-        console.info('StreamWindowManager: setWindowDecorVisible 不支持（非 2in1 设备）');
-      }
-
-      // 尝试隐藏标题栏和 Dock 悬停显示 (API 14+)
-      try {
-        win.setTitleAndDockHoverShown(false);
-      } catch (_e) {
-        // API 不可用，忽略
-      }
-
-      // 沉浸式模式：抑制系统导航手势，需两次手势才能退出 (API 12+)
-      try {
-        win.setImmersiveModeEnabledState(true);
-      } catch (_e) {}
-
-      // 横屏多窗支持（参考 moonlight-ohos）
+      // 横屏多窗支持
       if (this.streamWidth > this.streamHeight) {
-        try {
-          await win.enableLandscapeMultiWindow();
-        } catch (_e) {}
+        try { await win.enableLandscapeMultiWindow(); } catch (_e) {}
       }
-      // 注：不禁用返回手势（setGestureBackEnabled），
-      // 返回手势需要到达 onBackPress() 以打开游戏菜单。
-      // 沉浸式模式已足够防止误触退出。
+
+      this._isFullscreen = true;
       console.info('StreamWindowManager: 已配置窗口基本设置（全屏+沉浸式+装饰栏隐藏）');
     } catch (err) {
       console.error('配置窗口失败:', err);
@@ -151,93 +123,25 @@ export class StreamWindowManager {
   }
   
   /**
-   * 根据串流分辨率设置屏幕方向
-   */
-  async configureOrientation(): Promise<void> {
-    try {
-      const win = await window.getLastWindow(this.context);
-      
-      if (this.streamWidth > this.streamHeight) {
-        // 横屏分辨率 → 横屏模式
-        await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_LANDSCAPE);
-        console.info(`StreamWindowManager: 设置横屏模式 (${this.streamWidth}x${this.streamHeight})`);
-      } else if (this.streamHeight > this.streamWidth) {
-        // 竖屏分辨率 → 竖屏模式
-        await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_PORTRAIT);
-        console.info(`StreamWindowManager: 设置竖屏模式 (${this.streamWidth}x${this.streamHeight})`);
-      } else {
-        // 正方形分辨率 → 自动旋转
-        await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION);
-        console.info(`StreamWindowManager: 设置自动旋转模式 (${this.streamWidth}x${this.streamHeight})`);
-      }
-    } catch (err) {
-      console.error('设置屏幕方向失败:', err);
-    }
-  }
-  
-  /**
-   * 更新屏幕尺寸（在屏幕旋转后调用）
-   */
-  async updateScreenSize(): Promise<DisplaySize> {
-    try {
-      // 短暂延迟，确保系统完成旋转
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-      
-      const displayInfo = display.getDefaultDisplaySync();
-      
-      // 根据当前串流方向确定正确的宽高
-      if (this.streamWidth > this.streamHeight) {
-        // 横屏模式：宽 > 高
-        this.screenWidth = Math.max(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
-        this.screenHeight = Math.min(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
-      } else {
-        // 竖屏模式：高 > 宽
-        this.screenWidth = Math.min(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
-        this.screenHeight = Math.max(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
-      }
-      
-      console.info(`StreamWindowManager: 更新屏幕尺寸 ${this.screenWidth}x${this.screenHeight}`);
-    } catch (err) {
-      console.error('更新屏幕尺寸失败:', err);
-    }
-    
-    return this.getScreenSize();
-  }
-  
-  /**
-   * 恢复窗口设置
+   * 恢复窗口设置（串流结束时调用）
    */
   async restoreWindow(): Promise<void> {
     try {
       const win = await window.getLastWindow(this.context);
-      // 恢复屏幕常亮设置
+      this.unregisterWindowSizeListener(win);
       win.setWindowKeepScreenOn(false);
+      await this.exitImmersiveFullscreen(win);
 
-      // 退出沉浸式模式
-      try { win.setImmersiveModeEnabledState(false); } catch (_e) {}
+      // 恢复全屏布局：重新显示系统栏后系统可能收回了全屏布局，
+      // 导致内容区缩进出现黑边，此处再次设为 true 使内容延伸到系统栏下
+      try { await win.setWindowLayoutFullScreen(true); } catch (_e) {}
 
-      // 恢复系统栏显示（不恢复 navigationIndicator：EntryAbility 未显式管理它，
-      // 恢复会让导航指示器以系统默认的白色不透明样式出现）
-      try {
-        await win.setSpecificSystemBarEnabled('status', true);
-        await win.setSpecificSystemBarEnabled('navigation', true);
-      } catch (_e) {
-        try { win.setWindowSystemBarEnable(['status', 'navigation']); } catch (_e2) {}
-      }
-
-      // 恢复全屏布局：重新显示系统栏后系统可能收回了全屏布局，导致内容区被缩进出现黑边，此处再次设为 true 使内容延伸到系统栏下
-      try {
-        await win.setWindowLayoutFullScreen(true);
-      } catch (_e) {}
-
-      // 恢复标题栏和 Dock 悬停显示
-      try { win.setTitleAndDockHoverShown(true); } catch (_e) {}
       // 退出横屏多窗模式
       try { await win.disableLandscapeMultiWindow(); } catch (_e) {}
-      // 恢复自动旋转
       await win.setPreferredOrientation(window.Orientation.UNSPECIFIED);
-      // 恢复屏幕亮度为系统默认
       win.setWindowBrightness(-1);
+
+      this._isFullscreen = false;
       console.info('StreamWindowManager: 已恢复窗口设置');
     } catch (err) {
       console.error('恢复窗口设置失败:', err);
@@ -245,9 +149,211 @@ export class StreamWindowManager {
   }
 
   /**
+   * 切换窗口/全屏模式（2in1 设备）
+   *
+   * 全屏 → 窗口化：退出沉浸式 + recover() 恢复悬浮窗
+   * 窗口化 → 全屏：隐藏装饰栏 + 沉浸式最大化
+   */
+  async toggleWindowMode(): Promise<void> {
+    try {
+      const win = await window.getLastWindow(this.context);
+
+      if (this._isFullscreen) {
+        await this.exitImmersiveFullscreen(win);
+        try {
+          await win.recover();
+        } catch (_e) {
+          console.info('StreamWindowManager: recover() 不可用，保持最大化');
+        }
+        this._isFullscreen = false;
+        // 注册窗口大小变化监听（窗口模式下用户可能拖拽缩放）
+        this.registerWindowSizeListener(win);
+        console.info('StreamWindowManager: 已切换到窗口模式');
+      } else {
+        // 取消窗口大小变化监听
+        this.unregisterWindowSizeListener(win);
+        await this.enterImmersiveFullscreen(win);
+        this._isFullscreen = true;
+        console.info('StreamWindowManager: 已切换到全屏模式');
+      }
+    } catch (err) {
+      console.error('StreamWindowManager: 窗口模式切换失败:', err);
+    }
+  }
+
+  /**
+   * 注册窗口大小变化监听器
+   */
+  private registerWindowSizeListener(win: window.Window): void {
+    this.unregisterWindowSizeListener(win);
+    let debounceTimer: number = -1;
+    this.windowSizeChangeHandler = (_size: window.Size) => {
+      // 防抖：拖拽缩放时高频触发，200ms 后才真正回调
+      if (debounceTimer !== -1) {
+        clearTimeout(debounceTimer);
+      }
+      debounceTimer = Number(setTimeout(() => {
+        debounceTimer = -1;
+        this.onWindowSizeChanged?.();
+      }, 200));
+    };
+    try {
+      win.on('windowSizeChange', this.windowSizeChangeHandler);
+    } catch (_e) {}
+  }
+
+  /**
+   * 取消窗口大小变化监听器
+   */
+  private unregisterWindowSizeListener(win: window.Window): void {
+    if (this.windowSizeChangeHandler) {
+      try {
+        win.off('windowSizeChange', this.windowSizeChangeHandler);
+      } catch (_e) {}
+      this.windowSizeChangeHandler = null;
+    }
+  }
+
+  // ==================== 沉浸式全屏辅助方法 ====================
+
+  /**
+   * 进入沉浸式全屏：隐藏装饰栏 → 最大化(禁用Dock悬停) → 全屏布局 → 隐藏系统栏 → 沉浸式
+   */
+  private async enterImmersiveFullscreen(win: window.Window): Promise<void> {
+    // 1. 隐藏装饰栏（必须在 maximize 之前，避免闪现）
+    this.setDecorVisible(win, false);
+
+    // 2. 最大化 + 沉浸式 + 禁用 Dock 悬停（3 级回退）
+    await this.maximizeImmersive(win);
+
+    // 3. 全屏布局（内容延伸到系统栏区域）
+    try { await win.setWindowLayoutFullScreen(true); } catch (_e) {}
+
+    // 4. 隐藏系统栏
+    await this.setSystemBarsVisible(win, false);
+
+    // 5. 沉浸式模式：抑制系统导航手势 (API 12+)
+    try { win.setImmersiveModeEnabledState(true); } catch (_e) {}
+  }
+
+  /**
+   * 退出沉浸式全屏：退出沉浸式 → 显示系统栏 → 显示装饰栏 → 退出沉浸式最大化
+   */
+  private async exitImmersiveFullscreen(win: window.Window): Promise<void> {
+    // 1. 退出沉浸式模式
+    try { win.setImmersiveModeEnabledState(false); } catch (_e) {}
+
+    // 2. 显示系统栏（不恢复 navigationIndicator，避免白色不透明样式）
+    await this.setSystemBarsVisible(win, true);
+
+    // 3. 显示装饰栏
+    this.setDecorVisible(win, true);
+
+    // 4. 退出沉浸式最大化
+    try {
+      await win.maximize(window.MaximizePresentation.EXIT_IMMERSIVE);
+    } catch (_e) {
+      try { win.setTitleAndDockHoverShown(true); } catch (_e2) {}
+    }
+  }
+
+  /**
+   * 最大化窗口并进入沉浸式，禁用标题栏和 Dock 悬停（3 级回退链）
+   *
+   * 优先级：
+   * 1. ENTER_IMMERSIVE_DISABLE_TITLE_AND_DOCK_HOVER (API 14+) — 彻底禁用 Dock 悬停
+   * 2. ENTER_IMMERSIVE (API 12+) + setTitleAndDockHoverShown(false)
+   * 3. maximize() + setTitleAndDockHoverShown(false)
+   */
+  private async maximizeImmersive(win: window.Window): Promise<void> {
+    try {
+      await win.maximize(window.MaximizePresentation.ENTER_IMMERSIVE_DISABLE_TITLE_AND_DOCK_HOVER);
+    } catch (_e) {
+      try {
+        await win.maximize(window.MaximizePresentation.ENTER_IMMERSIVE);
+      } catch (_e2) {
+        try { await win.maximize(); } catch (_e3) {}
+      }
+      try { win.setTitleAndDockHoverShown(false); } catch (_e2) {}
+    }
+  }
+
+  /**
+   * 设置系统栏（状态栏 + 导航栏）可见性
+   */
+  private async setSystemBarsVisible(win: window.Window, visible: boolean): Promise<void> {
+    try {
+      await win.setSpecificSystemBarEnabled('status', visible);
+      await win.setSpecificSystemBarEnabled('navigation', visible);
+      if (!visible) {
+        await win.setSpecificSystemBarEnabled('navigationIndicator', false);
+      }
+    } catch (_e) {
+      try {
+        win.setWindowSystemBarEnable(visible ? ['status', 'navigation'] : []);
+      } catch (_e2) {}
+    }
+  }
+
+  /**
+   * 设置窗口装饰栏（标题栏：放大/缩小/关闭按钮）可见性
+   */
+  private setDecorVisible(win: window.Window, visible: boolean): void {
+    try { win.setWindowDecorVisible(visible); } catch (_e) {}
+  }
+
+  // ==================== 屏幕方向 ====================
+
+  /**
+   * 根据串流分辨率设置屏幕方向
+   */
+  async configureOrientation(): Promise<void> {
+    try {
+      const win = await window.getLastWindow(this.context);
+
+      if (this.streamWidth > this.streamHeight) {
+        await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_LANDSCAPE);
+        console.info(`StreamWindowManager: 设置横屏模式 (${this.streamWidth}x${this.streamHeight})`);
+      } else if (this.streamHeight > this.streamWidth) {
+        await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_PORTRAIT);
+        console.info(`StreamWindowManager: 设置竖屏模式 (${this.streamWidth}x${this.streamHeight})`);
+      } else {
+        await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION);
+        console.info(`StreamWindowManager: 设置自动旋转模式 (${this.streamWidth}x${this.streamHeight})`);
+      }
+    } catch (err) {
+      console.error('设置屏幕方向失败:', err);
+    }
+  }
+
+  /**
+   * 更新屏幕尺寸（在屏幕旋转后调用）
+   */
+  async updateScreenSize(): Promise<DisplaySize> {
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      const displayInfo = display.getDefaultDisplaySync();
+
+      if (this.streamWidth > this.streamHeight) {
+        this.screenWidth = Math.max(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
+        this.screenHeight = Math.min(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
+      } else {
+        this.screenWidth = Math.min(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
+        this.screenHeight = Math.max(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
+      }
+
+      console.info(`StreamWindowManager: 更新屏幕尺寸 ${this.screenWidth}x${this.screenHeight}`);
+    } catch (err) {
+      console.error('更新屏幕尺寸失败:', err);
+    }
+    return this.getScreenSize();
+  }
+
+  // ==================== 显示设置 ====================
+
+  /**
    * 设置 HDR 高亮度模式
    * 当 HDR 开启且用户启用高亮度选项时，将屏幕亮度调至最大
-   * 参考 Android: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL
    *
    * @param enableHdr 是否启用 HDR
    * @param hdrHighBrightness 是否启用 HDR 高亮度模式
@@ -269,60 +375,55 @@ export class StreamWindowManager {
     }
   }
   
+  // ==================== 视频尺寸计算 ====================
+
   /**
-   * 计算 XComponent 尺寸以保持视频宽高比
-   * 
+   * 计算 XComponent 尺寸以保持视频宽高比（全屏模式下使用屏幕尺寸计算 letterbox/pillarbox）
+   *
+   * 窗口模式下应直接使用 '100%' 填满窗口，无需调用此方法。
+   *
    * @param stretchVideo 是否拉伸视频填满全屏
    * @returns XComponent 尺寸
    */
   calculateXComponentSize(stretchVideo: boolean = false): XComponentSize {
     if (stretchVideo) {
-      return {
-        width: '100%',
-        height: '100%'
-      };
+      return { width: '100%', height: '100%' };
     }
-    
+
     try {
       const displayInfo = display.getDefaultDisplaySync();
       const screenWidth = displayInfo.width;
       const screenHeight = displayInfo.height;
+      const density = displayInfo.densityPixels;
       const videoAspectRatio = this.streamWidth / this.streamHeight;
       const screenAspectRatio = screenWidth / screenHeight;
-      
+
       let measuredWidth: number;
       let measuredHeight: number;
-      
+
       if (screenAspectRatio > videoAspectRatio) {
-        // 屏幕更宽，以高度为基准，添加左右黑边（pillarbox）
         measuredHeight = screenHeight;
         measuredWidth = Math.floor(measuredHeight * videoAspectRatio);
       } else {
-        // 屏幕更高，以宽度为基准，添加上下黑边（letterbox）
         measuredWidth = screenWidth;
         measuredHeight = Math.floor(measuredWidth / videoAspectRatio);
       }
-      
-      // 转换为 vp 单位
-      const density = displayInfo.densityPixels;
+
       const widthVp = measuredWidth / density;
       const heightVp = measuredHeight / density;
-      
-      console.info(`StreamWindowManager: 视频尺寸计算 - 屏幕=${screenWidth}x${screenHeight}, 视频=${this.streamWidth}x${this.streamHeight}, XComponent=${widthVp}x${heightVp}vp`);
-      
-      return {
-        width: widthVp,
-        height: heightVp
-      };
+
+      console.info(`StreamWindowManager: 视频尺寸计算 - 屏幕=${screenWidth}x${screenHeight}px, ` +
+        `视频=${this.streamWidth}x${this.streamHeight}, XComponent=${widthVp.toFixed(1)}x${heightVp.toFixed(1)}vp`);
+
+      return { width: widthVp, height: heightVp };
     } catch (err) {
       console.error('计算视频尺寸失败:', err);
-      return {
-        width: '100%',
-        height: '100%'
-      };
+      return { width: '100%', height: '100%' };
     }
   }
-  
+
+  // ==================== 初始化 ====================
+
   /**
    * 完整的窗口初始化流程
    * 

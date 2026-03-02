@@ -114,6 +114,7 @@ interface SidebarGroupMeta {
 @Entry
 @Component
 struct SettingsPageV2 {
+  @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
   // 视频设置
   @State resolution: string = '1080p';
   @State customResolutions: string[] = [];  // 自定义分辨率列表，格式如 "1920x1080"
@@ -1858,7 +1859,7 @@ struct SettingsPageV2 {
     .padding({
       left: AppSpacing.Large,
       right: AppSpacing.Large,
-      top: 56,
+      top: this.topSafeHeight,
       bottom: AppSpacing.Large
     })
   }

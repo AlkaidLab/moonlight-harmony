@@ -112,6 +112,11 @@ struct StreamPage {
     onSelect: () => {}
   };
   
+  // XComponent 实际渲染尺寸缓存（由 onAreaChange 回调更新）
+  // 窗口模式下 xComponentWidth/Height='100%'，实际 vp 尺寸需从 onAreaChange 获取
+  private xComponentActualWidthVp: number = 0;
+  private xComponentActualHeightVp: number = 0;
+
   // 组件控制器和服务
   private xComponentController: XComponentController = new XComponentController();
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
@@ -151,6 +156,7 @@ struct StreamPage {
     
     // 初始化窗口管理器
     this.windowManager = new StreamWindowManager(this.context);
+    this.windowManager.setOnWindowSizeChanged(() => this.recalculateXComponentSize());
     
     // 初始化快捷键管理器
     this.shortcutManager.initialize(this.context);
@@ -181,6 +187,7 @@ struct StreamPage {
     
     // 初始化输入处理器
     this.inputHandler.initialize(this.viewModel, this.gamepadManager);
+    this.inputHandler.setOnShowStreamMenu(() => this.showStreamMenu());
     
     // 初始化生命周期管理器
     this.lifecycleManager.initialize(this.viewModel, this.windowManager, {
@@ -444,6 +451,7 @@ struct StreamPage {
         hasUsbGamepad: this.gamepadManager.hasUsbGamepad(),
         isMouseEmulationActive: this.gamepadManager.isMouseEmulationActive(),
         hasConnectedGamepad: this.gamepadManager.getConnectedGamepads().length > 0,
+        isFullscreen: this.windowManager?.isFullscreen ?? true,
         controllerOpacity: this.controllerOpacityValue,
         controllerScale: this.controllerScaleValue,
         touchPassthrough: this.touchPassthrough,
@@ -534,6 +542,10 @@ struct StreamPage {
             PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, false);
             promptAction.showToast({ message: '已解锁覆盖层', duration: 1500 });
             this.gameMenuDialogController?.close();
+          },
+          onToggleWindowMode: async () => {
+            await this.windowManager?.toggleWindowMode();
+            this.recalculateXComponentSize();
           }
         }
       }),
@@ -549,18 +561,45 @@ struct StreamPage {
    * 解析 Length 类型（'100%' 或数字）为实际 vp 值
    */
   private getXComponentWidthVp(): number {
-    return typeof this.xComponentWidth === 'string'
-      ? this.viewModel.displayInfo.screenWidth
-      : (this.xComponentWidth as number);
+    if (typeof this.xComponentWidth === 'string') {
+      // '100%' 模式 — 优先使用 onAreaChange 缓存的实际尺寸
+      return this.xComponentActualWidthVp > 0
+        ? this.xComponentActualWidthVp
+        : this.viewModel.displayInfo.screenWidth;
+    }
+    return this.xComponentWidth as number;
   }
 
   /**
    * 获取 XComponent 实际渲染高度（vp）
    */
   private getXComponentHeightVp(): number {
-    return typeof this.xComponentHeight === 'string'
-      ? this.viewModel.displayInfo.screenHeight
-      : (this.xComponentHeight as number);
+    if (typeof this.xComponentHeight === 'string') {
+      return this.xComponentActualHeightVp > 0
+        ? this.xComponentActualHeightVp
+        : this.viewModel.displayInfo.screenHeight;
+    }
+    return this.xComponentHeight as number;
+  }
+
+  /**
+   * 重新计算 XComponent 尺寸（窗口模式切换/窗口大小变化后调用）
+   */
+  private async recalculateXComponentSize(): Promise<void> {
+    if (!this.windowManager) return;
+
+    if (this.windowManager.isFullscreen) {
+      // 全屏：按屏幕尺寸精确计算 letterbox/pillarbox
+      const size = this.windowManager.calculateXComponentSize(
+        this.viewModel.displayInfo.stretchVideo
+      );
+      this.xComponentWidth = size.width;
+      this.xComponentHeight = size.height;
+    } else {
+      // 窗口模式：直接填满窗口，视频缩放由 Surface 处理
+      this.xComponentWidth = '100%';
+      this.xComponentHeight = '100%';
+    }
   }
 
   /**
@@ -990,8 +1029,15 @@ struct StreamPage {
           this.inputHandler.handleAxisEvent(event);
         })
         .onAreaChange((_oldArea: Area, newArea: Area) => {
+          // 更新 XComponent 实际渲染尺寸（窗口模式下 '100%' 的实际 vp 值）
+          const w = newArea.width as number;
+          const h = newArea.height as number;
+          if (w > 0 && h > 0) {
+            this.xComponentActualWidthVp = w;
+            this.xComponentActualHeightVp = h;
+            this.inputHandler.updateXComponentActualSize(w, h);
+          }
           // 获取 XComponent 在屏幕上的精确位置，用于绝对模式鼠标坐标转换
-          // 替代基于居中假设的偏移计算，解决安全区域/导航栏导致的偏差
           const globalPos = newArea.globalPosition;
           if (globalPos) {
             const screenX = globalPos.x as number;

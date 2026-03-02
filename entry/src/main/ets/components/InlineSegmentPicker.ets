@@ -9,6 +9,7 @@
  */
 
 import { SegmentButton, SegmentButtonOptions, SegmentButtonTextItem } from '@kit.ArkUI';
+import { AppColors } from '../common/Theme';
 
 /**
  * 内联分段选择器 - 包装 HarmonyOS SegmentButton
@@ -55,22 +56,34 @@ export struct InlineSegmentPicker {
     if (len === 2) {
       this.segmentOptions = SegmentButtonOptions.capsule({
         buttons: [items[0], items[1]],
-        multiply: false
+        multiply: false,
+        fontColor: AppColors.TextSecondary,
+        selectedFontColor: AppColors.TextOnPrimary,
+        selectedBackgroundColor: AppColors.Primary
       })
     } else if (len === 3) {
       this.segmentOptions = SegmentButtonOptions.capsule({
         buttons: [items[0], items[1], items[2]],
-        multiply: false
+        multiply: false,
+        fontColor: AppColors.TextSecondary,
+        selectedFontColor: AppColors.TextOnPrimary,
+        selectedBackgroundColor: AppColors.Primary
       })
     } else if (len === 4) {
       this.segmentOptions = SegmentButtonOptions.capsule({
         buttons: [items[0], items[1], items[2], items[3]],
-        multiply: false
+        multiply: false,
+        fontColor: AppColors.TextSecondary,
+        selectedFontColor: AppColors.TextOnPrimary,
+        selectedBackgroundColor: AppColors.Primary
       })
     } else {
       this.segmentOptions = SegmentButtonOptions.capsule({
         buttons: [items[0], items[1], items[2], items[3], items[4]],
-        multiply: false
+        multiply: false,
+        fontColor: AppColors.TextSecondary,
+        selectedFontColor: AppColors.TextOnPrimary,
+        selectedBackgroundColor: AppColors.Primary
       })
     }
   }

@@ -36,6 +36,7 @@ const DEFAULT_HORIZONTAL_ROW_COUNT = 1;
 @Entry
 @Component
 struct AppListPageV2 {
+  @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
   @State viewModel: AppListViewModel = new AppListViewModel();
   @State computerName: string = '';
   @State isLoading: boolean = true;
@@ -518,7 +519,7 @@ struct AppListPageV2 {
     .padding({
       left: AppSpacing.Large,
       right: AppSpacing.Large,
-      top: 56,
+      top: this.topSafeHeight,
       bottom: AppSpacing.Medium
     })
   }

@@ -13,6 +13,7 @@
  */
 import { display, promptAction } from '@kit.ArkUI';
 import { ConfigurationConstant } from '@kit.AbilityKit';
+import { deviceInfo } from '@kit.BasicServicesKit';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { VirtualKey } from './StreamMenuManager';
@@ -42,6 +43,7 @@ export interface GameMenuCallbacks {
   onTouchPassthroughChange?: (enabled: boolean) => void;
   onClose?: () => void;
   onUnlockOverlay?: () => void;
+  onToggleWindowMode?: () => void;
 }
 
 /** 菜单项配置 */
@@ -109,6 +111,7 @@ export struct GameMenuDialog {
   hasUsbGamepad: boolean = false;
   isMouseEmulationActive: boolean = false;
   hasConnectedGamepad: boolean = false;
+  isFullscreen: boolean = true;
   controllerOpacity: number = 0.75;
   controllerScale: number = 1.0;
   touchPassthrough: boolean = false;
@@ -278,7 +281,23 @@ export struct GameMenuDialog {
 
   private showExitDialog(): void {
     const callbacks = this.callbacks;
-    const actions: ActionItem[] = [
+    const actions: ActionItem[] = [];
+
+    // 窗口/全屏切换 - 仅在 2in1 设备（支持自由窗口模式）上显示
+    if (deviceInfo.deviceType === '2in1') {
+      actions.push({
+        text: this.isFullscreen ? '窗口模式' : '全屏模式',
+        subtitle: this.isFullscreen ? '切换到悬浮窗口，方便多任务' : '切换到沉浸式全屏',
+        color: '#8B5CF6',
+        backgroundColor: '#F5F3FF',
+        onClick: () => {
+          callbacks.onToggleWindowMode?.();
+          callbacks.onClose?.();
+        }
+      });
+    }
+
+    actions.push(
       {
         text: '断开连接',
         subtitle: '游戏继续在主机上运行',
@@ -299,7 +318,7 @@ export struct GameMenuDialog {
           callbacks.onClose?.();
         }
       }
-    ];
+    );
     const config: ActionDialogConfig = {
       title: '离开串流',
       actions: actions,

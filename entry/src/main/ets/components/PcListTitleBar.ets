@@ -33,6 +33,7 @@ export interface TitleBarConfig {
  */
 @Component
 export struct PcListTitleBar {
+  @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
   @Prop config: TitleBarConfig = {
     onlineCount: 0,
     totalCount: 0,
@@ -119,7 +120,7 @@ export struct PcListTitleBar {
     .padding({
       left: AppSpacing.Large,
       right: AppSpacing.Large,
-      top: 56,
+      top: this.topSafeHeight,
       bottom: AppSpacing.Large
     })
   }

@@ -6,15 +6,15 @@
     },
     {
       "name": "primary",
-      "value": "#3D8ECF"
+      "value": "#2873B3"
     },
     {
       "name": "primary_dark",
-      "value": "#2D6FA8"
+      "value": "#1A5A8A"
     },
     {
       "name": "primary_light",
-      "value": "#5FAEE8"
+      "value": "#4A98D0"
     },
     {
       "name": "accent",
@@ -58,11 +58,11 @@
     },
     {
       "name": "text_secondary",
-      "value": "#5A7A8A"
+      "value": "#506A7A"
     },
     {
       "name": "text_tertiary",
-      "value": "#8AA0AA"
+      "value": "#6E8894"
     },
     {
       "name": "text_on_primary",
@@ -102,7 +102,7 @@
     },
     {
       "name": "glow_primary",
-      "value": "#3D8ECF40"
+      "value": "#2873B340"
     },
     {
       "name": "glow_accent",
