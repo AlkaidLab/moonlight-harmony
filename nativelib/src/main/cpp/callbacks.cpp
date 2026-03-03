@@ -628,16 +628,11 @@ int BridgeDrSubmitDecodeUnit(void* decodeUnitPtr) {
         delete[] segments;
     }
     
-    // 同时通知 ArkTS 层（可选，用于统计等）
-    if (g_videoCallbacks.tsfn_submitDecodeUnit) {
-        CallbackData* data = new CallbackData();
-        data->intParams[0] = decodeUnit->frameNumber;
-        data->intParams[1] = decodeUnit->frameType;
-        data->intParams[2] = totalSize;
-        data->ptrParam = nullptr;  // 不传递数据，已经在本地解码
-        data->ptrSize = 0;
-        napi_call_threadsafe_function(g_videoCallbacks.tsfn_submitDecodeUnit, data, napi_tsfn_nonblocking);
-    }
+    // 注意: 不再通过 tsfn_submitDecodeUnit 通知 ArkTS 层
+    // 之前每帧都分配 CallbackData (ptrParam=nullptr) 并 dispatch 到 JS 线程，
+    // 但 CallJs_DrSubmitDecodeUnit 检测到 ptrParam==null 后直接 delete，
+    // 导致 ~60Hz 的无用 new/delete + 事件循环唤醒，累积 GC 压力引起顿卡。
+    // 视频帧已在本地直接提交硬件解码器，无需再通知 JS。
     
     return result == 0 ? DR_OK : DR_NEED_IDR;
 }
@@ -810,7 +805,8 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
             if (g_audioCallbacks.tsfn_bassEnergy) {
                 CallbackData* data = new CallbackData();
                 data->intParams[0] = bassIntensity;
-                napi_call_threadsafe_function(g_audioCallbacks.tsfn_bassEnergy, data, napi_tsfn_nonblocking);
+                napi_status st = napi_call_threadsafe_function(g_audioCallbacks.tsfn_bassEnergy, data, napi_tsfn_nonblocking);
+                if (st != napi_ok) delete data;
             }
         }
     }
@@ -867,7 +863,8 @@ void BridgeClRumble(unsigned short controllerNumber, unsigned short lowFreqMotor
         data->intParams[0] = controllerNumber;
         data->intParams[1] = lowFreqMotor;
         data->intParams[2] = highFreqMotor;
-        napi_call_threadsafe_function(g_connCallbacks.tsfn_rumble, data, napi_tsfn_nonblocking);
+        napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_rumble, data, napi_tsfn_nonblocking);
+        if (st != napi_ok) delete data;
     }
 }
 
@@ -876,7 +873,8 @@ void BridgeClConnectionStatusUpdate(int connectionStatus) {
     if (g_connCallbacks.tsfn_connectionStatusUpdate) {
         CallbackData* data = new CallbackData();
         data->intParams[0] = connectionStatus;
-        napi_call_threadsafe_function(g_connCallbacks.tsfn_connectionStatusUpdate, data, napi_tsfn_nonblocking);
+        napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_connectionStatusUpdate, data, napi_tsfn_nonblocking);
+        if (st != napi_ok) delete data;
     }
 }
 
@@ -898,7 +896,8 @@ void BridgeClSetHdrMode(int enabled, void* hdrMetadata) {
     if (g_connCallbacks.tsfn_setHdrMode) {
         CallbackData* data = new CallbackData();
         data->intParams[0] = enabled;
-        napi_call_threadsafe_function(g_connCallbacks.tsfn_setHdrMode, data, napi_tsfn_nonblocking);
+        napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_setHdrMode, data, napi_tsfn_nonblocking);
+        if (st != napi_ok) delete data;
     }
 }
 
@@ -908,7 +907,8 @@ void BridgeClRumbleTriggers(unsigned short controllerNumber, unsigned short left
         data->intParams[0] = controllerNumber;
         data->intParams[1] = leftTrigger;
         data->intParams[2] = rightTrigger;
-        napi_call_threadsafe_function(g_connCallbacks.tsfn_rumbleTriggers, data, napi_tsfn_nonblocking);
+        napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_rumbleTriggers, data, napi_tsfn_nonblocking);
+        if (st != napi_ok) delete data;
     }
 }
 
@@ -919,7 +919,8 @@ void BridgeClSetMotionEventState(unsigned short controllerNumber, unsigned char 
         data->intParams[0] = controllerNumber;
         data->intParams[1] = motionType;
         data->intParams[2] = reportRateHz;
-        napi_call_threadsafe_function(g_connCallbacks.tsfn_setMotionEventState, data, napi_tsfn_nonblocking);
+        napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_setMotionEventState, data, napi_tsfn_nonblocking);
+        if (st != napi_ok) delete data;
     }
 }
 
@@ -930,7 +931,8 @@ void BridgeClSetControllerLED(unsigned short controllerNumber, unsigned char r, 
         data->intParams[1] = r;
         data->intParams[2] = g;
         data->intParams[3] = b;
-        napi_call_threadsafe_function(g_connCallbacks.tsfn_setControllerLED, data, napi_tsfn_nonblocking);
+        napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_setControllerLED, data, napi_tsfn_nonblocking);
+        if (st != napi_ok) delete data;
     }
 }
 

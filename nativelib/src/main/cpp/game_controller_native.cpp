@@ -472,7 +472,8 @@ static void OnDeviceChanged(const struct GameDevice_DeviceEvent* deviceEvent) {
         data->isConnected = isConnected;
         data->info = info;
         
-        napi_call_threadsafe_function(g_tsfnDevice, data, napi_tsfn_nonblocking);
+        napi_status st = napi_call_threadsafe_function(g_tsfnDevice, data, napi_tsfn_nonblocking);
+        if (st != napi_ok) delete data;
     }
     
     if (deviceId) free(deviceId);
@@ -548,7 +549,8 @@ static void OnButtonEvent(const struct GamePad_ButtonEvent* buttonEvent, const c
         data->buttonCode = buttonCode;
         data->isPressed = isPressed;
         
-        napi_call_threadsafe_function(g_tsfnButton, data, napi_tsfn_nonblocking);
+        napi_status st = napi_call_threadsafe_function(g_tsfnButton, data, napi_tsfn_nonblocking);
+        if (st != napi_ok) delete data;
     }
     
     if (deviceId) free(deviceId);
@@ -1120,7 +1122,8 @@ int GameController_RefreshDevices(void) {
             strncpy(data->deviceId, pair.first.c_str(), sizeof(data->deviceId) - 1);
             data->isConnected = true;
             data->info = pair.second;
-            napi_call_threadsafe_function(g_tsfnDevice, data, napi_tsfn_nonblocking);
+            napi_status st = napi_call_threadsafe_function(g_tsfnDevice, data, napi_tsfn_nonblocking);
+            if (st != napi_ok) delete data;
         }
     }
     for (auto& pair : goneDevices) {
@@ -1140,7 +1143,8 @@ int GameController_RefreshDevices(void) {
             data->isConnected = false;
             data->info = pair.second;
             data->info.isConnected = false;
-            napi_call_threadsafe_function(g_tsfnDevice, data, napi_tsfn_nonblocking);
+            napi_status st = napi_call_threadsafe_function(g_tsfnDevice, data, napi_tsfn_nonblocking);
+            if (st != napi_ok) delete data;
         }
     }
 
@@ -1293,6 +1297,12 @@ static void DeviceCallbackCallJS(napi_env env, napi_value js_callback, void* con
     };
     DeviceEventData* eventData = (DeviceEventData*)data;
     
+    // env 为空说明 tsfn 正在 teardown，仅释放数据
+    if (!env || !js_callback) {
+        delete eventData;
+        return;
+    }
+    
     napi_value argv[3];
     napi_create_string_utf8(env, eventData->deviceId, NAPI_AUTO_LENGTH, &argv[0]);
     napi_get_boolean(env, eventData->isConnected, &argv[1]);
@@ -1334,6 +1344,11 @@ static void ButtonCallbackCallJS(napi_env env, napi_value js_callback, void* con
     };
     ButtonEventData* eventData = (ButtonEventData*)data;
     
+    if (!env || !js_callback) {
+        delete eventData;
+        return;
+    }
+    
     napi_value argv[3];
     napi_create_string_utf8(env, eventData->deviceId, NAPI_AUTO_LENGTH, &argv[0]);
     napi_create_int32(env, eventData->buttonCode, &argv[1]);
@@ -1354,6 +1369,11 @@ static void AxisCallbackCallJS(napi_env env, napi_value js_callback, void* conte
         double y;
     };
     AxisEventData* eventData = (AxisEventData*)data;
+    
+    if (!env || !js_callback) {
+        delete eventData;
+        return;
+    }
     
     napi_value argv[4];
     napi_create_string_utf8(env, eventData->deviceId, NAPI_AUTO_LENGTH, &argv[0]);
