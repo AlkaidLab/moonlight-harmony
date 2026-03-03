@@ -517,15 +517,15 @@ export abstract class AbstractDualSenseController extends AbstractController {
     console.info(`${TAG} 停止控制器`);
     this.stopped = true;
 
+    // 先发送振动停止命令（必须在 DDK 释放前，否则无法发送）
+    this.rumble(0, 0);
+
     // 停止 DDK 轮询器
     if (this.ddkPoller) {
       this.ddkPoller.stop();
       this.ddkPoller = null;
       this.useDdkPolling = false;
     }
-    
-    // 取消震动
-    this.rumble(0, 0);
     
     // 释放接口 (仅 usbManager 路径)
     if (!this.useDdkPolling && this.pipe && this.usbInterface) {

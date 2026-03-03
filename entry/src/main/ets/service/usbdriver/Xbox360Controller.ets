@@ -23,6 +23,9 @@ import { readShortLE, AXIS_MAX, TRIGGER_MAX } from '../GamepadTypes';
 const TAG = '[USB-X360]';
 
 export class Xbox360Controller extends AbstractXboxController {
+  // 去重: 记录上次发送的振动值
+  private lastRumbleLow: number = -1;
+  private lastRumbleHigh: number = -1;
   
   constructor(
     device: usbManager.USBDevice,
@@ -154,9 +157,17 @@ export class Xbox360Controller extends AbstractXboxController {
   }
   
   /**
-   * 震动反馈
+   * 震动反馈 (去重: 跳过相同非零值, 零值始终发送)
    */
   rumble(lowFreqMotor: number, highFreqMotor: number): void {
+    if (lowFreqMotor !== 0 || highFreqMotor !== 0) {
+      if (lowFreqMotor === this.lastRumbleLow && highFreqMotor === this.lastRumbleHigh) {
+        return;
+      }
+    }
+    this.lastRumbleLow = lowFreqMotor;
+    this.lastRumbleHigh = highFreqMotor;
+
     const data = new Uint8Array([
       0x00, 0x08, 0x00,
       (lowFreqMotor >> 8) & 0xFF,   // 低频马达 (大马达)

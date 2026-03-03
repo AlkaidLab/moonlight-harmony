@@ -221,9 +221,15 @@ export class XboxOneController extends AbstractXboxController {
   }
   
   /**
-   * 震动反馈
+   * 震动反馈 (去重: 跳过相同非零值, 零值始终发送)
    */
   rumble(lowFreqMotor: number, highFreqMotor: number): void {
+    // 零值(停止振动)始终发送, 非零重复值跳过
+    if (lowFreqMotor !== 0 || highFreqMotor !== 0) {
+      if (lowFreqMotor === this.lowFreqMotor && highFreqMotor === this.highFreqMotor) {
+        return;
+      }
+    }
     this.lowFreqMotor = lowFreqMotor;
     this.highFreqMotor = highFreqMotor;
     this.sendRumble();

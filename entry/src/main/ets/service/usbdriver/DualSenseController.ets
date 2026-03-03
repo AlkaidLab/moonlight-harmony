@@ -23,6 +23,9 @@ import { readShortLE, TRIGGER_MAX } from '../GamepadTypes';
 const TAG = '[USB-DS5]';
 
 export class DualSenseController extends AbstractDualSenseController {
+  // 去重: 记录上次发送的振动值
+  private lastRumbleLow: number = -1;
+  private lastRumbleHigh: number = -1;
   
   constructor(
     device: usbManager.USBDevice,
@@ -203,9 +206,18 @@ const gyrox = readShortLE(buffer, imuOffset);
   }
   
   /**
-   * 震动反馈
+   * 震动反馈 (去重: 跳过相同非零值, 零值始终发送)
    */
   rumble(lowFreqMotor: number, highFreqMotor: number): void {
+    // 零值(停止振动)始终发送, 非零重复值跳过
+    if (lowFreqMotor !== 0 || highFreqMotor !== 0) {
+      if (lowFreqMotor === this.lastRumbleLow && highFreqMotor === this.lastRumbleHigh) {
+        return;
+      }
+    }
+    this.lastRumbleLow = lowFreqMotor;
+    this.lastRumbleHigh = highFreqMotor;
+
     // DualSense 震动命令 (USB 模式)
     const data = new Uint8Array(48);
     data[0] = 0x02;  // 报告 ID

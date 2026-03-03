@@ -41,6 +41,10 @@ export class GamepadVibrationService {
   private lastHighFreq: number = 0;
   // 震动活跃标志
   private isVibrating: boolean = false;
+  // USB 振动 watchdog: 防止 USB 传输失败导致振动卡死
+  private rumbleWatchdogTimer: number = -1;
+  private lastRumbleControllerNumber: number = 0;
+  private static readonly RUMBLE_WATCHDOG_MS = 3000;
 
   constructor(usbDriverService: UsbDriverService, deviceKeyToSlot: Map<string, number>) {
     this.usbDriverService = usbDriverService;
@@ -64,6 +68,20 @@ export class GamepadVibrationService {
    * 处理震动反馈
    */
   handleRumble(controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
+    // Watchdog: 防止 USB 传输失败导致振动卡死 (3s 无新回调→强制停止)
+    if (this.rumbleWatchdogTimer !== -1) {
+      clearTimeout(this.rumbleWatchdogTimer);
+      this.rumbleWatchdogTimer = -1;
+    }
+    if (lowFreqMotor !== 0 || highFreqMotor !== 0) {
+      this.lastRumbleControllerNumber = controllerNumber;
+      this.rumbleWatchdogTimer = setTimeout(() => {
+        this.rumbleWatchdogTimer = -1;
+        console.warn('[Vibration] watchdog: 3s 无回调, 强制停止振动');
+        this.handleRumble(this.lastRumbleControllerNumber, 0, 0);
+      }, GamepadVibrationService.RUMBLE_WATCHDOG_MS);
+    }
+
     const controllers = this.usbDriverService.getControllers();
     const hasUsbController = controllers.length > 0;
 
@@ -128,6 +146,12 @@ export class GamepadVibrationService {
    * 停止所有震动（设备马达 + USB 控制器马达）
    */
   stopAll(): void {
+    // 清除 watchdog
+    if (this.rumbleWatchdogTimer !== -1) {
+      clearTimeout(this.rumbleWatchdogTimer);
+      this.rumbleWatchdogTimer = -1;
+    }
+
     // 停止设备马达
     if (this.isVibrating) {
       this.stopVibrationImmediate();

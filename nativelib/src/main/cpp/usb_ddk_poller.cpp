@@ -10,12 +10,13 @@
  *   3. OH_Usb_ClaimInterface() → OH_Usb_CreateDeviceMemMap()
  *   4. pthread 循环调用 OH_Usb_SendPipeRequest() 阻塞读取 IN 端点
  *   5. 数据通过 napi_threadsafe_function 回调到 JS 线程
- *   6. 输出(init/rumble) 通过 SendPipeRequest() 在 JS 线程同步发送
+ *   6. 输出(init/rumble) 由轮询线程在 IN 请求间隙发送 (非阻塞 JS)
  *
  * 性能优势：
  *   - SendPipeRequest 是纯同步内核调用，无 IPC 开销
  *   - pthread 直接等待内核事件，响应延迟 < 0.1ms
  *   - 理论轮询率可达 USB High Speed 上限 (1000Hz)
+ *   - 输出 (rumble) 不阻塞 JS 主线程
  */
 
 #include "usb_ddk_poller.h"
@@ -25,6 +26,7 @@
 #include <string.h>
 #include <dlfcn.h>
 #include <atomic>
+#include <mutex>
 #include <hilog/log.h>
 
 #define LOG_TAG "USB-DDK-Poller"
@@ -125,7 +127,7 @@ struct DdkPollerContext {
     uint32_t timeoutMs;
 
     UsbDeviceMemMap *inMemMap;   // 输入 (轮询线程专用)
-    UsbDeviceMemMap *outMemMap;  // 输出 (JS 线程专用)
+    UsbDeviceMemMap *outMemMap;  // 输出 (轮询线程发送)
 
     // 线程控制
     std::atomic<bool> running;
@@ -139,6 +141,13 @@ struct DdkPollerContext {
 
     // 忽略断开信号 (对应用户设置 "忽略手柄断开")
     std::atomic<bool> ignoreDisconnect;
+
+    // 异步输出 (sendOutput 非阻塞, 由轮询线程发送)
+    std::mutex outMutex;
+    uint8_t pendingOutData[64];
+    uint32_t pendingOutLen;
+    uint8_t pendingOutEndpoint;
+    std::atomic<bool> hasPendingOutput{false};
 
     // 统计
     std::atomic<uint64_t> totalReads;
@@ -346,7 +355,32 @@ static void *ddkPollThread(void *arg) {
     pipe.timeout = ctx->timeoutMs;
 
     while (ctx->running.load()) {
-        // 设置 memmap 参数
+        // ---- 优先处理挂起的输出数据 (rumble/init) ----
+        if (ctx->outMemMap && ctx->hasPendingOutput.load(std::memory_order_acquire)) {
+            UsbRequestPipe outPipe;
+            memset(&outPipe, 0, sizeof(outPipe));
+            outPipe.interfaceHandle = ctx->interfaceHandle;
+            outPipe.timeout = 100;  // 100ms 足够发送小数据包
+
+            uint32_t outLen;
+            {
+                std::lock_guard<std::mutex> lock(ctx->outMutex);
+                outLen = ctx->pendingOutLen;
+                outPipe.endpoint = ctx->pendingOutEndpoint;
+                memcpy(ctx->outMemMap->address, ctx->pendingOutData, outLen);
+                ctx->outMemMap->offset = 0;
+                ctx->outMemMap->bufferLength = outLen;
+                ctx->hasPendingOutput.store(false, std::memory_order_release);
+            }
+
+            int32_t outRet = fn_SendPipeRequest(&outPipe, ctx->outMemMap);
+            if (outRet != USB_DDK_SUCCESS) {
+                OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 轮询线程 sendOutput 失败: ep=0x%{public}x len=%{public}u ret=%{public}d (%{public}s)",
+                            LOG_TAG, pollerId, outPipe.endpoint, outLen, outRet, ddkErrStr(outRet));
+            }
+        }
+
+        // ---- 输入轮询 ----
         ctx->inMemMap->offset = 0;
         ctx->inMemMap->bufferLength = ctx->maxPacketSize;
 
@@ -843,6 +877,27 @@ static napi_value DdkPoller_StopPoller(napi_env env, napi_callback_info info) {
     // 等待线程退出
     pthread_join(ctx->thread, nullptr);
 
+    // 发送残留的挂起输出 (例如 stop() 前的 rumble(0,0))
+    if (ctx->hasPendingOutput.load() && ctx->outMemMap && ctx->interfaceClaimed) {
+        UsbRequestPipe outPipe;
+        memset(&outPipe, 0, sizeof(outPipe));
+        outPipe.interfaceHandle = ctx->interfaceHandle;
+        outPipe.timeout = 200;
+
+        {
+            std::lock_guard<std::mutex> lock(ctx->outMutex);
+            memcpy(ctx->outMemMap->address, ctx->pendingOutData, ctx->pendingOutLen);
+            ctx->outMemMap->offset = 0;
+            ctx->outMemMap->bufferLength = ctx->pendingOutLen;
+            outPipe.endpoint = ctx->pendingOutEndpoint;
+            ctx->hasPendingOutput.store(false);
+        }
+
+        int32_t outRet = fn_SendPipeRequest(&outPipe, ctx->outMemMap);
+        OH_LOG_INFO(LOG_APP, "[%{public}s] id=%{public}d flush pending output: ret=%{public}d (%{public}s)",
+                    LOG_TAG, pollerId, outRet, ddkErrStr(outRet));
+    }
+
     pthread_mutex_lock(&g_ddkMutex);
 
     // 释放 threadsafe functions
@@ -883,8 +938,9 @@ static napi_value DdkPoller_StopPoller(napi_env env, napi_callback_info info) {
 }
 
 // ============================================================
-// NAPI: sendOutput(pollerId, endpoint, data) → 同步发送输出
-//       返回发送的字节数，-1 表示失败
+// NAPI: sendOutput(pollerId, endpoint, data) → 非阻塞发送输出
+//       将数据交给轮询线程发送 (latest-wins: 新数据覆盖旧数据)
+//       返回数据长度 (乐观), -1 表示参数错误
 // ============================================================
 
 static napi_value DdkPoller_SendOutput(napi_env env, napi_callback_info info) {
@@ -935,29 +991,41 @@ static napi_value DdkPoller_SendOutput(napi_env env, napi_callback_info info) {
         inputData = (uint8_t *)data;
     }
 
-    if (!inputData || inputLen == 0 || inputLen > ctx->outMemMap->size) {
-        OH_LOG_ERROR(LOG_APP, "[%{public}s] sendOutput: 数据无效 (len=%{public}zu, maxSize=%{public}zu)",
-                     LOG_TAG, inputLen, ctx->outMemMap->size);
+    if (!inputData || inputLen == 0 || inputLen > 64) {
+        OH_LOG_ERROR(LOG_APP, "[%{public}s] sendOutput: 数据无效 (len=%{public}zu, max=64)",
+                     LOG_TAG, inputLen);
         return result;
     }
 
-    // 复制数据到输出 memmap
+    // 轮询线程运行中 → 非阻塞: 存入 pending buffer, 由轮询线程发送
+    if (ctx->running.load()) {
+        {
+            std::lock_guard<std::mutex> lock(ctx->outMutex);
+            memcpy(ctx->pendingOutData, inputData, inputLen);
+            ctx->pendingOutLen = (uint32_t)inputLen;
+            ctx->pendingOutEndpoint = (uint8_t)endpoint;
+        }
+        ctx->hasPendingOutput.store(true, std::memory_order_release);
+        napi_create_int32(env, (int32_t)inputLen, &result);
+        return result;
+    }
+
+    // 轮询线程未运行 → 同步发送 (用于 init 命令)
     memcpy(ctx->outMemMap->address, inputData, inputLen);
     ctx->outMemMap->offset = 0;
     ctx->outMemMap->bufferLength = (uint32_t)inputLen;
 
-    // 发送
     UsbRequestPipe pipe;
     memset(&pipe, 0, sizeof(pipe));
     pipe.interfaceHandle = ctx->interfaceHandle;
     pipe.endpoint = (uint8_t)endpoint;
-    pipe.timeout = 3000;  // 3 秒超时
+    pipe.timeout = 3000;
 
     int32_t ret = fn_SendPipeRequest(&pipe, ctx->outMemMap);
     if (ret == USB_DDK_SUCCESS) {
         napi_create_int32(env, (int32_t)inputLen, &result);
     } else {
-        OH_LOG_WARN(LOG_APP, "[%{public}s] sendOutput 失败: id=%{public}d ep=0x%{public}x len=%{public}zu ret=%{public}d (%{public}s)",
+        OH_LOG_WARN(LOG_APP, "[%{public}s] sendOutput 同步失败: id=%{public}d ep=0x%{public}x len=%{public}zu ret=%{public}d (%{public}s)",
                     LOG_TAG, pollerId, endpoint, inputLen, ret, ddkErrStr(ret));
         napi_create_int32(env, -ret, &result);
     }
