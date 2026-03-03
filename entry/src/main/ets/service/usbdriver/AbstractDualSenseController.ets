@@ -200,7 +200,11 @@ export abstract class AbstractDualSenseController extends AbstractController {
   protected async bulkWrite(data: Uint8Array, timeout: number = 3000): Promise<number> {
     // DDK 路径: 通过 DDK 同步发送
     if (this.useDdkPolling && this.ddkPoller) {
-      return this.ddkPoller.sendOutput(data);
+      const ret = this.ddkPoller.sendOutput(data);
+      if (ret < 0) {
+        console.error(`${TAG} DDK sendOutput 失败: ret=${ret}, dataLen=${data.length}`);
+      }
+      return ret;
     }
 
     // usbManager 路径
@@ -466,6 +470,10 @@ export abstract class AbstractDualSenseController extends AbstractController {
       },
       (errorCode: number) => {
         if (this.stopped) return;
+        if (this.ignoreDisconnect) {
+          console.warn(`${TAG} DDK 轮询错误: ${errorCode}，但忽略断开信号已启用`);
+          return;
+        }
         console.error(`${TAG} DDK 轮询错误: ${errorCode}`);
         this.stop();
       },
@@ -482,6 +490,12 @@ export abstract class AbstractDualSenseController extends AbstractController {
 
     this.stopped = false;
     this.useDdkPolling = true;
+    this.ddkActive = true;
+
+    // 同步忽略断开信号设置到原生层
+    if (this.ignoreDisconnect) {
+      this.ddkPoller.setIgnoreDisconnect(true);
+    }
 
     if (!this.doInit()) {
       console.warn(`${TAG} DDK 路径下 doInit 失败`);

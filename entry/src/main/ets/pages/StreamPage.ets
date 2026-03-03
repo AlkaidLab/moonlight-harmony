@@ -20,7 +20,7 @@ import { displaySync } from '@kit.ArkGraphics2D';
 import { VirtualControllerOverlay } from '../components/VirtualController';
 import { PerformanceOverlay } from '../components/PerformanceOverlay';
 import { OptionPickerDialog, OptionPickerDialogConfig } from '../components/OptionPickerDialog';
-import { GameMenuDialog } from '../components/GameMenuDialog';
+import { GameMenuDialog, GameMenuCallbacks } from '../components/GameMenuDialog';
 import { StreamMenuManager } from '../components/StreamMenuManager';
 import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { TouchInputHandler, TouchInputMode } from '../service/TouchInputHandler';
@@ -433,6 +433,91 @@ struct StreamPage {
   }
   
   /**
+   * 构建游戏菜单回调（从 showStreamMenu 提取，减少嵌套层级）
+   */
+  private buildGameMenuCallbacks(): GameMenuCallbacks {
+    return {
+      onDismiss: () => {
+        this.resumeMouseInterceptor();
+      },
+      onDisconnect: () => {
+        this.stopStreaming();
+      },
+      onQuitGame: () => {
+        this.quitGameAndReturn();
+      },
+      onTouchModeChanged: (mode: string) => {
+        this.setTouchMode(mode);
+      },
+      onOpenShortcutEditor: () => {
+        this.gameMenuDialogController?.close();
+        setTimeout(() => this.showShortcutEditor(), 300);
+      },
+      onEditShortcut: (shortcut) => {
+        this.gameMenuDialogController?.close();
+        setTimeout(() => this.showShortcutEditor(shortcut), 300);
+      },
+      onDeleteShortcut: async (shortcut) => {
+        const success = await this.shortcutManager.deleteShortcut(shortcut.id);
+        if (success) {
+          promptAction.showToast({ message: `快捷键 "${shortcut.name}" 已删除` });
+        }
+      },
+      onSendSuperCmd: (cmdId: string) => {
+        this.sendSuperCmd(cmdId);
+      },
+      onForceUsbDriver: () => {
+        this.forceUsbDriverMode();
+      },
+      onToggleKeyboard: () => {
+        if (this.useVirtualKeyboard) {
+          this.showVirtualKeyboard = !this.showVirtualKeyboard;
+        } else {
+          this.pendingShowIME = true;
+        }
+      },
+      onToggleMouseEmulation: () => {
+        this.gamepadManager.toggleMouseEmulation();
+        const active = this.gamepadManager.isMouseEmulationActive();
+        promptAction.showToast({
+          message: active ? '手柄鼠标模拟已开启' : '手柄鼠标模拟已关闭',
+          duration: 2000
+        });
+      },
+      onControllerOpacityChange: (opacity: number) => {
+        this.controllerOpacityValue = opacity;
+        VirtualControllerOverlay.saveOpacity(opacity);
+      },
+      onControllerScaleChange: (scale: number) => {
+        this.controllerScaleValue = scale;
+        VirtualControllerOverlay.saveScale(scale);
+      },
+      onTouchPassthroughChange: (enabled: boolean) => {
+        this.touchPassthrough = enabled;
+      },
+      onClose: () => {
+        this.gameMenuDialogController?.close();
+        if (this.pendingShowIME) {
+          this.pendingShowIME = false;
+          setTimeout(() => this.imeManager.show(), 300);
+        }
+      },
+      onUnlockOverlay: () => {
+        this.viewModel.overlayState.config.isLocked = false;
+        this.viewModel.overlayState.configVersion++;
+        AppStorage.setOrCreate('perf_overlay_locked', false);
+        PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, false);
+        promptAction.showToast({ message: '已解锁覆盖层', duration: 1500 });
+        this.gameMenuDialogController?.close();
+      },
+      onToggleWindowMode: async () => {
+        await this.windowManager?.toggleWindowMode();
+        this.recalculateXComponentSize();
+      }
+    };
+  }
+
+  /**
    * 显示串流菜单
    */
   showStreamMenu(): void {
@@ -442,11 +527,10 @@ struct StreamPage {
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
     
-    // 使用新的游戏菜单对话框
     this.gameMenuDialogController = new CustomDialogController({
       builder: GameMenuDialog({
         viewModel: this.viewModel,
-        superCmds: this.cmdList,  // 传递超级指令列表
+        superCmds: this.cmdList,
         isUsbDriverMode: !this.gamepadManager.isUsingGameControllerKit(),
         hasUsbGamepad: this.gamepadManager.hasUsbGamepad(),
         isMouseEmulationActive: this.gamepadManager.isMouseEmulationActive(),
@@ -455,99 +539,7 @@ struct StreamPage {
         controllerOpacity: this.controllerOpacityValue,
         controllerScale: this.controllerScaleValue,
         touchPassthrough: this.touchPassthrough,
-        callbacks: {
-          onDismiss: () => {
-            // 对话框关闭后恢复鼠标拦截器
-            this.resumeMouseInterceptor();
-          },
-          onDisconnect: () => {
-            this.stopStreaming();
-          },
-          onQuitGame: () => {
-            this.quitGameAndReturn();
-          },
-          onTouchModeChanged: (mode: string) => {
-            this.setTouchMode(mode);
-          },
-          onOpenShortcutEditor: () => {
-            // 关闭游戏菜单后打开快捷键编辑器（拦截器在快捷键编辑器关闭后恢复）
-            this.gameMenuDialogController?.close();
-            setTimeout(() => {
-              this.showShortcutEditor();
-            }, 300);
-          },
-          onEditShortcut: (shortcut) => {
-            // 关闭游戏菜单后打开快捷键编辑器（编辑模式）
-            this.gameMenuDialogController?.close();
-            setTimeout(() => {
-              this.showShortcutEditor(shortcut);
-            }, 300);
-          },
-          onDeleteShortcut: async (shortcut) => {
-            // 删除快捷键
-            const success = await this.shortcutManager.deleteShortcut(shortcut.id);
-            if (success) {
-              promptAction.showToast({ message: `快捷键 "${shortcut.name}" 已删除` });
-            }
-          },
-          onSendSuperCmd: (cmdId: string) => {
-            this.sendSuperCmd(cmdId);
-          },
-          onForceUsbDriver: () => {
-            this.forceUsbDriverMode();
-          },
-          onToggleKeyboard: () => {
-            if (this.useVirtualKeyboard) {
-              this.showVirtualKeyboard = !this.showVirtualKeyboard;
-            } else {
-              // 标记待显示 IME，等对话框关闭后再调用
-              this.pendingShowIME = true;
-            }
-          },
-          onToggleMouseEmulation: () => {
-            this.gamepadManager.toggleMouseEmulation();
-            const active = this.gamepadManager.isMouseEmulationActive();
-            promptAction.showToast({
-              message: active ? '手柄鼠标模拟已开启' : '手柄鼠标模拟已关闭',
-              duration: 2000
-            });
-          },
-          onControllerOpacityChange: (opacity: number) => {
-            this.controllerOpacityValue = opacity;
-            VirtualControllerOverlay.saveOpacity(opacity);
-          },
-          onControllerScaleChange: (scale: number) => {
-            this.controllerScaleValue = scale;
-            VirtualControllerOverlay.saveScale(scale);
-          },
-          onTouchPassthroughChange: (enabled: boolean) => {
-            this.touchPassthrough = enabled;
-          },
-          onClose: () => {
-            this.gameMenuDialogController?.close();
-            // 对话框关闭后执行待处理的 IME 显示
-            // 延迟 300ms 确保对话框关闭动画完成、焦点转换稳定，
-            // 避免部分设备上 IME 闪现后因焦点丢失立即被系统收回
-            if (this.pendingShowIME) {
-              this.pendingShowIME = false;
-              setTimeout(() => {
-                this.imeManager.show();
-              }, 300);
-            }
-          },
-          onUnlockOverlay: () => {
-            this.viewModel.overlayState.config.isLocked = false;
-            this.viewModel.overlayState.configVersion++;
-            AppStorage.setOrCreate('perf_overlay_locked', false);
-            PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, false);
-            promptAction.showToast({ message: '已解锁覆盖层', duration: 1500 });
-            this.gameMenuDialogController?.close();
-          },
-          onToggleWindowMode: async () => {
-            await this.windowManager?.toggleWindowMode();
-            this.recalculateXComponentSize();
-          }
-        }
+        callbacks: this.buildGameMenuCallbacks()
       }),
       alignment: DialogAlignment.CenterEnd,
       customStyle: true,
@@ -709,6 +701,63 @@ struct StreamPage {
     this.optionPickerDialogController.open();
   }
   
+  /**
+   * 配置串流窗口（分辨率 → 窗口全屏 → 方向 → 屏幕尺寸 → XComponent 尺寸）
+   * 初次连接和重连均需调用，避免遗漏步骤导致画面缩小/黑边
+   */
+  private async configureStreamWindow(): Promise<void> {
+    // 设置串流分辨率
+    this.windowManager?.setStreamResolution(
+      this.viewModel.displayInfo.streamWidth,
+      this.viewModel.displayInfo.streamHeight
+    );
+
+    // 确保窗口处于全屏沉浸模式
+    await this.windowManager?.configureWindow();
+
+    // 配置屏幕方向
+    await this.windowManager?.configureOrientation();
+
+    // 更新屏幕尺寸
+    const screenSize = await this.windowManager?.updateScreenSize();
+    if (screenSize) {
+      this.viewModel.displayInfo.screenWidth = screenSize.width;
+      this.viewModel.displayInfo.screenHeight = screenSize.height;
+    }
+
+    // 计算 XComponent 尺寸（letterbox/pillarbox）
+    const xComponentSize = this.windowManager?.calculateXComponentSize(this.viewModel.displayInfo.stretchVideo);
+    if (xComponentSize) {
+      this.xComponentWidth = xComponentSize.width;
+      this.xComponentHeight = xComponentSize.height;
+      console.info(`StreamPage: XComponent 尺寸 = ${JSON.stringify(xComponentSize)}`);
+    }
+  }
+
+  /**
+   * 设置 XComponent 帧率 + 获取 surfaceId + 启动串流
+   */
+  private async launchStream(): Promise<void> {
+    const surfaceId = this.xComponentController.getXComponentSurfaceId();
+
+    // 设置 XComponent 期望帧率（通过 FrameNode → ArkUI_NodeHandle）
+    // 解决 MatePad 等设备渲染帧率被锁定在 60fps 的问题
+    const streamConfig = this.viewModel.streamConfig;
+    if (streamConfig && streamConfig.fps > 60) {
+      try {
+        const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
+        if (frameNode) {
+          MoonBridge.setXComponentFrameRate(frameNode, streamConfig.fps);
+          console.info(`XComponent 帧率已设置为 ${streamConfig.fps} fps`);
+        }
+      } catch (e) {
+        console.warn(`设置 XComponent 帧率失败: ${e}`);
+      }
+    }
+
+    await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+  }
+
   async startStreaming(): Promise<void> {
     try {
       // 加载设置
@@ -722,34 +771,14 @@ struct StreamPage {
       this.controllerScaleValue = await VirtualControllerOverlay.loadScale();
       this.controllerOpacityValue = await VirtualControllerOverlay.loadOpacity();
       await this.gamepadManager.reloadSettings();
-      
-      // 设置串流分辨率
-      this.windowManager?.setStreamResolution(
-        this.viewModel.displayInfo.streamWidth,
-        this.viewModel.displayInfo.streamHeight
-      );
-      
-      // 配置屏幕方向
-      await this.windowManager?.configureOrientation();
+
+      // 配置窗口（分辨率→全屏→方向→屏幕尺寸→XComponent 尺寸）
+      await this.configureStreamWindow();
 
       // 设置 HDR 高亮度（如果启用）
       const streamConfig = this.viewModel.streamConfig;
       if (streamConfig) {
         await this.windowManager?.setHdrBrightness(streamConfig.hdr, streamConfig.hdrHighBrightness);
-      }
-      
-      // 更新屏幕尺寸
-      const screenSize = await this.windowManager?.updateScreenSize();
-      if (screenSize) {
-        this.viewModel.displayInfo.screenWidth = screenSize.width;
-        this.viewModel.displayInfo.screenHeight = screenSize.height;
-      }
-      
-      // 计算 XComponent 尺寸
-      const xComponentSize = this.windowManager?.calculateXComponentSize(this.viewModel.displayInfo.stretchVideo);
-      if (xComponentSize) {
-        this.xComponentWidth = xComponentSize.width;
-        this.xComponentHeight = xComponentSize.height;
       }
       
       // 设置触摸输入模式
@@ -766,24 +795,8 @@ struct StreamPage {
         this.lifecycleManager.handleServerResolutionChanged(width, height);
       });
 
-      // 获取 surfaceId 并开始串流
-      const surfaceId = this.xComponentController.getXComponentSurfaceId();
-      
-      // 设置 XComponent 期望帧率（通过 FrameNode → ArkUI_NodeHandle，无需 libraryname）
-      // 解决 MatePad 等设备渲染帧率被锁定在 60fps 的问题
-      if (streamConfig && streamConfig.fps > 60) {
-        try {
-          const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
-          if (frameNode) {
-            MoonBridge.setXComponentFrameRate(frameNode, streamConfig.fps);
-            console.info(`XComponent 帧率已设置为 ${streamConfig.fps} fps`);
-          }
-        } catch (e) {
-          console.warn(`设置 XComponent 帧率失败: ${e}`);
-        }
-      }
-      
-      await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+      // 获取 surfaceId → 设置帧率 → 启动串流
+      await this.launchStream();
 
       // 启动后台保活（AVSession + 长时任务），防止退到后台时进程被冻结
       if (this.enableBackgroundTask) {
@@ -869,21 +882,11 @@ struct StreamPage {
       await this.viewModel.stopStreaming();
       console.info('[StreamPage] 旧会话已停止，开始重新连接...');
 
-      // 用相同参数重新启动串流
-      const surfaceId = this.xComponentController.getXComponentSurfaceId();
-      
-      // 重新设置 XComponent 帧率
-      const streamConfig = this.viewModel.streamConfig;
-      if (streamConfig && streamConfig.fps > 60) {
-        try {
-          const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
-          if (frameNode) {
-            MoonBridge.setXComponentFrameRate(frameNode, streamConfig.fps);
-          }
-        } catch (_e) { /* ignore */ }
-      }
-      
-      await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+      // 重新配置窗口和尺寸（与初次连接共用同一流程，避免画面缩小/黑边）
+      await this.configureStreamWindow();
+
+      // 获取 surfaceId → 设置帧率 → 启动串流
+      await this.launchStream();
       console.info('[StreamPage] 重连串流成功');
 
       promptAction.showToast({ message: '已重新连接' });

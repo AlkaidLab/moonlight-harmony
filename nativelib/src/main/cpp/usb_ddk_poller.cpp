@@ -137,6 +137,9 @@ struct DdkPollerContext {
     napi_threadsafe_function tsfn;      // 数据回调
     napi_threadsafe_function errorTsfn; // 错误回调
 
+    // 忽略断开信号 (对应用户设置 "忽略手柄断开")
+    std::atomic<bool> ignoreDisconnect;
+
     // 统计
     std::atomic<uint64_t> totalReads;
     std::atomic<uint64_t> totalBytes;
@@ -189,6 +192,7 @@ static void initPollerPool() {
         g_ddkPollers[i].outMemMap = nullptr;
         g_ddkPollers[i].tsfn = nullptr;
         g_ddkPollers[i].errorTsfn = nullptr;
+        g_ddkPollers[i].ignoreDisconnect.store(false);
     }
     g_ddkPoolInited = true;
 }
@@ -406,8 +410,14 @@ static void *ddkPollThread(void *arg) {
                 if (st != napi_ok) free(ped);
             }
 
-            // IO 错误 - 停止轮询
+            // IO 错误 - 停止轮询（除非忽略断开信号）
             if (ret == USB_DDK_IO_FAILED || ret == USB_DDK_INVALID_OP) {
+                if (ctx->ignoreDisconnect.load()) {
+                    OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 致命错误(%{public}s)但忽略断开信号已启用，50ms 后继续轮询",
+                                LOG_TAG, pollerId, ddkErrStr(ret));
+                    usleep(50 * 1000);  // 50ms
+                    continue;
+                }
                 OH_LOG_ERROR(LOG_APP, "[%{public}s] id=%{public}d 致命错误，停止轮询", LOG_TAG, pollerId);
                 break;
             }
@@ -686,11 +696,24 @@ static napi_value DdkPoller_StartPoller(napi_env env, napi_callback_info info) {
         // 输出缓冲区大小：64 字节足够大多数控制命令
         ret = fn_CreateDeviceMemMap(deviceId, 64, &ctx->outMemMap);
         if (ret != USB_DDK_SUCCESS || !ctx->outMemMap) {
-            OH_LOG_WARN(LOG_APP, "[%{public}s] CreateDeviceMemMap(OUT) 失败: %{public}d, 输出将不可用",
-                        LOG_TAG, ret);
+            OH_LOG_ERROR(LOG_APP, "[%{public}s] CreateDeviceMemMap(OUT) 失败: %{public}d (%{public}s), DDK 整体回退",
+                        LOG_TAG, ret, ddkErrStr(ret));
             ctx->outMemMap = nullptr;
-            // 不影响轮询，继续
+            // 输出不可用 → 回退到 usbManager，保障振动等输出功能
+            fn_DestroyDeviceMemMap(ctx->inMemMap);
+            fn_ReleaseInterface(ctx->interfaceHandle);
+            ctx->interfaceClaimed = false;
+            ctx->inMemMap = nullptr;
+            pthread_mutex_unlock(&g_ddkMutex);
+            napi_value r;
+            napi_create_int32(env, -1, &r);
+            return r;
+        } else {
+            OH_LOG_INFO(LOG_APP, "[%{public}s] CreateDeviceMemMap(OUT) 成功: size=%{public}zu, address=%{public}p",
+                        LOG_TAG, ctx->outMemMap->size, (void *)ctx->outMemMap->address);
         }
+    } else {
+        OH_LOG_INFO(LOG_APP, "[%{public}s] 无输出端点 (outEp=0), 跳过输出 memmap 创建", LOG_TAG);
     }
 
     // 保存配置
@@ -701,6 +724,7 @@ static napi_value DdkPoller_StartPoller(napi_env env, napi_callback_info info) {
     ctx->timeoutMs = (uint32_t)timeoutMs;
     ctx->totalReads.store(0);
     ctx->totalBytes.store(0);
+    ctx->ignoreDisconnect.store(false);
 
     // Step 4: 创建 threadsafe functions
     napi_value dataResName;
@@ -884,7 +908,9 @@ static napi_value DdkPoller_SendOutput(napi_env env, napi_callback_info info) {
 
     DdkPollerContext *ctx = &g_ddkPollers[pollerId];
     if (!ctx->interfaceClaimed || !ctx->outMemMap) {
-        OH_LOG_ERROR(LOG_APP, "[%{public}s] sendOutput: 接口未声明或输出 memmap 不可用", LOG_TAG);
+        OH_LOG_ERROR(LOG_APP, "[%{public}s] sendOutput: id=%{public}d 不可用 (claimed=%{public}d, outMemMap=%{public}s)",
+                     LOG_TAG, pollerId, (int)ctx->interfaceClaimed,
+                     ctx->outMemMap ? "有" : "无");
         return result;
     }
 
@@ -931,8 +957,8 @@ static napi_value DdkPoller_SendOutput(napi_env env, napi_callback_info info) {
     if (ret == USB_DDK_SUCCESS) {
         napi_create_int32(env, (int32_t)inputLen, &result);
     } else {
-        OH_LOG_WARN(LOG_APP, "[%{public}s] sendOutput 失败: %{public}d (%{public}s)",
-                    LOG_TAG, ret, ddkErrStr(ret));
+        OH_LOG_WARN(LOG_APP, "[%{public}s] sendOutput 失败: id=%{public}d ep=0x%{public}x len=%{public}zu ret=%{public}d (%{public}s)",
+                    LOG_TAG, pollerId, endpoint, inputLen, ret, ddkErrStr(ret));
         napi_create_int32(env, -ret, &result);
     }
 
@@ -964,6 +990,31 @@ static napi_value DdkPoller_GetStats(napi_env env, napi_callback_info info) {
     }
 
     return result;
+}
+
+// ============================================================
+// NAPI: setIgnoreDisconnect(pollerId, ignore) → 设置忽略断开信号
+// ============================================================
+
+static napi_value DdkPoller_SetIgnoreDisconnect(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    int32_t pollerId = -1;
+    bool ignore = false;
+    if (argc >= 1) napi_get_value_int32(env, args[0], &pollerId);
+    if (argc >= 2) napi_get_value_bool(env, args[1], &ignore);
+
+    if (pollerId >= 0 && pollerId < DDK_MAX_POLLERS) {
+        g_ddkPollers[pollerId].ignoreDisconnect.store(ignore);
+        OH_LOG_INFO(LOG_APP, "[%{public}s] id=%{public}d ignoreDisconnect=%{public}d",
+                    LOG_TAG, pollerId, (int)ignore);
+    }
+
+    napi_value undefined;
+    napi_get_undefined(env, &undefined);
+    return undefined;
 }
 
 // ============================================================
@@ -1096,6 +1147,7 @@ void UsbDdkPoller_Init(napi_env env, napi_value exports) {
         { "stopPoller",   nullptr, DdkPoller_StopPoller,   nullptr, nullptr, nullptr, napi_default, nullptr },
         { "sendOutput",   nullptr, DdkPoller_SendOutput,   nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getStats",     nullptr, DdkPoller_GetStats,     nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "setIgnoreDisconnect", nullptr, DdkPoller_SetIgnoreDisconnect, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "release",      nullptr, DdkPoller_Release,      nullptr, nullptr, nullptr, napi_default, nullptr },
     };
 

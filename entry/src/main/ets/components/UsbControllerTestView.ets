@@ -37,11 +37,6 @@ interface StickVisualizerParams {
   isRight: boolean;
 }
 
-interface TriggerBarParams {
-  value: number;
-  isLeft: boolean;
-}
-
 interface ButtonStateParams {
   label: string;
   buttons: number;
@@ -370,326 +365,317 @@ export struct UsbControllerTestView {
 
   build() {
     Scroll() {
-      Column({ space: 16 }) {
-        // 控制按钮区
-        Row({ space: 12 }) {
-          Button(this.isRunning ? '停止驱动' : '启动驱动')
-            .onClick(() => {
-              if (this.isRunning) {
-                this.stopDriver();
-              } else {
-                this.startDriver();
-              }
-            })
-            .backgroundColor(this.isRunning ? AppColors.Error : AppColors.Success)
-            .fontColor(AppColors.TextOnPrimary)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .height(40)
-            .padding({ left: 20, right: 20 })
-            .borderRadius(20)
-
-          Button('刷新设备')
-            .onClick(() => {
-              this.checkUsbDevices();
-            })
-            .backgroundColor(AppColors.Primary)
-            .fontColor(AppColors.TextOnPrimary)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .height(40)
-            .padding({ left: 20, right: 20 })
-            .borderRadius(20)
-        }
-
-        // 设备状态卡片
-        Column({ space: 12 }) {
+      Column({ space: 10 }) {
+        // ═══ 设备状态 + 控制按钮（合并为一张卡片）═══
+        Column({ space: 10 }) {
+          // 标题 + 操作按钮
           Row() {
-            Text('🎮')
-              .fontSize(20)
             Text('设备状态')
-              .fontSize(16)
+              .fontSize(15)
               .fontWeight(FontWeight.Bold)
               .fontColor(AppColors.TextPrimary)
-              .margin({ left: 8 })
+
             Blank()
-            // 设备数量徽章
-            Text(`${this.deviceCount}`)
-              .fontSize(12)
+
+            Button(this.isRunning ? '停止' : '启动')
+              .onClick(() => {
+                if (this.isRunning) {
+                  this.stopDriver();
+                } else {
+                  this.startDriver();
+                }
+              })
+              .backgroundColor(this.isRunning ? AppColors.Error : AppColors.Success)
               .fontColor(AppColors.TextOnPrimary)
+              .fontSize(12)
+              .height(30)
+              .padding({ left: 14, right: 14 })
+              .borderRadius(15)
+
+            Button('刷新')
+              .onClick(() => {
+                this.checkUsbDevices();
+              })
               .backgroundColor(AppColors.Primary)
-              .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-              .borderRadius(10)
+              .fontColor(AppColors.TextOnPrimary)
+              .fontSize(12)
+              .height(30)
+              .padding({ left: 14, right: 14 })
+              .borderRadius(15)
+              .margin({ left: 8 })
           }
           .width('100%')
-          
-          Row({ space: 16 }) {
-            Column({ space: 4 }) {
-              Text('USB 设备')
-                .fontSize(12)
-                .fontColor(AppColors.TextSecondary)
+
+          // 统计数字行
+          Row() {
+            Column({ space: 2 }) {
               Text(`${this.deviceCount}`)
-                .fontSize(24)
+                .fontSize(20)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(AppColors.TextPrimary)
+              Text('USB 设备')
+                .fontSize(11)
+                .fontColor(AppColors.TextSecondary)
             }
             .alignItems(HorizontalAlign.Center)
-            
-            Divider()
-              .vertical(true)
-              .height(40)
-              .color(AppColors.Divider)
-            
-            Column({ space: 4 }) {
-              Text('已连接手柄')
-                .fontSize(12)
-                .fontColor(AppColors.TextSecondary)
+            .layoutWeight(1)
+
+            Row().width(1).height(28).backgroundColor(AppColors.Divider)
+
+            Column({ space: 2 }) {
               Text(`${this.connectedDevices.length}`)
-                .fontSize(24)
+                .fontSize(20)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(this.connectedDevices.length > 0 ? AppColors.Success : AppColors.TextTertiary)
+              Text('已连接')
+                .fontSize(11)
+                .fontColor(AppColors.TextSecondary)
             }
             .alignItems(HorizontalAlign.Center)
-            
+            .layoutWeight(1)
+
             if (this.connectedDevices.length > 0) {
-              Divider()
-                .vertical(true)
-                .height(40)
-                .color(AppColors.Divider)
-              
-              Column({ space: 4 }) {
-                Text('轮询率')
-                  .fontSize(12)
-                  .fontColor(AppColors.TextSecondary)
+              Row().width(1).height(28).backgroundColor(AppColors.Divider)
+
+              Column({ space: 2 }) {
                 Row() {
                   Text(`${this.pollRate}`)
-                    .fontSize(24)
+                    .fontSize(20)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(this.getPollRateColor())
                   Text(' Hz')
-                    .fontSize(14)
+                    .fontSize(12)
                     .fontColor(AppColors.TextSecondary)
                 }
+                Text(this.getPollRateDesc())
+                  .fontSize(11)
+                  .fontColor(AppColors.TextSecondary)
               }
               .alignItems(HorizontalAlign.Center)
+              .layoutWeight(1)
             }
           }
           .width('100%')
-          .justifyContent(FlexAlign.SpaceEvenly)
 
           // 已连接设备列表
           if (this.connectedDevices.length > 0) {
-            Divider().color(AppColors.Divider)
-            
             ForEach(this.connectedDevices, (device: DeviceInfo) => {
               Row({ space: 8 }) {
                 Text(this.getControllerTypeIcon(device.type))
-                  .fontSize(24)
-                Column({ space: 2 }) {
+                  .fontSize(20)
+                Column({ space: 1 }) {
                   Text(device.name)
-                    .fontSize(14)
+                    .fontSize(13)
                     .fontWeight(FontWeight.Medium)
                     .fontColor(AppColors.TextPrimary)
                   Text(`${this.getControllerTypeName(device.type)} · VID:0x${device.vid.toString(16).toUpperCase()} PID:0x${device.pid.toString(16).toUpperCase()}`)
-                    .fontSize(11)
+                    .fontSize(10)
                     .fontColor(AppColors.TextTertiary)
                 }
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
-                
-                Text(this.getPollRateDesc())
-                  .fontSize(11)
-                  .fontColor(this.getPollRateColor())
-                  .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                  .backgroundColor(AppColors.SurfaceDark)
-                  .borderRadius(4)
               }
               .width('100%')
-              .padding(8)
-              .backgroundColor(AppColors.SurfaceTransparent)
-              .borderRadius(8)
+              .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+              .backgroundColor('#0A808080')
+              .borderRadius(6)
             })
           }
         }
         .width('100%')
-        .padding(16)
+        .padding(12)
         .backgroundColor(AppColors.CardBackground)
         .borderRadius(12)
         .border({ width: 1, color: AppColors.CardBorder })
 
-        // 输入状态卡片 - 手柄形状可视化
+        // ═══ 输入可视化卡片 ═══
         if (this.hasInput) {
-          Column({ space: 12 }) {
+          Column({ space: 10 }) {
+            // 标题行
             Row() {
-              Text('🕹️')
-                .fontSize(20)
               Text('输入状态')
-                .fontSize(16)
+                .fontSize(15)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(AppColors.TextPrimary)
-                .margin({ left: 8 })
+              Blank()
+              Text('实时')
+                .fontSize(10)
+                .fontColor(AppColors.Success)
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .backgroundColor('#1A4CAF50')
+                .borderRadius(4)
             }
             .width('100%')
 
-            // 手柄可视化面板
-            Column() {
-              // 顶部：扳机和肩键
-              Row() {
-                // 左扳机 LT
-                Column({ space: 2 }) {
-                  Text('LT')
+            // 扳机区
+            Row() {
+              // 左侧
+              Column({ space: 4 }) {
+                Row() {
+                  Text('LB')
                     .fontSize(10)
-                    .fontColor(AppColors.TextSecondary)
-                  this.TriggerBar({ value: this.displayLT, isLeft: true })
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor((this.displayButtons & ButtonFlags.LB_FLAG) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
                 }
-                // 左肩键 LB
-                this.ShoulderButton({ label: 'LB', buttons: this.displayButtons, flag: ButtonFlags.LB_FLAG })
-                
-                Blank()
-                
-                // 右肩键 RB
-                this.ShoulderButton({ label: 'RB', buttons: this.displayButtons, flag: ButtonFlags.RB_FLAG })
-                // 右扳机 RT
-                Column({ space: 2 }) {
-                  Text('RT')
-                    .fontSize(10)
-                    .fontColor(AppColors.TextSecondary)
-                  this.TriggerBar({ value: this.displayRT, isLeft: false })
-                }
-              }
-              .width('100%')
-              .padding({ left: 16, right: 16 })
-              
-              // 主体部分：手柄轮廓
-              Row() {
-                // 左半部分：D-Pad + 左摇杆
-                Column({ space: 16 }) {
-                  // 左摇杆
-                  Column({ space: 4 }) {
-                    this.StickVisualizer({ x: this.displayLSX, y: this.displayLSY, isRight: false })
-                    Row() {
-                      Text('L3')
-                        .fontSize(9)
-                        .fontColor((this.displayButtons & ButtonFlags.LS_CLK_FLAG) !== 0 ? 
-                          AppColors.Primary : AppColors.TextTertiary)
-                        .fontWeight((this.displayButtons & ButtonFlags.LS_CLK_FLAG) !== 0 ? 
-                          FontWeight.Bold : FontWeight.Normal)
-                    }
-                  }
-                  
-                  // D-Pad
-                  this.DPadVisualizer()
-                }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Center)
-                
-                // 中间部分：功能键
-                Column({ space: 12 }) {
-                  // Back / Start
-                  Row({ space: 16 }) {
-                    this.FunctionButton({ label: '⏪', buttons: this.displayButtons, flag: ButtonFlags.BACK_FLAG })
-                    this.FunctionButton({ label: '🏠', buttons: this.displayButtons, flag: ButtonFlags.SPECIAL_BUTTON_FLAG })
-                    this.FunctionButton({ label: '⏯', buttons: this.displayButtons, flag: ButtonFlags.PLAY_FLAG })
-                  }
-                }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Center)
+                .width(48)
+                .height(22)
+                .borderRadius(11)
+                .backgroundColor((this.displayButtons & ButtonFlags.LB_FLAG) !== 0 ? AppColors.Primary : '#1A808080')
                 .justifyContent(FlexAlign.Center)
-                
-                // 右半部分：ABXY + 右摇杆
-                Column({ space: 16 }) {
-                  // ABXY 按钮（菱形布局）
-                  this.ABXYVisualizer()
-                  
-                  // 右摇杆
-                  Column({ space: 4 }) {
-                    this.StickVisualizer({ x: this.displayRSX, y: this.displayRSY, isRight: true })
-                    Row() {
-                      Text('R3')
-                        .fontSize(9)
-                        .fontColor((this.displayButtons & ButtonFlags.RS_CLK_FLAG) !== 0 ? 
-                          AppColors.Error : AppColors.TextTertiary)
-                        .fontWeight((this.displayButtons & ButtonFlags.RS_CLK_FLAG) !== 0 ? 
-                          FontWeight.Bold : FontWeight.Normal)
-                    }
+                .animation({ duration: 60 })
+
+                Row({ space: 4 }) {
+                  Text('LT')
+                    .fontSize(9)
+                    .fontColor(AppColors.TextTertiary)
+                  Stack({ alignContent: Alignment.Start }) {
+                    Row().width(64).height(6).backgroundColor('#1A808080').borderRadius(3)
+                    Row()
+                      .width(Math.max(3, this.displayLT * 64))
+                      .height(6)
+                      .borderRadius(3)
+                      .linearGradient({ angle: 90, colors: [['#3D8ECF', 0], ['#5BA8E6', 1]] })
+                      .animation({ duration: 50, curve: Curve.Linear })
                   }
                 }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Center)
-              }
-              .width('100%')
-              .padding(16)
-            }
-            .width('100%')
-            .padding({ top: 12, bottom: 12 })
-            .backgroundColor(AppColors.SurfaceTransparent)
-            .borderRadius(16)
-            
-            // 底部数值显示
-            Row({ space: 16 }) {
-              // 左摇杆数值
-              Column({ space: 2 }) {
-                Text('左摇杆')
-                  .fontSize(10)
-                  .fontColor(AppColors.TextTertiary)
-                Text(`${this.formatStickValue(this.displayLSX)}, ${this.formatStickValue(this.displayLSY)}`)
-                  .fontSize(11)
-                  .fontColor(AppColors.TextSecondary)
-                  .fontFamily('monospace')
               }
               .alignItems(HorizontalAlign.Center)
-              
-              Divider().vertical(true).height(24).color(AppColors.Divider)
-              
-              // 扳机数值
-              Column({ space: 2 }) {
-                Text('扳机')
-                  .fontSize(10)
-                  .fontColor(AppColors.TextTertiary)
-                Text(`L:${this.formatTriggerValue(this.displayLT)} R:${this.formatTriggerValue(this.displayRT)}`)
-                  .fontSize(11)
-                  .fontColor(AppColors.TextSecondary)
-                  .fontFamily('monospace')
-              }
-              .alignItems(HorizontalAlign.Center)
-              
-              Divider().vertical(true).height(24).color(AppColors.Divider)
-              
-              // 右摇杆数值
-              Column({ space: 2 }) {
-                Text('右摇杆')
-                  .fontSize(10)
-                  .fontColor(AppColors.TextTertiary)
-                Text(`${this.formatStickValue(this.displayRSX)}, ${this.formatStickValue(this.displayRSY)}`)
-                  .fontSize(11)
-                  .fontColor(AppColors.TextSecondary)
-                  .fontFamily('monospace')
+
+              Blank()
+
+              // 右侧
+              Column({ space: 4 }) {
+                Row() {
+                  Text('RB')
+                    .fontSize(10)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor((this.displayButtons & ButtonFlags.RB_FLAG) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
+                }
+                .width(48)
+                .height(22)
+                .borderRadius(11)
+                .backgroundColor((this.displayButtons & ButtonFlags.RB_FLAG) !== 0 ? AppColors.Error : '#1A808080')
+                .justifyContent(FlexAlign.Center)
+                .animation({ duration: 60 })
+
+                Row({ space: 4 }) {
+                  Stack({ alignContent: Alignment.End }) {
+                    Row().width(64).height(6).backgroundColor('#1A808080').borderRadius(3)
+                    Row()
+                      .width(Math.max(3, this.displayRT * 64))
+                      .height(6)
+                      .borderRadius(3)
+                      .linearGradient({ angle: 90, colors: [['#E85D75', 0], ['#E81123', 1]] })
+                      .animation({ duration: 50, curve: Curve.Linear })
+                  }
+                  Text('RT')
+                    .fontSize(9)
+                    .fontColor(AppColors.TextTertiary)
+                }
               }
               .alignItems(HorizontalAlign.Center)
             }
             .width('100%')
-            .justifyContent(FlexAlign.SpaceEvenly)
+            .padding({ left: 20, right: 20 })
+
+            // 主体区
+            Row() {
+              // 左：摇杆 + D-Pad
+              Column({ space: 14 }) {
+                this.StickVisualizer({ x: this.displayLSX, y: this.displayLSY, isRight: false })
+                Text((this.displayButtons & ButtonFlags.LS_CLK_FLAG) !== 0 ? 'L3 ●' : 'L3')
+                  .fontSize(9)
+                  .fontColor((this.displayButtons & ButtonFlags.LS_CLK_FLAG) !== 0 ?
+                    AppColors.Primary : AppColors.TextTertiary)
+                  .margin({ top: -8 })
+                this.DPadVisualizer()
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Center)
+
+              // 中：功能键
+              Column() {
+                Row({ space: 16 }) {
+                  this.FunctionButton({ label: '≡', buttons: this.displayButtons, flag: ButtonFlags.BACK_FLAG })
+                  this.FunctionButton({ label: '⊙', buttons: this.displayButtons, flag: ButtonFlags.SPECIAL_BUTTON_FLAG })
+                  this.FunctionButton({ label: '▶', buttons: this.displayButtons, flag: ButtonFlags.PLAY_FLAG })
+                }
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Center)
+              .justifyContent(FlexAlign.Center)
+
+              // 右：ABXY + 摇杆
+              Column({ space: 14 }) {
+                this.ABXYVisualizer()
+                this.StickVisualizer({ x: this.displayRSX, y: this.displayRSY, isRight: true })
+                Text((this.displayButtons & ButtonFlags.RS_CLK_FLAG) !== 0 ? 'R3 ●' : 'R3')
+                  .fontSize(9)
+                  .fontColor((this.displayButtons & ButtonFlags.RS_CLK_FLAG) !== 0 ?
+                    AppColors.Error : AppColors.TextTertiary)
+                  .margin({ top: -8 })
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Center)
+            }
+            .width('100%')
+            .padding({ left: 4, right: 4 })
+
+            // 数值行
+            Row() {
+              Column() {
+                Text(`L: ${this.formatStickValue(this.displayLSX)},${this.formatStickValue(this.displayLSY)}`)
+                  .fontSize(11)
+                  .fontColor(AppColors.TextSecondary)
+                  .fontFamily('monospace')
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Center)
+
+              Row().width(1).height(16).backgroundColor(AppColors.Divider)
+
+              Column() {
+                Text(`LT:${this.formatTriggerValue(this.displayLT)} RT:${this.formatTriggerValue(this.displayRT)}`)
+                  .fontSize(11)
+                  .fontColor(AppColors.TextSecondary)
+                  .fontFamily('monospace')
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Center)
+
+              Row().width(1).height(16).backgroundColor(AppColors.Divider)
+
+              Column() {
+                Text(`R: ${this.formatStickValue(this.displayRSX)},${this.formatStickValue(this.displayRSY)}`)
+                  .fontSize(11)
+                  .fontColor(AppColors.TextSecondary)
+                  .fontFamily('monospace')
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Center)
+            }
+            .width('100%')
+            .padding({ left: 4, right: 4, top: 6, bottom: 4 })
+            .backgroundColor('#0A808080')
+            .borderRadius(6)
           }
           .width('100%')
-          .padding(16)
+          .padding(12)
           .backgroundColor(AppColors.CardBackground)
           .borderRadius(12)
           .border({ width: 1, color: AppColors.CardBorder })
         }
 
-        // 日志卡片
-        Column({ space: 12 }) {
+        // ═══ 日志卡片 ═══
+        Column({ space: 8 }) {
           Row() {
-            Text('📋')
-              .fontSize(20)
             Text('调试日志')
-              .fontSize(16)
+              .fontSize(15)
               .fontWeight(FontWeight.Bold)
               .fontColor(AppColors.TextPrimary)
-              .margin({ left: 8 })
             Blank()
             Text(`${this.logMessages.length} 条`)
-              .fontSize(12)
+              .fontSize(11)
               .fontColor(AppColors.TextTertiary)
           }
           .width('100%')
@@ -703,22 +689,22 @@ export struct UsbControllerTestView {
                   .fontFamily('monospace')
                   .width('100%')
               }
-              .padding({ top: 4, bottom: 4 })
+              .padding({ top: 3, bottom: 3 })
             })
           }
-          .height(120)
+          .height(100)
           .width('100%')
-          .backgroundColor(AppColors.SurfaceTransparent)
-          .borderRadius(8)
+          .backgroundColor('#0A808080')
+          .borderRadius(6)
           .padding(8)
         }
         .width('100%')
-        .padding(16)
+        .padding(12)
         .backgroundColor(AppColors.CardBackground)
         .borderRadius(12)
         .border({ width: 1, color: AppColors.CardBorder })
       }
-      .padding(16)
+      .padding(12)
       .width('100%')
     }
     .width('100%')
@@ -727,211 +713,147 @@ export struct UsbControllerTestView {
     .scrollBar(BarState.Off)
   }
 
-  // 摇杆可视化 - 实时动画
+  // 摇杆可视化 - 精致圆盘风格
   @Builder
   StickVisualizer($$: StickVisualizerParams) {
     Stack() {
-      // 外圈
+      // 外圈 - 柔和边框
       Circle()
-        .width(80)
-        .height(80)
-        .fill(AppColors.SurfaceDark)
-        .stroke(AppColors.Border)
-        .strokeWidth(2)
-      
-      // 十字线
+        .width(76)
+        .height(76)
+        .fill('#0A808080')
+        .stroke('#20808080')
+        .strokeWidth(1.5)
+
+      // 十字参考线（淡）
       Line()
-        .width(60)
-        .height(1)
-        .backgroundColor(AppColors.Divider)
+        .width(56)
+        .height(0.5)
+        .backgroundColor('#15808080')
       Line()
-        .width(1)
-        .height(60)
-        .backgroundColor(AppColors.Divider)
-      
-      // 死区圈
+        .width(0.5)
+        .height(56)
+        .backgroundColor('#15808080')
+
+      // 死区范围
       Circle()
-        .width(16)
-        .height(16)
+        .width(12)
+        .height(12)
         .fill(Color.Transparent)
-        .stroke(AppColors.Divider)
-        .strokeWidth(1)
+        .stroke('#18808080')
+        .strokeWidth(0.5)
       
-      // 移动轨迹 (淡化效果)
+      // 指示点 — 渐变发光
       Circle()
-        .width(8)
-        .height(8)
-        .fill($$.isRight ? '#E8112320' : '#3D8ECF20')
+        .width(18)
+        .height(18)
+        .fill($$.isRight ? '#E81123' : '#3D8ECF')
+        .shadow({ radius: 10, color: $$.isRight ? '#50E81123' : '#503D8ECF', offsetX: 0, offsetY: 0 })
         .offset({
-          x: ($$.x / 32767) * 30,
-          y: -($$.y / 32767) * 30
+          x: ($$.x / 32767) * 28,
+          y: -($$.y / 32767) * 28
         })
-        .animation({ duration: 150, curve: Curve.EaseOut })
-      
-      // 指示点 - 添加平滑动画
-      Circle()
-        .width(16)
-        .height(16)
-        .fill($$.isRight ? AppColors.Error : AppColors.Primary)
-        .shadow({ radius: 8, color: $$.isRight ? '#E8112360' : '#3D8ECF60', offsetX: 0, offsetY: 0 })
-        .offset({
-          x: ($$.x / 32767) * 30,
-          y: -($$.y / 32767) * 30
-        })
-        .animation({ duration: 50, curve: Curve.Linear })  // 快速响应
+        .animation({ duration: 50, curve: Curve.Linear })
     }
-    .width(80)
-    .height(80)
+    .width(76)
+    .height(76)
   }
 
-  // 扳机条 - 实时动画
-  @Builder
-  TriggerBar($$: TriggerBarParams) {
-    Stack({ alignContent: Alignment.Bottom }) {
-      // 背景
-      Column()
-        .width(24)
-        .height(60)
-        .backgroundColor(AppColors.SurfaceDark)
-        .borderRadius(12)
-      
-      // 发光层 (value > 0 时显示)
-      if ($$.value > 0.1) {
-        Column()
-          .width(24)
-          .height(Math.max(4, $$.value * 60))
-          .backgroundColor($$.isLeft ? '#3D8ECF40' : '#E8112340')
-          .borderRadius(12)
-          .animation({ duration: 80, curve: Curve.EaseOut })
-      }
-      
-      // 填充 - 添加平滑动画
-      Column()
-        .width(24)
-        .height(Math.max(4, $$.value * 60))
-        .backgroundColor($$.isLeft ? AppColors.Primary : AppColors.Error)
-        .borderRadius(12)
-        .animation({ duration: 50, curve: Curve.Linear })  // 快速响应
-    }
-    .width(24)
-    .height(60)
-  }
-  
-  // 肩键按钮 - 带按下动画
-  @Builder
-  ShoulderButton($$: ButtonStateParams) {
-    Column() {
-      Text($$.label)
-        .fontSize(12)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(($$.buttons & $$.flag) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
-    }
-    .width(48)
-    .height(24)
-    .borderRadius(12)
-    .backgroundColor(($$.buttons & $$.flag) !== 0 ? AppColors.Primary : AppColors.SurfaceDark)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .margin({ left: 8, right: 8 })
-    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 0.95 : 1, y: ($$.buttons & $$.flag) !== 0 ? 0.95 : 1 })
-    .animation({ duration: 60 })
-  }
-  
-  // 功能键（Back/Start/Home）- 带按下动画
+  // 功能键（Back/Home/Start）- 小型胶囊风格
   @Builder
   FunctionButton($$: ButtonStateParams) {
     Column() {
       Text($$.label)
-        .fontSize(14)
+        .fontSize(13)
         .fontColor(($$.buttons & $$.flag) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
     }
-    .width(32)
-    .height(32)
-    .borderRadius(16)
-    .backgroundColor(($$.buttons & $$.flag) !== 0 ? AppColors.Primary : AppColors.SurfaceDark)
+    .width(30)
+    .height(30)
+    .borderRadius(15)
+    .backgroundColor(($$.buttons & $$.flag) !== 0 ? '#606060' : '#1A808080')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 0.9 : 1, y: ($$.buttons & $$.flag) !== 0 ? 0.9 : 1 })
+    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 0.88 : 1, y: ($$.buttons & $$.flag) !== 0 ? 0.88 : 1 })
     .animation({ duration: 80 })
   }
   
-  // ABXY 按钮菱形布局
+  // ABXY 按钮菱形布局 — 紧凑排列
   @Builder
   ABXYVisualizer() {
-    Column({ space: 2 }) {
+    Column({ space: 1 }) {
       // Y 在上
       this.ABXYButton({ label: 'Y', buttons: this.displayButtons, flag: ButtonFlags.Y_FLAG, color: '#FFB900' })
-      
+
       // X 和 B 在中间
-      Row({ space: 24 }) {
+      Row({ space: 22 }) {
         this.ABXYButton({ label: 'X', buttons: this.displayButtons, flag: ButtonFlags.X_FLAG, color: '#0078D4' })
         this.ABXYButton({ label: 'B', buttons: this.displayButtons, flag: ButtonFlags.B_FLAG, color: '#E81123' })
       }
-      
+
       // A 在下
       this.ABXYButton({ label: 'A', buttons: this.displayButtons, flag: ButtonFlags.A_FLAG, color: '#107C10' })
     }
   }
-  
-  // 单个 ABXY 按钮 - 带按下动画
+
+  // 单个 ABXY 按钮 — 精致圆形
   @Builder
   ABXYButton($$: ABXYButtonParams) {
     Column() {
       Text($$.label)
-        .fontSize(14)
+        .fontSize(13)
         .fontWeight(FontWeight.Bold)
         .fontColor(($$.buttons & $$.flag) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
     }
-    .width(36)
-    .height(36)
-    .borderRadius(18)
-    .backgroundColor(($$.buttons & $$.flag) !== 0 ? $$.color : AppColors.SurfaceDark)
+    .width(34)
+    .height(34)
+    .borderRadius(17)
+    .backgroundColor(($$.buttons & $$.flag) !== 0 ? $$.color : '#1A808080')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .shadow(($$.buttons & $$.flag) !== 0 ? { radius: 12, color: $$.color, offsetX: 0, offsetY: 2 } : undefined)
-    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 1.15 : 1, y: ($$.buttons & $$.flag) !== 0 ? 1.15 : 1 })
+    .shadow(($$.buttons & $$.flag) !== 0 ?
+      { radius: 10, color: `${$$.color}80`, offsetX: 0, offsetY: 1 } : undefined)
+    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 1.12 : 1, y: ($$.buttons & $$.flag) !== 0 ? 1.12 : 1 })
     .animation({ duration: 60 })
   }
   
-  // D-Pad 十字键可视化
+  // D-Pad 十字键 — 更紧凑的十字形
   @Builder
   DPadVisualizer() {
-    Column({ space: 2 }) {
+    Column({ space: 1 }) {
       // 上
       this.DPadArrow({ label: '▲', buttons: this.displayButtons, flag: ButtonFlags.UP_FLAG })
-      
+
       // 左 中心 右
-      Row({ space: 2 }) {
+      Row({ space: 1 }) {
         this.DPadArrow({ label: '◀', buttons: this.displayButtons, flag: ButtonFlags.LEFT_FLAG })
-        // 中心占位
         Column()
-          .width(28)
-          .height(28)
-          .backgroundColor(AppColors.SurfaceDark)
-          .borderRadius(4)
+          .width(26)
+          .height(26)
+          .backgroundColor('#1A808080')
+          .borderRadius(3)
         this.DPadArrow({ label: '▶', buttons: this.displayButtons, flag: ButtonFlags.RIGHT_FLAG })
       }
-      
+
       // 下
       this.DPadArrow({ label: '▼', buttons: this.displayButtons, flag: ButtonFlags.DOWN_FLAG })
     }
   }
-  
-  // D-Pad 单个方向键 - 带按下动画
+
+  // D-Pad 单个方向键
   @Builder
   DPadArrow($$: ButtonStateParams) {
     Column() {
       Text($$.label)
-        .fontSize(12)
+        .fontSize(11)
         .fontColor(($$.buttons & $$.flag) !== 0 ? '#FFFFFF' : AppColors.TextTertiary)
     }
-    .width(28)
-    .height(28)
-    .borderRadius(4)
-    .backgroundColor(($$.buttons & $$.flag) !== 0 ? AppColors.Primary : AppColors.SurfaceDark)
+    .width(26)
+    .height(26)
+    .borderRadius(3)
+    .backgroundColor(($$.buttons & $$.flag) !== 0 ? AppColors.Primary : '#1A808080')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 1.1 : 1, y: ($$.buttons & $$.flag) !== 0 ? 1.1 : 1 })
+    .scale({ x: ($$.buttons & $$.flag) !== 0 ? 1.08 : 1, y: ($$.buttons & $$.flag) !== 0 ? 1.08 : 1 })
     .animation({ duration: 60 })
   }
 }

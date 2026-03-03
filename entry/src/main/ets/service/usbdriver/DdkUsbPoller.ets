@@ -36,6 +36,7 @@ interface DdkPollerNativeInterface {
   stopPoller(pollerId: number): void;
   sendOutput(pollerId: number, endpoint: number, data: Uint8Array): number;
   getStats(pollerId: number): DdkPollerStats;
+  setIgnoreDisconnect(pollerId: number, ignore: boolean): void;
   release(): void;
 }
 
@@ -333,6 +334,20 @@ export class DdkUsbPoller {
       return ddkNative.getStats(this.pollerId);
     } catch {
       return { totalReads: 0, totalBytes: 0 };
+    }
+  }
+
+  /**
+   * 设置是否忽略断开信号 (对应用户设置 "忽略手柄断开")
+   * 启用后，DDK 原生轮询线程遇到致命 IO 错误不会退出，而是 sleep 后继续
+   */
+  setIgnoreDisconnect(ignore: boolean): void {
+    if (this.pollerId < 0 || !ddkNative) return;
+    try {
+      ddkNative.setIgnoreDisconnect(this.pollerId, ignore);
+      console.info(`${TAG} pollerId=${this.pollerId} ignoreDisconnect=${ignore}`);
+    } catch (err) {
+      console.error(`${TAG} setIgnoreDisconnect 异常:`, err);
     }
   }
 }

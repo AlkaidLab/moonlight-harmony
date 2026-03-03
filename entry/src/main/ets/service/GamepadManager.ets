@@ -1932,10 +1932,11 @@ export class GamepadManager implements UsbDriverListener {
     
     // 注册设备
     this.registerUsbDevice(controllerId, deviceKey, name, vendorId, productId);
-    console.info(`[GAMEPAD-USB] 设备添加: ${name} (ID=${controllerId}, Slot=${slot})`);
+    const ddkTag = controller.isDdkPolling() ? ' [DDK]' : '';
+    console.info(`[GAMEPAD-USB] 设备添加: ${name}${ddkTag} (ID=${controllerId}, Slot=${slot})`);
     
     const ctrlType = MoonlightControllerType.fromVendorProduct(vendorId, productId);
-    this.listener?.onGamepadConnected(slot, name, ctrlType);
+    this.listener?.onGamepadConnected(slot, `${name}${ddkTag}`, ctrlType);
   }
   
   /**
