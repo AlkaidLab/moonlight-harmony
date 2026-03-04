@@ -121,6 +121,8 @@ export class BackgroundImageUtil {
   private cachedOrientation: string = '';
   // 应用上下文（用于获取沙盒路径）
   private context: common.Context | null = null;
+  // 类型变更脏标记（singleton 共享，setBackgroundImageType 时置 true，reload 时消费）
+  private pendingTypeChange: boolean = false;
 
   private constructor() {}
 
@@ -375,6 +377,7 @@ export class BackgroundImageUtil {
         this.cachedUrl = '';
         this.cachedImageData = null;
         this.refreshTimestamp = Date.now();
+        this.pendingTypeChange = true;
         // 非关闭类型时清除本地缓存文件（关闭时由 disableBackgroundImage 处理）
         if (type !== BackgroundImageType.NONE) {
           await this.clearLocalCache();
@@ -494,10 +497,14 @@ export class BackgroundImageUtil {
    * @returns 如果类型发生变化返回 true，否则返回 false
    */
   async reload(): Promise<boolean> {
+    // pendingTypeChange: 通过 setBackgroundImageType() 修改（singleton 共享，cachedType 已被更新）
+    // previousType 比较: 通过 saveSetting() 直接写 preferences（cachedType 未更新，需从 prefs 重新读取）
+    const dirtyFlag = this.pendingTypeChange;
+    this.pendingTypeChange = false;
     const previousType = this.cachedType;
     this.isLoaded = false;
     await this.getBackgroundImageUrl();
-    return this.cachedType !== previousType;
+    return dirtyFlag || this.cachedType !== previousType;
   }
 
   /**

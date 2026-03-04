@@ -40,6 +40,9 @@ import { StreamInputHandler } from './StreamInputHandler';
 import { StreamLifecycleManager } from './StreamLifecycleManager';
 import { StreamIMEManager } from './StreamIMEManager';
 import { VirtualKeyboard } from '../components/VirtualKeyboard';
+import { CustomKeyOverlay } from '../components/CustomKeyOverlay';
+import { KeyAction } from '../service/CustomKeyTypes';
+import { CustomKeyManager, CustomKeyManagerHost, SessionLike } from '../service/CustomKeyManager';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -69,6 +72,50 @@ interface StreamPageParams {
   useVdd?: boolean;       // 是否使用虚拟显示器
 }
 
+/** StreamPage 对 CustomKeyManager 的宿主回调实现 */
+class CustomKeyManagerHostImpl implements CustomKeyManagerHost {
+  getSessionFn: () => SessionLike | null = () => null;
+  toggleVirtualKeyboardFn: () => void = () => {};
+  showIMEFn: () => void = () => {};
+  openGameMenuFn: () => void = () => {};
+  toggleMouseModeFn: () => void = () => {};
+  switchProfileFn: () => void = () => {};
+  toggleEditModeFn: () => void = () => {};
+  onCustomKeysImportedFn: () => void = () => {};
+
+  getSession(): SessionLike | null {
+    return this.getSessionFn();
+  }
+
+  toggleVirtualKeyboard(): void {
+    this.toggleVirtualKeyboardFn();
+  }
+
+  showIME(): void {
+    this.showIMEFn();
+  }
+
+  openGameMenu(): void {
+    this.openGameMenuFn();
+  }
+
+  toggleMouseMode(): void {
+    this.toggleMouseModeFn();
+  }
+
+  switchProfile(): void {
+    this.switchProfileFn();
+  }
+
+  toggleEditMode(): void {
+    this.toggleEditModeFn();
+  }
+
+  onCustomKeysImported(): void {
+    this.onCustomKeysImportedFn();
+  }
+}
+
 @Entry
 @Component
 struct StreamPage {
@@ -81,6 +128,14 @@ struct StreamPage {
   @State showKeyboardPanel: boolean = false;  // 系统键盘输入面板
   @State keyboardHeight: number = 0;  // IME 键盘高度 (vp)
   @State showVirtualKeyboard: boolean = false;  // PC 虚拟键盘
+  @State showCustomKeys: boolean = false;  // 自定义按键覆盖层
+  @State customKeyEditMode: boolean = false;  // 自定义按键编辑模式
+  /**
+   * 自定义按键命中测试刷新触发器。
+   * ArkUI 首次渲染时 .position() 子组件的命中测试区域可能未正确建立，
+   * 通过在父层触发一次重渲染来刷新命中测试树（参见 ARKUI_TOUCH_HANDLING_LESSONS.md）。
+   */
+  @State private customKeyHitReady: number = 0;
   /** 用户设置：优先使用虚拟键盘 */
   private useVirtualKeyboard: boolean = false;
   /** 待对话框关闭后显示 IME */
@@ -125,6 +180,7 @@ struct StreamPage {
   private menuManager: StreamMenuManager | null = null;
   private shortcutManager: ShortcutManager = ShortcutManager.getInstance();
   private gamepadManager: GamepadManager = GamepadManager.getInstance();
+  private customKeyManager: CustomKeyManager | null = null;
   private controllerTypes: Map<number, number> = new Map();  // slot → MoonlightControllerType
   
   // 页面参数
@@ -184,6 +240,32 @@ struct StreamPage {
     
     // 初始化手柄管理器
     this.initializeGamepad();
+
+    // 初始化自定义按键管理器
+    const customKeyHost = new CustomKeyManagerHostImpl();
+    customKeyHost.getSessionFn = (): SessionLike | null => this.viewModel.getSession();
+    customKeyHost.toggleVirtualKeyboardFn = (): void => {
+      if (this.useVirtualKeyboard) {
+        this.showVirtualKeyboard = !this.showVirtualKeyboard;
+      } else {
+        this.imeManager.show();
+      }
+    };
+    customKeyHost.showIMEFn = (): void => { this.imeManager.show(); };
+    customKeyHost.openGameMenuFn = (): void => { this.showStreamMenu(); };
+    customKeyHost.toggleMouseModeFn = (): void => {
+      // 切换鼠标模式（复用菜单管理器提供的触摸模式切换）
+      this.showTouchModeMenu();
+    };
+    customKeyHost.switchProfileFn = (): void => {
+      // TODO: 实现配置档案切换（当前仅支持单配置）
+      promptAction.showToast({ message: '配置切换（开发中）', duration: 1500 });
+    };
+    customKeyHost.toggleEditModeFn = (): void => {
+      this.customKeyEditMode = !this.customKeyEditMode;
+    };
+    customKeyHost.onCustomKeysImportedFn = (): void => { this.showCustomKeys = true; };
+    this.customKeyManager = new CustomKeyManager(customKeyHost);
     
     // 初始化输入处理器
     this.inputHandler.initialize(this.viewModel, this.gamepadManager);
@@ -416,6 +498,12 @@ struct StreamPage {
       return true;
     }
 
+    // 自定义按键编辑模式时，优先退出编辑
+    if (this.customKeyEditMode) {
+      this.customKeyEditMode = false;
+      return true;
+    }
+
     // IME 键盘正在显示时，优先收起键盘（排除弹出瞬间的误触发）
     if (this.showKeyboardPanel && Date.now() - this.imeManager.readyTime > 500) {
       this.imeManager.hide();
@@ -475,6 +563,25 @@ struct StreamPage {
         } else {
           this.pendingShowIME = true;
         }
+      },
+      onToggleCustomKeys: () => {
+        this.showCustomKeys = !this.showCustomKeys;
+        if (this.showCustomKeys) {
+          // 延迟刷新命中测试区域（参见 ARKUI_TOUCH_HANDLING_LESSONS.md）
+          setTimeout(() => { this.customKeyHitReady += 1; }, 100);
+        }
+      },
+      onEditCustomKeys: () => {
+        this.showCustomKeys = true;
+        this.customKeyEditMode = true;
+        // 延迟刷新命中测试区域
+        setTimeout(() => { this.customKeyHitReady += 1; }, 100);
+      },
+      onExportCustomKeys: () => {
+        this.customKeyManager?.exportProfile();
+      },
+      onImportCustomKeys: () => {
+        this.customKeyManager?.importProfile();
       },
       onToggleMouseEmulation: () => {
         this.gamepadManager.toggleMouseEmulation();
@@ -539,6 +646,7 @@ struct StreamPage {
         controllerOpacity: this.controllerOpacityValue,
         controllerScale: this.controllerScaleValue,
         touchPassthrough: this.touchPassthrough,
+        showCustomKeys: this.showCustomKeys,
         callbacks: this.buildGameMenuCallbacks()
       }),
       alignment: DialogAlignment.CenterEnd,
@@ -771,6 +879,9 @@ struct StreamPage {
       this.controllerScaleValue = await VirtualControllerOverlay.loadScale();
       this.controllerOpacityValue = await VirtualControllerOverlay.loadOpacity();
       await this.gamepadManager.reloadSettings();
+
+      // 初始化自定义按键存储
+      await this.customKeyManager?.init();
 
       // 配置窗口（分辨率→全屏→方向→屏幕尺寸→XComponent 尺寸）
       await this.configureStreamWindow();
@@ -1078,6 +1189,23 @@ struct StreamPage {
             this.viewModel.sendInput(input);
           }
         })
+      }
+
+      // 自定义按键覆盖层
+      if (this.showCustomKeys && this.viewModel.isConnected) {
+        CustomKeyOverlay({
+          editMode: $customKeyEditMode,
+          onKeyAction: (action: KeyAction, isDown: boolean): void => {
+            this.customKeyManager?.handleAction(action, isDown);
+          },
+          onEditModeChanged: (editing: boolean): void => {
+            this.customKeyEditMode = editing;
+          },
+        })
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.Transparent)
+          .opacity(this.customKeyHitReady > 0 ? 1 : 0.99) // 父层刷新命中测试区域
       }
 
       // 移除悬浮菜单按钮，改用返回手势触发菜单

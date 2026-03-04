@@ -44,6 +44,10 @@ export interface GameMenuCallbacks {
   onClose?: () => void;
   onUnlockOverlay?: () => void;
   onToggleWindowMode?: () => void;
+  onToggleCustomKeys?: () => void;
+  onEditCustomKeys?: () => void;
+  onExportCustomKeys?: () => void;
+  onImportCustomKeys?: () => void;
 }
 
 /** 菜单项配置 */
@@ -115,6 +119,7 @@ export struct GameMenuDialog {
   controllerOpacity: number = 0.75;
   controllerScale: number = 1.0;
   touchPassthrough: boolean = false;
+  showCustomKeys: boolean = false;
 
   // 动画状态
   @State private positions: number[] = Array(MENU_ITEM_COUNT).fill(200);
@@ -530,6 +535,7 @@ export struct GameMenuDialog {
 
         Column({ space: 12 }) {
           this.BitrateCard()
+          this.CustomKeyCard()
           if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
           if (this.hasGyroscope) this.GyroAssistCard()
           if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
@@ -554,6 +560,7 @@ export struct GameMenuDialog {
         if (this.shortcuts.length > 0) this.ShortcutCard()
         if (this.superCmds.length > 0) this.SuperCmdCard()
         this.BitrateCard()
+        this.CustomKeyCard()
         if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
         if (this.hasGyroscope) this.GyroAssistCard()
         if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
@@ -604,6 +611,88 @@ export struct GameMenuDialog {
       this.callbacks.onUnlockOverlay?.();
       this.callbacks.onClose?.();
     })
+  }
+
+  @Builder
+  CustomKeyCard() {
+    Column() {
+      Row() {
+        SymbolGlyph($r('sys.symbol.crown'))
+          .fontSize(14).fontColor([Color.Orange])
+        Text(' 自定义按键')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#E0FFFFFF')
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.showCustomKeys })
+          .selectedColor('#FFB7C5')
+          .switchPointColor('#FFFFFF')
+          .width(40)
+          .height(22)
+          .onChange((isOn: boolean) => {
+            if (isOn !== this.showCustomKeys) {
+              this.showCustomKeys = isOn;
+              this.callbacks.onToggleCustomKeys?.();
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 12, top: 14, bottom: 4 })
+
+      Text('自由放置的屏幕虚拟按键')
+        .fontSize(10)
+        .fontColor('#60FFFFFF')
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 10 })
+
+      Row({ space: 8 }) {
+        Text('编辑布局')
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFB7C5')
+          .padding({ left: 14, right: 14, top: 7, bottom: 7 })
+          .borderRadius(14)
+          .backgroundColor('#20FFB7C5')
+          .border({ width: 1, color: '#40FFB7C5' })
+          .onClick(() => {
+            this.callbacks.onEditCustomKeys?.();
+            this.animateOut();
+          })
+        Text('导出')
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#A8D8EA')
+          .padding({ left: 14, right: 14, top: 7, bottom: 7 })
+          .borderRadius(14)
+          .backgroundColor('#20A8D8EA')
+          .border({ width: 1, color: '#40A8D8EA' })
+          .onClick(() => {
+            this.callbacks.onExportCustomKeys?.();
+            this.animateOut();
+          })
+        Text('导入')
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#A8D8EA')
+          .padding({ left: 14, right: 14, top: 7, bottom: 7 })
+          .borderRadius(14)
+          .backgroundColor('#20A8D8EA')
+          .border({ width: 1, color: '#40A8D8EA' })
+          .onClick(() => {
+            this.callbacks.onImportCustomKeys?.();
+            this.animateOut();
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .padding({ bottom: 14 })
+    }
+    .width(CARD_WIDTH)
+    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
+    .backdropBlur(40)
+    .borderRadius(20)
+    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
   }
 
   @Builder
