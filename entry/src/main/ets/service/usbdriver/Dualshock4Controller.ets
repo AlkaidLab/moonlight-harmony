@@ -83,10 +83,10 @@ export class Dualshock4Controller extends AbstractDualSenseController {
       return false;
     }
     
-    // 检查报告 ID
+    // 检查报告 ID (0x01=USB, 0x11=Bluetooth)
     const reportId = buffer[0];
     if (reportId !== 0x01 && reportId !== 0x11) {
-      console.debug(`${TAG} 未知报告 ID: 0x${reportId.toString(16)}`);
+      return false;
     }
     
     // D-Pad

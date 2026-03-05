@@ -1609,7 +1609,8 @@ export class GamepadManager implements UsbDriverListener {
       const slot = this.deviceKeyToSlot.get(deviceKey);
       if (slot !== undefined) return slot;
     }
-    return controllerId;  // 回退：使用 controllerId
+    // 回退：钳位到 0，避免原始 controllerId (可能 ≥1000) 溢出
+    return 0;
   }
   
   /**

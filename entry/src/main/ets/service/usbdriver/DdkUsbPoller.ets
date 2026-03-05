@@ -37,6 +37,7 @@ interface DdkPollerNativeInterface {
   sendOutput(pollerId: number, endpoint: number, data: Uint8Array): number;
   getStats(pollerId: number): DdkPollerStats;
   setIgnoreDisconnect(pollerId: number, ignore: boolean): void;
+  isPollerRunning(pollerId: number): boolean;
   release(): void;
 }
 
@@ -348,6 +349,19 @@ export class DdkUsbPoller {
       console.info(`${TAG} pollerId=${this.pollerId} ignoreDisconnect=${ignore}`);
     } catch (err) {
       console.error(`${TAG} setIgnoreDisconnect 异常:`, err);
+    }
+  }
+
+  /**
+   * 查询原生轮询线程是否仍在运行
+   * 用于检测线程异常退出（IO 错误等导致线程结束但 JS 层未感知）
+   */
+  isNativeRunning(): boolean {
+    if (this.pollerId < 0 || !ddkNative) return false;
+    try {
+      return ddkNative.isPollerRunning(this.pollerId);
+    } catch {
+      return false;
     }
   }
 }

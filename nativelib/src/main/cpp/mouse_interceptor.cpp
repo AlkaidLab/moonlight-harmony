@@ -281,7 +281,7 @@ static napi_value AddMouseInterceptor(napi_env env, napi_callback_info info)
         bool relative = g_relativeMode.load();
         LOGI("鼠标监听器已启动（%{public}s模式，全速轮询）", relative ? "相对/游戏" : "绝对/桌面");
     } else {
-        LOGE("鼠标监听器启动失败: %{public}d", ret);
+        LOGW("鼠标监听器启动失败: %{public}d (需要 INPUT_MONITORING 权限, 将回退到 ArkUI 事件)", ret);
     }
 
     napi_value result;

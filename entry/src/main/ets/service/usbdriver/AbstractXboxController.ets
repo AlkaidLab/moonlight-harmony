@@ -388,11 +388,20 @@ export abstract class AbstractXboxController extends AbstractController {
       },
       (errorCode: number) => {
         if (this.stopped) return;
+        console.warn(`${TAG} DDK 轮询错误: ${errorCode}`);
+
+        // 检查原生轮询线程是否仍在运行
+        const nativeStillRunning = this.ddkPoller?.isNativeRunning() ?? false;
+
         if (this.ignoreDisconnect) {
-          console.warn(`${TAG} DDK 轮询错误: ${errorCode}，但忽略断开信号已启用`);
+          if (!nativeStillRunning) {
+            // 原生线程已退出但 ignoreDisconnect 开启 — 手柄会彻底无响应
+            // 记录警告，不主动 stop (避免串流中移除手柄)
+            console.error(`${TAG} DDK 原生线程已退出! 错误码=${errorCode}, 手柄输入将中断直到重新连接`);
+          }
           return;
         }
-        console.error(`${TAG} DDK 轮询错误: ${errorCode}`);
+        console.error(`${TAG} DDK 轮询致命错误: ${errorCode}, 停止控制器`);
         this.stop();
       },
       100  // 100ms timeout per read

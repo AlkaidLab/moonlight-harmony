@@ -470,11 +470,17 @@ export abstract class AbstractDualSenseController extends AbstractController {
       },
       (errorCode: number) => {
         if (this.stopped) return;
+        console.warn(`${TAG} DDK 轮询错误: ${errorCode}`);
+
+        const nativeStillRunning = this.ddkPoller?.isNativeRunning() ?? false;
+
         if (this.ignoreDisconnect) {
-          console.warn(`${TAG} DDK 轮询错误: ${errorCode}，但忽略断开信号已启用`);
+          if (!nativeStillRunning) {
+            console.error(`${TAG} DDK 原生线程已退出! 错误码=${errorCode}, 手柄输入将中断直到重新连接`);
+          }
           return;
         }
-        console.error(`${TAG} DDK 轮询错误: ${errorCode}`);
+        console.error(`${TAG} DDK 轮询致命错误: ${errorCode}, 停止控制器`);
         this.stop();
       },
       100

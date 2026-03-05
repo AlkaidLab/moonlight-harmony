@@ -87,6 +87,11 @@ export class Xbox360Controller extends AbstractXboxController {
       return false;
     }
     
+    // Xbox 360 输入报告: byte[0]=0x00 (report ID), byte[1]=0x14 (长度)
+    if (buffer[0] !== 0x00 || buffer[1] !== 0x14) {
+      return false;
+    }
+    
     // 跳过前两个字节（报告 ID 和长度）
     let offset = 2;
     

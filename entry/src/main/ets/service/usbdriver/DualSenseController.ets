@@ -93,14 +93,8 @@ export class DualSenseController extends AbstractDualSenseController {
     const reportId = buffer[0];
     let offset = 1;
     
-    // 打印原始数据以调试
-    const hexStr = Array.from(buffer.slice(0, Math.min(20, buffer.length)))
-      .map(b => b.toString(16).padStart(2, '0')).join(' ');
-    console.info(`${TAG} 收到数据 [${buffer.length}]: ${hexStr}`);
-    
     // USB 模式报告 ID 是 0x01
     if (reportId !== 0x01) {
-      console.info(`${TAG} 跳过非输入报告: reportId=0x${reportId.toString(16)}`);
       return false;
     }
     
