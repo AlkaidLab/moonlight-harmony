@@ -16,7 +16,7 @@ import { ConfigurationConstant } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
-import { VirtualKey } from './StreamMenuManager';
+import { VirtualKey, sendShortcutKeys } from '../service/CustomKeyTypes';
 import { ShortcutManager, Shortcut } from './ShortcutManager';
 import { ActionDialog, ActionDialogConfig, ConfirmDialog, ConfirmDialogConfig } from './ConfirmDialog';
 import { SuperCmd } from '../service/NvHttp';
@@ -234,12 +234,9 @@ export struct GameMenuDialog {
   }
 
   private sendShortcut(shortcut: Shortcut): void {
-    if (shortcut.keySequence?.length) {
-      shortcut.keySequence.forEach((keys: number[], index: number) => {
-        setTimeout(() => this.sendKeys(keys), index * 200);
-      });
-    } else if (shortcut.keys.length) {
-      this.sendKeys(shortcut.keys);
+    const session = this.viewModel.getSession();
+    if (session) {
+      sendShortcutKeys((keys: number[]) => session.sendKeys(keys), shortcut.keys, shortcut.keySequence);
     }
   }
 

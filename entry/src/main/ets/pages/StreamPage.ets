@@ -31,7 +31,7 @@ import { GamepadManager, GamepadState, MoonlightControllerType, MouseEmulationCa
 import { GyroAssistService } from '../service/GyroAssistService';
 import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../service/MoonBridge';
 import { SuperCmd } from '../service/NvHttp';
-import { VirtualKey } from '../components/StreamMenuManager';
+import { VirtualKey, KeyAction, sendShortcutKeys } from '../service/CustomKeyTypes';
 import { pointer } from '@kit.InputKit';
 import { InputInterceptorService } from '../service/InputInterceptorService';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
@@ -41,7 +41,6 @@ import { StreamLifecycleManager } from './StreamLifecycleManager';
 import { StreamIMEManager } from './StreamIMEManager';
 import { VirtualKeyboard } from '../components/VirtualKeyboard';
 import { CustomKeyOverlay } from '../components/CustomKeyOverlay';
-import { KeyAction } from '../service/CustomKeyTypes';
 import { CustomKeyManager, CustomKeyManagerHost, SessionLike } from '../service/CustomKeyManager';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
@@ -1029,17 +1028,7 @@ struct StreamPage {
   sendShortcut(shortcut: Shortcut): void {
     const session = this.viewModel.getSession();
     if (!session) return;
-
-    if (shortcut.keySequence && shortcut.keySequence.length > 0) {
-      // 多步按键序列：依次发送每组键，间隔 200ms
-      shortcut.keySequence.forEach((keys: number[], index: number) => {
-        setTimeout(() => {
-          session.sendKeys(keys);
-        }, index * 200);
-      });
-    } else if (shortcut.keys.length > 0) {
-      session.sendKeys(shortcut.keys);
-    }
+    sendShortcutKeys((keys: number[]) => session.sendKeys(keys), shortcut.keys, shortcut.keySequence);
   }
 
   /**

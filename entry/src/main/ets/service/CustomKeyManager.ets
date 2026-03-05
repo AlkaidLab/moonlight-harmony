@@ -36,6 +36,7 @@ import {
   ComboAction,
   ShortcutAction,
   SpecialAction,
+  sendShortcutKeys,
 } from './CustomKeyTypes';
 
 // =============================================================================
@@ -185,20 +186,11 @@ export class CustomKeyManager {
 
   /**
    * 执行快捷键动作（一次性组合键或多步序列）
-   * 复用 StreamingSession.sendKeys() 的能力
    */
   private executeShortcut(action: ShortcutAction, session: SessionLike): void {
-    if (action.keySequence && action.keySequence.length > 0) {
-      // 多步按键序列：依次发送，每步间隔 200ms
-      action.keySequence.forEach((keys: number[], index: number) => {
-        setTimeout(() => {
-          session.sendKeys(keys);
-        }, index * 200);
-      });
-    } else if (action.keys.length > 0) {
-      session.sendKeys(action.keys);
-    }
+    sendShortcutKeys((keys: number[]) => session.sendKeys(keys), action.keys, action.keySequence);
   }
+
   /**
    * 处理自定义按键的特殊功能
    */

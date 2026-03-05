@@ -260,6 +260,101 @@ export function createDefaultProfile(name: string = '默认'): CustomKeyProfile 
 }
 
 // =============================================================================
+// 统一的 Windows 虚拟键码常量
+// =============================================================================
+
+/**
+ * Windows Virtual-Key Codes（统一常量表）
+ *
+ * 所有 VK 码定义的唯一来源，供快捷键、自定义按键、菜单等共用。
+ * 原先分散在 StreamMenuManager.VirtualKey / MoonBridge.VK_* 中。
+ */
+export class VirtualKey {
+  // 修饰键
+  static readonly VK_SHIFT = 0x10;
+  static readonly VK_CONTROL = 0x11;
+  static readonly VK_MENU = 0x12;        // Alt
+  static readonly VK_LWIN = 0x5B;
+  static readonly VK_RWIN = 0x5C;
+  static readonly VK_LSHIFT = 0xA0;
+  static readonly VK_RSHIFT = 0xA1;
+  static readonly VK_LCONTROL = 0xA2;
+  static readonly VK_RCONTROL = 0xA3;
+  static readonly VK_LMENU = 0xA4;
+  static readonly VK_RMENU = 0xA5;
+  // 控制键
+  static readonly VK_ESCAPE = 0x1B;
+  static readonly VK_TAB = 0x09;
+  static readonly VK_RETURN = 0x0D;
+  static readonly VK_BACK = 0x08;        // Backspace
+  static readonly VK_SPACE = 0x20;
+  static readonly VK_DELETE = 0x2E;
+  static readonly VK_INSERT = 0x2D;
+  static readonly VK_HOME = 0x24;
+  static readonly VK_END = 0x23;
+  static readonly VK_PRIOR = 0x21;       // Page Up
+  static readonly VK_NEXT = 0x22;        // Page Down
+  static readonly VK_CAPITAL = 0x14;     // Caps Lock
+  static readonly VK_SNAPSHOT = 0x2C;    // Print Screen
+  static readonly VK_SCROLL = 0x91;      // Scroll Lock
+  static readonly VK_PAUSE = 0x13;
+  static readonly VK_NUMLOCK = 0x90;
+  // 方向键
+  static readonly VK_LEFT = 0x25;
+  static readonly VK_UP = 0x26;
+  static readonly VK_RIGHT = 0x27;
+  static readonly VK_DOWN = 0x28;
+  // 功能键
+  static readonly VK_F1 = 0x70;
+  static readonly VK_F2 = 0x71;
+  static readonly VK_F3 = 0x72;
+  static readonly VK_F4 = 0x73;
+  static readonly VK_F5 = 0x74;
+  static readonly VK_F6 = 0x75;
+  static readonly VK_F7 = 0x76;
+  static readonly VK_F8 = 0x77;
+  static readonly VK_F9 = 0x78;
+  static readonly VK_F10 = 0x79;
+  static readonly VK_F11 = 0x7A;
+  static readonly VK_F12 = 0x7B;
+  // 字母 (用于组合键引用，如 VK_B = Ctrl+B)
+  static readonly VK_A = 0x41;
+  static readonly VK_B = 0x42;
+  static readonly VK_C = 0x43;
+  static readonly VK_D = 0x44;
+  static readonly VK_E = 0x45;
+  static readonly VK_F = 0x46;
+  static readonly VK_G = 0x47;
+  static readonly VK_H = 0x48;
+  static readonly VK_I = 0x49;
+  static readonly VK_J = 0x4A;
+  static readonly VK_K = 0x4B;
+  static readonly VK_L = 0x4C;
+  static readonly VK_M = 0x4D;
+  static readonly VK_N = 0x4E;
+  static readonly VK_O = 0x4F;
+  static readonly VK_P = 0x50;
+  static readonly VK_Q = 0x51;
+  static readonly VK_R = 0x52;
+  static readonly VK_S = 0x53;
+  static readonly VK_T = 0x54;
+  static readonly VK_U = 0x55;
+  static readonly VK_V = 0x56;
+  static readonly VK_W = 0x57;
+  static readonly VK_X = 0x58;
+  static readonly VK_Y = 0x59;
+  static readonly VK_Z = 0x5A;
+  // 媒体键
+  static readonly VK_VOLUME_MUTE = 0xAD;
+  static readonly VK_VOLUME_DOWN = 0xAE;
+  static readonly VK_VOLUME_UP = 0xAF;
+  static readonly VK_MEDIA_NEXT_TRACK = 0xB0;
+  static readonly VK_MEDIA_PREV_TRACK = 0xB1;
+  static readonly VK_MEDIA_STOP = 0xB2;
+  static readonly VK_MEDIA_PLAY_PAUSE = 0xB3;
+}
+
+// =============================================================================
 // 常用按键预设
 // =============================================================================
 
@@ -291,8 +386,15 @@ export const VK_DISPLAY_NAMES: Record<number, string> = {
   // 符号
   0xC0: '`', 0xBD: '-', 0xBB: '=', 0xDB: '[', 0xDD: ']',
   0xDC: '\\', 0xBA: ';', 0xDE: "'", 0xBC: ',', 0xBE: '.', 0xBF: '/',
-  // 截图
-  0x2C: 'PrtSc',
+  // 截图/锁定
+  0x2C: 'PrtSc', 0x91: 'ScrLk', 0x13: 'Pause', 0x90: 'NumLk',
+  // 小键盘
+  0x60: 'Num0', 0x61: 'Num1', 0x62: 'Num2', 0x63: 'Num3', 0x64: 'Num4',
+  0x65: 'Num5', 0x66: 'Num6', 0x67: 'Num7', 0x68: 'Num8', 0x69: 'Num9',
+  0x6A: 'Num*', 0x6B: 'Num+', 0x6D: 'Num-', 0x6E: 'Num.', 0x6F: 'Num/',
+  // 媒体键
+  0xAD: '🔇', 0xAE: '🔉', 0xAF: '🔊',
+  0xB0: '⏭', 0xB1: '⏮', 0xB2: '⏹', 0xB3: '⏯',
 };
 
 /** 获取 VK 码的显示名称 */
@@ -513,6 +615,35 @@ function buildLetterPresets(): KeyPreset[] {
   return list;
 }
 
+// =============================================================================
+// 统一快捷键执行引擎
+// =============================================================================
+
+/**
+ * 统一的快捷键执行函数
+ *
+ * 支持单次组合键和多步按键序列（每步间隔 200ms）。
+ * 使用回调参数避免 ArkTS 结构化类型限制。
+ *
+ * @param sendKeysFn 发送按键组合的回调（通常是 session.sendKeys）
+ * @param keys       同时按下的键码数组
+ * @param keySequence 可选的多步按键序列
+ */
+export function sendShortcutKeys(
+  sendKeysFn: (keyCodes: number[]) => void,
+  keys: number[],
+  keySequence?: number[][],
+): void {
+  if (keySequence && keySequence.length > 0) {
+    keySequence.forEach((stepKeys: number[], index: number) => {
+      setTimeout(() => {
+        sendKeysFn(stepKeys);
+      }, index * 200);
+    });
+  } else if (keys.length > 0) {
+    sendKeysFn(keys);
+  }
+}
 /** 构建数字 0-9 预设列表 */
 function buildNumberPresets(): KeyPreset[] {
   const list: KeyPreset[] = [];

@@ -19,26 +19,9 @@ import { StreamingSession } from '../service/StreamingSession';
 import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { OptionPickerDialogConfig, OptionItem } from './OptionPickerDialog';
 
-/**
- * Windows 虚拟键码定义
- */
-export class VirtualKey {
-  static readonly VK_ESCAPE = 0x1B;
-  static readonly VK_LWIN = 0x5B;
-  static readonly VK_MENU = 0x12;      // Alt
-  static readonly VK_CONTROL = 0x11;
-  static readonly VK_SHIFT = 0x10;
-  static readonly VK_TAB = 0x09;
-  static readonly VK_DELETE = 0x2E;
-  static readonly VK_B = 0x42;
-  static readonly VK_F4 = 0x73;
-  static readonly VK_L = 0x4C;
-  static readonly VK_N = 0x4E;
-  static readonly VK_O = 0x4F;
-  static readonly VK_X = 0x58;
-  static readonly VK_U = 0x55;
-  static readonly VK_S = 0x53;
-}
+// VirtualKey 统一定义在 CustomKeyTypes 中，此处 re-export 保持向后兼容
+import { VirtualKey } from '../service/CustomKeyTypes';
+export { VirtualKey } from '../service/CustomKeyTypes';
 
 /**
  * 菜单操作回调

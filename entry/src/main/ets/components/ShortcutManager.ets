@@ -16,7 +16,7 @@
  */
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { VirtualKey } from './StreamMenuManager';
+import { VirtualKey, VK_DISPLAY_NAMES, getVkDisplayName } from '../service/CustomKeyTypes';
 
 /**
  * 快捷键定义
@@ -170,144 +170,26 @@ export class ShortcutManager {
   }
   
   /**
-   * 获取所有可用的键选项
+   * 获取所有可用的键选项（从统一的 VK_DISPLAY_NAMES 自动生成 + 补充小键盘/媒体键）
    */
   getAvailableKeys(): KeyOption[] {
-    return [
-      // ========== 修饰键 ==========
-      { code: VirtualKey.VK_CONTROL, name: 'Ctrl', shortName: 'Ctrl' },
-      { code: VirtualKey.VK_MENU, name: 'Alt', shortName: 'Alt' },
-      { code: VirtualKey.VK_SHIFT, name: 'Shift', shortName: 'Shift' },
-      { code: VirtualKey.VK_LWIN, name: 'Windows', shortName: 'Win' },
-      
-      // ========== 常用功能键 ==========
-      { code: VirtualKey.VK_ESCAPE, name: 'Escape', shortName: 'Esc' },
-      { code: VirtualKey.VK_TAB, name: 'Tab', shortName: 'Tab' },
-      { code: VirtualKey.VK_DELETE, name: 'Delete', shortName: 'Del' },
-      { code: 0x0D, name: 'Enter', shortName: 'Enter' },
-      { code: 0x08, name: 'Backspace', shortName: 'Back' },
-      { code: 0x20, name: 'Space', shortName: 'Space' },
-      { code: 0x2D, name: 'Insert', shortName: 'Ins' },
-      { code: 0x24, name: 'Home', shortName: 'Home' },
-      { code: 0x23, name: 'End', shortName: 'End' },
-      { code: 0x21, name: 'Page Up', shortName: 'PgUp' },
-      { code: 0x22, name: 'Page Down', shortName: 'PgDn' },
-      { code: 0x2C, name: 'Print Screen', shortName: 'PrtSc' },
-      { code: 0x91, name: 'Scroll Lock', shortName: 'ScrLk' },
-      { code: 0x13, name: 'Pause', shortName: 'Pause' },
-      { code: 0x14, name: 'Caps Lock', shortName: 'Caps' },
-      { code: 0x90, name: 'Num Lock', shortName: 'NumLk' },
-      
-      // ========== 方向键 ==========
-      { code: 0x25, name: '← Left', shortName: '←' },
-      { code: 0x26, name: '↑ Up', shortName: '↑' },
-      { code: 0x27, name: '→ Right', shortName: '→' },
-      { code: 0x28, name: '↓ Down', shortName: '↓' },
-      
-      // ========== F1-F12 ==========
-      { code: 0x70, name: 'F1', shortName: 'F1' },
-      { code: 0x71, name: 'F2', shortName: 'F2' },
-      { code: 0x72, name: 'F3', shortName: 'F3' },
-      { code: VirtualKey.VK_F4, name: 'F4', shortName: 'F4' },
-      { code: 0x74, name: 'F5', shortName: 'F5' },
-      { code: 0x75, name: 'F6', shortName: 'F6' },
-      { code: 0x76, name: 'F7', shortName: 'F7' },
-      { code: 0x77, name: 'F8', shortName: 'F8' },
-      { code: 0x78, name: 'F9', shortName: 'F9' },
-      { code: 0x79, name: 'F10', shortName: 'F10' },
-      { code: 0x7A, name: 'F11', shortName: 'F11' },
-      { code: 0x7B, name: 'F12', shortName: 'F12' },
-      
-      // ========== 字母键 A-Z ==========
-      { code: 0x41, name: 'A', shortName: 'A' },
-      { code: VirtualKey.VK_B, name: 'B', shortName: 'B' },
-      { code: 0x43, name: 'C', shortName: 'C' },
-      { code: 0x44, name: 'D', shortName: 'D' },
-      { code: 0x45, name: 'E', shortName: 'E' },
-      { code: 0x46, name: 'F', shortName: 'F' },
-      { code: 0x47, name: 'G', shortName: 'G' },
-      { code: 0x48, name: 'H', shortName: 'H' },
-      { code: 0x49, name: 'I', shortName: 'I' },
-      { code: 0x4A, name: 'J', shortName: 'J' },
-      { code: 0x4B, name: 'K', shortName: 'K' },
-      { code: VirtualKey.VK_L, name: 'L', shortName: 'L' },
-      { code: 0x4D, name: 'M', shortName: 'M' },
-      { code: VirtualKey.VK_N, name: 'N', shortName: 'N' },
-      { code: VirtualKey.VK_O, name: 'O', shortName: 'O' },
-      { code: 0x50, name: 'P', shortName: 'P' },
-      { code: 0x51, name: 'Q', shortName: 'Q' },
-      { code: 0x52, name: 'R', shortName: 'R' },
-      { code: VirtualKey.VK_S, name: 'S', shortName: 'S' },
-      { code: 0x54, name: 'T', shortName: 'T' },
-      { code: VirtualKey.VK_U, name: 'U', shortName: 'U' },
-      { code: 0x56, name: 'V', shortName: 'V' },
-      { code: 0x57, name: 'W', shortName: 'W' },
-      { code: VirtualKey.VK_X, name: 'X', shortName: 'X' },
-      { code: 0x59, name: 'Y', shortName: 'Y' },
-      { code: 0x5A, name: 'Z', shortName: 'Z' },
-      
-      // ========== 数字键 0-9 ==========
-      { code: 0x30, name: '0', shortName: '0' },
-      { code: 0x31, name: '1', shortName: '1' },
-      { code: 0x32, name: '2', shortName: '2' },
-      { code: 0x33, name: '3', shortName: '3' },
-      { code: 0x34, name: '4', shortName: '4' },
-      { code: 0x35, name: '5', shortName: '5' },
-      { code: 0x36, name: '6', shortName: '6' },
-      { code: 0x37, name: '7', shortName: '7' },
-      { code: 0x38, name: '8', shortName: '8' },
-      { code: 0x39, name: '9', shortName: '9' },
-      
-      // ========== 小键盘 ==========
-      { code: 0x60, name: 'Numpad 0', shortName: 'Num0' },
-      { code: 0x61, name: 'Numpad 1', shortName: 'Num1' },
-      { code: 0x62, name: 'Numpad 2', shortName: 'Num2' },
-      { code: 0x63, name: 'Numpad 3', shortName: 'Num3' },
-      { code: 0x64, name: 'Numpad 4', shortName: 'Num4' },
-      { code: 0x65, name: 'Numpad 5', shortName: 'Num5' },
-      { code: 0x66, name: 'Numpad 6', shortName: 'Num6' },
-      { code: 0x67, name: 'Numpad 7', shortName: 'Num7' },
-      { code: 0x68, name: 'Numpad 8', shortName: 'Num8' },
-      { code: 0x69, name: 'Numpad 9', shortName: 'Num9' },
-      { code: 0x6A, name: 'Numpad *', shortName: 'Num*' },
-      { code: 0x6B, name: 'Numpad +', shortName: 'Num+' },
-      { code: 0x6D, name: 'Numpad -', shortName: 'Num-' },
-      { code: 0x6E, name: 'Numpad .', shortName: 'Num.' },
-      { code: 0x6F, name: 'Numpad /', shortName: 'Num/' },
-      
-      // ========== 符号键 ==========
-      { code: 0xBA, name: '; / :', shortName: ';' },
-      { code: 0xBB, name: '= / +', shortName: '=' },
-      { code: 0xBC, name: ', / <', shortName: ',' },
-      { code: 0xBD, name: '- / _', shortName: '-' },
-      { code: 0xBE, name: '. / >', shortName: '.' },
-      { code: 0xBF, name: '/ / ?', shortName: '/' },
-      { code: 0xC0, name: '` / ~', shortName: '`' },
-      { code: 0xDB, name: '[ / {', shortName: '[' },
-      { code: 0xDC, name: '\\ / |', shortName: '\\' },
-      { code: 0xDD, name: '] / }', shortName: ']' },
-      { code: 0xDE, name: "' / \"", shortName: "'" },
-      
-      // ========== 媒体键 ==========
-      { code: 0xAD, name: 'Volume Mute', shortName: '🔇' },
-      { code: 0xAE, name: 'Volume Down', shortName: '🔉' },
-      { code: 0xAF, name: 'Volume Up', shortName: '🔊' },
-      { code: 0xB0, name: 'Next Track', shortName: '⏭' },
-      { code: 0xB1, name: 'Previous Track', shortName: '⏮' },
-      { code: 0xB2, name: 'Stop', shortName: '⏹' },
-      { code: 0xB3, name: 'Play/Pause', shortName: '⏯' },
-    ];
+    // 从 VK_DISPLAY_NAMES 自动生成（已包含字母/数字/功能键/修饰键/符号/方向键/小键盘/媒体键）
+    const keys: KeyOption[] = [];
+    const entries = Object.entries(VK_DISPLAY_NAMES);
+    for (const entry of entries) {
+      const code = Number(entry[0]);
+      const shortName = entry[1] as string;
+      const option: KeyOption = { code: code, name: shortName, shortName: shortName };
+      keys.push(option);
+    }
+    return keys;
   }
   
   /**
-   * 将键码数组转换为显示文本
+   * 将键码数组转换为显示文本（使用统一的 getVkDisplayName）
    */
   keysToDisplayText(keys: number[]): string {
-    const availableKeys = this.getAvailableKeys();
-    return keys.map(code => {
-      const option = availableKeys.find(k => k.code === code);
-      return option ? option.shortName : `0x${code.toString(16).toUpperCase()}`;
-    }).join('+');
+    return keys.map(code => getVkDisplayName(code)).join('+');
   }
   
   /**

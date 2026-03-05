@@ -42,7 +42,7 @@ export const MODIFIER_CTRL = 0x02;
 export const MODIFIER_ALT = 0x04;
 export const MODIFIER_META = 0x08;
 
-// Windows 虚拟键码（用于 Ctrl+Alt+Del / Ctrl+Alt+Shift 等组合键）
+// Windows 虚拟键码（修饰键检测用，完整定义见 CustomKeyTypes.VirtualKey）
 export const VK_SHIFT = 0x10;
 export const VK_CONTROL = 0x11;
 export const VK_MENU = 0x12;    // Alt
