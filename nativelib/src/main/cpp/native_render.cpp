@@ -16,7 +16,10 @@
  * - 保存 NativeWindow 引用供解码器使用
  * - 直接渲染模式（低延迟）
  * - VSync 渲染模式（使用 RenderOutputBufferAtTime 精确呈现）
- * - 高帧率优化（NativeVSync SetExpectedFrameRateRange，API 20+）
+ * - 高帧率优化：
+ *   1. NativeVSync SetExpectedFrameRateRange（VSync 回调频率，API 20+）
+ *   2. NativeWindow SetFrameRateRange（Surface buffer queue 帧率偏好，API 12+）
+ *   3. XComponent SetExpectedFrameRateRange（ArkUI 框架层，由 MoonBridge 独立设置）
  */
 
 #include "native_render.h"
@@ -194,8 +197,11 @@ void NativeRender::SetConfiguredFps(int fps) {
     // 重置时间基准
     timeBaseInitialized_ = false;
     
-    // 应用帧率范围
+    // 应用帧率范围（NativeVSync 层）
     ApplyFrameRateRange();
+    
+    // 应用帧率范围（NativeWindow/Surface 层）
+    ApplyNativeWindowFrameRate();
 }
 
 void NativeRender::SetVsyncEnabled(bool enable) {
@@ -216,6 +222,70 @@ void NativeRender::ConfigureNativeWindow() {
     int32_t ret = OH_NativeWindow_NativeWindowSetScalingModeV2(window_, OH_SCALING_MODE_SCALE_TO_WINDOW_V2);
     if (ret == 0) {
         OH_LOG_INFO(LOG_APP, "ScalingModeV2 set to SCALE_TO_WINDOW_V2");
+    }
+    
+    // 如果帧率已配置，立即在 NativeWindow 层设置帧率偏好
+    if (configuredFps_ > 60) {
+        ApplyNativeWindowFrameRate();
+    }
+}
+
+// =============================================================================
+// NativeWindow 帧率设置（Surface buffer queue 级别）
+// =============================================================================
+
+// 动态加载的 NativeWindow 帧率 API 函数指针
+// OH_NativeWindow_SetFrameRateRange(window, min, max, expected, strategy)
+// strategy: 0 = DEFAULT, 1 = EXACT
+typedef int32_t (*PFN_OH_NativeWindow_SetFrameRateRange)(
+    OHNativeWindow* window, int32_t min, int32_t max, int32_t expected, int32_t strategy);
+
+static PFN_OH_NativeWindow_SetFrameRateRange g_pfnNWSetFrameRateRange = nullptr;
+static bool g_nwFrameRateChecked = false;
+
+static bool CheckAndLoadNWFrameRateApi() {
+    if (g_nwFrameRateChecked) {
+        return g_pfnNWSetFrameRateRange != nullptr;
+    }
+    g_nwFrameRateChecked = true;
+    
+    // 尝试加载 OH_NativeWindow_SetFrameRateRange（API 12+）
+    g_pfnNWSetFrameRateRange = (PFN_OH_NativeWindow_SetFrameRateRange)
+        dlsym(RTLD_DEFAULT, "OH_NativeWindow_SetFrameRateRange");
+    
+    if (!g_pfnNWSetFrameRateRange) {
+        void* handle = dlopen("libnative_window.so", RTLD_NOW);
+        if (handle) {
+            g_pfnNWSetFrameRateRange = (PFN_OH_NativeWindow_SetFrameRateRange)
+                dlsym(handle, "OH_NativeWindow_SetFrameRateRange");
+        }
+    }
+    
+    if (g_pfnNWSetFrameRateRange) {
+        OH_LOG_INFO(LOG_APP, "NativeWindow: OH_NativeWindow_SetFrameRateRange available");
+    } else {
+        OH_LOG_WARN(LOG_APP, "NativeWindow: OH_NativeWindow_SetFrameRateRange not available");
+    }
+    
+    return g_pfnNWSetFrameRateRange != nullptr;
+}
+
+void NativeRender::ApplyNativeWindowFrameRate() {
+    if (window_ == nullptr || configuredFps_ <= 60) {
+        return;
+    }
+    
+    if (!CheckAndLoadNWFrameRateApi()) {
+        return;
+    }
+    
+    // strategy = 0 (DEFAULT): 让系统根据能力选择最佳刷新率
+    int32_t ret = g_pfnNWSetFrameRateRange(window_, configuredFps_, configuredFps_, configuredFps_, 0);
+    if (ret == 0) {
+        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d fps (Surface level)", configuredFps_);
+    } else {
+        OH_LOG_WARN(LOG_APP, "NativeWindow SetFrameRateRange failed: ret=%{public}d, fps=%{public}d", 
+                    ret, configuredFps_);
     }
 }
 

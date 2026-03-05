@@ -339,8 +339,13 @@ export class SettingsService {
         return 120; // 使用 120 作为 fps，实际帧率由 clientRefreshRateX100 控制
       case '120 FPS':
         return 120;
-      default:
-        return 60;
+      case '144 FPS':
+        return 144;
+      default: {
+        // 支持动态检测的设备刷新率（如 "165 FPS"）
+        const parsed = parseInt(fpsStr);
+        return isNaN(parsed) ? 60 : parsed;
+      }
     }
   }
 
@@ -366,8 +371,13 @@ export class SettingsService {
         return 11988;  // NTSC 标准: 120000/1001 ≈ 119.88 Hz
       case '120 FPS':
         return 12000;
-      default:
-        return 6000;
+      case '144 FPS':
+        return 14400;
+      default: {
+        // 支持动态检测的设备刷新率（如 "165 FPS"）
+        const parsed = parseInt(fpsStr);
+        return isNaN(parsed) ? 6000 : parsed * 100;
+      }
     }
   }
 

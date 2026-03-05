@@ -16,7 +16,10 @@
  * - 保存 NativeWindow 引用供解码器使用
  * - 直接渲染模式（低延迟）
  * - VSync 渲染模式（使用 RenderOutputBufferAtTime）
- * - 高帧率优化（NativeVSync SetExpectedFrameRateRange）
+ * - 高帧率优化：
+ *   1. NativeVSync SetExpectedFrameRateRange（VSync 回调频率，API 20+）
+ *   2. NativeWindow SetFrameRateRange（Surface buffer queue 帧率偏好，API 12+）
+ *   3. XComponent SetExpectedFrameRateRange（ArkUI 框架层，由 MoonBridge 独立设置）
  */
 
 #ifndef NATIVE_RENDER_H
@@ -112,6 +115,9 @@ private:
     
     // 应用帧率范围（通过 NativeVSync，API 20+）
     void ApplyFrameRateRange();
+    
+    // 应用 NativeWindow 帧率（Surface buffer queue 级别，API 12+）
+    void ApplyNativeWindowFrameRate();
     
     // 初始化 NativeVSync
     void InitNativeVSync();

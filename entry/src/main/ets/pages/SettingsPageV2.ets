@@ -2451,14 +2451,43 @@ struct SettingsPageV2 {
   }
 
   private showFpsPicker(): void {
-    // 预设帧率选项
+    // 检测设备屏幕刷新率
+    let deviceRefreshRate = 60;
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      deviceRefreshRate = Math.round(displayInfo.refreshRate || 60);
+    } catch (e) {
+      // 检测失败，使用默认值
+    }
+
+    // 基础帧率选项（所有设备通用）
     const presetOptions: PickerOption[] = [
       { title: '30 FPS', subtitle: '流畅，低带宽', value: '30 FPS' } as PickerOption,
       { title: '60 FPS', subtitle: '推荐，平衡', value: '60 FPS' } as PickerOption,
-      { title: '90 FPS', subtitle: '高刷新率', value: '90 FPS' } as PickerOption,
-      { title: '119.88 FPS', subtitle: '视频标准 (NTSC)', value: '119.88 FPS' } as PickerOption,
-      { title: '120 FPS', subtitle: '极致体验', value: '120 FPS' } as PickerOption,
     ];
+
+    // 根据设备刷新率动态添加高帧率选项
+    if (deviceRefreshRate >= 90) {
+      presetOptions.push({ title: '90 FPS', subtitle: '高刷新率', value: '90 FPS' } as PickerOption);
+    }
+    if (deviceRefreshRate >= 120) {
+      presetOptions.push(
+        { title: '119.88 FPS', subtitle: '视频标准 (NTSC)', value: '119.88 FPS' } as PickerOption,
+        { title: '120 FPS', subtitle: '极致体验', value: '120 FPS' } as PickerOption
+      );
+    }
+    if (deviceRefreshRate >= 144) {
+      presetOptions.push({ title: '144 FPS', subtitle: '高刷屏专属', value: '144 FPS' } as PickerOption);
+    }
+    // 如果设备刷新率不在预设中（如 165Hz, 240Hz 等），动态添加
+    const knownRates = [30, 60, 90, 120, 144];
+    if (deviceRefreshRate > 60 && !knownRates.includes(deviceRefreshRate)) {
+      presetOptions.push({
+        title: `${deviceRefreshRate} FPS`,
+        subtitle: `匹配设备屏幕 (${deviceRefreshRate}Hz)`,
+        value: `${deviceRefreshRate} FPS`
+      } as PickerOption);
+    }
     
     // 如果有自定义帧率，添加到选项中
     const customOptions: PickerOption[] = [];
@@ -2481,7 +2510,7 @@ struct SettingsPageV2 {
     
     const config: PickerConfig = {
       title: '选择帧率',
-      subtitle: '更高帧率需要更多带宽',
+      subtitle: `设备屏幕 ${deviceRefreshRate}Hz · 更高帧率需要更多带宽`,
       selectedValue: this.fps,
       options: options,
       onSelect: (option: PickerOption) => {
