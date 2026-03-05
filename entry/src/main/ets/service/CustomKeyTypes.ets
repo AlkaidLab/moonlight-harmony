@@ -63,6 +63,18 @@ export interface GamepadStickAction {
   direction: 'up' | 'down' | 'left' | 'right';
 }
 
+/**
+ * 模拟摇杆动作（完整的触摸虚拟摇杆）
+ * 与 gamepadStick 的区别：这是可拖拽的 2D 模拟摇杆 UI，
+ * 输出连续的 x/y (-1.0 ~ 1.0) 归一化轴值，而非离散的 4 方向。
+ * 参照 Android AnalogStick.java 实现。
+ */
+export interface AnalogStickAction {
+  type: 'analogStick';
+  /** 摇杆：'left' = 左摇杆, 'right' = 右摇杆 */
+  stick: 'left' | 'right';
+}
+
 /** 组合键动作：同时发送多个按键 */
 export interface ComboAction {
   type: 'combo';
@@ -107,6 +119,7 @@ export type KeyAction =
   | GamepadButtonAction
   | GamepadTriggerAction
   | GamepadStickAction
+  | AnalogStickAction
   | ComboAction
   | ShortcutAction
   | SpecialAction;
@@ -456,20 +469,17 @@ export function getVkDisplayName(vk: number): string {
   return VK_DISPLAY_NAMES[vk] ?? `0x${vk.toString(16).toUpperCase()}`;
 }
 
-/** 手柄按键掩码 → 显示名称 */
+/** 手柄按键掩码 → 显示名称（值与 GamepadButton.* 常量一致） */
 export const GAMEPAD_DISPLAY_NAMES: Record<number, string> = {
-  [GamepadButton.A]: 'A', [GamepadButton.B]: 'B',
-  [GamepadButton.X]: 'X', [GamepadButton.Y]: 'Y',
-  [GamepadButton.LB]: 'LB', [GamepadButton.RB]: 'RB',
-  [GamepadButton.START]: 'Start', [GamepadButton.BACK]: 'Back',
-  [GamepadButton.LS]: 'L3', [GamepadButton.RS]: 'R3',
-  [GamepadButton.GUIDE]: 'Guide',
-  [GamepadButton.UP]: 'D↑', [GamepadButton.DOWN]: 'D↓',
-  [GamepadButton.LEFT]: 'D←', [GamepadButton.RIGHT]: 'D→',
+  0x1000: 'A', 0x2000: 'B', 0x4000: 'X', 0x8000: 'Y',
+  0x0100: 'LB', 0x0200: 'RB',
+  0x0010: 'Start', 0x0020: 'Back',
+  0x0040: 'L3', 0x0080: 'R3',
+  0x0400: 'Guide',
+  0x0001: 'D↑', 0x0002: 'D↓', 0x0004: 'D←', 0x0008: 'D→',
   // 扩展按钮
-  [GamepadButton.PADDLE1]: 'P1', [GamepadButton.PADDLE2]: 'P2',
-  [GamepadButton.PADDLE3]: 'P3', [GamepadButton.PADDLE4]: 'P4',
-  [GamepadButton.TOUCHPAD]: 'Touchpad', [GamepadButton.MISC]: 'Misc',
+  0x010000: 'P1', 0x020000: 'P2', 0x040000: 'P3', 0x080000: 'P4',
+  0x100000: 'Touchpad', 0x200000: 'Misc',
 };
 
 /** 获取手柄按钮掩码的显示名称 */
@@ -498,6 +508,8 @@ export function getActionDisplayName(action: KeyAction): string {
       const dirMap: Record<string, string> = { 'up': '↑', 'down': '↓', 'left': '←', 'right': '→' };
       return `${stickName}${dirMap[action.direction] ?? action.direction}`;
     }
+    case 'analogStick':
+      return action.stick === 'left' ? '左摇杆' : '右摇杆';
     case 'combo':
       return action.actions.map(a => getActionDisplayName(a)).join('+');
     case 'shortcut': {
@@ -622,6 +634,9 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
       { label: 'P4', action: { type: 'gamepadButton', mask: GamepadButton.PADDLE4 } },
       { label: 'Touchpad', action: { type: 'gamepadButton', mask: GamepadButton.TOUCHPAD } },
       { label: 'Misc', action: { type: 'gamepadButton', mask: GamepadButton.MISC } },
+      // 模拟摇杆（完整虚拟摇杆 UI）
+      { label: '左摇杆', action: { type: 'analogStick', stick: 'left' } as AnalogStickAction },
+      { label: '右摇杆', action: { type: 'analogStick', stick: 'right' } as AnalogStickAction },
     ],
   },
   {

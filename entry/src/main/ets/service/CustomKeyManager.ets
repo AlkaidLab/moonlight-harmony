@@ -34,6 +34,7 @@ import {
   GamepadButtonAction,
   GamepadTriggerAction,
   GamepadStickAction,
+  GamepadButton,
   ComboAction,
   ShortcutAction,
   SpecialAction,
@@ -69,6 +70,16 @@ export interface SessionLike {
   sendKeyboardInput(vk: number, flags: number): void;
   /** 发送按键组合（同时按下，延迟后释放） */
   sendKeys(keyCodes: number[]): void;
+  /** 发送虚拟手柄输入（内部处理 controller arrival + activeGamepadMask） */
+  sendVirtualControllerInput(
+    buttonFlags: number,
+    leftTrigger: number,
+    rightTrigger: number,
+    leftStickX: number,
+    leftStickY: number,
+    rightStickX: number,
+    rightStickY: number,
+  ): void;
 }
 
 // =============================================================================
@@ -134,10 +145,11 @@ export class CustomKeyManager {
       }
       case 'gamepadButton': {
         const gpAction = action as GamepadButtonAction;
+        const mask: number = gpAction.mask;
         if (isDown) {
-          this.gamepadInputMap |= gpAction.mask;
+          this.gamepadInputMap |= mask;
         } else {
-          this.gamepadInputMap &= ~gpAction.mask;
+          this.gamepadInputMap &= ~mask;
         }
         this.sendGamepadState();
         break;
@@ -154,17 +166,18 @@ export class CustomKeyManager {
       }
       case 'gamepadStick': {
         const stickAction = action as GamepadStickAction;
-        const value = isDown ? CustomKeyManager.STICK_MAX : 0;
+        const posMax: number = CustomKeyManager.STICK_MAX;
+        const negMax: number = 0 - posMax;
         if (stickAction.stick === 'left') {
-          if (stickAction.direction === 'up') this.leftStickY = isDown ? -value : 0;
-          else if (stickAction.direction === 'down') this.leftStickY = value;
-          else if (stickAction.direction === 'left') this.leftStickX = isDown ? -value : 0;
-          else if (stickAction.direction === 'right') this.leftStickX = value;
+          if (stickAction.direction === 'up') this.leftStickY = isDown ? negMax : 0;
+          else if (stickAction.direction === 'down') this.leftStickY = isDown ? posMax : 0;
+          else if (stickAction.direction === 'left') this.leftStickX = isDown ? negMax : 0;
+          else if (stickAction.direction === 'right') this.leftStickX = isDown ? posMax : 0;
         } else {
-          if (stickAction.direction === 'up') this.rightStickY = isDown ? -value : 0;
-          else if (stickAction.direction === 'down') this.rightStickY = value;
-          else if (stickAction.direction === 'left') this.rightStickX = isDown ? -value : 0;
-          else if (stickAction.direction === 'right') this.rightStickX = value;
+          if (stickAction.direction === 'up') this.rightStickY = isDown ? negMax : 0;
+          else if (stickAction.direction === 'down') this.rightStickY = isDown ? posMax : 0;
+          else if (stickAction.direction === 'left') this.rightStickX = isDown ? negMax : 0;
+          else if (stickAction.direction === 'right') this.rightStickX = isDown ? posMax : 0;
         }
         this.sendGamepadState();
         break;
@@ -196,11 +209,13 @@ export class CustomKeyManager {
 
   /**
    * 发送当前累积的手柄状态
+   * 通过 session 的 sendVirtualControllerInput 发送，确保 controllerArrival 已注册。
    * 参照 Android ElementController.sendGamepadEvent()
    */
   private sendGamepadState(): void {
-    MoonBridge.sendMultiControllerInput(
-      0, 1,
+    const session = this.host.getSession();
+    if (!session) return;
+    session.sendVirtualControllerInput(
       this.gamepadInputMap,
       this.gamepadLeftTrigger,
       this.gamepadRightTrigger,
@@ -209,6 +224,47 @@ export class CustomKeyManager {
       this.rightStickX,
       this.rightStickY
     );
+  }
+
+  /**
+   * 处理模拟摇杆的连续移动输入
+   * 由 VirtualJoystick 组件直接调用（不经过 handleAction）
+   *
+   * @param stick 'left' | 'right'
+   * @param x 归一化水平值 -1.0 ~ 1.0
+   * @param y 归一化垂直值 -1.0 ~ 1.0（屏幕坐标，向下为正）
+   */
+  handleAnalogStickMovement(stick: string, x: number, y: number): void {
+    // 归一化值 → 16-bit 轴值 (0x7FFE = 32766，与 Android 保持一致)
+    // Y 轴取反：屏幕坐标 Y 向下为正，游戏协议 Y 向上为正（与 AnalogStick.ets 一致）
+    const axisX = Math.round(x * 0x7FFE);
+    const negY: number = 0 - y;
+    const axisY = Math.round(negY * 0x7FFE);
+    if (stick === 'left') {
+      this.leftStickX = axisX;
+      this.leftStickY = axisY;
+    } else {
+      this.rightStickX = axisX;
+      this.rightStickY = axisY;
+    }
+    this.sendGamepadState();
+  }
+
+  /**
+   * 处理模拟摇杆的 L3/R3 点击（双击触发，与 AnalogStick.ets 行为一致）
+   * 发送短暂的按下+释放（50ms），而非持续按住。
+   * @param stick 'left' | 'right'
+   */
+  handleAnalogStickClick(stick: string): void {
+    const mask: number = stick === 'left' ? GamepadButton.LS : GamepadButton.RS;
+    // 按下
+    this.gamepadInputMap |= mask;
+    this.sendGamepadState();
+    // 50ms 后自动释放（与 AnalogStick.ets 一致）
+    setTimeout(() => {
+      this.gamepadInputMap &= ~mask;
+      this.sendGamepadState();
+    }, 50);
   }
 
   /**

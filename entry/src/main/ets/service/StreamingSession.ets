@@ -620,6 +620,27 @@ export class StreamingSession {
     this.nativeModule.sendUtf8Text(text);
   }
 
+  /**
+   * 发送虚拟手柄输入（供 CustomKeyManager 使用）
+   *
+   * 与直接调用 MoonBridge 不同，此方法会先确保 controllerArrival 已发送，
+   * 并使用正确的 activeGamepadMask。对应 Android ControllerHandler 的流程。
+   */
+  sendVirtualControllerInput(
+    buttonFlags: number, leftTrigger: number, rightTrigger: number,
+    leftStickX: number, leftStickY: number,
+    rightStickX: number, rightStickY: number,
+  ): void {
+    if (!this.isRunning) return;
+    const controllerIndex = 0;
+    this.ensureVirtualControllerArrival(controllerIndex);
+    this.nativeModule.sendMultiControllerInput(
+      controllerIndex, this.activeGamepadMask,
+      buttonFlags, leftTrigger, rightTrigger,
+      leftStickX, leftStickY, rightStickX, rightStickY
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // 输入 — 手柄（虚拟 + 物理）
   // ---------------------------------------------------------------------------

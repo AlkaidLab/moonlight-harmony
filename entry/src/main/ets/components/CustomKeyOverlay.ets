@@ -25,6 +25,7 @@ import {
   KeyAction,
   KeyBehavior,
   KeyShape,
+  AnalogStickAction,
   createDefaultKeyDef,
   cloneKeyDef,
   KEY_PRESET_CATEGORIES,
@@ -32,6 +33,7 @@ import {
   KeyPresetCategory,
 } from '../service/CustomKeyTypes';
 import { CustomKeyStore } from '../service/CustomKeyStore';
+import { VirtualJoystick } from './VirtualJoystick';
 
 // =============================================================================
 // 常量
@@ -224,6 +226,10 @@ struct CustomKeyBtn {
 export struct CustomKeyOverlay {
   /** 按键事件回调（统一入口，包含 keyboard/mouse/gamepad/special 所有类型） */
   onKeyAction: (action: KeyAction, isDown: boolean) => void = () => {};
+  /** 模拟摇杆移动回调 */
+  onAnalogStickMovement: (stick: string, x: number, y: number) => void = () => {};
+  /** 模拟摇杆 L3/R3 点击回调（双击触发，自动短按+释放） */
+  onAnalogStickClick: (stick: string) => void = () => {};
   /** 编辑模式变化回调 */
   onEditModeChanged: (editing: boolean) => void = () => {};
 
@@ -266,31 +272,64 @@ export struct CustomKeyOverlay {
       Stack() {
         // 自定义按键 —— 每个是独立 @Component，有自己的触摸生命周期
         ForEach(this.keys, (key: CustomKeyDef) => {
-          CustomKeyBtn({
-            keyDef: key,
-            editMode: this.editMode,
-            isSelected: this.selectedKeyId === key.id,
-            onAction: (action: KeyAction, isDown: boolean): void => {
-              this.onKeyAction(action, isDown);
-            },
-            onDragFinish: (keyId: string, deltaX: number, deltaY: number): void => {
-              this.handleDragEnd(keyId, deltaX, deltaY);
-            },
-            onSelect: (keyId: string): void => {
-              this.selectedKeyId = keyId;
-            },
-            onLongPress: (keyId: string): void => {
-              this.selectedKeyId = keyId;
-              this.showPropertyPanel = true;
-            },
-          })
-            .position({
-              x: key.xPercent * this.screenWidthVp - key.width / 2,
-              y: key.yPercent * this.screenHeightVp - key.height / 2,
+          if (key.action.type === 'analogStick' && !this.editMode) {
+            // 模拟摇杆：非编辑模式时渲染真正的虚拟摇杆 UI
+            VirtualJoystick({
+              joystickSize: Math.max(key.width, key.height),
+              ringColor: key.normalColor,
+              stickColor: key.bgColor,
+              pressedColor: key.pressedColor,
+              opacity_: key.opacity,
+              onMovement: (x: number, y: number): void => {
+                const stickAction = key.action as AnalogStickAction;
+                this.onAnalogStickMovement(stickAction.stick, x, y);
+              },
+              onStickClick: (): void => {
+                // 单击仅开始追踪，不发送任何按键
+              },
+              onDoubleClick: (): void => {
+                // 双击触发 L3/R3 短按+自动释放（与 AnalogStick 一致）
+                const stickAction = key.action as AnalogStickAction;
+                this.onAnalogStickClick(stickAction.stick);
+              },
+              onRevoke: (): void => {
+                // 手指抬起：无需额外操作（L3/R3 已自动释放）
+              },
+              isEditMode: (): boolean => this.editMode,
             })
+              .position({
+                x: key.xPercent * this.screenWidthVp - Math.max(key.width, key.height) / 2,
+                y: key.yPercent * this.screenHeightVp - Math.max(key.width, key.height) / 2,
+              })
+          } else {
+            // 普通按键（含编辑模式下的 analogStick 占位）
+            CustomKeyBtn({
+              keyDef: key,
+              editMode: this.editMode,
+              isSelected: this.selectedKeyId === key.id,
+              onAction: (action: KeyAction, isDown: boolean): void => {
+                this.onKeyAction(action, isDown);
+              },
+              onDragFinish: (keyId: string, deltaX: number, deltaY: number): void => {
+                this.handleDragEnd(keyId, deltaX, deltaY);
+              },
+              onSelect: (keyId: string): void => {
+                this.selectedKeyId = keyId;
+              },
+              onLongPress: (keyId: string): void => {
+                this.selectedKeyId = keyId;
+                this.showPropertyPanel = true;
+              },
+            })
+              .position({
+                x: key.xPercent * this.screenWidthVp - key.width / 2,
+                y: key.yPercent * this.screenHeightVp - key.height / 2,
+              })
+          }
         }, (key: CustomKeyDef) => {
           // key 包含位置和外观属性，任何变化都触发组件重建
-          return `${key.id}|${key.xPercent.toFixed(4)}|${key.yPercent.toFixed(4)}|${key.width}|${key.height}|${key.opacity}|${key.fontSize}|${key.borderRadius}|${key.shape}|${key.behavior}|${key.label}|${key.bgColor}|${key.textColor}`;
+          // 加上 editMode 以在模式切换时强制重建（切换 VirtualJoystick ↔ CustomKeyBtn）
+          return `${key.id}|${this.editMode}|${key.xPercent.toFixed(4)}|${key.yPercent.toFixed(4)}|${key.width}|${key.height}|${key.opacity}|${key.fontSize}|${key.borderRadius}|${key.shape}|${key.behavior}|${key.label}|${key.bgColor}|${key.textColor}`;
         })
 
         // 添加按键面板
@@ -456,6 +495,17 @@ export struct CustomKeyOverlay {
         bgColor = '#30A070C0';
         pressedColor = '#80A070C0';
         borderRadius = 26;
+        break;
+      case 'analogStick':
+        // 模拟摇杆：大圆形、绿色系（与手柄按键同色调）
+        shape = 'circle';
+        width = 120;
+        height = 120;
+        bgColor = '#4050C080';
+        pressedColor = '#8070E090';
+        textColor = '#E0FFFFFF';
+        borderRadius = 60;
+        fontSize = 12;
         break;
       default:
         break;
