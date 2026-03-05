@@ -105,7 +105,7 @@ static void LoadAudioApis() {
 // =============================================================================
 
 AudioRenderer::AudioRenderer() {
-    memset(ringBuffer_, 0, sizeof(ringBuffer_));
+    // ringBuffer_ 在 Init 中动态分配
 }
 
 AudioRenderer::~AudioRenderer() {
@@ -119,6 +119,30 @@ int AudioRenderer::Init(const AudioRendererConfig& config) {
     }
     
     config_ = config;
+    
+    // 动态分配环形缓冲区：根据实际声道数和采样率计算容量
+    // 所有声道配置统一 TARGET_BUFFER_MS 时长，避免 stereo 时缓冲区过大
+    int usableSamples = config_.sampleRate * config_.channelCount * TARGET_BUFFER_MS / 1000;
+    // 对齐到帧边界（channelCount × samplesPerFrame）
+    int frameSize = config_.channelCount * config_.samplesPerFrame;
+    if (frameSize > 0) {
+        usableSamples = ((usableSamples + frameSize - 1) / frameSize) * frameSize;
+    }
+    // SPSC 环形缓冲区需要多留 1 个位置以区分满/空
+    ringCapacity_ = usableSamples + 1;
+    
+    // 释放旧缓冲区（如果有）
+    delete[] ringBuffer_;
+    ringBuffer_ = new int16_t[ringCapacity_];
+    memset(ringBuffer_, 0, ringCapacity_ * sizeof(int16_t));
+    
+    OH_LOG_INFO(LOG_APP, "Ring buffer: capacity=%{public}d samples (%{public}dms for %{public}dch @%{public}dHz), "
+                "latency cap=%{public}dms",
+                ringCapacity_ - 1,
+                TARGET_BUFFER_MS,
+                config_.channelCount,
+                config_.sampleRate,
+                MAX_AUDIO_LATENCY_MS);
     
     OH_LOG_INFO(LOG_APP, "Initializing audio renderer: sampleRate=%{public}d, channels=%{public}d, samplesPerFrame=%{public}d",
                 config_.sampleRate, config_.channelCount, config_.samplesPerFrame);
@@ -401,6 +425,11 @@ void AudioRenderer::Cleanup() {
     
     configured_ = false;
     
+    // 释放动态环形缓冲区
+    delete[] ringBuffer_;
+    ringBuffer_ = nullptr;
+    ringCapacity_ = 0;
+    
     OH_LOG_INFO(LOG_APP, "Audio renderer cleaned up");
 }
 
@@ -423,30 +452,39 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
     int tail = ringTail_.load(std::memory_order_relaxed);
     int head = ringHead_.load(std::memory_order_acquire);
     
+    // 延迟上限检查（匹配 Android 的 40ms 上限）
+    // 如果缓冲区中已有数据超过阈值，丢弃新数据以抑制延迟积累
+    int buffered = (tail >= head) ? (tail - head) : (ringCapacity_ - head + tail);
+    int bufferedFrames = buffered / std::max(config_.channelCount, 1);
+    double latencyMs = (config_.sampleRate > 0)
+        ? ((double)bufferedFrames * 1000.0 / config_.sampleRate)
+        : 0.0;
+    if (latencyMs > MAX_AUDIO_LATENCY_MS) {
+        droppedSamples_.fetch_add(sampleCount, std::memory_order_relaxed);
+        return 0;
+    }
+    
     // 计算可用空间（保留1个元素的间隔以区分满/空）
     int available;
     if (tail >= head) {
-        available = RING_BUFFER_CAPACITY - (tail - head) - 1;
+        available = ringCapacity_ - (tail - head) - 1;
     } else {
         available = head - tail - 1;
     }
     
     if (available < dataSize) {
         // 缓冲区空间不足 → 丢弃新数据
-        // 注意：不能在此推进 head（消费者的写变量），否则违反 SPSC 无锁约定
-        // 缓冲区最大 60ms (stereo)，满时丢新帧极少发生（仅在网络突发时）
-        // 如果频繁触发，OnWriteData 的 fade-out/fade-in 会平滑处理后续恢复
         droppedSamples_.fetch_add(sampleCount, std::memory_order_relaxed);
         return 0;
     }
     
     // 写入数据到环形缓冲区
-    int firstPart = std::min(dataSize, RING_BUFFER_CAPACITY - tail);
+    int firstPart = std::min(dataSize, ringCapacity_ - tail);
     memcpy(ringBuffer_ + tail, pcmData, firstPart * sizeof(int16_t));
     if (firstPart < dataSize) {
         memcpy(ringBuffer_, pcmData + firstPart, (dataSize - firstPart) * sizeof(int16_t));
     }
-    ringTail_.store((tail + dataSize) % RING_BUFFER_CAPACITY, std::memory_order_release);
+    ringTail_.store((tail + dataSize) % ringCapacity_, std::memory_order_release);
     
     totalSamples_.fetch_add(sampleCount, std::memory_order_relaxed);
     
@@ -523,7 +561,7 @@ AudioRendererStats AudioRenderer::GetStats() const {
     if (tail >= head) {
         buffered = tail - head;
     } else {
-        buffered = RING_BUFFER_CAPACITY - head + tail;
+        buffered = ringCapacity_ - head + tail;
     }
     int bufferedSamples = buffered / std::max(config_.channelCount, 1);
     stats.latencyMs = (config_.sampleRate > 0) 
@@ -536,7 +574,7 @@ AudioRendererStats AudioRenderer::GetStats() const {
 double AudioRenderer::GetBufferLatencyMs() const {
     int head = ringHead_.load(std::memory_order_relaxed);
     int tail = ringTail_.load(std::memory_order_relaxed);
-    int buffered = (tail >= head) ? (tail - head) : (RING_BUFFER_CAPACITY - head + tail);
+    int buffered = (tail >= head) ? (tail - head) : (ringCapacity_ - head + tail);
     int channelCount = std::max(config_.channelCount, 1);
     return (config_.sampleRate > 0)
         ? ((double)(buffered / channelCount) * 1000.0 / config_.sampleRate)
@@ -578,7 +616,7 @@ OH_AudioData_Callback_Result AudioRenderer::OnWriteData(OH_AudioRenderer* render
     if (tail >= head) {
         available = tail - head;
     } else {
-        available = RING_BUFFER_CAPACITY - head + tail;
+        available = self->ringCapacity_ - head + tail;
     }
     
     int toCopy = std::min(available, samplesNeeded);
@@ -589,12 +627,12 @@ OH_AudioData_Callback_Result AudioRenderer::OnWriteData(OH_AudioRenderer* render
     
     if (toCopy > 0) {
         // 从环形缓冲区读取
-        int firstPart = std::min(toCopy, RING_BUFFER_CAPACITY - head);
+        int firstPart = std::min(toCopy, self->ringCapacity_ - head);
         memcpy(outBuffer, self->ringBuffer_ + head, firstPart * sizeof(int16_t));
         if (firstPart < toCopy) {
             memcpy(outBuffer + firstPart, self->ringBuffer_, (toCopy - firstPart) * sizeof(int16_t));
         }
-        self->ringHead_.store((head + toCopy) % RING_BUFFER_CAPACITY, std::memory_order_release);
+        self->ringHead_.store((head + toCopy) % self->ringCapacity_, std::memory_order_release);
         
         // Underrun 后恢复：对开头数据施加渐入（fade-in），避免静音→有信号的波形跳变
         if (self->wasUnderrun_.load(std::memory_order_relaxed)) {

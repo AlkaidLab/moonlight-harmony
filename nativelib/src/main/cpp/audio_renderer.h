@@ -143,17 +143,18 @@ private:
     // 生产者: PlaySamples() (解码线程)
     // 消费者: OnWriteData() (OHAudio 音频回调线程)
     // =========================================================================
-    // 缓冲区容量：6帧 × 最大8声道 × 240采样/帧 = 11520 采样
-    // 对于 stereo: 11520/2 = 5760 samples = 60ms @48kHz
-    // 对于 5.1:   11520/6 = 1920 samples = 40ms
-    // 对于 7.1:   11520/8 = 1440 samples = 30ms
-    // 缓冲区满时丢弃旧数据、写入新数据，自然限制延迟上限
-    static constexpr int MAX_BUFFER_FRAMES = 6;
-    static constexpr int MAX_CHANNELS = 8;
-    static constexpr int MAX_SAMPLES_PER_FRAME = 240;
-    static constexpr int RING_BUFFER_CAPACITY = MAX_BUFFER_FRAMES * MAX_CHANNELS * MAX_SAMPLES_PER_FRAME;
+    // 缓冲区容量：根据实际声道数动态计算，所有声道配置统一 TARGET_BUFFER_MS 时长
+    // 对于 stereo @48kHz: 48000×2×50/1000 = 4800 采样 = 50ms
+    // 对于 5.1   @48kHz: 48000×6×50/1000 = 14400 采样 = 50ms
+    // 对于 7.1   @48kHz: 48000×8×50/1000 = 19200 采样 = 50ms
+    //
+    // 延迟控制：PlaySamples 中检查缓冲区填充水平，
+    // 超过 MAX_AUDIO_LATENCY_MS (40ms) 时丢弃新数据，匹配 Android 40ms 上限
+    static constexpr int TARGET_BUFFER_MS = 50;        // 环形缓冲区容量（毫秒）
+    static constexpr int MAX_AUDIO_LATENCY_MS = 40;    // 延迟丢弃阈值（毫秒），匹配 Android
     
-    int16_t ringBuffer_[RING_BUFFER_CAPACITY];
+    int ringCapacity_ = 0;          // 实际环形缓冲区容量（int16_t 数量，含 SPSC 保留位）
+    int16_t* ringBuffer_ = nullptr; // 动态分配的环形缓冲区
     std::atomic<int> ringHead_{0};  // 消费者读位置（OnWriteData 更新）
     std::atomic<int> ringTail_{0};  // 生产者写位置（PlaySamples 更新）
     
