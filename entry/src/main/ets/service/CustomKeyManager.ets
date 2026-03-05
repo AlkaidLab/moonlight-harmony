@@ -33,6 +33,7 @@ import {
   MouseScrollAction,
   GamepadButtonAction,
   GamepadTriggerAction,
+  GamepadStickAction,
   ComboAction,
   ShortcutAction,
   SpecialAction,
@@ -81,6 +82,12 @@ export class CustomKeyManager {
   private gamepadInputMap: number = 0;
   private gamepadLeftTrigger: number = 0;
   private gamepadRightTrigger: number = 0;
+  /** 摇杆轴值 (-32767 ~ 32767) */
+  private static readonly STICK_MAX = 32767;
+  private leftStickX: number = 0;
+  private leftStickY: number = 0;
+  private rightStickX: number = 0;
+  private rightStickY: number = 0;
 
   constructor(host: CustomKeyManagerHost) {
     this.host = host;
@@ -145,6 +152,23 @@ export class CustomKeyManager {
         this.sendGamepadState();
         break;
       }
+      case 'gamepadStick': {
+        const stickAction = action as GamepadStickAction;
+        const value = isDown ? CustomKeyManager.STICK_MAX : 0;
+        if (stickAction.stick === 'left') {
+          if (stickAction.direction === 'up') this.leftStickY = isDown ? -value : 0;
+          else if (stickAction.direction === 'down') this.leftStickY = value;
+          else if (stickAction.direction === 'left') this.leftStickX = isDown ? -value : 0;
+          else if (stickAction.direction === 'right') this.leftStickX = value;
+        } else {
+          if (stickAction.direction === 'up') this.rightStickY = isDown ? -value : 0;
+          else if (stickAction.direction === 'down') this.rightStickY = value;
+          else if (stickAction.direction === 'left') this.rightStickX = isDown ? -value : 0;
+          else if (stickAction.direction === 'right') this.rightStickX = value;
+        }
+        this.sendGamepadState();
+        break;
+      }
       case 'combo': {
         const comboAction = action as ComboAction;
         for (const subAction of comboAction.actions) {
@@ -180,7 +204,10 @@ export class CustomKeyManager {
       this.gamepadInputMap,
       this.gamepadLeftTrigger,
       this.gamepadRightTrigger,
-      0, 0, 0, 0
+      this.leftStickX,
+      this.leftStickY,
+      this.rightStickX,
+      this.rightStickY
     );
   }
 

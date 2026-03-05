@@ -54,6 +54,15 @@ export interface GamepadTriggerAction {
   trigger: 'left' | 'right';
 }
 
+/** 手柄摇杆方向动作（按下推满、释放归零） */
+export interface GamepadStickAction {
+  type: 'gamepadStick';
+  /** 摇杆：'left' = 左摇杆, 'right' = 右摇杆 */
+  stick: 'left' | 'right';
+  /** 方向 */
+  direction: 'up' | 'down' | 'left' | 'right';
+}
+
 /** 组合键动作：同时发送多个按键 */
 export interface ComboAction {
   type: 'combo';
@@ -97,6 +106,7 @@ export type KeyAction =
   | MouseScrollAction
   | GamepadButtonAction
   | GamepadTriggerAction
+  | GamepadStickAction
   | ComboAction
   | ShortcutAction
   | SpecialAction;
@@ -483,6 +493,11 @@ export function getActionDisplayName(action: KeyAction): string {
       return getGamepadDisplayName(action.mask);
     case 'gamepadTrigger':
       return action.trigger === 'left' ? 'LT' : 'RT';
+    case 'gamepadStick': {
+      const stickName = action.stick === 'left' ? 'LS' : 'RS';
+      const dirMap: Record<string, string> = { 'up': '↑', 'down': '↓', 'left': '←', 'right': '→' };
+      return `${stickName}${dirMap[action.direction] ?? action.direction}`;
+    }
     case 'combo':
       return action.actions.map(a => getActionDisplayName(a)).join('+');
     case 'shortcut': {
@@ -593,6 +608,15 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
       { label: 'D←', action: { type: 'gamepadButton', mask: GamepadButton.LEFT } },
       { label: 'D→', action: { type: 'gamepadButton', mask: GamepadButton.RIGHT } },
       { label: 'P1', action: { type: 'gamepadButton', mask: GamepadButton.PADDLE1 } },
+      // 摇杆方向
+      { label: 'LS↑', action: { type: 'gamepadStick', stick: 'left', direction: 'up' } as GamepadStickAction },
+      { label: 'LS↓', action: { type: 'gamepadStick', stick: 'left', direction: 'down' } as GamepadStickAction },
+      { label: 'LS←', action: { type: 'gamepadStick', stick: 'left', direction: 'left' } as GamepadStickAction },
+      { label: 'LS→', action: { type: 'gamepadStick', stick: 'left', direction: 'right' } as GamepadStickAction },
+      { label: 'RS↑', action: { type: 'gamepadStick', stick: 'right', direction: 'up' } as GamepadStickAction },
+      { label: 'RS↓', action: { type: 'gamepadStick', stick: 'right', direction: 'down' } as GamepadStickAction },
+      { label: 'RS←', action: { type: 'gamepadStick', stick: 'right', direction: 'left' } as GamepadStickAction },
+      { label: 'RS→', action: { type: 'gamepadStick', stick: 'right', direction: 'right' } as GamepadStickAction },
       { label: 'P2', action: { type: 'gamepadButton', mask: GamepadButton.PADDLE2 } },
       { label: 'P3', action: { type: 'gamepadButton', mask: GamepadButton.PADDLE3 } },
       { label: 'P4', action: { type: 'gamepadButton', mask: GamepadButton.PADDLE4 } },

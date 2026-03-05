@@ -416,6 +416,7 @@ export struct CustomKeyOverlay {
     switch (preset.action.type) {
       case 'gamepadButton':
       case 'gamepadTrigger':
+      case 'gamepadStick':
         // 手柄按键：圆形、略大、绿色系
         shape = 'circle';
         width = 56;
