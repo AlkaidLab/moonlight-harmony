@@ -16,6 +16,7 @@
  */
 import { display, window, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
+import { inputDevice } from '@kit.InputKit';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { GamepadManager } from '../service/GamepadManager';
 
@@ -71,6 +72,13 @@ export class StreamInputHandler {
   private viewModel: StreamViewModel | null = null;
   private gamepadManager: GamepadManager | null = null;
 
+  // ── D-pad 设备类型缓存（区分手柄 vs 键盘的方向键事件）──
+  // true = 手柄设备（D-pad 事件应被消费以避免与 GCK Axis 双发）
+  // false = 非手柄设备（D-pad 事件应作为键盘方向键正常转发）
+  private deviceIsGamepad: Map<number, boolean> = new Map<number, boolean>();
+  // 正在查询中的设备 ID（避免重复 async 查询）
+  private deviceQueryPending: Set<number> = new Set<number>();
+
   /**
    * 初始化依赖项
    */
@@ -95,6 +103,50 @@ export class StreamInputHandler {
     this.lastEscUpTime = 0;
     this.hasShownEscHint = false;
     this.stopMouseInterceptor();
+    this.deviceIsGamepad.clear();
+    this.deviceQueryPending.clear();
+  }
+
+  // ==================== D-pad 设备类型识别 ====================
+
+  /**
+   * 判断指定 deviceId 是否为手柄设备（用于 D-pad 事件过滤）
+   *
+   * 返回值：
+   * - true:  确认是手柄 → D-pad 事件应被消费（避免与 GCK Axis 双发）
+   * - false: 确认不是手柄 或 尚未查询完成 → D-pad 事件正常转发
+   *
+   * 对未知设备，异步查询 inputDevice.getDeviceInfo() 并缓存结果。
+   * 查询完成前默认返回 false（允许 D-pad 通过），确保键盘方向键不被误吞。
+   */
+  private isDpadFromGamepad(deviceId: number): boolean {
+    // deviceId = -1 或 0 表示未知设备（API 不可用或拦截器路径），无法区分
+    if (deviceId <= 0) {
+      return true; // 兼容旧行为：来源不明时假设是手柄
+    }
+
+    const cached = this.deviceIsGamepad.get(deviceId);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    // 首次遇到此设备 → 启动异步查询，同时返回 false（放行）
+    if (!this.deviceQueryPending.has(deviceId)) {
+      this.deviceQueryPending.add(deviceId);
+      inputDevice.getDeviceInfo(deviceId).then((info) => {
+        const isGamepad = info.sources.some(
+          (s: inputDevice.SourceType) => s === 'joystick'
+        );
+        this.deviceIsGamepad.set(deviceId, isGamepad);
+        this.deviceQueryPending.delete(deviceId);
+      }).catch(() => {
+        // 查询失败，标记为非手柄（安全默认值：放行 D-pad）
+        this.deviceIsGamepad.set(deviceId, false);
+        this.deviceQueryPending.delete(deviceId);
+      });
+    }
+
+    return false; // 查询中，默认放行
   }
 
   /**
@@ -324,12 +376,16 @@ export class StreamInputHandler {
       return true;
     }
 
-    // D-pad 方向键 (2012-2015) - 仅在有 GCK 手柄实际连接时消费，避免与 GCK Axis 路径双发
+    // D-pad 方向键 (2012-2015) - 仅在事件来源是手柄设备时消费，避免与 GCK Axis 双发
     // 蓝牙手柄 D-pad 会同时产生 GCK Axis 事件和 KeyEvent(2012-2015)
     // GCK Axis 已发送手柄 D-pad，这里如果再翻译成键盘方向键 VK_UP 等就会"按一下走两格"
-    // 注意：仅检查 isUsingGameControllerKit() 会在无手柄时也过滤掉物理键盘方向键
+    // 但蓝牙键盘的箭头键也产生 2012-2015，需要通过 deviceId 区分来源
     if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.hasActiveGcGamepad()) {
-      return true; // GCK 手柄已接管 D-pad，消费事件
+      const eventDeviceId = event.deviceId ?? -1;
+      if (this.isDpadFromGamepad(eventDeviceId)) {
+        return true; // 确认是手柄 D-pad，消费事件
+      }
+      // 非手柄设备（如键盘）→ fall through 作为键盘方向键处理
     }
 
     // ESC 双击检测（2in1 物理键盘用 ESC 代替返回手势打开串流菜单）
@@ -385,15 +441,18 @@ export class StreamInputHandler {
         return;
       }
 
-      // 2. D-pad 方向键 (2012-2015) - GCK 活跃时消费掉，避免与 GCK Axis 双发
+      // 2. D-pad 方向键 (2012-2015) - 仅在事件来源是手柄设备时消费
       //    GCK Axis 已经处理了手柄 D-pad，这里如果再翻译成键盘方向键发送
       //    会导致游戏同时收到手柄 D-pad + 键盘方向键 = "按一下走两格"
+      //    但蓝牙键盘的箭头键也产生 2012-2015，需要通过 deviceId 区分来源
       if (keyCode >= 2012 && keyCode <= 2015) {
         if (this.gamepadManager?.hasActiveGcGamepad()) {
-          // GCK 手柄已接管 D-pad，丢弃拦截器中的方向键事件
-          return;
+          const eventDeviceId = event.deviceId ?? -1;
+          if (this.isDpadFromGamepad(eventDeviceId)) {
+            return; // 确认是手柄 D-pad，丢弃拦截器中的方向键事件
+          }
         }
-        // 没有 GCK 设备时，作为键盘方向键正常转发（后面的 isKeyboardKey 分支会处理）
+        // 非手柄设备或无 GCK 手柄 → 作为键盘方向键正常转发（后面的 isKeyboardKey 分支会处理）
       }
 
       // 3. 音量键 (16=VOLUME_UP, 17=VOLUME_DOWN, 22=VOLUME_MUTE)

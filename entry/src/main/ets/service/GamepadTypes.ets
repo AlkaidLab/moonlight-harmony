@@ -296,3 +296,16 @@ export function isNonGamepadByName(nameLower: string): boolean {
   const hasGamepadKeyword = GAMEPAD_NAME_KEYWORDS.some(kw => nameLower.includes(kw));
   return !hasGamepadKeyword;
 }
+
+/** 强非手柄关键词列表（keyboard/mouse 等产品类型标识） */
+export const STRONG_NON_GAMEPAD_KEYWORDS: string[] = [
+  'keyboard', '键盘', 'mouse', '鼠标', 'touchpad', 'trackpad', '触摸板'
+];
+
+/**
+ * 检查设备名是否包含强非手柄关键词（keyboard/mouse 等）
+ * 用于 GCK 回调中需要额外验证设备源类型的场景
+ */
+export function hasStrongNonGamepadKeyword(nameLower: string): boolean {
+  return STRONG_NON_GAMEPAD_KEYWORDS.some(kw => nameLower.includes(kw));
+}

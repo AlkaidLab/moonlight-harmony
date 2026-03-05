@@ -26,7 +26,8 @@ import {
   MoonlightButton, GCButton2313Action, GCButton2313ActionCallback,
   MoonlightControllerType, VendorId, ProductId,
   AXIS_MAX, TRIGGER_MAX, SPECIAL_KEYCODE_MIN, SPECIAL_KEYCODE_MAX,
-  buttonMap, gcButtonMap, GAMEPAD_NAME_KEYWORDS, NON_GAMEPAD_KEYWORDS, isNonGamepadByName
+  buttonMap, gcButtonMap, GAMEPAD_NAME_KEYWORDS, NON_GAMEPAD_KEYWORDS, isNonGamepadByName,
+  hasStrongNonGamepadKeyword
 } from './GamepadTypes';
 
 // 重新导出公共类型，保持向后兼容
@@ -1047,6 +1048,14 @@ export class GamepadManager implements UsbDriverListener {
         return;
       }
 
+      // 品牌匹配通过但名称含强非手柄关键词（如 "RAPOO Keyboard-1 System Control"）
+      // → 异步验证：查询 InputDevice 源类型，只有确实有 joystick 源才注册
+      if (hasStrongNonGamepadKeyword(deviceNameLower)) {
+        console.info(`[GAMEPAD-GC] 名称含非手柄关键词，验证设备源类型: "${info?.name}"`);
+        this.verifyAndRegisterGCDevice(deviceId, info);
+        return;
+      }
+
       // 去重检查 1：同一物理地址的设备只注册一次
       const physAddr = info?.physicalAddress || '';
       if (physAddr && physAddr.length > 0) {
@@ -1174,6 +1183,86 @@ export class GamepadManager implements UsbDriverListener {
     }
   }
   
+  /**
+   * 异步验证 GCK 报告的设备是否真的是手柄
+   *
+   * 当设备名称通过了品牌匹配（如 "rapoo"）但同时包含强非手柄关键词（如 "keyboard"）时，
+   * 通过 InputDevice API 查询实际设备源类型来确认：
+   * - 有 joystick 源 → 是带键盘功能的手柄（如 Gamesir G8+ keyboard）→ 注册
+   * - 无 joystick 源 → 是手柄品牌的键盘产品（如 RAPOO Keyboard-1）→ 跳过
+   */
+  private async verifyAndRegisterGCDevice(deviceId: string, info: GameControllerDeviceInfo): Promise<void> {
+    try {
+      // 通过名称或 vendor/product 匹配 InputDevice
+      const deviceIds = await inputDevice.getDeviceIds();
+      let hasJoystickSource = false;
+
+      for (const id of deviceIds) {
+        const devInfo = await inputDevice.getDeviceInfo(id);
+        // 按名称匹配（GCK 和 InputDevice 通常报告相同名称）
+        // 同时匹配 vendor/product 以提高准确性
+        const nameMatch = devInfo.name === info?.name;
+        const vpMatch = info?.vendor !== undefined && info?.product !== undefined &&
+          devInfo.vendor === info.vendor && devInfo.product === info.product;
+
+        if (nameMatch || vpMatch) {
+          hasJoystickSource = devInfo.sources.some(
+            (s: inputDevice.SourceType) => s === 'joystick'
+          );
+          if (hasJoystickSource) break;
+        }
+      }
+
+      if (hasJoystickSource) {
+        // 设备确实是手柄（带键盘功能），正常注册
+        console.info(`[GAMEPAD-GC] 设备 "${info?.name}" 验证通过（有 joystick 源），继续注册`);
+        this.continueGCDeviceRegistration(deviceId, info);
+      } else {
+        // 设备不是手柄（如 RAPOO Keyboard-1），跳过
+        console.info(`[GAMEPAD-GC] 设备 "${info?.name}" 无 joystick 源，跳过（不是手柄）`);
+      }
+    } catch (err) {
+      // 查询失败，安全起见跳过（避免误注册键盘为手柄）
+      console.warn(`[GAMEPAD-GC] 验证设备 "${info?.name}" 失败，跳过: ${err}`);
+    }
+  }
+
+  /**
+   * 继续 GCK 设备注册流程（在异步验证通过后调用）
+   * 包含去重检查和槽位分配
+   */
+  private continueGCDeviceRegistration(deviceId: string, info: GameControllerDeviceInfo): void {
+    // 防止异步期间已有其他路径注册了此设备
+    if (this.gcDeviceIdToSlot.has(deviceId)) {
+      return;
+    }
+
+    const hadNoGcDevices = this.gcDeviceIdToSlot.size === 0;
+
+    const slot = this.allocateSlotForGCDevice(deviceId);
+    if (slot < 0) {
+      console.warn(`[GAMEPAD-GC] 无法分配槽位，忽略设备: ${info?.name}`);
+      return;
+    }
+
+    if (info) {
+      this.gcDeviceInfoCache.set(deviceId, info);
+    }
+
+    this.gcDeviceStates.set(deviceId, this.createEmptyState());
+
+    if (this.listener) {
+      const ctrlType = MoonlightControllerType.fromDeviceName(info?.name || '');
+      console.info(`[GAMEPAD-GC] 通知手柄连接(验证后): slot=${slot}, name=${info?.name || `Controller ${slot}`}, type=${ctrlType}`);
+      this.listener.onGamepadConnected(slot, info?.name || `Controller ${slot}`, ctrlType);
+    }
+
+    if (hadNoGcDevices) {
+      gameControllerService.startMonitor();
+      console.info('[GAMEPAD] 检测到手柄连接，恢复 GCK Monitor');
+    }
+  }
+
   /**
    * 处理 Game Controller Kit 按键事件
    */

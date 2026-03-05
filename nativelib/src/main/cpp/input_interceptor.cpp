@@ -38,6 +38,7 @@ struct InterceptedKeyEvent {
     int32_t keyCode;
     int32_t action;     // KEY_ACTION_DOWN=1, KEY_ACTION_UP=2
     int64_t actionTime;
+    int32_t deviceId;   // 输入设备 ID（用于区分键盘 vs 手柄）, -1 = 未知
 };
 
 // ==================== 全局状态 ====================
@@ -56,12 +57,16 @@ typedef Input_Result (*PFN_SetKeyEventAction)(Input_KeyEvent *keyEvent, int32_t 
 typedef Input_Result (*PFN_SetKeyEventActionTime)(Input_KeyEvent *keyEvent, int64_t actionTime);
 typedef Input_Result (*PFN_InjectKeyEvent)(const Input_KeyEvent *keyEvent);
 
+// deviceId 获取函数指针（API 14+，可选）
+typedef int32_t (*PFN_GetKeyEventDeviceId)(const Input_KeyEvent *keyEvent);
+
 static PFN_CreateKeyEvent g_pfnCreateKeyEvent = nullptr;
 static PFN_DestroyKeyEvent g_pfnDestroyKeyEvent = nullptr;
 static PFN_SetKeyEventKeyCode g_pfnSetKeyCode = nullptr;
 static PFN_SetKeyEventAction g_pfnSetAction = nullptr;
 static PFN_SetKeyEventActionTime g_pfnSetActionTime = nullptr;
 static PFN_InjectKeyEvent g_pfnInjectKeyEvent = nullptr;
+static PFN_GetKeyEventDeviceId g_pfnGetKeyEventDeviceId = nullptr;
 static bool g_injectApiChecked = false;
 static bool g_injectApiAvailable = false;
 
@@ -101,6 +106,11 @@ static bool CheckAndLoadInjectApi()
         g_pfnSetActionTime   = nullptr;
         g_pfnInjectKeyEvent  = nullptr;
     }
+    
+    // 尝试加载 deviceId 获取函数（可选，API 14+）
+    g_pfnGetKeyEventDeviceId = (PFN_GetKeyEventDeviceId)dlsym(handle, "OH_Input_GetKeyEventDeviceId");
+    LOGI("GetKeyEventDeviceId: %{public}s", g_pfnGetKeyEventDeviceId ? "available" : "not available");
+    
     // 不 dlclose，保持库加载
     return g_injectApiAvailable;
 }
@@ -168,6 +178,7 @@ static void OnKeyEventCallback(const Input_KeyEvent *keyEvent)
     data->keyCode = keyCode;
     data->action = OH_Input_GetKeyEventAction(keyEvent);
     data->actionTime = OH_Input_GetKeyEventActionTime(keyEvent);
+    data->deviceId = g_pfnGetKeyEventDeviceId ? g_pfnGetKeyEventDeviceId(keyEvent) : -1;
 
     napi_status status = napi_call_threadsafe_function(g_tsCallback, data, napi_tsfn_nonblocking);
     if (status != napi_ok) {
@@ -188,18 +199,20 @@ static void CallJsCallback(napi_env env, napi_value jsCallback, void *context, v
 
     auto *event = static_cast<InterceptedKeyEvent *>(data);
 
-    // 构造参数: { keyCode: number, action: number, actionTime: number }
+    // 构造参数: { keyCode: number, action: number, actionTime: number, deviceId: number }
     napi_value jsEvent;
     napi_create_object(env, &jsEvent);
 
-    napi_value keyCodeVal, actionVal, actionTimeVal;
+    napi_value keyCodeVal, actionVal, actionTimeVal, deviceIdVal;
     napi_create_int32(env, event->keyCode, &keyCodeVal);
     napi_create_int32(env, event->action, &actionVal);
     napi_create_int64(env, event->actionTime, &actionTimeVal);
+    napi_create_int32(env, event->deviceId, &deviceIdVal);
 
     napi_set_named_property(env, jsEvent, "keyCode", keyCodeVal);
     napi_set_named_property(env, jsEvent, "action", actionVal);
     napi_set_named_property(env, jsEvent, "actionTime", actionTimeVal);
+    napi_set_named_property(env, jsEvent, "deviceId", deviceIdVal);
 
     // 调用 ArkTS 回调
     napi_value result;
@@ -211,7 +224,7 @@ static void CallJsCallback(napi_env env, napi_value jsCallback, void *context, v
 // ==================== NAPI 接口 ====================
 
 /**
- * addKeyInterceptor(callback: (event: {keyCode, action, actionTime}) => void): number
+ * addKeyInterceptor(callback: (event: {keyCode, action, actionTime, deviceId}) => void): number
  *
  * 启用按键拦截器。返回 0 表示成功。
  */

@@ -28,6 +28,7 @@ export interface InterceptedKeyEvent {
   keyCode: number;
   action: number;      // 1 = KEY_DOWN, 2 = KEY_UP
   actionTime: number;
+  deviceId: number;    // 输入设备 ID（-1 = 未知，API 14+ 可用）
 }
 
 /**
