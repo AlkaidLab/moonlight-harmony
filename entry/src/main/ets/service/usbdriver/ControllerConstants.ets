@@ -14,7 +14,7 @@
  * 参考 Android moonlight-android ControllerPacket
  */
 
-// 按钮标志位定义
+// 按钮标志位定义（完整定义见 CustomKeyTypes.GamepadButton）
 export class ButtonFlags {
   static readonly UP_FLAG: number = 0x0001;
   static readonly DOWN_FLAG: number = 0x0002;

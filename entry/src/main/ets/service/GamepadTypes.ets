@@ -64,7 +64,7 @@ export class DeviceBusType {
   static readonly BUS_BLUETOOTH = 0x05;
 }
 
-/** Moonlight 按键标志位 */
+/** Moonlight 按键标志位（完整定义见 CustomKeyTypes.GamepadButton） */
 export class MoonlightButton {
   static readonly UP = 0x0001;
   static readonly DOWN = 0x0002;

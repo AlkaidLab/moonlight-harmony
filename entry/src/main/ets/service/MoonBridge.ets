@@ -75,7 +75,7 @@ export const LI_ROT_UNKNOWN = 0xFFFF;
 // 主机功能标志
 export const LI_FF_PEN_TOUCH_EVENTS = 0x01;
 
-// 手柄按钮
+// 手柄按钮（完整定义见 CustomKeyTypes.GamepadButton）
 export const A_FLAG = 0x1000;
 export const B_FLAG = 0x2000;
 export const X_FLAG = 0x4000;

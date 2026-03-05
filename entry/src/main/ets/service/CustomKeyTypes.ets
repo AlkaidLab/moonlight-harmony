@@ -355,6 +355,50 @@ export class VirtualKey {
 }
 
 // =============================================================================
+// 统一的手柄按钮掩码常量
+// =============================================================================
+
+/**
+ * 手柄按钮位掩码（统一常量表）
+ *
+ * 所有手柄按钮掩码定义的唯一来源，供自定义按键、显示名称、预设等共用。
+ * 值与 moonlight-common-c/Limelight.h 保持一致。
+ * 原先分散在 MoonBridge / GamepadTypes.MoonlightButton / ControllerConstants.ButtonFlags 中。
+ */
+export class GamepadButton {
+  // D-Pad
+  static readonly UP = 0x0001;
+  static readonly DOWN = 0x0002;
+  static readonly LEFT = 0x0004;
+  static readonly RIGHT = 0x0008;
+  // 功能键
+  static readonly START = 0x0010;        // Play/Menu
+  static readonly BACK = 0x0020;         // Select/View
+  // 摇杆按下
+  static readonly LS = 0x0040;           // Left Stick Click (L3)
+  static readonly RS = 0x0080;           // Right Stick Click (R3)
+  // 肩键
+  static readonly LB = 0x0100;
+  static readonly RB = 0x0200;
+  // 特殊
+  static readonly GUIDE = 0x0400;        // Xbox/PS/Home 按钮
+  // 面板键
+  static readonly A = 0x1000;
+  static readonly B = 0x2000;
+  static readonly X = 0x4000;
+  static readonly Y = 0x8000;
+  // 扩展按钮（值必须与 moonlight-common-c/Limelight.h 一致）
+  static readonly PADDLE1 = 0x010000;
+  static readonly PADDLE2 = 0x020000;
+  static readonly PADDLE3 = 0x040000;
+  static readonly PADDLE4 = 0x080000;
+  static readonly TOUCHPAD = 0x100000;   // 触摸板按钮 (DualShock4/DualSense)
+  static readonly MISC = 0x200000;       // 杂项按钮 (Capture/Mute 等)
+  // 组合掩码
+  static readonly DPAD_MASK = 0x000F;    // UP | DOWN | LEFT | RIGHT
+}
+
+// =============================================================================
 // 常用按键预设
 // =============================================================================
 
@@ -404,13 +448,24 @@ export function getVkDisplayName(vk: number): string {
 
 /** 手柄按键掩码 → 显示名称 */
 export const GAMEPAD_DISPLAY_NAMES: Record<number, string> = {
-  0x1000: 'A', 0x2000: 'B', 0x4000: 'X', 0x8000: 'Y',
-  0x0100: 'LB', 0x0200: 'RB',
-  0x0010: 'Start', 0x0020: 'Back',
-  0x0040: 'L3', 0x0080: 'R3',
-  0x0400: 'Guide',
-  0x0001: 'D↑', 0x0002: 'D↓', 0x0004: 'D←', 0x0008: 'D→',
+  [GamepadButton.A]: 'A', [GamepadButton.B]: 'B',
+  [GamepadButton.X]: 'X', [GamepadButton.Y]: 'Y',
+  [GamepadButton.LB]: 'LB', [GamepadButton.RB]: 'RB',
+  [GamepadButton.START]: 'Start', [GamepadButton.BACK]: 'Back',
+  [GamepadButton.LS]: 'L3', [GamepadButton.RS]: 'R3',
+  [GamepadButton.GUIDE]: 'Guide',
+  [GamepadButton.UP]: 'D↑', [GamepadButton.DOWN]: 'D↓',
+  [GamepadButton.LEFT]: 'D←', [GamepadButton.RIGHT]: 'D→',
+  // 扩展按钮
+  [GamepadButton.PADDLE1]: 'P1', [GamepadButton.PADDLE2]: 'P2',
+  [GamepadButton.PADDLE3]: 'P3', [GamepadButton.PADDLE4]: 'P4',
+  [GamepadButton.TOUCHPAD]: 'Touchpad', [GamepadButton.MISC]: 'Misc',
 };
+
+/** 获取手柄按钮掩码的显示名称 */
+export function getGamepadDisplayName(mask: number): string {
+  return GAMEPAD_DISPLAY_NAMES[mask] ?? `手柄0x${mask.toString(16)}`;
+}
 
 /** 获取 KeyAction 的显示名称 */
 export function getActionDisplayName(action: KeyAction): string {
@@ -425,7 +480,7 @@ export function getActionDisplayName(action: KeyAction): string {
     case 'mouseScroll':
       return action.direction > 0 ? '滚轮↑' : '滚轮↓';
     case 'gamepadButton':
-      return GAMEPAD_DISPLAY_NAMES[action.mask] ?? `手柄0x${action.mask.toString(16)}`;
+      return getGamepadDisplayName(action.mask);
     case 'gamepadTrigger':
       return action.trigger === 'left' ? 'LT' : 'RT';
     case 'combo':
@@ -520,23 +575,29 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
   {
     name: '手柄',
     presets: [
-      { label: 'A', action: { type: 'gamepadButton', mask: 0x1000 } },
-      { label: 'B', action: { type: 'gamepadButton', mask: 0x2000 } },
-      { label: 'X', action: { type: 'gamepadButton', mask: 0x4000 } },
-      { label: 'Y', action: { type: 'gamepadButton', mask: 0x8000 } },
-      { label: 'LB', action: { type: 'gamepadButton', mask: 0x0100 } },
-      { label: 'RB', action: { type: 'gamepadButton', mask: 0x0200 } },
+      { label: 'A', action: { type: 'gamepadButton', mask: GamepadButton.A } },
+      { label: 'B', action: { type: 'gamepadButton', mask: GamepadButton.B } },
+      { label: 'X', action: { type: 'gamepadButton', mask: GamepadButton.X } },
+      { label: 'Y', action: { type: 'gamepadButton', mask: GamepadButton.Y } },
+      { label: 'LB', action: { type: 'gamepadButton', mask: GamepadButton.LB } },
+      { label: 'RB', action: { type: 'gamepadButton', mask: GamepadButton.RB } },
       { label: 'LT', action: { type: 'gamepadTrigger', trigger: 'left' } as GamepadTriggerAction },
       { label: 'RT', action: { type: 'gamepadTrigger', trigger: 'right' } as GamepadTriggerAction },
-      { label: 'Start', action: { type: 'gamepadButton', mask: 0x0010 } },
-      { label: 'Back', action: { type: 'gamepadButton', mask: 0x0020 } },
-      { label: 'L3', action: { type: 'gamepadButton', mask: 0x0040 } },
-      { label: 'R3', action: { type: 'gamepadButton', mask: 0x0080 } },
-      { label: 'Guide', action: { type: 'gamepadButton', mask: 0x0400 } },
-      { label: 'D↑', action: { type: 'gamepadButton', mask: 0x0001 } },
-      { label: 'D↓', action: { type: 'gamepadButton', mask: 0x0002 } },
-      { label: 'D←', action: { type: 'gamepadButton', mask: 0x0004 } },
-      { label: 'D→', action: { type: 'gamepadButton', mask: 0x0008 } },
+      { label: 'Start', action: { type: 'gamepadButton', mask: GamepadButton.START } },
+      { label: 'Back', action: { type: 'gamepadButton', mask: GamepadButton.BACK } },
+      { label: 'L3', action: { type: 'gamepadButton', mask: GamepadButton.LS } },
+      { label: 'R3', action: { type: 'gamepadButton', mask: GamepadButton.RS } },
+      { label: 'Guide', action: { type: 'gamepadButton', mask: GamepadButton.GUIDE } },
+      { label: 'D↑', action: { type: 'gamepadButton', mask: GamepadButton.UP } },
+      { label: 'D↓', action: { type: 'gamepadButton', mask: GamepadButton.DOWN } },
+      { label: 'D←', action: { type: 'gamepadButton', mask: GamepadButton.LEFT } },
+      { label: 'D→', action: { type: 'gamepadButton', mask: GamepadButton.RIGHT } },
+      { label: 'P1', action: { type: 'gamepadButton', mask: GamepadButton.PADDLE1 } },
+      { label: 'P2', action: { type: 'gamepadButton', mask: GamepadButton.PADDLE2 } },
+      { label: 'P3', action: { type: 'gamepadButton', mask: GamepadButton.PADDLE3 } },
+      { label: 'P4', action: { type: 'gamepadButton', mask: GamepadButton.PADDLE4 } },
+      { label: 'Touchpad', action: { type: 'gamepadButton', mask: GamepadButton.TOUCHPAD } },
+      { label: 'Misc', action: { type: 'gamepadButton', mask: GamepadButton.MISC } },
     ],
   },
   {
