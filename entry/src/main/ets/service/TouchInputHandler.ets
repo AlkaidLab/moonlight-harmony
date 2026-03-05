@@ -39,8 +39,8 @@ import {
  */
 export enum TouchInputMode {
   TRACKPAD = 'trackpad',  // 触摸板模式：相对移动
-  DIRECT = 'direct',      // 直接触摸模式：绝对坐标
-  MOUSE = 'mouse'         // 鼠标模式：相对移动 + 按键
+  DIRECT = 'direct',      // 直接触摸模式：绝对坐标（多点触控协议）
+  MOUSE = 'mouse'         // 鼠标模式：绝对定位 + 死区 + 长按右键 + 双指滚轮
 }
 
 /**
@@ -131,6 +131,56 @@ export class TouchInputHandler {
   private static readonly TWO_FINGER_MOVE_THRESHOLD = 30;
   /** 滚轮速度因子 */
   private static readonly SCROLL_SPEED_FACTOR = 5;
+
+  // ====== 鼠标模式状态（绝对定位 + 死区 + 长按右键，对齐 Android AbsoluteTouchContext） ======
+  /** 主手指按下位置 */
+  private mouseDownX: number = 0;
+  private mouseDownY: number = 0;
+  private mouseDownTime: number = 0;
+  /** 上次抬起位置（用于双击判定） */
+  private mouseLastUpX: number = 0;
+  private mouseLastUpY: number = 0;
+  private mouseLastUpTime: number = 0;
+  /** 当前主手指位置 */
+  private mouseLastX: number = 0;
+  private mouseLastY: number = 0;
+  /** 手势是否已取消（第二根手指出现时取消主手指） */
+  private mouseCancelled: boolean = false;
+  /** 是否已确认为点击（死区时间/距离超过后） */
+  private mouseConfirmedTap: boolean = false;
+  /** 是否已确认为长按（650ms 后切换为右键） */
+  private mouseConfirmedLongPress: boolean = false;
+  /** 长按定时器 */
+  private mouseLongPressTimer: number = -1;
+  /** 死区定时器（100ms 后确认点击） */
+  private mouseTapDownTimer: number = -1;
+  /** 左键释放延迟定时器（快速点击时延迟 100ms 释放） */
+  private mouseLeftButtonUpTimer: number = -1;
+  /** 主手指 ID */
+  private mousePrimaryFingerId: number = -1;
+  /** 第二根手指 ID（用于滚轮） */
+  private mouseSecondFingerId: number = -1;
+  /** 第二根手指的最后 Y 位置 */
+  private mouseSecondFingerLastY: number = 0;
+  /** 组件区域尺寸（缓存，用于 sendMousePosition） */
+  private mouseAreaWidth: number = 0;
+  private mouseAreaHeight: number = 0;
+
+  // 鼠标模式常量（与 Android AbsoluteTouchContext 一致）
+  /** 长按时间阈值（ms） */
+  private static readonly MOUSE_LONG_PRESS_TIME = 650;
+  /** 长按移动距离阈值（px）—— 超过后取消长按 */
+  private static readonly MOUSE_LONG_PRESS_DISTANCE = 30;
+  /** 死区时间阈值（ms）—— 按下后此时间内不响应移动 */
+  private static readonly MOUSE_DEADZONE_TIME = 100;
+  /** 死区距离阈值（px）—— 移动超过此距离立即确认点击 */
+  private static readonly MOUSE_DEADZONE_DISTANCE = 20;
+  /** 双击时间阈值（ms）—— 两次点击间隔小于此值视为双击 */
+  private static readonly MOUSE_DOUBLE_TAP_TIME = 250;
+  /** 双击距离阈值（px）—— 两次点击位置距离小于此值视为双击 */
+  private static readonly MOUSE_DOUBLE_TAP_DISTANCE = 60;
+  /** 鼠标模式滚轮速度因子 */
+  private static readonly MOUSE_SCROLL_SPEED_FACTOR = 3;
 
   // 默认配置
   private static readonly DEFAULT_SENSITIVITY = 1.5;
@@ -234,21 +284,8 @@ export class TouchInputHandler {
       return;
     }
     
-    // MOUSE 模式：只处理第一个触摸点
-    const touch = touches[0];
-    
-    switch (event.type) {
-      case TouchType.Down:
-        this.handleTouchDown(touch, event);
-        break;
-      case TouchType.Move:
-        this.handleTouchMove(touch, event);
-        break;
-      case TouchType.Up:
-      case TouchType.Cancel:
-        this.handleTouchUp(touch, event);
-        break;
-    }
+    // MOUSE 模式：绝对定位 + 死区 + 长按右键 + 双指滚轮（对齐 Android AbsoluteTouchContext）
+    this.handleMouseEvent(event);
   }
   
   /**
@@ -551,64 +588,210 @@ export class TouchInputHandler {
     }
   }
 
+  // ====== MOUSE 模式：绝对定位（对齐 Android AbsoluteTouchContext） ======
+
   /**
-   * 处理触摸按下 (MOUSE 模式)
+   * 计算两点间距离是否超过阈值
    */
-  private handleTouchDown(touch: TouchObject, event: TouchEvent): void {
-    // 记录触摸状态
-    this.touchStates.set(touch.id, {
-      startX: touch.x,   // 记录起始位置（用于判断是否为点击）
-      startY: touch.y,
-      lastX: touch.x,    // 最后位置（用于计算相对移动）
-      lastY: touch.y,
-      startTime: Date.now()
-    });
-    
-    if (this.mode === TouchInputMode.MOUSE) {
-      // 鼠标模式：触摸作为左键点击
-      this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
-    }
-    // trackpad 模式：按下不做动作，等待移动
+  private mouseDistanceExceeds(deltaX: number, deltaY: number, limit: number): boolean {
+    return Math.sqrt(deltaX * deltaX + deltaY * deltaY) > limit;
   }
-  
+
   /**
-   * 处理触摸移动 (MOUSE 模式)
+   * 更新绝对鼠标位置（限制在组件区域内）
    */
-  private handleTouchMove(touch: TouchObject, event: TouchEvent): void {
-    const state = this.touchStates.get(touch.id);
-    if (!state) {
+  private mouseUpdatePosition(eventX: number, eventY: number): void {
+    const x = Math.min(Math.max(eventX, 0), this.mouseAreaWidth);
+    const y = Math.min(Math.max(eventY, 0), this.mouseAreaHeight);
+    this.nativeInput.sendMousePosition(
+      Math.floor(x), Math.floor(y),
+      Math.floor(this.mouseAreaWidth), Math.floor(this.mouseAreaHeight)
+    );
+  }
+
+  /**
+   * 确认点击（死区时间/距离超过后调用）
+   * 发送绝对鼠标位置 + 左键按下
+   */
+  private mouseTapConfirmed(): void {
+    if (this.mouseConfirmedTap || this.mouseConfirmedLongPress) {
       return;
     }
-    
-    const deltaX = touch.x - state.lastX;
-    const deltaY = touch.y - state.lastY;
-    
-    // 更新状态
-    state.lastX = touch.x;
-    state.lastY = touch.y;
-    
-    if (this.mode === TouchInputMode.MOUSE) {
-      // 鼠标模式：移动光标（相对移动）
-      this.nativeInput.sendMouseMove(
-        Math.floor(deltaX),
-        Math.floor(deltaY)
-      );
+    this.mouseConfirmedTap = true;
+    this.cancelMouseTapDownTimer();
+
+    // 双击判定：如果本次按下距上次抬起很近且时间短，不重定位（方便双击）
+    if (this.mouseDownTime - this.mouseLastUpTime > TouchInputHandler.MOUSE_DOUBLE_TAP_TIME ||
+        this.mouseDistanceExceeds(
+          this.mouseDownX - this.mouseLastUpX,
+          this.mouseDownY - this.mouseLastUpY,
+          TouchInputHandler.MOUSE_DOUBLE_TAP_DISTANCE)) {
+      this.mouseUpdatePosition(this.mouseDownX, this.mouseDownY);
     }
+    this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
   }
-  
+
   /**
-   * 处理触摸抬起 (MOUSE 模式)
+   * 取消主手指手势（第二根手指出现时调用）
    */
-  private handleTouchUp(touch: TouchObject, event: TouchEvent): void {
-    const state = this.touchStates.get(touch.id);
-    
-    if (this.mode === TouchInputMode.MOUSE) {
-      // 鼠标模式：释放左键
+  private mouseCancelTouch(): void {
+    this.mouseCancelled = true;
+    this.cancelMouseLongPressTimer();
+    this.cancelMouseTapDownTimer();
+
+    if (this.mouseConfirmedLongPress) {
+      this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
+    } else if (this.mouseConfirmedTap) {
       this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
     }
-    
-    // 清理触摸状态
-    this.touchStates.delete(touch.id);
+  }
+
+  private startMouseLongPressTimer(): void {
+    this.cancelMouseLongPressTimer();
+    this.mouseLongPressTimer = setTimeout(() => {
+      this.cancelMouseTapDownTimer();
+      this.mouseConfirmedLongPress = true;
+      if (this.mouseConfirmedTap) {
+        this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+      }
+      this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_RIGHT);
+    }, TouchInputHandler.MOUSE_LONG_PRESS_TIME);
+  }
+
+  private cancelMouseLongPressTimer(): void {
+    if (this.mouseLongPressTimer !== -1) {
+      clearTimeout(this.mouseLongPressTimer);
+      this.mouseLongPressTimer = -1;
+    }
+  }
+
+  private startMouseTapDownTimer(): void {
+    this.cancelMouseTapDownTimer();
+    this.mouseTapDownTimer = setTimeout(() => {
+      this.mouseTapConfirmed();
+    }, TouchInputHandler.MOUSE_DEADZONE_TIME);
+  }
+
+  private cancelMouseTapDownTimer(): void {
+    if (this.mouseTapDownTimer !== -1) {
+      clearTimeout(this.mouseTapDownTimer);
+      this.mouseTapDownTimer = -1;
+    }
+  }
+
+  /**
+   * 处理鼠标模式触摸事件（对齐 Android AbsoluteTouchContext）
+   * - 主手指：绝对定位 + 死区 + 长按右键
+   * - 第二根手指：滚轮
+   * - 第二根手指出现时取消主手指手势
+   */
+  private handleMouseEvent(event: TouchEvent): void {
+    // 缓存组件尺寸
+    this.mouseAreaWidth = event.target.area.width as number;
+    this.mouseAreaHeight = event.target.area.height as number;
+
+    const changedTouches = event.changedTouches;
+
+    switch (event.type) {
+      case TouchType.Down: {
+        for (const touch of changedTouches) {
+          if (this.mousePrimaryFingerId === -1) {
+            // 第一根手指：设为主手指
+            this.mousePrimaryFingerId = touch.id;
+            this.mouseDownX = this.mouseLastX = touch.x;
+            this.mouseDownY = this.mouseLastY = touch.y;
+            this.mouseDownTime = Date.now();
+            this.mouseCancelled = false;
+            this.mouseConfirmedTap = false;
+            this.mouseConfirmedLongPress = false;
+
+            // 启动定时器
+            this.startMouseTapDownTimer();
+            this.startMouseLongPressTimer();
+          } else if (this.mouseSecondFingerId === -1) {
+            // 第二根手指：用于滚轮，同时取消主手指手势
+            this.mouseSecondFingerId = touch.id;
+            this.mouseSecondFingerLastY = touch.y;
+            this.mouseCancelTouch();
+          }
+          // 忽略更多手指
+        }
+        break;
+      }
+
+      case TouchType.Move: {
+        for (const touch of changedTouches) {
+          if (touch.id === this.mousePrimaryFingerId && !this.mouseCancelled) {
+            // 主手指移动：绝对定位
+            if (this.mouseDistanceExceeds(
+              touch.x - this.mouseDownX, touch.y - this.mouseDownY,
+              TouchInputHandler.MOUSE_LONG_PRESS_DISTANCE)) {
+              // 移动过远，取消长按
+              this.cancelMouseLongPressTimer();
+            }
+
+            // 死区内忽略移动，死区外确认点击并更新位置
+            if (this.mouseConfirmedTap ||
+                this.mouseDistanceExceeds(
+                  touch.x - this.mouseDownX, touch.y - this.mouseDownY,
+                  TouchInputHandler.MOUSE_DEADZONE_DISTANCE)) {
+              this.mouseTapConfirmed();
+              this.mouseUpdatePosition(touch.x, touch.y);
+            }
+
+            this.mouseLastX = touch.x;
+            this.mouseLastY = touch.y;
+          } else if (touch.id === this.mouseSecondFingerId) {
+            // 第二根手指移动：滚轮
+            const deltaY = touch.y - this.mouseSecondFingerLastY;
+            this.nativeInput.sendMouseHighResScroll(
+              Math.floor(deltaY * TouchInputHandler.MOUSE_SCROLL_SPEED_FACTOR)
+            );
+            this.mouseSecondFingerLastY = touch.y;
+          }
+        }
+        break;
+      }
+
+      case TouchType.Up:
+      case TouchType.Cancel: {
+        for (const touch of changedTouches) {
+          if (touch.id === this.mousePrimaryFingerId) {
+            // 主手指抬起
+            this.mousePrimaryFingerId = -1;
+
+            if (!this.mouseCancelled) {
+              this.cancelMouseLongPressTimer();
+              this.cancelMouseTapDownTimer();
+
+              if (this.mouseConfirmedLongPress) {
+                this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
+              } else if (this.mouseConfirmedTap) {
+                this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+              } else {
+                // 在死区时间内完成的快速点击：立即按下，延迟 100ms 释放
+                this.mouseTapConfirmed();
+                if (this.mouseLeftButtonUpTimer !== -1) {
+                  clearTimeout(this.mouseLeftButtonUpTimer);
+                }
+                this.mouseLeftButtonUpTimer = setTimeout(() => {
+                  this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+                  this.mouseLeftButtonUpTimer = -1;
+                }, 100);
+              }
+            }
+
+            this.mouseLastUpX = touch.x;
+            this.mouseLastUpY = touch.y;
+            this.mouseLastUpTime = Date.now();
+          } else if (touch.id === this.mouseSecondFingerId) {
+            // 第二根手指抬起
+            this.mouseSecondFingerId = -1;
+          }
+        }
+        break;
+      }
+    }
   }
   
   /**
