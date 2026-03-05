@@ -34,6 +34,12 @@ import {
 } from '../service/CustomKeyTypes';
 import { CustomKeyStore } from '../service/CustomKeyStore';
 import { VirtualJoystick } from './VirtualJoystick';
+import {
+  OV_ACCENT_BLUE, OV_TEXT_BRIGHT, OV_TEXT_MEDIUM, OV_TEXT_DIM,
+  OV_TEXT_WHITE, OV_TEXT_SUBTLE, OV_BG_TRACK, OV_BG_CARD_LIGHTER,
+  OV_BG_CARD_DARK, OV_BLUE_40, OV_BLUE_50,
+  OV_FONT_MD, OV_FONT_LG,
+} from '../common/OverlayConstants';
 
 // =============================================================================
 // 常量
@@ -90,7 +96,7 @@ struct CustomKeyBtn {
   build() {
     Text(this.keyDef.label)
       .fontSize(this.keyDef.fontSize)
-      .fontColor(this.isPressed || this.isToggled ? '#FFFFFF' : this.keyDef.textColor)
+      .fontColor(this.isPressed || this.isToggled ? OV_TEXT_WHITE : this.keyDef.textColor)
       .fontWeight(FontWeight.Bold)
       .textAlign(TextAlign.Center)
       .width(this.keyDef.width)
@@ -389,7 +395,7 @@ export struct CustomKeyOverlay {
             SymbolGlyph($r('sys.symbol.plus_circle'))
               .fontSize(16).fontColor([Color.White])
             Text('添加')
-              .fontSize(13).fontColor('#FFFFFF').fontWeight(FontWeight.Medium)
+              .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
           .height(32).padding({ left: 10, right: 12 })
           .borderRadius(16).backgroundColor('#50C080')
@@ -401,7 +407,7 @@ export struct CustomKeyOverlay {
             SymbolGlyph($r('sys.symbol.trash'))
               .fontSize(16).fontColor([Color.White])
             Text('删除')
-              .fontSize(13).fontColor('#FFFFFF').fontWeight(FontWeight.Medium)
+              .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
           .height(32).padding({ left: 10, right: 12 })
           .borderRadius(16).backgroundColor('#D06060')
@@ -413,7 +419,7 @@ export struct CustomKeyOverlay {
             SymbolGlyph($r('sys.symbol.gearshape'))
               .fontSize(16).fontColor([Color.White])
             Text('属性')
-              .fontSize(13).fontColor('#FFFFFF').fontWeight(FontWeight.Medium)
+              .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
           .height(32).padding({ left: 10, right: 12 })
           .borderRadius(16).backgroundColor('#6098C0')
@@ -427,7 +433,7 @@ export struct CustomKeyOverlay {
             SymbolGlyph($r('sys.symbol.checkmark_circle'))
               .fontSize(16).fontColor([Color.White])
             Text('完成')
-              .fontSize(13).fontColor('#FFFFFF').fontWeight(FontWeight.Medium)
+              .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
           .height(32).padding({ left: 10, right: 12 })
           .borderRadius(16).backgroundColor('#A8D8EA')
@@ -643,11 +649,11 @@ export struct CustomKeyOverlay {
     Column() {
       // 标题栏
       Row() {
-        Text('添加按键').fontSize(16).fontColor('#FFFFFF').fontWeight(FontWeight.Bold)
+        Text('添加按键').fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
         Blank()
         Text('✕').fontSize(14).fontColor('#99FFFFFF')
           .width(28).height(28).textAlign(TextAlign.Center)
-          .borderRadius(14).backgroundColor('#30FFFFFF')
+          .borderRadius(14).backgroundColor(OV_BG_TRACK)
           .onClick(() => { this.showAddPanel = false; })
       }
       .width('100%')
@@ -659,7 +665,7 @@ export struct CustomKeyOverlay {
           ForEach(KEY_PRESET_CATEGORIES, (category: KeyPresetCategory, index: number) => {
             Text(category.name)
               .fontSize(12)
-              .fontColor(this.addPanelCategoryIdx === index ? '#FFFFFF' : '#80FFFFFF')
+              .fontColor(this.addPanelCategoryIdx === index ? OV_TEXT_WHITE : '#80FFFFFF')
               .fontWeight(this.addPanelCategoryIdx === index ? FontWeight.Bold : FontWeight.Normal)
               .padding({ left: 12, right: 12 })
               .height(30)
@@ -685,11 +691,11 @@ export struct CustomKeyOverlay {
           space: { main: LengthMetrics.vp(6), cross: LengthMetrics.vp(6) } }) {
           ForEach(this.getSelectedCategoryPresets(), (preset: KeyPreset) => {
             Text(preset.label)
-              .fontSize(12).fontColor('#E0FFFFFF').fontWeight(FontWeight.Bold)
+              .fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Bold)
               .constraintSize({ minWidth: 42 })
               .padding({ left: 6, right: 6 })
               .height(36).textAlign(TextAlign.Center)
-              .borderRadius(8).backgroundColor('#30FFFFFF')
+              .borderRadius(8).backgroundColor(OV_BG_TRACK)
               .border({ width: 1, color: '#20FFFFFF' })
               .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
               .onClick(() => { this.addKeyFromPreset(preset); })
@@ -714,11 +720,11 @@ export struct CustomKeyOverlay {
   PropertyPanel() {
     Column() {
       Row() {
-        Text('按键属性').fontSize(16).fontColor('#FFFFFF').fontWeight(FontWeight.Bold)
+        Text('按键属性').fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
         Blank()
         Text('✕').fontSize(14).fontColor('#99FFFFFF')
           .width(28).height(28).textAlign(TextAlign.Center)
-          .borderRadius(14).backgroundColor('#30FFFFFF')
+          .borderRadius(14).backgroundColor(OV_BG_TRACK)
           .onClick(() => { this.showPropertyPanel = false; })
       }
       .width('100%')
@@ -728,10 +734,10 @@ export struct CustomKeyOverlay {
         Column({ space: 10 }) {
           // 标签编辑
           Row() {
-            Text('标签').fontSize(12).fontColor('#B0FFFFFF').width(50)
+            Text('标签').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
             TextInput({ text: this.getSelectedKey()?.label ?? '' })
-              .layoutWeight(1).height(32).fontSize(13)
-              .fontColor('#FFFFFF').backgroundColor('#20FFFFFF')
+              .layoutWeight(1).height(32).fontSize(OV_FONT_LG)
+              .fontColor(OV_TEXT_WHITE).backgroundColor(OV_BG_CARD_LIGHTER)
               .borderRadius(8).padding({ left: 8, right: 8 })
               .maxLength(8)
               .onChange((value: string) => { this.updateSelectedKeyProp('label', value); })
@@ -746,7 +752,7 @@ export struct CustomKeyOverlay {
 
           // 背景色
           Row() {
-            Text('底色').fontSize(12).fontColor('#B0FFFFFF').width(50)
+            Text('底色').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
             Row({ space: 6 }) {
               ForEach(BG_COLOR_PRESETS, (color: string) => {
                 Text('')
@@ -764,7 +770,7 @@ export struct CustomKeyOverlay {
 
           // 文字色
           Row() {
-            Text('字色').fontSize(12).fontColor('#B0FFFFFF').width(50)
+            Text('字色').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
             Row({ space: 6 }) {
               ForEach(TEXT_COLOR_PRESETS, (color: string) => {
                 Text('')
@@ -781,7 +787,7 @@ export struct CustomKeyOverlay {
           .width('100%').padding({ left: 4, right: 4 })
 
           Row() {
-            Text('模式').fontSize(12).fontColor('#B0FFFFFF').width(50)
+            Text('模式').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
             Row({ space: 8 }) {
               this.BehaviorChip('点触', 'momentary')
               this.BehaviorChip('切换', 'toggle')
@@ -790,7 +796,7 @@ export struct CustomKeyOverlay {
           .width('100%').padding({ left: 4, right: 4 })
 
           Row() {
-            Text('形状').fontSize(12).fontColor('#B0FFFFFF').width(50)
+            Text('形状').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
             Row({ space: 8 }) {
               this.ShapeChip('方形', 'rect')
               this.ShapeChip('圆形', 'circle')
@@ -816,15 +822,15 @@ export struct CustomKeyOverlay {
   @Builder
   PropertySlider(label: string, min: number, max: number, value: number, propName: string) {
     Row() {
-      Text(label).fontSize(12).fontColor('#B0FFFFFF').width(50)
+      Text(label).fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
       Slider({ value: value, min: min, max: max, step: 1, style: SliderStyle.OutSet })
         .layoutWeight(1)
-        .blockColor('#A8D8EA').blockSize({ width: 14, height: 14 })
-        .trackColor('#30FFFFFF').selectedColor('#A8D8EA').trackThickness(3)
+        .blockColor(OV_ACCENT_BLUE).blockSize({ width: 14, height: 14 })
+        .trackColor(OV_BG_TRACK).selectedColor(OV_ACCENT_BLUE).trackThickness(3)
         .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
         .onChange((v: number) => { this.updateSelectedKeyProp(propName, Math.round(v)); })
       Text(Math.round(value).toString())
-        .fontSize(11).fontColor('#80FFFFFF').width(30).textAlign(TextAlign.End)
+        .fontSize(OV_FONT_MD).fontColor(OV_TEXT_DIM).width(30).textAlign(TextAlign.End)
     }
     .width('100%')
   }
@@ -832,8 +838,8 @@ export struct CustomKeyOverlay {
   @Builder
   BehaviorChip(label: string, behavior: KeyBehavior) {
     Text(label)
-      .fontSize(11)
-      .fontColor(this.getSelectedKey()?.behavior === behavior ? '#FFFFFF' : '#80FFFFFF')
+      .fontSize(OV_FONT_MD)
+      .fontColor(this.getSelectedKey()?.behavior === behavior ? OV_TEXT_WHITE : '#80FFFFFF')
       .padding({ left: 10, right: 10 }).height(26).borderRadius(13)
       .backgroundColor(this.getSelectedKey()?.behavior === behavior ? '#50A8D8EA' : '#20FFFFFF')
       .border({
@@ -846,8 +852,8 @@ export struct CustomKeyOverlay {
   @Builder
   ShapeChip(label: string, shape: string) {
     Text(label)
-      .fontSize(11)
-      .fontColor(this.getSelectedKey()?.shape === shape ? '#FFFFFF' : '#80FFFFFF')
+      .fontSize(OV_FONT_MD)
+      .fontColor(this.getSelectedKey()?.shape === shape ? OV_TEXT_WHITE : '#80FFFFFF')
       .padding({ left: 10, right: 10 }).height(26).borderRadius(13)
       .backgroundColor(this.getSelectedKey()?.shape === shape ? '#50A8D8EA' : '#20FFFFFF')
       .border({

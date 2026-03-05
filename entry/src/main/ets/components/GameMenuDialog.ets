@@ -24,6 +24,15 @@ import { GyroAssistService, GYRO_ACTIVATION_ALWAYS, GYRO_ACTIVATION_LT, GYRO_ACT
 import { SettingsKeys } from '../service/SettingsService';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { DeviceSensorService } from '../service/DeviceSensorService';
+import {
+  OV_ACCENT_BLUE, OV_ACCENT_PINK, OV_ACCENT_RED,
+  OV_TEXT_BRIGHT, OV_TEXT_MEDIUM, OV_TEXT_DIM, OV_TEXT_FAINT, OV_TEXT_WHITE, OV_TEXT_ULTRA,
+  OV_BG_TRACK, OV_BG_CARD_LIGHT, OV_BG_CARD_LIGHTER, OV_BG_DIVIDER,
+  OV_BG_CARD_DARK, OV_BG_CARD_DARKER, OV_SHADOW_MEDIUM, OV_SHADOW_LIGHT,
+  OV_BLUE_40, OV_BLUE_50,
+  OV_FONT_XS, OV_FONT_SM, OV_FONT_MD, OV_FONT_LG,
+  OV_CARD_WIDTH, OV_CARD_RADIUS, OV_CARD_BLUR,
+} from '../common/OverlayConstants';
 
 /** 菜单回调接口 */
 export interface GameMenuCallbacks {
@@ -75,7 +84,6 @@ interface ActionItem {
 }
 
 // 常量定义
-const CARD_WIDTH = 280;
 const BUTTON_CARD_SIZE = 70;
 const ANIMATION_STAGGER_DELAY = 50;
 const ANIMATION_DURATION_IN = 200;
@@ -178,13 +186,13 @@ export struct GameMenuDialog {
 
   /**
    * 根据屏幕宽度的 2/3 是否能容纳两列卡片来决定布局
-   * 两列所需宽度 = CARD_WIDTH * 2 + 间距 + 内边距
+   * 两列所需宽度 = OV_CARD_WIDTH * 2 + 间距 + 内边距
    */
   private detectLayoutMode(): void {
     try {
       const displayInfo = display.getDefaultDisplaySync();
       const vpWidth = displayInfo.width / displayInfo.densityPixels;
-      const twoColumnMinWidth = (CARD_WIDTH * 2 + 12 + 32); // 两列卡片 + 间距 + 左右内边距
+      const twoColumnMinWidth = (OV_CARD_WIDTH * 2 + 12 + 32); // 两列卡片 + 间距 + 左右内边距
       this.useTwoColumns = (vpWidth * 2 / 3) >= twoColumnMinWidth;
     } catch (_) {}
   }
@@ -578,9 +586,9 @@ export struct GameMenuDialog {
     Column() {
       Text(icon).fontSize(20)
       Text(label)
-        .fontSize(11)
+        .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#E0FFFFFF')
+        .fontColor(OV_TEXT_BRIGHT)
         .margin({ top: 4 })
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -599,11 +607,11 @@ export struct GameMenuDialog {
     .width(BUTTON_CARD_SIZE)
     .height(BUTTON_CARD_SIZE)
     .padding(10)
-    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
-    .backdropBlur(40)
-    .borderRadius(20)
-    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
+    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
+    .backdropBlur(OV_CARD_BLUR)
+    .borderRadius(OV_CARD_RADIUS)
+    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
     .onClick(() => {
       this.callbacks.onUnlockOverlay?.();
       this.callbacks.onClose?.();
@@ -617,13 +625,13 @@ export struct GameMenuDialog {
         SymbolGlyph($r('sys.symbol.crown'))
           .fontSize(14).fontColor([Color.Orange])
         Text(' 自定义按键')
-          .fontSize(13)
+          .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#E0FFFFFF')
+          .fontColor(OV_TEXT_BRIGHT)
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.showCustomKeys })
-          .selectedColor('#FFB7C5')
-          .switchPointColor('#FFFFFF')
+          .selectedColor(OV_ACCENT_PINK)
+          .switchPointColor(OV_TEXT_WHITE)
           .width(40)
           .height(22)
           .onChange((isOn: boolean) => {
@@ -637,8 +645,8 @@ export struct GameMenuDialog {
       .padding({ left: 16, right: 12, top: 14, bottom: 4 })
 
       Text('自由放置的屏幕虚拟按键')
-        .fontSize(10)
-        .fontColor('#60FFFFFF')
+        .fontSize(OV_FONT_SM)
+        .fontColor(OV_TEXT_FAINT)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 10 })
 
@@ -646,7 +654,7 @@ export struct GameMenuDialog {
         Text('编辑布局')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#FFB7C5')
+          .fontColor(OV_ACCENT_PINK)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(14)
           .backgroundColor('#20FFB7C5')
@@ -658,11 +666,11 @@ export struct GameMenuDialog {
         Text('导出')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#A8D8EA')
+          .fontColor(OV_ACCENT_BLUE)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(14)
           .backgroundColor('#20A8D8EA')
-          .border({ width: 1, color: '#40A8D8EA' })
+          .border({ width: 1, color: OV_BLUE_40 })
           .onClick(() => {
             this.callbacks.onExportCustomKeys?.();
             this.animateOut();
@@ -670,11 +678,11 @@ export struct GameMenuDialog {
         Text('导入')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#A8D8EA')
+          .fontColor(OV_ACCENT_BLUE)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(14)
           .backgroundColor('#20A8D8EA')
-          .border({ width: 1, color: '#40A8D8EA' })
+          .border({ width: 1, color: OV_BLUE_40 })
           .onClick(() => {
             this.callbacks.onImportCustomKeys?.();
             this.animateOut();
@@ -684,27 +692,27 @@ export struct GameMenuDialog {
       .justifyContent(FlexAlign.Center)
       .padding({ bottom: 14 })
     }
-    .width(CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
-    .backdropBlur(40)
-    .borderRadius(20)
-    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
+    .width(OV_CARD_WIDTH)
+    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
+    .backdropBlur(OV_CARD_BLUR)
+    .borderRadius(OV_CARD_RADIUS)
+    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
   }
 
   @Builder
   VirtualControllerCard() {
     Column() {
       Row() {
-        Text('🎮').fontSize(13)
+        Text('🎮').fontSize(OV_FONT_LG)
         Text(' 虚拟手柄')
-          .fontSize(13)
+          .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#E0FFFFFF')
+          .fontColor(OV_TEXT_BRIGHT)
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.viewModel.showController })
-          .selectedColor('#A8D8EA')
-          .switchPointColor('#FFFFFF')
+          .selectedColor(OV_ACCENT_BLUE)
+          .switchPointColor(OV_TEXT_WHITE)
           .width(40)
           .height(22)
           .onChange((isOn: boolean) => {
@@ -717,21 +725,21 @@ export struct GameMenuDialog {
       .padding({ left: 16, right: 12, top: 14, bottom: 4 })
 
       Text('屏幕虚拟手柄叠加层')
-        .fontSize(10)
-        .fontColor('#60FFFFFF')
+        .fontSize(OV_FONT_SM)
+        .fontColor(OV_TEXT_FAINT)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: this.viewModel.showController ? 8 : 14 })
 
       if (this.viewModel.showController) {
-        Row().width('85%').height(1).backgroundColor('#15FFFFFF')
+        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
 
         // 触摸穿透开关
         Row() {
-          Text('触摸穿透').fontSize(11).fontColor('#B0FFFFFF')
+          Text('触摸穿透').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
           Blank()
           Toggle({ type: ToggleType.Switch, isOn: this.touchPassthroughLocal })
-            .selectedColor('#A8D8EA')
-            .switchPointColor('#FFFFFF')
+            .selectedColor(OV_ACCENT_BLUE)
+            .switchPointColor(OV_TEXT_WHITE)
             .width(36)
             .height(20)
             .onChange((isOn: boolean) => {
@@ -743,21 +751,21 @@ export struct GameMenuDialog {
         .padding({ left: 16, right: 12, top: 10, bottom: 4 })
 
         Text('允许触摸穿透手柄操控画面')
-          .fontSize(9)
+          .fontSize(OV_FONT_XS)
           .fontColor('#50FFFFFF')
           .width('100%')
           .padding({ left: 16, right: 16, bottom: 4 })
 
-        Row().width('85%').height(1).backgroundColor('#15FFFFFF')
+        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
 
         // 透明度
         Column() {
           Row() {
-            Text('透明度').fontSize(11).fontColor('#B0FFFFFF')
+            Text('透明度').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
             Blank()
             Text(`${Math.round(this.controllerOpacityLocal * 100)}%`)
-              .fontSize(11)
-              .fontColor('#A8D8EA')
+              .fontSize(OV_FONT_MD)
+              .fontColor(OV_ACCENT_BLUE)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -771,10 +779,10 @@ export struct GameMenuDialog {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .blockColor('#A8D8EA')
+            .blockColor(OV_ACCENT_BLUE)
             .blockSize({ width: 12, height: 12 })
-            .trackColor('#30FFFFFF')
-            .selectedColor('#A8D8EA')
+            .trackColor(OV_BG_TRACK)
+            .selectedColor(OV_ACCENT_BLUE)
             .showSteps(false)
             .showTips(false)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
@@ -784,25 +792,25 @@ export struct GameMenuDialog {
             })
 
           Row() {
-            Text('20%').fontSize(9).fontColor('#60FFFFFF')
+            Text('20%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
             Blank()
-            Text('100%').fontSize(9).fontColor('#60FFFFFF')
+            Text('100%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
           }
           .width('100%')
         }
         .width('100%')
         .padding({ left: 14, right: 14, top: 10, bottom: 4 })
 
-        Row().width('85%').height(1).backgroundColor('#15FFFFFF')
+        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
 
         // 大小调整
         Column() {
           Row() {
-            Text('大小').fontSize(11).fontColor('#B0FFFFFF')
+            Text('大小').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
             Blank()
             Text(`${Math.round(this.controllerScaleLocal * 100)}%`)
-              .fontSize(11)
-              .fontColor('#A8D8EA')
+              .fontSize(OV_FONT_MD)
+              .fontColor(OV_ACCENT_BLUE)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -816,10 +824,10 @@ export struct GameMenuDialog {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .blockColor('#A8D8EA')
+            .blockColor(OV_ACCENT_BLUE)
             .blockSize({ width: 12, height: 12 })
-            .trackColor('#30FFFFFF')
-            .selectedColor('#A8D8EA')
+            .trackColor(OV_BG_TRACK)
+            .selectedColor(OV_ACCENT_BLUE)
             .showSteps(false)
             .showTips(false)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
@@ -829,9 +837,9 @@ export struct GameMenuDialog {
             })
 
           Row() {
-            Text('50%').fontSize(9).fontColor('#60FFFFFF')
+            Text('50%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
             Blank()
-            Text('200%').fontSize(9).fontColor('#60FFFFFF')
+            Text('200%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
           }
           .width('100%')
         }
@@ -839,35 +847,35 @@ export struct GameMenuDialog {
         .padding({ left: 14, right: 14, top: 10, bottom: 12 })
       }
     }
-    .width(CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
-    .backdropBlur(40)
-    .borderRadius(20)
-    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
+    .width(OV_CARD_WIDTH)
+    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
+    .backdropBlur(OV_CARD_BLUR)
+    .borderRadius(OV_CARD_RADIUS)
+    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
   }
 
   @Builder
   BitrateCard() {
     Column() {
       Row() {
-        Text('📊').fontSize(13)
+        Text('📊').fontSize(OV_FONT_LG)
         Text(' 码率调整')
-          .fontSize(13)
+          .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#E0FFFFFF')
+          .fontColor(OV_TEXT_BRIGHT)
         Blank()
         Text(this.formatBitrate(this.currentBitrate))
           .fontSize(12)
-          .fontColor('#FFB7C5')
+          .fontColor(OV_ACCENT_PINK)
           .fontWeight(FontWeight.Medium)
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 14, bottom: 4 })
 
       Text('实时调整串流画质，需 Foundation Sunshine 支持')
-        .fontSize(10)
-        .fontColor('#60FFFFFF')
+        .fontSize(OV_FONT_SM)
+        .fontColor(OV_TEXT_FAINT)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 8 })
 
@@ -880,9 +888,9 @@ export struct GameMenuDialog {
           style: SliderStyle.OutSet
         })
           .width('100%')
-          .blockColor('#FFB7C5')
-          .trackColor('#30FFFFFF')
-          .selectedColor('#FFB7C5')
+          .blockColor(OV_ACCENT_PINK)
+          .trackColor(OV_BG_TRACK)
+          .selectedColor(OV_ACCENT_PINK)
           .showSteps(false)
           .showTips(false)
           .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
@@ -894,41 +902,41 @@ export struct GameMenuDialog {
           })
 
         Row() {
-          Text('0.5').fontSize(10).fontColor('#80FFFFFF')
+          Text('0.5').fontSize(OV_FONT_SM).fontColor(OV_TEXT_DIM)
           Blank()
           Text(this.isAdjustingBitrate ? '调整中...' : this.formatBitrate(this.sliderValueToBitrate(this.bitrateSliderValue)))
-            .fontSize(11)
-            .fontColor(this.isAdjustingBitrate ? '#80FFFFFF' : '#FFB7C5')
+            .fontSize(OV_FONT_MD)
+            .fontColor(this.isAdjustingBitrate ? OV_TEXT_DIM : OV_ACCENT_PINK)
             .fontWeight(FontWeight.Bold)
           Blank()
-          Text('200').fontSize(10).fontColor('#80FFFFFF')
+          Text('200').fontSize(OV_FONT_SM).fontColor(OV_TEXT_DIM)
         }
         .width('100%')
       }
       .width('100%')
       .padding({ left: 14, right: 14, bottom: 12 })
     }
-    .width(CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
-    .backdropBlur(40)
-    .borderRadius(20)
-    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
+    .width(OV_CARD_WIDTH)
+    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
+    .backdropBlur(OV_CARD_BLUR)
+    .borderRadius(OV_CARD_RADIUS)
+    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
   }
 
   @Builder
   GyroAssistCard() {
     Column() {
       Row() {
-        Text('🎮').fontSize(13)
+        Text('🎮').fontSize(OV_FONT_LG)
         Text(' 体感助手')
-          .fontSize(13)
+          .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#E0FFFFFF')
+          .fontColor(OV_TEXT_BRIGHT)
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.gyroEnabled })
-          .selectedColor('#A8D8EA')
-          .switchPointColor('#FFFFFF')
+          .selectedColor(OV_ACCENT_BLUE)
+          .switchPointColor(OV_TEXT_WHITE)
           .width(40)
           .height(22)
           .onChange((isOn: boolean) => {
@@ -941,21 +949,21 @@ export struct GameMenuDialog {
       .padding({ left: 16, right: 12, top: 14, bottom: 4 })
 
       Text(this.hasGyroscope ? '陀螺仪 → 右摇杆映射' : '⚠ 设备无陀螺仪')
-        .fontSize(10)
-        .fontColor(this.hasGyroscope ? '#60FFFFFF' : '#FFB7C5')
+        .fontSize(OV_FONT_SM)
+        .fontColor(this.hasGyroscope ? OV_TEXT_FAINT : OV_ACCENT_PINK)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: this.gyroEnabled ? 8 : 14 })
 
       if (this.gyroEnabled) {
-        Row().width('85%').height(1).backgroundColor('#15FFFFFF')
+        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
 
         Column() {
           Row() {
-            Text('灵敏度').fontSize(11).fontColor('#B0FFFFFF')
+            Text('灵敏度').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
             Blank()
             Text(`${this.gyroSensitivity.toFixed(1)}x`)
-              .fontSize(11)
-              .fontColor('#A8D8EA')
+              .fontSize(OV_FONT_MD)
+              .fontColor(OV_ACCENT_BLUE)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -969,9 +977,9 @@ export struct GameMenuDialog {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .blockColor('#A8D8EA')
-            .trackColor('#30FFFFFF')
-            .selectedColor('#A8D8EA')
+            .blockColor(OV_ACCENT_BLUE)
+            .trackColor(OV_BG_TRACK)
+            .selectedColor(OV_ACCENT_BLUE)
             .showSteps(false)
             .showTips(false)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
@@ -984,9 +992,9 @@ export struct GameMenuDialog {
             })
 
           Row() {
-            Text('0.5x').fontSize(9).fontColor('#60FFFFFF')
+            Text('0.5x').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
             Blank()
-            Text('3.0x').fontSize(9).fontColor('#60FFFFFF')
+            Text('3.0x').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
           }
           .width('100%')
         }
@@ -1005,10 +1013,10 @@ export struct GameMenuDialog {
           this.saveGyroSetting(SettingsKeys.GYRO_INVERT_Y, isOn);
         })
 
-        Row().width('85%').height(1).backgroundColor('#15FFFFFF')
+        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
 
         Column() {
-          Text('激活方式').fontSize(11).fontColor('#B0FFFFFF').width('100%').padding({ bottom: 6 })
+          Text('激活方式').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM).width('100%').padding({ bottom: 6 })
           Row({ space: 8 }) {
             this.ActivationButton('始终', GYRO_ACTIVATION_ALWAYS)
             this.ActivationButton('LT', GYRO_ACTIVATION_LT)
@@ -1021,22 +1029,22 @@ export struct GameMenuDialog {
         .padding({ left: 16, right: 16, top: 8, bottom: 14 })
       }
     }
-    .width(CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
-    .backdropBlur(40)
-    .borderRadius(20)
-    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
+    .width(OV_CARD_WIDTH)
+    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
+    .backdropBlur(OV_CARD_BLUR)
+    .borderRadius(OV_CARD_RADIUS)
+    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
   }
 
   @Builder
   GyroToggleRow(label: string, isOn: boolean, onChange: (isOn: boolean) => void) {
     Row() {
-      Text(label).fontSize(11).fontColor('#B0FFFFFF')
+      Text(label).fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
       Blank()
       Toggle({ type: ToggleType.Switch, isOn: isOn })
-        .selectedColor('#A8D8EA')
-        .switchPointColor('#FFFFFF')
+        .selectedColor(OV_ACCENT_BLUE)
+        .switchPointColor(OV_TEXT_WHITE)
         .width(36)
         .height(20)
         .onChange(onChange)
@@ -1048,13 +1056,13 @@ export struct GameMenuDialog {
   @Builder
   ActivationButton(label: string, key: number) {
     Text(label)
-      .fontSize(11)
+      .fontSize(OV_FONT_MD)
       .fontWeight(this.gyroActivationKey === key ? FontWeight.Bold : FontWeight.Normal)
-      .fontColor(this.gyroActivationKey === key ? '#FFFFFF' : (this.isCurrentDark() ? '#80000000' : '#80FFFFFF'))
+      .fontColor(this.gyroActivationKey === key ? '#FFFFFF' : (this.isCurrentDark() ? '#80000000' : OV_TEXT_DIM))
       .padding({ left: 16, right: 16, top: 6, bottom: 6 })
       .borderRadius(14)
-      .backgroundColor(this.gyroActivationKey === key ? '#50A8D8EA' : (this.isCurrentDark() ? '#10000000' : '#15FFFFFF'))
-      .border({ width: 1, color: this.gyroActivationKey === key ? '#A8D8EA' : (this.isCurrentDark() ? '#15000000' : '#20FFFFFF') })
+      .backgroundColor(this.gyroActivationKey === key ? OV_BLUE_50 : (this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_BG_DIVIDER))
+      .border({ width: 1, color: this.gyroActivationKey === key ? OV_ACCENT_BLUE : (this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER) })
       .onClick(() => {
         this.gyroActivationKey = key;
         GyroAssistService.getInstance().setActivationKey(key);
@@ -1066,18 +1074,18 @@ export struct GameMenuDialog {
   SuperCmdCard() {
     Column() {
       Row() {
-        Text('🎯').fontSize(13)
+        Text('🎯').fontSize(OV_FONT_LG)
         Text(' 服务端指令')
-          .fontSize(13)
+          .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#E0FFFFFF')
+          .fontColor(OV_TEXT_BRIGHT)
       }
       .width('100%')
       .padding({ left: 16, right: 12, top: 14, bottom: 4 })
 
       Text('执行 Sunshine 预设脚本')
-        .fontSize(10)
-        .fontColor('#60FFFFFF')
+        .fontSize(OV_FONT_SM)
+        .fontColor(OV_TEXT_FAINT)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 6 })
 
@@ -1094,27 +1102,27 @@ export struct GameMenuDialog {
       .scrollBar(BarState.Off)
       .padding({ left: 14, right: 14, top: 10, bottom: 14 })
     }
-    .width(CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
-    .backdropBlur(40)
-    .borderRadius(20)
-    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
+    .width(OV_CARD_WIDTH)
+    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
+    .backdropBlur(OV_CARD_BLUR)
+    .borderRadius(OV_CARD_RADIUS)
+    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
   }
 
   @Builder
   ShortcutCard() {
     Column() {
       Row() {
-        Text('⚡').fontSize(13)
+        Text('⚡').fontSize(OV_FONT_LG)
         Text(' 快捷键')
-          .fontSize(13)
+          .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#E0FFFFFF')
+          .fontColor(OV_TEXT_BRIGHT)
         Blank()
         Text('＋')
           .fontSize(14)
-          .fontColor('#FFFFFF')
+          .fontColor(OV_TEXT_WHITE)
           .fontWeight(FontWeight.Bold)
           .width(24)
           .height(24)
@@ -1139,12 +1147,12 @@ export struct GameMenuDialog {
       .scrollBar(BarState.Off)
       .padding({ left: 14, right: 14, top: 10, bottom: 14 })
     }
-    .width(CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? '#20000000' : '#25FFFFFF')
-    .backdropBlur(40)
-    .borderRadius(20)
-    .border({ width: 1, color: this.isCurrentDark() ? '#15000000' : '#20FFFFFF' })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? '#10000000' : '#08000000', offsetY: 2 })
+    .width(OV_CARD_WIDTH)
+    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
+    .backdropBlur(OV_CARD_BLUR)
+    .borderRadius(OV_CARD_RADIUS)
+    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
   }
 
   @Builder
@@ -1214,9 +1222,9 @@ export struct GameMenuDialog {
   ShortcutPill(shortcut: Shortcut) {
     Row() {
       if (shortcut.icon) {
-        Text(shortcut.icon).fontSize(11).margin({ right: 4 })
+        Text(shortcut.icon).fontSize(OV_FONT_MD).margin({ right: 4 })
       }
-      Text(shortcut.name).fontSize(11).fontColor('#F0FFFFFF')
+      Text(shortcut.name).fontSize(OV_FONT_MD).fontColor(OV_TEXT_ULTRA)
     }
     .padding({ left: 12, right: 12, top: 6, bottom: 6 })
     .backgroundColor(`#50${(shortcut.color || '#9DABB2').replace('#', '')}`)
@@ -1293,20 +1301,20 @@ export struct GameMenuDialog {
   SuperCmdPill(cmd: SuperCmd) {
     Row() {
       Text(cmd.name.charAt(0) || '?')
-        .fontSize(11)
+        .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
+        .fontColor(OV_TEXT_WHITE)
         .width(20)
         .height(20)
         .textAlign(TextAlign.Center)
         .backgroundColor('#60A5FA')
         .borderRadius(10)
         .margin({ right: 6 })
-      Text(cmd.name).fontSize(11).fontColor('#F0FFFFFF')
+      Text(cmd.name).fontSize(OV_FONT_MD).fontColor(OV_TEXT_ULTRA)
     }
     .padding({ left: 6, right: 12, top: 6, bottom: 6 })
-    .backgroundColor(this.isCurrentDark() ? '#15000000' : '#20FFFFFF')
-    .border({ width: 1, color: this.isCurrentDark() ? '#20000000' : '#30FFFFFF' })
+    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER)
+    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_TRACK })
     .borderRadius(16)
     .margin({ right: 6, bottom: 6 })
     .focusable(true)
