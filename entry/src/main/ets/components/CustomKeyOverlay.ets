@@ -248,14 +248,37 @@ export struct CustomKeyOverlay {
   @State private hitTestReady: number = 0;
 
   /** 屏幕尺寸 (vp)，用于百分比坐标↔绝对坐标转换 */
-  private screenWidthVp: number = 0;
-  private screenHeightVp: number = 0;
+  @State private screenWidthVp: number = 0;
+  @State private screenHeightVp: number = 0;
+  /** 屏幕变化监听回调引用，用于注销 */
+  private displayChangeCallback: ((displayId: number) => void) | null = null;
 
   async aboutToAppear(): Promise<void> {
     // 获取屏幕尺寸
     const displayInfo = display.getDefaultDisplaySync();
     this.screenWidthVp = px2vp(displayInfo.width);
     this.screenHeightVp = px2vp(displayInfo.height);
+
+    // 监听屏幕变化（折叠屏展开/折叠、旋转等），动态更新坐标基准
+    this.displayChangeCallback = (_displayId: number): void => {
+      try {
+        const info = display.getDefaultDisplaySync();
+        const newW = px2vp(info.width);
+        const newH = px2vp(info.height);
+        if (newW > 0 && newH > 0 && (newW !== this.screenWidthVp || newH !== this.screenHeightVp)) {
+          console.info(`[CustomKeyOverlay] 屏幕尺寸变化: ${this.screenWidthVp}x${this.screenHeightVp} → ${newW}x${newH}`);
+          this.screenWidthVp = newW;
+          this.screenHeightVp = newH;
+        }
+      } catch (e) {
+        console.warn('[CustomKeyOverlay] 获取屏幕尺寸失败:', e);
+      }
+    };
+    try {
+      display.on('change', this.displayChangeCallback);
+    } catch (e) {
+      console.warn('[CustomKeyOverlay] 注册屏幕变化监听失败:', e);
+    }
 
     await CustomKeyStore.init();
     this.keys = await CustomKeyStore.getKeys();
@@ -264,6 +287,16 @@ export struct CustomKeyOverlay {
     setTimeout(() => {
       this.hitTestReady = 1;
     }, 100);
+  }
+
+  aboutToDisappear(): void {
+    // 注销屏幕变化监听
+    if (this.displayChangeCallback) {
+      try {
+        display.off('change', this.displayChangeCallback);
+      } catch (_e) { /* ignore */ }
+      this.displayChangeCallback = null;
+    }
   }
 
   build() {
