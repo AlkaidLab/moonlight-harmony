@@ -60,6 +60,19 @@ export interface ComboAction {
   actions: KeyAction[];
 }
 
+/**
+ * 快捷键动作：一次性发送组合键或多步按键序列
+ * 与 keyboard 类型（持续按住/释放）不同，shortcut 在按下时一次性触发完整序列
+ * 复用 ShortcutManager 的 Shortcut 数据模型
+ */
+export interface ShortcutAction {
+  type: 'shortcut';
+  /** 同时按下的虚拟键码数组 */
+  keys: number[];
+  /** 多步按键序列（依次执行，每步间隔 200ms） */
+  keySequence?: number[][];
+}
+
 /** 特殊功能动作 */
 export interface SpecialAction {
   type: 'special';
@@ -85,6 +98,7 @@ export type KeyAction =
   | GamepadButtonAction
   | GamepadTriggerAction
   | ComboAction
+  | ShortcutAction
   | SpecialAction;
 
 // =============================================================================
@@ -271,6 +285,7 @@ export const VK_DISPLAY_NAMES: Record<number, string> = {
   // 方向键
   0x25: '←', 0x26: '↑', 0x27: '→', 0x28: '↓',
   // 修饰键
+  0x10: 'Shift', 0x11: 'Ctrl', 0x12: 'Alt',
   0xA0: 'LShift', 0xA1: 'RShift', 0xA2: 'LCtrl', 0xA3: 'RCtrl',
   0xA4: 'LAlt', 0xA5: 'RAlt', 0x5B: 'LWin', 0x5C: 'RWin',
   // 符号
@@ -313,6 +328,15 @@ export function getActionDisplayName(action: KeyAction): string {
       return action.trigger === 'left' ? 'LT' : 'RT';
     case 'combo':
       return action.actions.map(a => getActionDisplayName(a)).join('+');
+    case 'shortcut': {
+      // 快捷键：显示组合键码名称
+      if (action.keySequence && action.keySequence.length > 0) {
+        return action.keySequence.map(step =>
+          step.map(vk => getVkDisplayName(vk)).join('+')
+        ).join(' → ');
+      }
+      return action.keys.map(vk => getVkDisplayName(vk)).join('+');
+    }
     case 'special':
       const specialNames: Record<string, string> = {
         'toggleKeyboard': '键盘', 'toggleIME': '输入法',
@@ -455,6 +479,23 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
       { label: '切换配置', action: { type: 'special', id: 'switchProfile' } as SpecialAction },
       { label: '菜单', action: { type: 'special', id: 'openGameMenu' } as SpecialAction },
       { label: '编辑', action: { type: 'special', id: 'editMode' } as SpecialAction },
+    ],
+  },
+  {
+    name: '快捷键',
+    presets: [
+      { label: 'Alt+Tab', action: { type: 'shortcut', keys: [0x12, 0x09], keySequence: undefined } as ShortcutAction },
+      { label: 'Alt+F4', action: { type: 'shortcut', keys: [0x12, 0x73], keySequence: undefined } as ShortcutAction },
+      { label: 'Ctrl+C', action: { type: 'shortcut', keys: [0x11, 0x43], keySequence: undefined } as ShortcutAction },
+      { label: 'Ctrl+V', action: { type: 'shortcut', keys: [0x11, 0x56], keySequence: undefined } as ShortcutAction },
+      { label: 'Ctrl+Z', action: { type: 'shortcut', keys: [0x11, 0x5A], keySequence: undefined } as ShortcutAction },
+      { label: 'Ctrl+A', action: { type: 'shortcut', keys: [0x11, 0x41], keySequence: undefined } as ShortcutAction },
+      { label: 'Ctrl+S', action: { type: 'shortcut', keys: [0x11, 0x53], keySequence: undefined } as ShortcutAction },
+      { label: 'Win', action: { type: 'shortcut', keys: [0x5B], keySequence: undefined } as ShortcutAction },
+      { label: 'Win+D', action: { type: 'shortcut', keys: [0x5B, 0x44], keySequence: undefined } as ShortcutAction },
+      { label: 'Win+E', action: { type: 'shortcut', keys: [0x5B, 0x45], keySequence: undefined } as ShortcutAction },
+      { label: 'Ctrl+Alt+Del', action: { type: 'shortcut', keys: [0x11, 0x12, 0x2E], keySequence: undefined } as ShortcutAction },
+      { label: '休眠', action: { type: 'shortcut', keys: [], keySequence: [[0x5B, 0x58], [0x55], [0x53]] } as ShortcutAction },
     ],
   },
 ];

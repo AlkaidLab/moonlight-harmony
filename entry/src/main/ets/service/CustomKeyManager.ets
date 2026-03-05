@@ -34,6 +34,7 @@ import {
   GamepadButtonAction,
   GamepadTriggerAction,
   ComboAction,
+  ShortcutAction,
   SpecialAction,
 } from './CustomKeyTypes';
 
@@ -64,6 +65,8 @@ export interface CustomKeyManagerHost {
 /** session 只需要 sendKeyboardInput 能力 */
 export interface SessionLike {
   sendKeyboardInput(vk: number, flags: number): void;
+  /** 发送按键组合（同时按下，延迟后释放） */
+  sendKeys(keyCodes: number[]): void;
 }
 
 // =============================================================================
@@ -148,6 +151,14 @@ export class CustomKeyManager {
         }
         break;
       }
+      case 'shortcut': {
+        // 快捷键：仅在按下时一次性触发完整组合/序列，释放无操作
+        if (isDown) {
+          const scAction = action as ShortcutAction;
+          this.executeShortcut(scAction, session);
+        }
+        break;
+      }
       case 'special': {
         const specialAction = action as SpecialAction;
         if (isDown) {
@@ -172,6 +183,22 @@ export class CustomKeyManager {
     );
   }
 
+  /**
+   * 执行快捷键动作（一次性组合键或多步序列）
+   * 复用 StreamingSession.sendKeys() 的能力
+   */
+  private executeShortcut(action: ShortcutAction, session: SessionLike): void {
+    if (action.keySequence && action.keySequence.length > 0) {
+      // 多步按键序列：依次发送，每步间隔 200ms
+      action.keySequence.forEach((keys: number[], index: number) => {
+        setTimeout(() => {
+          session.sendKeys(keys);
+        }, index * 200);
+      });
+    } else if (action.keys.length > 0) {
+      session.sendKeys(action.keys);
+    }
+  }
   /**
    * 处理自定义按键的特殊功能
    */

@@ -436,6 +436,16 @@ export struct CustomKeyOverlay {
         textColor = '#FFA8D8EA';
         fontSize = 12;
         break;
+      case 'shortcut':
+        // 快捷键：宽矩形、橙色系
+        shape = 'rect';
+        width = 76;
+        height = 44;
+        bgColor = '#30C09050';
+        pressedColor = '#80C09050';
+        textColor = '#FFFFD080';
+        fontSize = 11;
+        break;
       case 'mouse':
       case 'mouseScroll':
         // 鼠标：圆形、紫色系
