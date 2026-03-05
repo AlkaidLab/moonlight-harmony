@@ -299,6 +299,7 @@ export struct OptionPickerDialog {
               .selectedColor(AppColors.Primary)
               .showSteps(false)
               .showTips(false)
+              .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
               .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
               .onChange((value: number) => {
                 this.sliderValue = value;

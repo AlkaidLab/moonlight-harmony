@@ -181,6 +181,7 @@ export struct SettingSlider {
         .blockSize({ width: 28, height: 28 })
         .trackThickness(8)
         .showTips(this.isDragging, this.formatValue(this.draggingValue))
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
         .focusable(true)
         .defaultFocus(false)
         .focusOnTouch(true)

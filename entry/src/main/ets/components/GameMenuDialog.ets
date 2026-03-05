@@ -777,6 +777,7 @@ export struct GameMenuDialog {
             .selectedColor('#A8D8EA')
             .showSteps(false)
             .showTips(false)
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
             .onChange((value: number, mode: SliderChangeMode) => {
               this.controllerOpacityLocal = value / 100;
               this.callbacks.onControllerOpacityChange?.(this.controllerOpacityLocal);
@@ -821,6 +822,7 @@ export struct GameMenuDialog {
             .selectedColor('#A8D8EA')
             .showSteps(false)
             .showTips(false)
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
             .onChange((value: number, mode: SliderChangeMode) => {
               this.controllerScaleLocal = Math.round(value) / 100;
               this.callbacks.onControllerScaleChange?.(this.controllerScaleLocal);
@@ -883,6 +885,7 @@ export struct GameMenuDialog {
           .selectedColor('#FFB7C5')
           .showSteps(false)
           .showTips(false)
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .onChange((value: number, mode: SliderChangeMode) => {
             this.bitrateSliderValue = value;
             if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
@@ -971,6 +974,7 @@ export struct GameMenuDialog {
             .selectedColor('#A8D8EA')
             .showSteps(false)
             .showTips(false)
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
             .onChange((value: number, mode: SliderChangeMode) => {
               this.gyroSensitivity = Math.round(value * 10) / 10;
               GyroAssistService.getInstance().setSensitivity(this.gyroSensitivity);

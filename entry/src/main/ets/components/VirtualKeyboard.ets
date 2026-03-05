@@ -417,6 +417,7 @@ export struct VirtualKeyboard {
           .trackThickness(3)
           .showSteps(false)
           .showTips(false)
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .onChange((value: number) => {
             this.opacity_ = value / 100;
           })

@@ -1200,12 +1200,12 @@ export class GamepadManager implements UsbDriverListener {
       for (const id of deviceIds) {
         const devInfo = await inputDevice.getDeviceInfo(id);
         // 按名称匹配（GCK 和 InputDevice 通常报告相同名称）
-        // 同时匹配 vendor/product 以提高准确性
+        // 同时匹配 product 以提高准确性
         const nameMatch = devInfo.name === info?.name;
-        const vpMatch = info?.vendor !== undefined && info?.product !== undefined &&
-          devInfo.vendor === info.vendor && devInfo.product === info.product;
+        const productMatch = info?.product !== undefined &&
+          devInfo.product === info.product;
 
-        if (nameMatch || vpMatch) {
+        if (nameMatch || productMatch) {
           hasJoystickSource = devInfo.sources.some(
             (s: inputDevice.SourceType) => s === 'joystick'
           );

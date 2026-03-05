@@ -788,6 +788,7 @@ export struct CustomKeyOverlay {
         .layoutWeight(1)
         .blockColor('#A8D8EA').blockSize({ width: 14, height: 14 })
         .trackColor('#30FFFFFF').selectedColor('#A8D8EA').trackThickness(3)
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
         .onChange((v: number) => { this.updateSelectedKeyProp(propName, Math.round(v)); })
       Text(Math.round(value).toString())
         .fontSize(11).fontColor('#80FFFFFF').width(30).textAlign(TextAlign.End)
