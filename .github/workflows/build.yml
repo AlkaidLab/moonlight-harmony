@@ -27,7 +27,7 @@ env:
   # ========== 版本配置（更新 SDK/工具时修改这里） ==========
   SDK_VERSION: '6.0-Release'
   CMDLINE_TOOLS_VERSION: '5.1.0.840'
-  CACHE_VERSION: 'v3'
+  CACHE_VERSION: 'v4'
 
 jobs:
   build:
@@ -150,100 +150,120 @@ jobs:
         echo "✅ Tools ready" && df -h /
 
     # ────────────────────────────────────────────
-    # SDK 目录结构修正（hvigor 实际期望 $SDK_HOME/<component> 根目录结构）
+    # SDK 目录结构修正
+    # hvigor's parseSdks scans $SDK_HOME for sdk-pkg.json (flat layout).
+    # But OhosBaseSdkInfoHandler.getLocalSdks() remaps component locations:
+    #   OPENHARMONY → $SDK_HOME/toolchains/openharmony/<component>/
+    #   HARMONYOS   → $SDK_HOME/toolchains/hms/<component>/
+    # checkComponentExistence then verifies oh-uni-package.json / uni-package.json
+    # at the REMAPPED locations. We keep flat layout for scanning and create
+    # symlinks at the remapped locations for the existence check.
     # ────────────────────────────────────────────
     - name: Normalize SDK layout for hvigor
       run: |
+        set -euo pipefail
         SDK_HOME=~/ohos-sdk
 
-        echo "=== Pre-restructure contents ==="
+        echo "=== Pre-normalization contents ==="
         ls -la "$SDK_HOME/"
 
-        # Read apiVersion from any component's oh-uni-package.json
-        PKG_FILE=$(find "$SDK_HOME" -maxdepth 2 -name "oh-uni-package.json" -type f | head -1)
+        # ─── Determine API version ───
+        PKG_FILE=$(find "$SDK_HOME" -maxdepth 4 -name "oh-uni-package.json" -type f | head -1)
         if [ -n "$PKG_FILE" ]; then
           API_VER=$(python3 -c "import json; print(json.load(open('$PKG_FILE'))['apiVersion'])")
         else
           API_VER=$(find "$SDK_HOME/openharmony" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | head -1)
         fi
         echo "SDK API version: $API_VER"
+        [ -z "$API_VER" ] && { echo "ERROR: Could not determine API version"; exit 1; }
 
-        # hvigor's HosLocalComponentLoader resolves expected locations as:
-        #   $SDK_HOME/<component path>
-        # It does NOT expect nested openharmony/<apiVersion>/component paths.
-        # Normalize the cached SDK back to a flat root layout.
-        if [ -n "$API_VER" ]; then
-          for comp in ets js native toolchains previewer; do
-            ROOT_DIR="$SDK_HOME/$comp"
-            OH_NESTED_DIR="$SDK_HOME/openharmony/$API_VER/$comp"
+        # ─── Step 1: Flatten nested openharmony/<ver> layout to root ───
+        # Downloaded SDK: openharmony/<apiVer>/{ets,js,native,previewer,toolchains}
+        for comp in ets js native toolchains previewer; do
+          ROOT_DIR="$SDK_HOME/$comp"
+          OH_NESTED_DIR="$SDK_HOME/openharmony/$API_VER/$comp"
+          if [ ! -d "$ROOT_DIR" ] && [ -d "$OH_NESTED_DIR" ]; then
+            mv "$OH_NESTED_DIR" "$ROOT_DIR"
+            echo "  Flattened $comp"
+          fi
+        done
+        rm -rf "$SDK_HOME/openharmony" "$SDK_HOME/HarmonyOS"
 
-            if [ ! -d "$ROOT_DIR" ] && [ -d "$OH_NESTED_DIR" ]; then
-              mv "$OH_NESTED_DIR" "$ROOT_DIR"
-              echo "  Flattened $comp -> $ROOT_DIR"
-            fi
-          done
+        # ─── Step 2: Ensure oh-uni-package.json and sdk-pkg.json in each component ───
+        for comp in ets js native toolchains previewer; do
+          COMP_DIR="$SDK_HOME/$comp"
+          [ ! -d "$COMP_DIR" ] && mkdir -p "$COMP_DIR"
 
-          # Verify required OpenHarmony components; create stubs for missing ones.
-          # hvigor checks oh-uni-package.json and scans sdk-pkg.json in each root dir.
-          for comp in ets js native toolchains previewer; do
-            COMP_DIR="$SDK_HOME/$comp"
-            if [ ! -d "$COMP_DIR" ]; then
-              echo "  ⚠️  Missing component '$comp' — creating stub"
-              mkdir -p "$COMP_DIR"
-            fi
-            if [ ! -f "$COMP_DIR/oh-uni-package.json" ]; then
-              echo "  ⚠️  Missing oh-uni-package.json in '$comp' — creating from template"
-              cat > "$COMP_DIR/oh-uni-package.json" << STUBEOF
-        {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"4.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
+          if [ ! -f "$COMP_DIR/oh-uni-package.json" ]; then
+            cat > "$COMP_DIR/oh-uni-package.json" << STUBEOF
+        {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
         STUBEOF
-            fi
-            # hvigor scanner looks for sdk-pkg.json (not oh-uni-package.json!)
-            # Format: {data: {...}, meta: {version: "3.0.0"}}
-            if [ ! -f "$COMP_DIR/sdk-pkg.json" ]; then
-              echo "  Creating sdk-pkg.json for '$comp'"
-              python3 -c "
-        import json, sys
-        pkg_path = '$COMP_DIR/oh-uni-package.json'
-        with open(pkg_path) as f:
+          fi
+
+          if [ ! -f "$COMP_DIR/sdk-pkg.json" ]; then
+            python3 -c "
+        import json
+        with open('$COMP_DIR/oh-uni-package.json') as f:
             pkg = json.load(f)
-        meta_ver = '3.0.0'
-        if 'meta' in pkg and 'metaVersion' in pkg['meta']:
-            meta_ver = pkg['meta']['metaVersion']
+        meta_ver = pkg.get('meta', {}).get('metaVersion', '3.0.0')
         data = {k: v for k, v in pkg.items() if k != 'meta'}
-        sdk_pkg = {'data': data, 'meta': {'version': meta_ver}}
         with open('$COMP_DIR/sdk-pkg.json', 'w') as f:
-            json.dump(sdk_pkg, f)
-        print(f'  Created sdk-pkg.json for $comp (meta version: {meta_ver})')
+            json.dump({'data': data, 'meta': {'version': meta_ver}}, f)
+        print(f'  Created sdk-pkg.json for $comp (meta: {meta_ver})')
         "
-            fi
-          done
+          fi
+        done
 
-          # When runtimeOS=HarmonyOS, hvigor also checks for uni-package.json.
-          # Keep these files on the same flat root component directories.
-          for comp in toolchains ets native; do
-            HMS_COMP="$SDK_HOME/$comp"
-            mkdir -p "$HMS_COMP"
-            if [ ! -f "$HMS_COMP/uni-package.json" ]; then
-              cat > "$HMS_COMP/uni-package.json" << STUBEOF
-        {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"4.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
-        STUBEOF
-            fi
+        # ─── Step 3: Create OPENHARMONY remapped locations ───
+        # OhosBaseSdkInfoHandler remaps to: $SDK_HOME/toolchains/openharmony/<comp>/
+        # checkComponentExistence looks for oh-uni-package.json there.
+        mkdir -p "$SDK_HOME/toolchains/openharmony"
+        for comp in ets js native previewer; do
+          if [ -d "$SDK_HOME/$comp" ] && [ ! -e "$SDK_HOME/toolchains/openharmony/$comp" ]; then
+            ln -sf "$SDK_HOME/$comp" "$SDK_HOME/toolchains/openharmony/$comp"
+            echo "  Symlinked toolchains/openharmony/$comp"
+          fi
+        done
+        # toolchains component: cannot symlink to ancestor dir, so create
+        # a directory with symlinks to all actual toolchains content.
+        if [ ! -d "$SDK_HOME/toolchains/openharmony/toolchains" ]; then
+          mkdir -p "$SDK_HOME/toolchains/openharmony/toolchains"
+          for item in "$SDK_HOME/toolchains/"*; do
+            bname=$(basename "$item")
+            case "$bname" in openharmony|hms) continue ;; esac
+            ln -sf "$item" "$SDK_HOME/toolchains/openharmony/toolchains/$bname"
           done
-
-          # Avoid duplicate sdk-pkg.json entries from previous cache layouts.
-          # Recursive scanning can otherwise pick nested OpenHarmony/HarmonyOS
-          # component locations that fail the later file-existence check.
-          rm -rf "$SDK_HOME/openharmony" "$SDK_HOME/HarmonyOS"
-          echo "SDK normalized to flat root layout"
-        else
-          echo "⚠️  Could not determine API version"
+          echo "  Created toolchains/openharmony/toolchains with content symlinks"
         fi
+
+        # ─── Step 4: Create HARMONYOS (HMS) remapped locations ───
+        # HosSdkInfoHandler remaps to: $SDK_HOME/toolchains/hms/<comp>/
+        # checkComponentExistence looks for uni-package.json there.
+        mkdir -p "$SDK_HOME/toolchains/hms"
+        for comp in ets native previewer toolchains; do
+          HMS_DIR="$SDK_HOME/toolchains/hms/$comp"
+          mkdir -p "$HMS_DIR"
+          if [ ! -f "$HMS_DIR/uni-package.json" ]; then
+            cat > "$HMS_DIR/uni-package.json" << STUBEOF
+        {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
+        STUBEOF
+            echo "  Created HMS stub: $comp"
+          fi
+          if [ ! -f "$HMS_DIR/sdk-pkg.json" ]; then
+            python3 -c "
+        import json
+        data = {'apiVersion': '$API_VER', 'displayName': '${comp^}', 'path': '$comp', 'releaseType': 'Beta1', 'version': '6.0.0.47'}
+        with open('$HMS_DIR/sdk-pkg.json', 'w') as f:
+            json.dump({'data': data, 'meta': {'version': '3.0.0'}}, f)
+        "
+          fi
+        done
 
         echo "SDK_API_VERSION=$API_VER" >> "$GITHUB_ENV"
         echo "=== Post-normalization structure ==="
-        find "$SDK_HOME" -maxdepth 4 -type d
-        echo "=== oh-uni-package.json locations ==="
-        find "$SDK_HOME" -name "oh-uni-package.json" -o -name "uni-package.json" | sort
+        find "$SDK_HOME" -maxdepth 4 -type d | sort
+        echo "=== Package JSON locations ==="
+        find "$SDK_HOME" \( -name "sdk-pkg.json" -o -name "oh-uni-package.json" -o -name "uni-package.json" \) | sort
 
     # ────────────────────────────────────────────
     # 环境配置
@@ -459,96 +479,42 @@ jobs:
           python3 -c "import json,sys; c=json.load(open(sys.argv[1], encoding='utf-8')); m=c.get('osVersionMapper', {}); print(sys.argv[1], '=>', '6.0.0' in m, 'API', m.get('6.0.0', 'MISSING'))" "$cfg"
         done
 
-        echo "=== ALL sdk-pkg.json files ==="
-        find ~/ohos-sdk -name "sdk-pkg.json" -type f | sort | while read -r f; do
-          echo "$f => $(python3 -c "import json; d=json.load(open('$f')); print(d.get('data',{}).get('path','?'), 'api='+str(d.get('data',{}).get('apiVersion','?')), 'meta='+str(d.get('meta',{}).get('version','?')))")"
-        done
-
-        echo "=== Sample oh-uni-package.json (ets) ==="
-        cat ~/ohos-sdk/ets/oh-uni-package.json 2>/dev/null || echo "(not found at root)"
-        echo ""
-
-        echo "=== HOS_CONFIG dump ==="
-        node -e "
-        process.env.NODE_PATH = '$HOME/cmdline-tools/hvigor/hvigor-ohos-plugin/node_modules:$HOME/cmdline-tools/hvigor/node_modules/@ohos/hvigor/node_modules';
-        require('module').Module._initPaths();
-        const cfg = require('@ohos/hos-sdkmanager-common/build/res/hos-config.json');
-        console.log('sdkSufNameMapper:', JSON.stringify(cfg.sdkSufNameMapper));
-        console.log('pathVersionMapper:', JSON.stringify(cfg.pathVersionMapper));
-        console.log('osVersionMapper:', JSON.stringify(cfg.osVersionMapper));
-        console.log('hosSupportVersion:', cfg.hosSupportVersion);
-        " 2>&1 || true
-
-        echo "=== SimpleHosPrjSdkHandler source ==="
-        find ~/cmdline-tools -path "*/hos-sdkmanager-common/build/src/hos/*" -name "*.js" | sort | head -20
-        # Dump the handler factory source
-        HANDLER_SRC=$(find ~/cmdline-tools -path "*/hos-sdkmanager-common/build/src/hos/handler/*" -name "*.js" | head -5)
-        for f in $HANDLER_SRC; do
-          echo "--- $f ---"
-          cat "$f" | tr ';' '\n' | head -40
-        done
-
-        echo "=== SDK handler deep test ==="
+        echo "=== SDK handler checkComponentExistence test ==="
         node -e "
         process.env.NODE_PATH = '$HOME/cmdline-tools/hvigor/hvigor-ohos-plugin/node_modules:$HOME/cmdline-tools/hvigor/node_modules/@ohos/hvigor/node_modules';
         require('module').Module._initPaths();
         try {
-          const {HosVersionMapper} = require('@ohos/hos-sdkmanager-common/build/src/hos/api/hos-version-mapper');
-          console.log('getHosVersion(20):', JSON.stringify(HosVersionMapper.INSTANCE.getHosVersion(20)));
           const {HosPrjSdkConfig, SimpleHosPrjSdkHandler, HosPrjSdkType} = require('@ohos/hos-sdkmanager-common');
-          const sdkDir = process.env.DEVECO_SDK_HOME;
-          console.log('DEVECO_SDK_HOME:', sdkDir);
-          const config = HosPrjSdkConfig.builder(sdkDir);
-          // Dump config internal state
-          for (const k of Object.getOwnPropertyNames(config)) {
-            const v = config[k];
-            if (typeof v === 'string' || typeof v === 'number') console.log('config.' + k + ':', v);
-          }
-          const logs = [];
-          const progress = { debug:(m)=>logs.push('D: '+m), warn:(m)=>logs.push('W: '+m), info:(m)=>logs.push('I: '+m), error:(m)=>logs.push('E: '+m) };
-          const handler = new SimpleHosPrjSdkHandler(config, progress);
-          const oh = handler.getSdkHandler(HosPrjSdkType.OPENHARMONY);
-          // Dump handler internal state
-          console.log('OH handler type:', oh?.constructor?.name);
-          for (const k of Object.getOwnPropertyNames(oh)) {
-            const v = oh[k];
-            if (typeof v === 'string') console.log('oh.' + k + ':', v);
-            if (v && typeof v === 'object' && v.sdkRoot) console.log('oh.' + k + '.sdkRoot:', v.sdkRoot);
-            if (v && typeof v === 'object' && v.getSdkRoot) console.log('oh.' + k + '.getSdkRoot():', v.getSdkRoot());
-          }
-          const sdks = oh.getLocalSdks('20');
-          console.log('localSdks for API 20: size =', sdks?.size);
           const fs = require('fs');
           const path = require('path');
+          const sdkDir = process.env.DEVECO_SDK_HOME;
+          console.log('DEVECO_SDK_HOME:', sdkDir);
+          const logs = [];
+          const progress = { debug:(m)=>logs.push('D: '+m), warn:(m)=>logs.push('W: '+m), info:(m)=>logs.push('I: '+m), error:(m)=>logs.push('E: '+m) };
+          const config = HosPrjSdkConfig.builder(sdkDir);
+          const handler = new SimpleHosPrjSdkHandler(config, progress);
+          // Test OPENHARMONY
+          const oh = handler.getSdkHandler(HosPrjSdkType.OPENHARMONY);
+          const sdks = oh.getLocalSdks('20');
+          console.log('OH localSdks: size =', sdks?.size);
           if (sdks) { for (const [k,v] of sdks.entries()) {
-            const loc = v?.getLocation?.();
-            console.log(' ', k, '->', loc, 'oh-uni=', fs.existsSync(path.join(loc||'','oh-uni-package.json')), 'sdk-pkg=', fs.existsSync(path.join(loc||'','sdk-pkg.json')));
+            const loc = v?.getLocation?.() || '';
+            const ohUni = fs.existsSync(path.join(loc, 'oh-uni-package.json'));
+            console.log(' ', k, '->', loc, 'oh-uni=', ohUni);
           }}
+          // Test HARMONYOS
           const hms = handler.getSdkHandler(HosPrjSdkType.HARMONYOS);
-          console.log('HMS handler type:', hms?.constructor?.name);
-          for (const k of Object.getOwnPropertyNames(hms)) {
-            const v = hms[k];
-            if (typeof v === 'string') console.log('hms.' + k + ':', v);
-            if (v && typeof v === 'object' && v.sdkRoot) console.log('hms.' + k + '.sdkRoot:', v.sdkRoot);
-            if (v && typeof v === 'object' && v.getSdkRoot) console.log('hms.' + k + '.getSdkRoot():', v.getSdkRoot());
-          }
           const hmsSdks = hms.getLocalSdks('20');
-          console.log('hms localSdks for API 20: size =', hmsSdks?.size);
-          if (hmsSdks) {
-            for (const [k,v] of hmsSdks.entries()) {
-              const loc = v?.getLocation?.();
-              console.log(' HMS', k, '->', loc, 'uni=', fs.existsSync(path.join(loc || '', 'uni-package.json')));
-            }
-          }
+          console.log('HMS localSdks: size =', hmsSdks?.size);
+          if (hmsSdks) { for (const [k,v] of hmsSdks.entries()) {
+            const loc = v?.getLocation?.() || '';
+            const uni = fs.existsSync(path.join(loc, 'uni-package.json'));
+            console.log(' HMS', k, '->', loc, 'uni=', uni);
+          }}
           console.log('=== Scanner logs ===');
           logs.forEach(l => console.log(l));
-        } catch(e) { console.log('Error:', e.message); console.log(e.stack); }
+        } catch(e) { console.log('Error:', e.message, e.stack); }
         " 2>&1 || true
-
-        echo "=== Check toolchains internal structure ==="
-        find ~/ohos-sdk/toolchains -maxdepth 3 -name "sdk-pkg.json" -o -name "oh-uni-package.json" -o -name "uni-package.json" 2>/dev/null | sort
-        echo "=== Directories inside toolchains ==="
-        ls -la ~/ohos-sdk/toolchains/ 2>/dev/null
 
     - name: Build HAP
       run: |
