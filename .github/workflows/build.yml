@@ -27,7 +27,7 @@ env:
   # ========== 版本配置（更新 SDK/工具时修改这里） ==========
   SDK_VERSION: '6.0-Release'
   CMDLINE_TOOLS_VERSION: '5.1.0.840'
-  CACHE_VERSION: 'v1'
+  CACHE_VERSION: 'v3'
 
 jobs:
   build:
@@ -121,11 +121,15 @@ jobs:
         tar -xzf sdk.tar.gz && rm sdk.tar.gz
 
         if [ -d "linux" ]; then
+          echo "ZIP files in linux/:"
+          ls -la linux/*.zip 2>/dev/null
           for zip in linux/*.zip; do
             [ -f "$zip" ] && unzip -q -o "$zip" -d . && echo "  ✓ $(basename "$zip")"
           done
           rm -rf linux windows
         fi
+        echo "Extracted SDK components:"
+        ls -la ~/ohos-sdk/
         echo "✅ SDK ready" && df -h /
 
     - name: Download command-line-tools
@@ -146,13 +150,109 @@ jobs:
         echo "✅ Tools ready" && df -h /
 
     # ────────────────────────────────────────────
+    # SDK 目录结构修正（hvigor 实际期望 $SDK_HOME/<component> 根目录结构）
+    # ────────────────────────────────────────────
+    - name: Normalize SDK layout for hvigor
+      run: |
+        SDK_HOME=~/ohos-sdk
+
+        echo "=== Pre-restructure contents ==="
+        ls -la "$SDK_HOME/"
+
+        # Read apiVersion from any component's oh-uni-package.json
+        PKG_FILE=$(find "$SDK_HOME" -maxdepth 2 -name "oh-uni-package.json" -type f | head -1)
+        if [ -n "$PKG_FILE" ]; then
+          API_VER=$(python3 -c "import json; print(json.load(open('$PKG_FILE'))['apiVersion'])")
+        else
+          API_VER=$(find "$SDK_HOME/openharmony" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | head -1)
+        fi
+        echo "SDK API version: $API_VER"
+
+        # hvigor's HosLocalComponentLoader resolves expected locations as:
+        #   $SDK_HOME/<component path>
+        # It does NOT expect nested openharmony/<apiVersion>/component paths.
+        # Normalize the cached SDK back to a flat root layout.
+        if [ -n "$API_VER" ]; then
+          for comp in ets js native toolchains previewer; do
+            ROOT_DIR="$SDK_HOME/$comp"
+            OH_NESTED_DIR="$SDK_HOME/openharmony/$API_VER/$comp"
+
+            if [ ! -d "$ROOT_DIR" ] && [ -d "$OH_NESTED_DIR" ]; then
+              mv "$OH_NESTED_DIR" "$ROOT_DIR"
+              echo "  Flattened $comp -> $ROOT_DIR"
+            fi
+          done
+
+          # Verify required OpenHarmony components; create stubs for missing ones.
+          # hvigor checks oh-uni-package.json and scans sdk-pkg.json in each root dir.
+          for comp in ets js native toolchains previewer; do
+            COMP_DIR="$SDK_HOME/$comp"
+            if [ ! -d "$COMP_DIR" ]; then
+              echo "  ⚠️  Missing component '$comp' — creating stub"
+              mkdir -p "$COMP_DIR"
+            fi
+            if [ ! -f "$COMP_DIR/oh-uni-package.json" ]; then
+              echo "  ⚠️  Missing oh-uni-package.json in '$comp' — creating from template"
+              cat > "$COMP_DIR/oh-uni-package.json" << STUBEOF
+        {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"4.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
+        STUBEOF
+            fi
+            # hvigor scanner looks for sdk-pkg.json (not oh-uni-package.json!)
+            # Format: {data: {...}, meta: {version: "3.0.0"}}
+            if [ ! -f "$COMP_DIR/sdk-pkg.json" ]; then
+              echo "  Creating sdk-pkg.json for '$comp'"
+              python3 -c "
+        import json, sys
+        pkg_path = '$COMP_DIR/oh-uni-package.json'
+        with open(pkg_path) as f:
+            pkg = json.load(f)
+        meta_ver = '3.0.0'
+        if 'meta' in pkg and 'metaVersion' in pkg['meta']:
+            meta_ver = pkg['meta']['metaVersion']
+        data = {k: v for k, v in pkg.items() if k != 'meta'}
+        sdk_pkg = {'data': data, 'meta': {'version': meta_ver}}
+        with open('$COMP_DIR/sdk-pkg.json', 'w') as f:
+            json.dump(sdk_pkg, f)
+        print(f'  Created sdk-pkg.json for $comp (meta version: {meta_ver})')
+        "
+            fi
+          done
+
+          # When runtimeOS=HarmonyOS, hvigor also checks for uni-package.json.
+          # Keep these files on the same flat root component directories.
+          for comp in toolchains ets native; do
+            HMS_COMP="$SDK_HOME/$comp"
+            mkdir -p "$HMS_COMP"
+            if [ ! -f "$HMS_COMP/uni-package.json" ]; then
+              cat > "$HMS_COMP/uni-package.json" << STUBEOF
+        {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"4.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
+        STUBEOF
+            fi
+          done
+
+          # Avoid duplicate sdk-pkg.json entries from previous cache layouts.
+          # Recursive scanning can otherwise pick nested OpenHarmony/HarmonyOS
+          # component locations that fail the later file-existence check.
+          rm -rf "$SDK_HOME/openharmony" "$SDK_HOME/HarmonyOS"
+          echo "SDK normalized to flat root layout"
+        else
+          echo "⚠️  Could not determine API version"
+        fi
+
+        echo "SDK_API_VERSION=$API_VER" >> "$GITHUB_ENV"
+        echo "=== Post-normalization structure ==="
+        find "$SDK_HOME" -maxdepth 4 -type d
+        echo "=== oh-uni-package.json locations ==="
+        find "$SDK_HOME" -name "oh-uni-package.json" -o -name "uni-package.json" | sort
+
+    # ────────────────────────────────────────────
     # 环境配置
     # ────────────────────────────────────────────
     - name: Setup environment
       run: |
         SDK_HOME=~/ohos-sdk
-        NATIVE_DIR="$(find "$SDK_HOME" -maxdepth 2 -name "native" -type d | head -1)"
-        TOOLCHAINS_DIR="$(find "$SDK_HOME" -maxdepth 2 -name "toolchains" -type d | head -1)"
+        NATIVE_DIR="$(find "$SDK_HOME" -maxdepth 3 -name "native" -type d | head -1)"
+        TOOLCHAINS_DIR="$(find "$SDK_HOME" -maxdepth 3 -name "toolchains" -type d | head -1)"
 
         [ -n "$TOOLCHAINS_DIR" ] && echo "$TOOLCHAINS_DIR" >> "$GITHUB_PATH"
         [ -n "$NATIVE_DIR" ] && echo "${NATIVE_DIR}/build-tools/cmake/bin" >> "$GITHUB_PATH"
@@ -163,6 +263,7 @@ jobs:
           echo "OHOS_SDK_HOME=$SDK_HOME"
           echo "HOS_SDK_HOME=$SDK_HOME"
           echo "OHOS_BASE_SDK_HOME=$SDK_HOME"
+          echo "DEVECO_SDK_HOME=$SDK_HOME"
         } >> "$GITHUB_ENV"
 
         echo "✅ Environment configured"
@@ -181,6 +282,7 @@ jobs:
               {
                 "name": "default",
                 "compatibleSdkVersion": "5.0.0(12)",
+                "targetSdkVersion": "6.0.0(20)",
                 "runtimeOS": "HarmonyOS",
                 "buildOption": {
                   "strictMode": {
@@ -250,6 +352,7 @@ jobs:
                 "name": "default",
                 "signingConfig": "default",
                 "compatibleSdkVersion": "5.0.0(12)",
+                "targetSdkVersion": "6.0.0(20)",
                 "runtimeOS": "HarmonyOS",
                 "buildOption": {
                   "strictMode": {
@@ -294,10 +397,50 @@ jobs:
         key: ohpm-${{ hashFiles('**/oh-package.json5') }}
         restore-keys: ohpm-
 
-    - name: Install hvigor
+    - name: Setup hvigor
       run: |
-        cd hvigor && npm install --legacy-peer-deps
-        echo "✅ hvigor installed"
+        set -euo pipefail
+        CMDTOOLS_HVIGOR="$HOME/cmdline-tools/hvigor"
+
+        # Create ~/.npmrc to satisfy hvigorw requirement
+        echo "@ohos:registry=https://repo.huaweicloud.com/repository/npm/" > ~/.npmrc
+
+        # Create node_modules/@ohos inside command-line-tools so internal
+        # cross-references between hvigor packages resolve correctly
+        # (Node.js resolves from real path after following symlinks)
+        mkdir -p "$CMDTOOLS_HVIGOR/node_modules/@ohos"
+        ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$CMDTOOLS_HVIGOR/node_modules/@ohos/hvigor"
+        ln -sf "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin" "$CMDTOOLS_HVIGOR/node_modules/@ohos/hvigor-ohos-plugin"
+
+        # Symlink into project directories for hvigorfile.ts imports
+        for dir in . hvigor entry nativelib; do
+          mkdir -p "$dir/node_modules/@ohos"
+          ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$dir/node_modules/@ohos/hvigor"
+          ln -sf "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin" "$dir/node_modules/@ohos/hvigor-ohos-plugin"
+        done
+
+        echo "✅ hvigor setup done"
+
+    - name: Patch hos-config.json for API 20
+      run: |
+        # command-line-tools 5.1.0 only maps up to API 18 (5.1.0).
+        # SDK 6.0-Release uses API 20, so we must add the mapping.
+        echo "=== Patching hos-config.json for API 20 support ==="
+        find ~/cmdline-tools -name "hos-config.json" -type f | while read -r cfg; do
+          echo "Patching: $cfg"
+          CONFIG_PATH="$cfg" python3 -c "
+        import json, os
+        p = os.environ['CONFIG_PATH']
+        with open(p) as f:
+            c = json.load(f)
+        c.setdefault('osVersionMapper', {})['6.0.0'] = '20'
+        c.setdefault('osNameMapper', {})['6.0.0'] = 'HarmonyOS NEXT3'
+        c.setdefault('pathVersionMapper', {})['6.0.0'] = 'HarmonyOS-NEXT3'
+        with open(p, 'w') as f:
+            json.dump(c, f, indent=2)
+        print('  Patched successfully')
+        "
+        done
 
     - name: Install ohpm dependencies
       run: |
@@ -309,6 +452,46 @@ jobs:
     # ────────────────────────────────────────────
     # 构建
     # ────────────────────────────────────────────
+    - name: Debug SDK structure
+      run: |
+        echo "=== Verify hos-config.json patch ==="
+        find ~/cmdline-tools -name "hos-config.json" -type f | while read -r cfg; do
+          python3 -c "import json,sys; c=json.load(open(sys.argv[1], encoding='utf-8')); m=c.get('osVersionMapper', {}); print(sys.argv[1], '=>', '6.0.0' in m, 'API', m.get('6.0.0', 'MISSING'))" "$cfg"
+        done
+
+        echo "=== Root SDK component dirs ==="
+        find ~/ohos-sdk -maxdepth 2 \( -name ets -o -name js -o -name native -o -name toolchains -o -name previewer \) -type d | sort
+
+        echo "=== SDK handler quick test ==="
+        node -e "
+        process.env.NODE_PATH = '$HOME/cmdline-tools/hvigor/hvigor-ohos-plugin/node_modules:$HOME/cmdline-tools/hvigor/node_modules/@ohos/hvigor/node_modules';
+        require('module').Module._initPaths();
+        try {
+          const {HosVersionMapper} = require('@ohos/hos-sdkmanager-common/build/src/hos/api/hos-version-mapper');
+          console.log('getHosVersion(20):', JSON.stringify(HosVersionMapper.INSTANCE.getHosVersion(20)));
+          const {HosPrjSdkConfig, SimpleHosPrjSdkHandler, HosPrjSdkType} = require('@ohos/hos-sdkmanager-common');
+          const sdkDir = process.env.DEVECO_SDK_HOME;
+          const config = HosPrjSdkConfig.builder(sdkDir);
+          const noop = { debug:()=>{}, warn:console.warn, info:()=>{}, error:console.error };
+          const handler = new SimpleHosPrjSdkHandler(config, noop);
+          const oh = handler.getSdkHandler(HosPrjSdkType.OPENHARMONY);
+          const sdks = oh.getLocalSdks('20');
+          console.log('localSdks for API 20: size =', sdks?.size);
+          if (sdks) { for (const [k,v] of sdks.entries()) console.log(' ', k, '->', v?.getLocation?.()); }
+          const hms = handler.getSdkHandler(HosPrjSdkType.HARMONYOS);
+          const hmsSdks = hms.getLocalSdks('20');
+          console.log('hms localSdks for API 20: size =', hmsSdks?.size);
+          if (hmsSdks) {
+            const fs = require('fs');
+            const path = require('path');
+            for (const [k,v] of hmsSdks.entries()) {
+              const loc = v?.getLocation?.();
+              console.log(' HMS', k, '->', loc, 'uni=', fs.existsSync(path.join(loc || '', 'uni-package.json')));
+            }
+          }
+        } catch(e) { console.log('Error:', e.message); console.log(e.stack); }
+        " 2>&1 || true
+
     - name: Build HAP
       run: |
         BUILD_MODE="${{ steps.build-mode.outputs.mode }}"
@@ -322,6 +505,7 @@ jobs:
           -p product=default \
           -p buildMode="${BUILD_MODE}" \
           --no-daemon \
+          --stacktrace \
           2>&1 | tee build-hap.log
 
         echo "✅ HAP build completed:"

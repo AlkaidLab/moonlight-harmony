@@ -1283,9 +1283,10 @@ export class GamepadManager implements UsbDriverListener {
     // 映射按键码到按钮标志
     const buttonFlag = gcButtonMap.get(buttonCode);
     if (buttonFlag !== undefined) {
-      // D-pad 按键去重：如果该设备已经通过 Axis 通道报告了 D-pad，
-      // 则丢弃 Button 通道的 D-pad 按下事件，但放行释放事件以确保不卡键
-      if ((buttonFlag & MoonlightButton.DPAD_MASK) !== 0 && this.gcDpadAxisActive.has(deviceId) && isPressed) {
+      // D-pad 通道去重：Axis 通道已处理 D-pad 时，Button 通道事件全部丢弃（含释放）。
+      // Axis 通道通过 hatX/hatY 归零正确处理释放，Button release 放行反而会与 Axis flush
+      // 产生时序竞争导致 D-pad 鬼畜振荡（Button 立即清除 → Axis flush 又设置）。
+      if ((buttonFlag & MoonlightButton.DPAD_MASK) !== 0 && this.gcDpadAxisActive.has(deviceId)) {
         return;
       }
       this.updateButtonState(state, buttonFlag, isPressed);
