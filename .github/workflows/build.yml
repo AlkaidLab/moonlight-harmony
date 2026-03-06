@@ -251,10 +251,12 @@ jobs:
           fi
         done
         # HMS toolchains: create dir with content symlinks
+        # Skip id_defined.json — restool reads it from both OH and HMS paths,
+        # causing "duplicate ID" errors if both point to the same file.
         mkdir -p "$SDK_HOME/toolchains/hms/toolchains"
         for item in "$SDK_HOME/toolchains/"*; do
           bname=$(basename "$item")
-          case "$bname" in openharmony|hms) continue ;; esac
+          case "$bname" in openharmony|hms|id_defined.json) continue ;; esac
           ln -sf "$item" "$SDK_HOME/toolchains/hms/toolchains/$bname"
         done
         cat > "$SDK_HOME/toolchains/hms/toolchains/uni-package.json" << STUBEOF
@@ -601,45 +603,6 @@ jobs:
         SDK_HOME=~/ohos-sdk
         ID_FILE="$SDK_HOME/toolchains/id_defined.json"
         if [ -f "$ID_FILE" ]; then
-          echo "=== id_defined.json structure (first 5 entries) ==="
-          python3 -c "
-        import json, os
-        p = os.path.expanduser('~/ohos-sdk/toolchains/id_defined.json')
-        with open(p) as f:
-            data = json.load(f)
-        print(f'Type: {type(data).__name__}')
-        if isinstance(data, dict):
-            print(f'Keys: {list(data.keys())}')
-            for k, v in data.items():
-                if isinstance(v, list):
-                    print(f'  {k}: list of {len(v)} items')
-                    for item in v[:3]:
-                        print(f'    {item}')
-                else:
-                    print(f'  {k}: {type(v).__name__} = {str(v)[:100]}')
-        elif isinstance(data, list):
-            print(f'Length: {len(data)}')
-            for item in data[:3]:
-                print(f'  {item}')
-        # Find duplicates specifically for ohos_id_color_foreground
-        print()
-        print('=== Searching for ohos_id_color_foreground ===')
-        if isinstance(data, dict):
-            for k, v in data.items():
-                if isinstance(v, list):
-                    for i, item in enumerate(v):
-                        if isinstance(item, dict):
-                            for fk, fv in item.items():
-                                if 'ohos_id_color_foreground' in str(fv):
-                                    print(f'  [{k}][{i}] {item}')
-        elif isinstance(data, list):
-            for i, item in enumerate(data):
-                if isinstance(item, dict):
-                    for fk, fv in item.items():
-                        if 'ohos_id_color_foreground' in str(fv):
-                            print(f'  [{i}] {item}')
-        "
-          echo "=== Deduplicating ==="
           python3 -c "
         import json, os
         p = os.path.expanduser('~/ohos-sdk/toolchains/id_defined.json')
@@ -650,7 +613,6 @@ jobs:
             seen_names = set()
             deduped = []
             for item in records:
-                # Try all possible name/key fields
                 key = None
                 if isinstance(item, dict):
                     for field in ['name', 'Name', 'key', 'type']:
@@ -664,7 +626,7 @@ jobs:
                 if key not in seen_names:
                     seen_names.add(key)
                     deduped.append(item)
-            # Re-sequence order field
+                # Re-sequence order field
             for i, item in enumerate(deduped):
                 if isinstance(item, dict) and 'order' in item:
                     item['order'] = i
@@ -678,46 +640,258 @@ jobs:
                     if removed:
                         data[k] = deduped
                         changed = True
-                        print(f'  {k}: removed {removed} duplicates')
+                        print(f'{k}: removed {removed} duplicates, re-indexed order')
         elif isinstance(data, list):
             deduped, removed = dedup_records(data)
             if removed:
                 data = deduped
                 changed = True
-                print(f'  Removed {removed} duplicates')
+                print(f'Removed {removed} duplicates, re-indexed order')
 
         if changed:
             with open(p, 'w') as f:
                 json.dump(data, f, indent=2)
-            print('  Written deduped file')
         else:
-            print('  No duplicates found')
+            print('No duplicates found in id_defined.json')
         "
-          echo "=== Verifying symlink ==="
-          ls -la "$SDK_HOME/toolchains/openharmony/toolchains/id_defined.json" 2>&1 || true
-          python3 -c "
-        import json, os
-        p = os.path.expanduser('~/ohos-sdk/toolchains/openharmony/toolchains/id_defined.json')
-        with open(p) as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            for k, v in data.items():
-                if isinstance(v, list):
-                    for i, item in enumerate(v):
-                        if isinstance(item, dict):
-                            for fk, fv in item.items():
-                                if 'ohos_id_color_foreground' in str(fv):
-                                    print(f'  SYMLINK [{k}][{i}] {item}')
-        elif isinstance(data, list):
-            for i, item in enumerate(data):
-                if isinstance(item, dict):
-                    for fk, fv in item.items():
-                        if 'ohos_id_color_foreground' in str(fv):
-                            print(f'  SYMLINK [{i}] {item}')
-        " 2>&1 || true
         else
           echo "id_defined.json not found at $ID_FILE"
         fi
+
+    - name: Create ets-loader externalconfig.json
+      run: |
+        SDK_HOME=~/ohos-sdk
+        # process_visual.js reads externalconfig.json from each external component path.
+        # When externalApiPaths is set by hvigor, the resolved components directory exists
+        # (due to our symlinks), but externalconfig.json doesn't exist in the public SDK.
+        # ts.readConfigFile returns {config: {}} for a missing file, causing
+        # concatenateEtsOptions to crash on undefined.compilerOptions.
+        COMPONENTS_DIR="$SDK_HOME/ets/build-tools/ets-loader/components"
+        if [ ! -f "$COMPONENTS_DIR/externalconfig.json" ]; then
+          cat > "$COMPONENTS_DIR/externalconfig.json" << 'EXTCFG'
+        {
+          "compilerOptions": {
+            "ets": {
+              "components": [],
+              "extend": {
+                "components": []
+              }
+            }
+          }
+        }
+        EXTCFG
+          echo "Created externalconfig.json in ets-loader components"
+        fi
+
+    - name: Patch SDK for missing HarmonyOS APIs
+      run: |
+        SDK_HOME=~/ohos-sdk
+        ETS_API="$SDK_HOME/ets/api"
+        KIT_CONFIGS="$SDK_HOME/ets/build-tools/ets-loader/kit_configs"
+        ETS_LOADER="$SDK_HOME/ets/build-tools/ets-loader"
+
+        # ─── @kit.RemoteCommunicationKit (rcp module) ───
+        if [ ! -f "$KIT_CONFIGS/@kit.RemoteCommunicationKit.json" ]; then
+          echo "Creating @kit.RemoteCommunicationKit kit config..."
+          cat > "$KIT_CONFIGS/@kit.RemoteCommunicationKit.json" << 'KITCFG'
+        {
+          "symbols": {
+            "rcp": {
+              "source": "@ohos.net.rcp.d.ts",
+              "bindings": "default"
+            }
+          }
+        }
+        KITCFG
+        fi
+
+        if [ ! -f "$ETS_API/@ohos.net.rcp.d.ts" ]; then
+          echo "Creating @ohos.net.rcp.d.ts..."
+          cat > "$ETS_API/@ohos.net.rcp.d.ts" << 'RCPDTS'
+        declare namespace rcp {
+          interface CertificateConfig {
+            type: string;
+            filePath: string;
+            key: string;
+          }
+          interface SecurityConfiguration {
+            remoteValidation?: 'skip' | 'system';
+            certificate?: CertificateConfig;
+          }
+          interface TimeoutConfig {
+            connectMs?: number;
+            transferMs?: number;
+          }
+          interface TransferConfig {
+            timeout?: TimeoutConfig;
+          }
+          interface RequestConfiguration {
+            security?: SecurityConfiguration;
+            transfer?: TransferConfig;
+          }
+          interface SessionConfiguration {
+            requestConfiguration?: RequestConfiguration;
+          }
+          interface Response {
+            statusCode: number;
+            body: ArrayBuffer;
+          }
+          interface Session {
+            get(url: string): Promise<Response>;
+            close(): void;
+          }
+          function createSession(config?: SessionConfiguration): Session;
+        }
+        export default rcp;
+        export { rcp };
+        RCPDTS
+        fi
+
+        cat > "$ETS_API/@kit.RemoteCommunicationKit.d.ts" << 'KITDTS'
+        declare module '@kit.RemoteCommunicationKit' {
+          namespace rcp {
+            interface CertificateConfig {
+              type: string;
+              filePath: string;
+              key: string;
+            }
+            interface SecurityConfiguration {
+              remoteValidation?: 'skip' | 'system';
+              certificate?: CertificateConfig;
+            }
+            interface TimeoutConfig {
+              connectMs?: number;
+              transferMs?: number;
+            }
+            interface TransferConfig {
+              timeout?: TimeoutConfig;
+            }
+            interface RequestConfiguration {
+              security?: SecurityConfiguration;
+              transfer?: TransferConfig;
+            }
+            interface SessionConfiguration {
+              requestConfiguration?: RequestConfiguration;
+            }
+            interface Response {
+              statusCode: number;
+              body: ArrayBuffer;
+            }
+            interface Session {
+              get(url: string): Promise<Response>;
+              close(): void;
+            }
+            function createSession(config?: SessionConfiguration): Session;
+          }
+          export { rcp };
+        }
+        KITDTS
+        echo "  Created RemoteCommunicationKit declarations"
+
+        # ─── Patch socket module to fix constructUDPSocketInstance return type ───
+        SOCKET_DTS=$(find "$ETS_API" -name "@ohos.net.socket.d.ts" -o -name "@ohos.net.socket.d.ets" 2>/dev/null | head -1)
+        echo "Socket declaration file: ${SOCKET_DTS:-NOT FOUND}"
+        if [ -n "$SOCKET_DTS" ]; then
+          # Check if constructUDPSocketInstance return type includes 'any'
+          echo "=== constructUDPSocketInstance declaration ==="
+          grep -B2 -A5 "constructUDPSocketInstance" "$SOCKET_DTS" | head -20
+          # Check if UDPSocket interface exists
+          echo "=== UDPSocket interface ==="
+          grep "interface UDPSocket\|export.*UDPSocket" "$SOCKET_DTS" | head -5
+        else
+          echo "Socket module not found - creating stub..."
+          cat > "$ETS_API/@ohos.net.socket.d.ts" << 'SOCKETDTS'
+        declare namespace socket {
+          interface NetAddress {
+            address: string;
+            port?: number;
+            family?: number;
+          }
+          interface UDPSocket {
+            bind(address: NetAddress): Promise<void>;
+            send(options: UDPSendOptions): Promise<void>;
+            setExtraOptions(options: UDPExtraOptions): Promise<void>;
+            close(): Promise<void>;
+            on(type: string, callback: Function): void;
+            off(type: string, callback?: Function): void;
+          }
+          interface UDPSendOptions {
+            data: string | ArrayBuffer;
+            address: NetAddress;
+          }
+          interface UDPExtraOptions {
+            broadcast?: boolean;
+            receiveBufferSize?: number;
+            sendBufferSize?: number;
+            reuseAddress?: boolean;
+            socketTimeout?: number;
+          }
+          function constructUDPSocketInstance(): UDPSocket;
+        }
+        export default socket;
+        export { socket };
+        SOCKETDTS
+          echo "  Created socket stub"
+        fi
+
+        # ─── Add getBrightnessInfo to display module ───
+        DISPLAY_DTS=$(find "$ETS_API" -name "@ohos.display.d.ts" -o -name "@ohos.display.d.ets" 2>/dev/null | head -1)
+        if [ -n "$DISPLAY_DTS" ]; then
+          if ! grep -q "getBrightnessInfo" "$DISPLAY_DTS"; then
+            echo "Patching display module with getBrightnessInfo..."
+            cat >> "$DISPLAY_DTS" << 'DISPLAYPATCH'
+
+        declare namespace display {
+          interface BrightnessInfo {
+            sdrNits: number;
+            currentHeadroom: number;
+            maxHeadroom: number;
+          }
+          function getBrightnessInfo(displayId: number): BrightnessInfo;
+        }
+        DISPLAYPATCH
+            echo "  Patched display module"
+          fi
+        else
+          echo "Warning: display module declaration not found"
+        fi
+
+        # ─── Debug UI component syntax error root cause ───
+        echo "=== Investigating UI component syntax validation ==="
+
+        # Deep-dive: examine componentCollection and storedFileInfo in process_component_build.js
+        PCB="$ETS_LOADER/lib/process_component_build.js"
+        echo "--- process_component_build.js analysis ---"
+        # Extract how componentCollection is checked (the error-producing code)
+        grep -oP ".{0,200}does not meet UI component syntax.{0,200}" "$PCB" 2>/dev/null | head -5
+        echo "---"
+        # How is component type determined?
+        grep -oP ".{0,100}componentCollection.{0,100}" "$PCB" 2>/dev/null | head -10
+        echo "---"
+        # Check storedFileInfo usage
+        grep -oP ".{0,100}storedFileInfo.{0,100}" "$PCB" 2>/dev/null | head -10
+        echo "---"
+        # isEtsComponent function
+        grep -oP ".{0,200}isEtsComponent.{0,200}" "$PCB" 2>/dev/null | head -5
+
+        # Check validate_ui_syntax for componentCollection population
+        VSYN="$ETS_LOADER/lib/validate_ui_syntax.js"
+        echo "--- validate_ui_syntax: how componentCollection is populated ---"
+        grep -oP ".{0,200}componentCollection\.(customComponents|localStorageCollection).{0,200}" "$VSYN" 2>/dev/null | head -10
+        echo "---"
+        grep -oP ".{0,200}storedFileInfo\.getCurrentArkTsFile.{0,200}" "$VSYN" 2>/dev/null | head -5
+
+        # Check @kit.NetworkKit.json for socket mapping
+        echo "=== NetworkKit kit config ==="
+        cat "$KIT_CONFIGS/@kit.NetworkKit.json" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({k:v for k,v in d.get('symbols',{}).items() if 'socket' in k.lower()}, indent=2))" 2>/dev/null || echo "Failed to parse"
+
+        # Check socket type resolution
+        echo "=== Socket d.ts first 5 lines ==="
+        head -5 "$ETS_API/@ohos.net.socket.d.ts" 2>/dev/null
+        echo "=== Socket d.ts - export lines ==="
+        grep -n "^export\|^declare" "$ETS_API/@ohos.net.socket.d.ts" 2>/dev/null | head -10
+
+        echo "✅ SDK API patches applied"
 
     - name: Build HAP
       run: |

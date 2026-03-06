@@ -47,6 +47,17 @@ class PerfOverlayItemOption {
   }
 }
 
+class ResolutionPreset {
+  label: string;
+  w: string;
+  h: string;
+  constructor(label: string, w: string, h: string) {
+    this.label = label;
+    this.w = w;
+    this.h = h;
+  }
+}
+
 /**
  * 选择器配置接口
  */
@@ -256,10 +267,12 @@ struct SettingsPageV2 {
   private textInputCallback: ((value: string) => void) | null = null;
   
   // 自定义分辨率输入弹窗状态
-  @State showCustomResolutionSheet: boolean = false;
   @State customResWidth: string = '';
   @State customResHeight: string = '';
   @State customResAspectRatio: string = '';
+  
+  // 底部弹窗类型: 'text' = 文本输入, 'resolution' = 自定义分辨率
+  private bottomSheetType: string = 'text';
   
   // OptionPickerDialog 配置
   private optionPickerDialogConfig: OptionPickerDialogConfig = {
@@ -610,6 +623,18 @@ struct SettingsPageV2 {
   }
   
   /**
+   * 统一底部弹窗内容
+   */
+  @Builder
+  BottomSheetContent() {
+    if (this.bottomSheetType === 'resolution') {
+      this.CustomResolutionSheet()
+    } else {
+      this.TextInputSheet()
+    }
+  }
+
+  /**
    * 文本输入弹窗
    */
   @Builder
@@ -784,16 +809,16 @@ struct SettingsPageV2 {
 
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, space: { main: LengthMetrics.vp(8), cross: LengthMetrics.vp(8) } }) {
         ForEach([
-          { label: '2K 超宽', w: '2560', h: '1080' },
-          { label: 'QHD 超宽', w: '3440', h: '1440' },
-          { label: '1920×1200', w: '1920', h: '1200' },
-          { label: '2560×1600', w: '2560', h: '1600' },
-          { label: '1280×1024', w: '1280', h: '1024' },
-          { label: '5120×1440', w: '5120', h: '1440' },
-          { label: '5K', w: '5120', h: '2880' },
-          { label: '8K', w: '7680', h: '4320' },
-        ] as object[], (item: Record<string, string>) => {
-          Button(item.label as string)
+          new ResolutionPreset('2K 超宽', '2560', '1080'),
+          new ResolutionPreset('QHD 超宽', '3440', '1440'),
+          new ResolutionPreset('1920×1200', '1920', '1200'),
+          new ResolutionPreset('2560×1600', '2560', '1600'),
+          new ResolutionPreset('1280×1024', '1280', '1024'),
+          new ResolutionPreset('5120×1440', '5120', '1440'),
+          new ResolutionPreset('5K', '5120', '2880'),
+          new ResolutionPreset('8K', '7680', '4320'),
+        ] as ResolutionPreset[], (item: ResolutionPreset) => {
+          Button(item.label)
             .fontSize(AppSizes.FontCaption)
             .fontColor(AppColors.TextPrimary)
             .backgroundColor(AppColors.Surface)
@@ -801,10 +826,10 @@ struct SettingsPageV2 {
             .borderRadius(16)
             .padding({ left: 12, right: 12 })
             .onClick(() => {
-              this.customResWidth = item.w as string;
-              this.customResHeight = item.h as string;
-              const w = parseInt(item.w as string);
-              const h = parseInt(item.h as string);
+              this.customResWidth = item.w;
+              this.customResHeight = item.h;
+              const w = parseInt(item.w);
+              const h = parseInt(item.h);
               this.customResAspectRatio = this.calcAspectRatio(w, h);
             })
         })
@@ -821,7 +846,7 @@ struct SettingsPageV2 {
           .layoutWeight(1)
           .height(48)
           .onClick(() => {
-            this.showCustomResolutionSheet = false;
+            this.showTextInputDialog = false;
           })
         
         Button('添加')
@@ -839,7 +864,7 @@ struct SettingsPageV2 {
             } else {
               this.showToast('请输入宽度和高度');
             }
-            this.showCustomResolutionSheet = false;
+            this.showTextInputDialog = false;
           })
       }
       .width('100%')
@@ -888,16 +913,6 @@ struct SettingsPageV2 {
                 subtitle: this.resolution,
                 type: 'select',
                 action: () => this.showResolutionPicker()
-              },
-              {
-                title: '自定义分辨率',
-                subtitle: this.customResolutions.length > 0 ? 
-                  (this.customResolutions.length <= 3 
-                    ? this.customResolutions.map(r => r.replace('x', '×')).join(', ')
-                    : `已添加 ${this.customResolutions.length} 个`) 
-                  : '点击添加或管理',
-                type: 'action',
-                action: () => this.showCustomResolutionDialog()
               },
               {
                 title: '帧率',
@@ -1997,14 +2012,7 @@ struct SettingsPageV2 {
       const width = newValue.width as number;
       this.isWideScreen = width > 840;
     })
-    .bindSheet($$this.showTextInputDialog, this.TextInputSheet(), {
-      height: SheetSize.FIT_CONTENT,
-      backgroundColor: Color.Transparent,
-      dragBar: false,
-      showClose: false,
-      preferType: SheetType.BOTTOM
-    } as SheetOptions)
-    .bindSheet($$this.showCustomResolutionSheet, this.CustomResolutionSheet(), {
+    .bindSheet($$this.showTextInputDialog, this.BottomSheetContent(), {
       height: SheetSize.FIT_CONTENT,
       backgroundColor: Color.Transparent,
       dragBar: false,
@@ -2453,7 +2461,17 @@ struct SettingsPageV2 {
       value: 'custom_input'
     } as PickerOption;
     
-    const allOptions = [...presetOptions, ...nativeOptions, ...customOptions, customActionOption];
+    // 添加"管理自定义"选项（仅已有自定义分辨率时显示）
+    const manageOptions: PickerOption[] = [];
+    if (this.customResolutions.length > 0) {
+      manageOptions.push({
+        title: '管理自定义分辨率',
+        subtitle: `已添加 ${this.customResolutions.length} 个，点击管理`,
+        value: 'manage_custom'
+      } as PickerOption);
+    }
+    
+    const allOptions = [...presetOptions, ...nativeOptions, ...customOptions, customActionOption, ...manageOptions];
     
     const config: PickerConfig = {
       title: '选择分辨率',
@@ -2463,8 +2481,10 @@ struct SettingsPageV2 {
       onSelect: (option: PickerOption) => {
         const value = option.value as string;
         if (value === 'custom_input') {
-          // 显示自定义分辨率输入框
-          this.showAddResolutionInput();
+          // 延迟打开输入框，等待 picker dialog 关闭动画完成
+          setTimeout(() => this.showAddResolutionInput(), 200);
+        } else if (value === 'manage_custom') {
+          setTimeout(() => this.showCustomResolutionDialog(), 200);
         } else {
           this.resolution = value;
           this.saveSetting(SettingsKeys.RESOLUTION, value);
@@ -2511,7 +2531,8 @@ struct SettingsPageV2 {
       onSelect: (option: PickerOption) => {
         const value = option.value as string;
         if (value === 'action:add') {
-          this.showAddResolutionInput();
+          // 延迟打开输入框，等待 picker dialog 关闭动画完成
+          setTimeout(() => this.showAddResolutionInput(), 200);
         } else if (value === 'action:clear') {
           this.clearAllCustomResolutions();
         } else if (value.startsWith('delete:')) {
@@ -2530,7 +2551,8 @@ struct SettingsPageV2 {
     this.customResWidth = '';
     this.customResHeight = '';
     this.customResAspectRatio = '';
-    this.showCustomResolutionSheet = true;
+    this.bottomSheetType = 'resolution';
+    this.showTextInputDialog = true;
   }
 
   /**
@@ -2732,8 +2754,8 @@ struct SettingsPageV2 {
       onSelect: (option: PickerOption) => {
         const value = option.value as string;
         if (value === 'custom_input') {
-          // 显示自定义帧率输入框
-          this.showCustomFpsInput();
+          // 延迟打开输入框，等待 picker dialog 关闭动画完成
+          setTimeout(() => this.showCustomFpsInput(), 200);
         } else if (value.startsWith('自定义:')) {
           // 选择了已保存的自定义帧率
           this.fps = value;
@@ -2791,6 +2813,7 @@ struct SettingsPageV2 {
         this.setCustomFps(value.trim());
       }
     };
+    this.bottomSheetType = 'text';
     this.showTextInputDialog = true;
   }
 
