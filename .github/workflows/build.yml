@@ -601,46 +601,120 @@ jobs:
         SDK_HOME=~/ohos-sdk
         ID_FILE="$SDK_HOME/toolchains/id_defined.json"
         if [ -f "$ID_FILE" ]; then
+          echo "=== id_defined.json structure (first 5 entries) ==="
+          python3 -c "
+        import json, os
+        p = os.path.expanduser('~/ohos-sdk/toolchains/id_defined.json')
+        with open(p) as f:
+            data = json.load(f)
+        print(f'Type: {type(data).__name__}')
+        if isinstance(data, dict):
+            print(f'Keys: {list(data.keys())}')
+            for k, v in data.items():
+                if isinstance(v, list):
+                    print(f'  {k}: list of {len(v)} items')
+                    for item in v[:3]:
+                        print(f'    {item}')
+                else:
+                    print(f'  {k}: {type(v).__name__} = {str(v)[:100]}')
+        elif isinstance(data, list):
+            print(f'Length: {len(data)}')
+            for item in data[:3]:
+                print(f'  {item}')
+        # Find duplicates specifically for ohos_id_color_foreground
+        print()
+        print('=== Searching for ohos_id_color_foreground ===')
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, list):
+                    for i, item in enumerate(v):
+                        if isinstance(item, dict):
+                            for fk, fv in item.items():
+                                if 'ohos_id_color_foreground' in str(fv):
+                                    print(f'  [{k}][{i}] {item}')
+        elif isinstance(data, list):
+            for i, item in enumerate(data):
+                if isinstance(item, dict):
+                    for fk, fv in item.items():
+                        if 'ohos_id_color_foreground' in str(fv):
+                            print(f'  [{i}] {item}')
+        "
+          echo "=== Deduplicating ==="
           python3 -c "
         import json, os
         p = os.path.expanduser('~/ohos-sdk/toolchains/id_defined.json')
         with open(p) as f:
             data = json.load(f)
 
-        def dedup_and_reindex(records):
-            seen = set()
+        def dedup_records(records):
+            seen_names = set()
             deduped = []
             for item in records:
-                key = item.get('name', '') if isinstance(item, dict) else str(item)
-                if key not in seen:
-                    seen.add(key)
+                # Try all possible name/key fields
+                key = None
+                if isinstance(item, dict):
+                    for field in ['name', 'Name', 'key', 'type']:
+                        if field in item:
+                            key = str(item[field])
+                            break
+                    if key is None:
+                        key = json.dumps(item, sort_keys=True)
+                else:
+                    key = str(item)
+                if key not in seen_names:
+                    seen_names.add(key)
                     deduped.append(item)
-            # Re-sequence order field to match array index
+            # Re-sequence order field
             for i, item in enumerate(deduped):
                 if isinstance(item, dict) and 'order' in item:
                     item['order'] = i
             return deduped, len(records) - len(deduped)
 
-        if isinstance(data, list):
-            deduped, removed = dedup_and_reindex(data)
+        changed = False
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, list) and len(v) > 0:
+                    deduped, removed = dedup_records(v)
+                    if removed:
+                        data[k] = deduped
+                        changed = True
+                        print(f'  {k}: removed {removed} duplicates')
+        elif isinstance(data, list):
+            deduped, removed = dedup_records(data)
             if removed:
-                with open(p, 'w') as f:
-                    json.dump(deduped, f, indent=2)
-                print(f'Removed {removed} duplicates, re-indexed order fields')
-            else:
-                print('No duplicates in id_defined.json')
-        elif isinstance(data, dict):
-            record = data.get('record', [])
-            if isinstance(record, list):
-                deduped, removed = dedup_and_reindex(record)
-                if removed:
-                    data['record'] = deduped
-                    with open(p, 'w') as f:
-                        json.dump(data, f, indent=2)
-                    print(f'Removed {removed} duplicates, re-indexed order fields')
-                else:
-                    print('No duplicates in id_defined.json')
+                data = deduped
+                changed = True
+                print(f'  Removed {removed} duplicates')
+
+        if changed:
+            with open(p, 'w') as f:
+                json.dump(data, f, indent=2)
+            print('  Written deduped file')
+        else:
+            print('  No duplicates found')
         "
+          echo "=== Verifying symlink ==="
+          ls -la "$SDK_HOME/toolchains/openharmony/toolchains/id_defined.json" 2>&1 || true
+          python3 -c "
+        import json, os
+        p = os.path.expanduser('~/ohos-sdk/toolchains/openharmony/toolchains/id_defined.json')
+        with open(p) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, list):
+                    for i, item in enumerate(v):
+                        if isinstance(item, dict):
+                            for fk, fv in item.items():
+                                if 'ohos_id_color_foreground' in str(fv):
+                                    print(f'  SYMLINK [{k}][{i}] {item}')
+        elif isinstance(data, list):
+            for i, item in enumerate(data):
+                if isinstance(item, dict):
+                    for fk, fv in item.items():
+                        if 'ohos_id_color_foreground' in str(fv):
+                            print(f'  SYMLINK [{i}] {item}')
+        " 2>&1 || true
         else
           echo "id_defined.json not found at $ID_FILE"
         fi
