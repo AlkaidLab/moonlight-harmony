@@ -27,7 +27,7 @@ env:
   # ========== 版本配置（更新 SDK/工具时修改这里） ==========
   SDK_VERSION: '6.0-Release'
   CMDLINE_TOOLS_VERSION: '5.1.0.840'
-  CACHE_VERSION: 'v4'
+  CACHE_VERSION: 'v5'
 
 jobs:
   build:
