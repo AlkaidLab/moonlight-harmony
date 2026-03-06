@@ -239,21 +239,49 @@ jobs:
         # ─── Step 4: Create HARMONYOS (HMS) remapped locations ───
         # HosSdkInfoHandler remaps to: $SDK_HOME/toolchains/hms/<comp>/
         # checkComponentExistence looks for uni-package.json there.
+        # hvigor also uses these directories for actual build tools (modulecheck, etc.),
+        # so we must provide real content — not just stubs.
         mkdir -p "$SDK_HOME/toolchains/hms"
-        for comp in ets native previewer toolchains; do
+        for comp in ets native previewer; do
           HMS_DIR="$SDK_HOME/toolchains/hms/$comp"
-          mkdir -p "$HMS_DIR"
-          if [ ! -f "$HMS_DIR/uni-package.json" ]; then
-            cat > "$HMS_DIR/uni-package.json" << STUBEOF
+          if [ -d "$SDK_HOME/$comp" ] && [ ! -e "$HMS_DIR" ]; then
+            # Symlink to actual OH content; hvigor accesses build tools from here
+            ln -sf "$SDK_HOME/$comp" "$HMS_DIR"
+            echo "  Symlinked toolchains/hms/$comp"
+          fi
+          # uni-package.json must be at the resolved location for checkComponentExistence.
+          # Since the symlink points to the actual comp dir, put uni-package.json there.
+          TARGET="$SDK_HOME/$comp"
+          if [ ! -f "$TARGET/uni-package.json" ]; then
+            cat > "$TARGET/uni-package.json" << STUBEOF
         {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
         STUBEOF
-            echo "  Created HMS stub: $comp"
           fi
-          if [ ! -f "$HMS_DIR/sdk-pkg.json" ]; then
+        done
+        # HMS toolchains: like OH toolchains, create dir with content symlinks
+        if [ ! -d "$SDK_HOME/toolchains/hms/toolchains" ]; then
+          mkdir -p "$SDK_HOME/toolchains/hms/toolchains"
+          for item in "$SDK_HOME/toolchains/"*; do
+            bname=$(basename "$item")
+            case "$bname" in openharmony|hms) continue ;; esac
+            ln -sf "$item" "$SDK_HOME/toolchains/hms/toolchains/$bname"
+          done
+          # uni-package.json for checkComponentExistence
+          cat > "$SDK_HOME/toolchains/hms/toolchains/uni-package.json" << STUBEOF
+        {"apiVersion":"$API_VER","displayName":"Toolchains","meta":{"metaVersion":"3.0.0"},"path":"toolchains","releaseType":"Beta1","version":"6.0.0.47"}
+        STUBEOF
+          echo "  Created toolchains/hms/toolchains with content symlinks"
+        fi
+        # HMS also needs sdk-pkg.json for parseSdks to discover during scanning
+        for comp in ets native previewer toolchains; do
+          HMS_DIR="$SDK_HOME/toolchains/hms/$comp"
+          # Resolve symlink target for file writes
+          REAL_DIR=$(readlink -f "$HMS_DIR" 2>/dev/null || echo "$HMS_DIR")
+          if [ ! -f "$REAL_DIR/sdk-pkg.json" ] && [ ! -f "$HMS_DIR/sdk-pkg.json" ]; then
             python3 -c "
         import json
         data = {'apiVersion': '$API_VER', 'displayName': '${comp^}', 'path': '$comp', 'releaseType': 'Beta1', 'version': '6.0.0.47'}
-        with open('$HMS_DIR/sdk-pkg.json', 'w') as f:
+        with open('$REAL_DIR/sdk-pkg.json', 'w') as f:
             json.dump({'data': data, 'meta': {'version': '3.0.0'}}, f)
         "
           fi
