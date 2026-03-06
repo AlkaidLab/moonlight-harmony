@@ -255,6 +255,12 @@ struct SettingsPageV2 {
   @State textInputValue: string = '';
   private textInputCallback: ((value: string) => void) | null = null;
   
+  // 自定义分辨率输入弹窗状态
+  @State showCustomResolutionSheet: boolean = false;
+  @State customResWidth: string = '';
+  @State customResHeight: string = '';
+  @State customResAspectRatio: string = '';
+  
   // OptionPickerDialog 配置
   private optionPickerDialogConfig: OptionPickerDialogConfig = {
     title: '',
@@ -681,6 +687,169 @@ struct SettingsPageV2 {
     .borderRadius(24)
   }
 
+  /**
+   * 计算宽高比的友好描述
+   */
+  private calcAspectRatio(w: number, h: number): string {
+    if (w <= 0 || h <= 0) return '';
+    const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
+    const d = gcd(w, h);
+    const rw = w / d;
+    const rh = h / d;
+    // 常见宽高比映射
+    const ratio = w / h;
+    if (Math.abs(ratio - 16 / 9) < 0.02) return '16:9';
+    if (Math.abs(ratio - 16 / 10) < 0.02) return '16:10';
+    if (Math.abs(ratio - 21 / 9) < 0.05) return '21:9 超宽';
+    if (Math.abs(ratio - 32 / 9) < 0.05) return '32:9 超超宽';
+    if (Math.abs(ratio - 4 / 3) < 0.02) return '4:3';
+    if (Math.abs(ratio - 3 / 2) < 0.02) return '3:2';
+    if (Math.abs(ratio - 5 / 4) < 0.02) return '5:4';
+    return `${rw}:${rh}`;
+  }
+
+  /**
+   * 自定义分辨率输入弹窗 — 分离宽高输入 + 快捷预设
+   */
+  @Builder
+  CustomResolutionSheet() {
+    Column({ space: AppSpacing.Medium }) {
+      // 标题
+      Text('添加自定义分辨率')
+        .fontSize(AppSizes.FontTitle)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(AppColors.TextPrimary)
+        .width('100%')
+        .padding({ top: AppSpacing.Large, left: AppSpacing.Large, right: AppSpacing.Large })
+
+      // 宽度 × 高度 输入行
+      Row({ space: AppSpacing.Small }) {
+        TextInput({ text: this.customResWidth, placeholder: '宽度' })
+          .type(InputType.Number)
+          .width(0)
+          .layoutWeight(1)
+          .height(48)
+          .fontSize(AppSizes.FontBody)
+          .fontColor(AppColors.TextPrimary)
+          .backgroundColor(AppColors.Surface)
+          .borderRadius(AppSizes.RadiusMedium)
+          .textAlign(TextAlign.Center)
+          .onChange((value: string) => {
+            this.customResWidth = value;
+            const w = parseInt(value) || 0;
+            const h = parseInt(this.customResHeight) || 0;
+            this.customResAspectRatio = this.calcAspectRatio(w, h);
+          })
+
+        Text('×')
+          .fontSize(20)
+          .fontColor(AppColors.TextSecondary)
+          .fontWeight(FontWeight.Bold)
+
+        TextInput({ text: this.customResHeight, placeholder: '高度' })
+          .type(InputType.Number)
+          .width(0)
+          .layoutWeight(1)
+          .height(48)
+          .fontSize(AppSizes.FontBody)
+          .fontColor(AppColors.TextPrimary)
+          .backgroundColor(AppColors.Surface)
+          .borderRadius(AppSizes.RadiusMedium)
+          .textAlign(TextAlign.Center)
+          .onChange((value: string) => {
+            this.customResHeight = value;
+            const w = parseInt(this.customResWidth) || 0;
+            const h = parseInt(value) || 0;
+            this.customResAspectRatio = this.calcAspectRatio(w, h);
+          })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.Large, right: AppSpacing.Large })
+
+      // 宽高比提示 + 验证提示
+      if (this.customResAspectRatio.length > 0) {
+        Text(`宽高比: ${this.customResAspectRatio}`)
+          .fontSize(AppSizes.FontCaption)
+          .fontColor(AppColors.Primary)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+      }
+
+      // 常用分辨率快捷按钮
+      Text('快速选择')
+        .fontSize(AppSizes.FontCaption)
+        .fontColor(AppColors.TextSecondary)
+        .width('100%')
+        .padding({ left: AppSpacing.Large })
+
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, space: { main: LengthMetrics.vp(8), cross: LengthMetrics.vp(8) } }) {
+        ForEach([
+          { label: '2K 超宽', w: '2560', h: '1080' },
+          { label: 'QHD 超宽', w: '3440', h: '1440' },
+          { label: '1920×1200', w: '1920', h: '1200' },
+          { label: '2560×1600', w: '2560', h: '1600' },
+          { label: '1280×1024', w: '1280', h: '1024' },
+          { label: '5120×1440', w: '5120', h: '1440' },
+          { label: '5K', w: '5120', h: '2880' },
+          { label: '8K', w: '7680', h: '4320' },
+        ] as object[], (item: Record<string, string>) => {
+          Button(item.label as string)
+            .fontSize(AppSizes.FontCaption)
+            .fontColor(AppColors.TextPrimary)
+            .backgroundColor(AppColors.Surface)
+            .height(32)
+            .borderRadius(16)
+            .padding({ left: 12, right: 12 })
+            .onClick(() => {
+              this.customResWidth = item.w as string;
+              this.customResHeight = item.h as string;
+              const w = parseInt(item.w as string);
+              const h = parseInt(item.h as string);
+              this.customResAspectRatio = this.calcAspectRatio(w, h);
+            })
+        })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.Large, right: AppSpacing.Large })
+
+      // 按钮行
+      Row({ space: AppSpacing.Medium }) {
+        Button('取消')
+          .fontSize(AppSizes.FontBody)
+          .fontColor(AppColors.TextSecondary)
+          .backgroundColor(Color.Transparent)
+          .layoutWeight(1)
+          .height(48)
+          .onClick(() => {
+            this.showCustomResolutionSheet = false;
+          })
+        
+        Button('添加')
+          .fontSize(AppSizes.FontBody)
+          .fontColor(AppColors.TextOnPrimary)
+          .backgroundColor(AppColors.Primary)
+          .layoutWeight(1)
+          .height(48)
+          .borderRadius(AppSizes.RadiusMedium)
+          .onClick(() => {
+            const w = this.customResWidth.trim();
+            const h = this.customResHeight.trim();
+            if (w.length > 0 && h.length > 0) {
+              this.addCustomResolution(`${w}x${h}`);
+            } else {
+              this.showToast('请输入宽度和高度');
+            }
+            this.showCustomResolutionSheet = false;
+          })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.Large, right: AppSpacing.Large, bottom: AppSpacing.Large })
+    }
+    .width('100%')
+    .backgroundColor(AppColors.CardBackground)
+    .borderRadius(24)
+  }
+
   build() {
     Column() {
       // 标题栏
@@ -723,7 +892,10 @@ struct SettingsPageV2 {
               {
                 title: '自定义分辨率',
                 subtitle: this.customResolutions.length > 0 ? 
-                  `已添加 ${this.customResolutions.length} 个` : '点击添加自定义分辨率',
+                  (this.customResolutions.length <= 3 
+                    ? this.customResolutions.map(r => r.replace('x', '×')).join(', ')
+                    : `已添加 ${this.customResolutions.length} 个`) 
+                  : '点击添加或管理',
                 type: 'action',
                 action: () => this.showCustomResolutionDialog()
               },
@@ -1832,6 +2004,13 @@ struct SettingsPageV2 {
       showClose: false,
       preferType: SheetType.BOTTOM
     } as SheetOptions)
+    .bindSheet($$this.showCustomResolutionSheet, this.CustomResolutionSheet(), {
+      height: SheetSize.FIT_CONTENT,
+      backgroundColor: Color.Transparent,
+      dragBar: false,
+      showClose: false,
+      preferType: SheetType.BOTTOM
+    } as SheetOptions)
   }
 
   @Builder
@@ -2296,46 +2475,62 @@ struct SettingsPageV2 {
   }
 
   /**
-   * 显示自定义分辨率管理对话框
+   * 显示自定义分辨率管理对话框 — 支持逐个删除和添加
    */
   private showCustomResolutionDialog(): void {
-    if (this.customResolutions.length === 0) {
-      this.showToast('没有自定义分辨率，请在分辨率选择器中添加');
-      return;
-    }
-    
-    // 有自定义分辨率时，显示管理选项
-    const existingList = this.customResolutions.join('\n');
-    
-    promptAction.showDialog({
-      title: '自定义分辨率管理',
-      message: `已添加的自定义分辨率:\n${existingList}`,
-      buttons: [
-        { text: '清空全部', color: AppColors.Error },
-        { text: '取消', color: AppColors.TextSecondary }
-      ]
-    }).then((result) => {
-      if (result.index === 0) {
-        // 清空全部
-        this.clearAllCustomResolutions();
-      }
-      // index === 1 取消，不做任何操作
+    // 将已有的自定义分辨率显示为可删除的选项
+    const existingOptions: PickerOption[] = this.customResolutions.map(res => {
+      const parts = res.split('x');
+      const w = parseInt(parts[0]) || 0;
+      const h = parseInt(parts[1]) || 0;
+      const ratio = this.calcAspectRatio(w, h);
+      return {
+        title: `${parts[0]}×${parts[1]}`,
+        subtitle: ratio ? `${ratio} — 点击删除` : '点击删除',
+        value: `delete:${res}`
+      } as PickerOption;
     });
+
+    // 添加操作选项
+    const actionOptions: PickerOption[] = [
+      { title: '➕ 添加新分辨率', subtitle: '输入宽度和高度', value: 'action:add' } as PickerOption,
+    ];
+    if (this.customResolutions.length > 0) {
+      actionOptions.push(
+        { title: '🗑️ 清空全部', subtitle: `删除所有 ${this.customResolutions.length} 个自定义分辨率`, value: 'action:clear' } as PickerOption
+      );
+    }
+
+    const allOptions = [...existingOptions, ...actionOptions];
+    
+    const config: PickerConfig = {
+      title: '自定义分辨率管理',
+      subtitle: this.customResolutions.length > 0 ? `已添加 ${this.customResolutions.length} 个` : '暂无自定义分辨率',
+      selectedValue: '',
+      options: allOptions,
+      onSelect: (option: PickerOption) => {
+        const value = option.value as string;
+        if (value === 'action:add') {
+          this.showAddResolutionInput();
+        } else if (value === 'action:clear') {
+          this.clearAllCustomResolutions();
+        } else if (value.startsWith('delete:')) {
+          const res = value.substring(7);
+          this.removeCustomResolution(res);
+        }
+      }
+    };
+    this.showPicker(config);
   }
 
   /**
    * 显示添加分辨率输入框 - 使用文本输入弹窗
    */
   private showAddResolutionInput(): void {
-    this.textInputTitle = '自定义分辨率';
-    this.textInputPlaceholder = '格式: 宽度x高度 (如: 2560x1080)';
-    this.textInputValue = '';
-    this.textInputCallback = (value: string) => {
-      if (value && value.trim()) {
-        this.addCustomResolution(value.trim());
-      }
-    };
-    this.showTextInputDialog = true;
+    this.customResWidth = '';
+    this.customResHeight = '';
+    this.customResAspectRatio = '';
+    this.showCustomResolutionSheet = true;
   }
 
   /**
@@ -2415,6 +2610,27 @@ struct SettingsPageV2 {
     this.customResolutions = [...this.customResolutions, resolution];
     this.saveCustomResolutions();
     this.showToast(`已添加: ${resolution}`);
+  }
+
+  /**
+   * 删除单个自定义分辨率
+   */
+  private removeCustomResolution(resolution: string): void {
+    const idx = this.customResolutions.indexOf(resolution);
+    if (idx === -1) {
+      this.showToast('该分辨率不存在');
+      return;
+    }
+    this.customResolutions = this.customResolutions.filter(r => r !== resolution);
+    this.saveCustomResolutions();
+    // 如果当前正在使用被删除的分辨率，回退到 1080p
+    if (this.resolution === resolution) {
+      this.resolution = '1080p';
+      this.saveSetting(SettingsKeys.RESOLUTION, '1080p');
+      this.showToast(`已删除 ${resolution}，分辨率已回退为 1080p`);
+    } else {
+      this.showToast(`已删除: ${resolution}`);
+    }
   }
 
   /**
