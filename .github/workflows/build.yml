@@ -459,10 +459,36 @@ jobs:
           python3 -c "import json,sys; c=json.load(open(sys.argv[1], encoding='utf-8')); m=c.get('osVersionMapper', {}); print(sys.argv[1], '=>', '6.0.0' in m, 'API', m.get('6.0.0', 'MISSING'))" "$cfg"
         done
 
-        echo "=== Root SDK component dirs ==="
-        find ~/ohos-sdk -maxdepth 2 \( -name ets -o -name js -o -name native -o -name toolchains -o -name previewer \) -type d | sort
+        echo "=== ALL sdk-pkg.json files ==="
+        find ~/ohos-sdk -name "sdk-pkg.json" -type f | sort | while read -r f; do
+          echo "$f => $(python3 -c "import json; d=json.load(open('$f')); print(d.get('data',{}).get('path','?'), 'api='+str(d.get('data',{}).get('apiVersion','?')), 'meta='+str(d.get('meta',{}).get('version','?')))")"
+        done
 
-        echo "=== SDK handler quick test ==="
+        echo "=== Sample oh-uni-package.json (ets) ==="
+        cat ~/ohos-sdk/ets/oh-uni-package.json 2>/dev/null || echo "(not found at root)"
+        echo ""
+
+        echo "=== HOS_CONFIG dump ==="
+        node -e "
+        process.env.NODE_PATH = '$HOME/cmdline-tools/hvigor/hvigor-ohos-plugin/node_modules:$HOME/cmdline-tools/hvigor/node_modules/@ohos/hvigor/node_modules';
+        require('module').Module._initPaths();
+        const cfg = require('@ohos/hos-sdkmanager-common/build/res/hos-config.json');
+        console.log('sdkSufNameMapper:', JSON.stringify(cfg.sdkSufNameMapper));
+        console.log('pathVersionMapper:', JSON.stringify(cfg.pathVersionMapper));
+        console.log('osVersionMapper:', JSON.stringify(cfg.osVersionMapper));
+        console.log('hosSupportVersion:', cfg.hosSupportVersion);
+        " 2>&1 || true
+
+        echo "=== SimpleHosPrjSdkHandler source ==="
+        find ~/cmdline-tools -path "*/hos-sdkmanager-common/build/src/hos/*" -name "*.js" | sort | head -20
+        # Dump the handler factory source
+        HANDLER_SRC=$(find ~/cmdline-tools -path "*/hos-sdkmanager-common/build/src/hos/handler/*" -name "*.js" | head -5)
+        for f in $HANDLER_SRC; do
+          echo "--- $f ---"
+          cat "$f" | tr ';' '\n' | head -40
+        done
+
+        echo "=== SDK handler deep test ==="
         node -e "
         process.env.NODE_PATH = '$HOME/cmdline-tools/hvigor/hvigor-ohos-plugin/node_modules:$HOME/cmdline-tools/hvigor/node_modules/@ohos/hvigor/node_modules';
         require('module').Module._initPaths();
@@ -471,26 +497,58 @@ jobs:
           console.log('getHosVersion(20):', JSON.stringify(HosVersionMapper.INSTANCE.getHosVersion(20)));
           const {HosPrjSdkConfig, SimpleHosPrjSdkHandler, HosPrjSdkType} = require('@ohos/hos-sdkmanager-common');
           const sdkDir = process.env.DEVECO_SDK_HOME;
+          console.log('DEVECO_SDK_HOME:', sdkDir);
           const config = HosPrjSdkConfig.builder(sdkDir);
-          const noop = { debug:()=>{}, warn:console.warn, info:()=>{}, error:console.error };
-          const handler = new SimpleHosPrjSdkHandler(config, noop);
+          // Dump config internal state
+          for (const k of Object.getOwnPropertyNames(config)) {
+            const v = config[k];
+            if (typeof v === 'string' || typeof v === 'number') console.log('config.' + k + ':', v);
+          }
+          const logs = [];
+          const progress = { debug:(m)=>logs.push('D: '+m), warn:(m)=>logs.push('W: '+m), info:(m)=>logs.push('I: '+m), error:(m)=>logs.push('E: '+m) };
+          const handler = new SimpleHosPrjSdkHandler(config, progress);
           const oh = handler.getSdkHandler(HosPrjSdkType.OPENHARMONY);
+          // Dump handler internal state
+          console.log('OH handler type:', oh?.constructor?.name);
+          for (const k of Object.getOwnPropertyNames(oh)) {
+            const v = oh[k];
+            if (typeof v === 'string') console.log('oh.' + k + ':', v);
+            if (v && typeof v === 'object' && v.sdkRoot) console.log('oh.' + k + '.sdkRoot:', v.sdkRoot);
+            if (v && typeof v === 'object' && v.getSdkRoot) console.log('oh.' + k + '.getSdkRoot():', v.getSdkRoot());
+          }
           const sdks = oh.getLocalSdks('20');
           console.log('localSdks for API 20: size =', sdks?.size);
-          if (sdks) { for (const [k,v] of sdks.entries()) console.log(' ', k, '->', v?.getLocation?.()); }
+          const fs = require('fs');
+          const path = require('path');
+          if (sdks) { for (const [k,v] of sdks.entries()) {
+            const loc = v?.getLocation?.();
+            console.log(' ', k, '->', loc, 'oh-uni=', fs.existsSync(path.join(loc||'','oh-uni-package.json')), 'sdk-pkg=', fs.existsSync(path.join(loc||'','sdk-pkg.json')));
+          }}
           const hms = handler.getSdkHandler(HosPrjSdkType.HARMONYOS);
+          console.log('HMS handler type:', hms?.constructor?.name);
+          for (const k of Object.getOwnPropertyNames(hms)) {
+            const v = hms[k];
+            if (typeof v === 'string') console.log('hms.' + k + ':', v);
+            if (v && typeof v === 'object' && v.sdkRoot) console.log('hms.' + k + '.sdkRoot:', v.sdkRoot);
+            if (v && typeof v === 'object' && v.getSdkRoot) console.log('hms.' + k + '.getSdkRoot():', v.getSdkRoot());
+          }
           const hmsSdks = hms.getLocalSdks('20');
           console.log('hms localSdks for API 20: size =', hmsSdks?.size);
           if (hmsSdks) {
-            const fs = require('fs');
-            const path = require('path');
             for (const [k,v] of hmsSdks.entries()) {
               const loc = v?.getLocation?.();
               console.log(' HMS', k, '->', loc, 'uni=', fs.existsSync(path.join(loc || '', 'uni-package.json')));
             }
           }
+          console.log('=== Scanner logs ===');
+          logs.forEach(l => console.log(l));
         } catch(e) { console.log('Error:', e.message); console.log(e.stack); }
         " 2>&1 || true
+
+        echo "=== Check toolchains internal structure ==="
+        find ~/ohos-sdk/toolchains -maxdepth 3 -name "sdk-pkg.json" -o -name "oh-uni-package.json" -o -name "uni-package.json" 2>/dev/null | sort
+        echo "=== Directories inside toolchains ==="
+        ls -la ~/ohos-sdk/toolchains/ 2>/dev/null
 
     - name: Build HAP
       run: |
