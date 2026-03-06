@@ -542,8 +542,29 @@ jobs:
         } catch(e) { console.log('Error:', e.message, e.stack); }
         " 2>&1 || true
 
+    # aubio is a git submodule — config.h is not tracked upstream.
+    # Generate the minimal config needed for HarmonyOS onset-detection build.
+    - name: Generate aubio config.h
+      run: |
+        cat > nativelib/src/main/cpp/aubio/src/config.h << 'AUBIO_CONFIG'
+        #ifndef AUBIO_CONFIG_H
+        #define AUBIO_CONFIG_H
+        #define HAVE_STDLIB_H  1
+        #define HAVE_STDIO_H   1
+        #define HAVE_COMPLEX_H 1
+        #define HAVE_MATH_H    1
+        #define HAVE_STRING_H  1
+        #define HAVE_ERRNO_H   1
+        #define HAVE_LIMITS_H  1
+        #define HAVE_STDARG_H  1
+        #define HAVE_OOURA     1
+        #define PACKAGE "aubio"
+        #endif
+        AUBIO_CONFIG
+
     - name: Build HAP
       run: |
+        set -o pipefail
         BUILD_MODE="${{ steps.build-mode.outputs.mode }}"
         echo "🔨 Building ${BUILD_MODE} HAP..."
 
@@ -564,6 +585,7 @@ jobs:
     - name: Build APP (signed)
       if: steps.signing.outputs.available == 'true'
       run: |
+        set -o pipefail
         BUILD_MODE="${{ steps.build-mode.outputs.mode }}"
         echo "🔨 Building ${BUILD_MODE} APP (signed)..."
 
