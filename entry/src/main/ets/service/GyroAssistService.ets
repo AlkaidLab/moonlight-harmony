@@ -236,9 +236,11 @@ export class GyroAssistService {
     const effectiveSensitivity = 180.0 / this._sensitivityMultiplier;
 
     // 轴映射: Z(yaw) → 水平, X(pitch) → 垂直
-    // 鸿蒙传感器符号约定与 Android 相反，需翻转两个轴
-    let scaledX = this.clampFloat(gz / effectiveSensitivity, -1.0, 1.0);
-    let scaledY = -this.clampFloat(gx / effectiveSensitivity, -1.0, 1.0);
+    // 与 Android applyGyroToRightStick(gz, gx) 一致:
+    //   scaledX = -clamp(gz / sensitivity)  → 左偏航为负(视角左移)
+    //   scaledY =  clamp(gx / sensitivity)  → 俯仰向上为正
+    let scaledX = -this.clampFloat(gz / effectiveSensitivity, -1.0, 1.0);
+    let scaledY = this.clampFloat(gx / effectiveSensitivity, -1.0, 1.0);
 
     // 轴反转
     if (this._invertX) scaledX = -scaledX;

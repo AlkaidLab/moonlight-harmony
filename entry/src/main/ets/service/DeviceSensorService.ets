@@ -168,26 +168,30 @@ export class DeviceSensorService {
     const rotation = this.getDeviceRotation();
     let x: number, y: number, z: number;
 
+    // HarmonyOS display.rotation 的旋转方向定义与 Android Surface.ROTATION_* 相反:
+    // HarmonyOS rotation=1 (90°顺时针) 对应 Android ROTATION_270
+    // HarmonyOS rotation=3 (270°顺时针) 对应 Android ROTATION_90
+    // 因此 case 90 和 case 270 的校正逻辑需要互换
     switch (rotation) {
-      case 0: // ROTATION_0 (竖屏)
+      case 0: // ROTATION_0 (竖屏) — 两平台一致
         x = rawX;
         y = rawZ;
         z = -rawY;
         break;
-      case 90: // ROTATION_90 (横屏，逆时针90度)
-        x = -rawY;
+      case 90: // HarmonyOS 顺时针90° → 对应 Android ROTATION_270
+        x = rawY;
         y = rawZ;
-        z = -rawX;
+        z = rawX;
         break;
-      case 180: // ROTATION_180 (倒竖屏)
+      case 180: // ROTATION_180 (倒竖屏) — 两平台一致
         x = -rawX;
         y = rawZ;
         z = rawY;
         break;
-      case 270: // ROTATION_270 (横屏，顺时针90度)
-        x = rawY;
+      case 270: // HarmonyOS 顺时针270° → 对应 Android ROTATION_90
+        x = -rawY;
         y = rawZ;
-        z = rawX;
+        z = -rawX;
         break;
       default:
         x = rawX;

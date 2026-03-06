@@ -217,88 +217,72 @@ jobs:
         # ─── Step 3: Create OPENHARMONY remapped locations ───
         # OhosBaseSdkInfoHandler remaps to: $SDK_HOME/toolchains/openharmony/<comp>/
         # checkComponentExistence looks for oh-uni-package.json there.
+        # Always rebuild to handle stale cache layouts.
+        rm -rf "$SDK_HOME/toolchains/openharmony"
         mkdir -p "$SDK_HOME/toolchains/openharmony"
         for comp in ets js native previewer; do
-          if [ -d "$SDK_HOME/$comp" ] && [ ! -e "$SDK_HOME/toolchains/openharmony/$comp" ]; then
-            ln -sf "$SDK_HOME/$comp" "$SDK_HOME/toolchains/openharmony/$comp"
-            echo "  Symlinked toolchains/openharmony/$comp"
-          fi
+          [ -d "$SDK_HOME/$comp" ] && ln -sf "$SDK_HOME/$comp" "$SDK_HOME/toolchains/openharmony/$comp"
         done
         # toolchains component: cannot symlink to ancestor dir, so create
         # a directory with symlinks to all actual toolchains content.
-        if [ ! -d "$SDK_HOME/toolchains/openharmony/toolchains" ]; then
-          mkdir -p "$SDK_HOME/toolchains/openharmony/toolchains"
-          for item in "$SDK_HOME/toolchains/"*; do
-            bname=$(basename "$item")
-            case "$bname" in openharmony|hms) continue ;; esac
-            ln -sf "$item" "$SDK_HOME/toolchains/openharmony/toolchains/$bname"
-          done
-          echo "  Created toolchains/openharmony/toolchains with content symlinks"
-        fi
+        mkdir -p "$SDK_HOME/toolchains/openharmony/toolchains"
+        for item in "$SDK_HOME/toolchains/"*; do
+          bname=$(basename "$item")
+          case "$bname" in openharmony|hms) continue ;; esac
+          ln -sf "$item" "$SDK_HOME/toolchains/openharmony/toolchains/$bname"
+        done
+        echo "  Created toolchains/openharmony/ with symlinks"
 
         # ─── Step 4: Create HARMONYOS (HMS) remapped locations ───
         # HosSdkInfoHandler remaps to: $SDK_HOME/toolchains/hms/<comp>/
         # checkComponentExistence looks for uni-package.json there.
         # hvigor also uses these directories for actual build tools (modulecheck, etc.),
         # so we must provide real content — not just stubs.
+        # Always rebuild to handle stale cache layouts.
+        rm -rf "$SDK_HOME/toolchains/hms"
         mkdir -p "$SDK_HOME/toolchains/hms"
         for comp in ets native previewer; do
-          HMS_DIR="$SDK_HOME/toolchains/hms/$comp"
-          if [ -d "$SDK_HOME/$comp" ] && [ ! -e "$HMS_DIR" ]; then
-            # Symlink to actual OH content; hvigor accesses build tools from here
-            ln -sf "$SDK_HOME/$comp" "$HMS_DIR"
-            echo "  Symlinked toolchains/hms/$comp"
-          fi
-          # uni-package.json must be at the resolved location for checkComponentExistence.
-          # Since the symlink points to the actual comp dir, put uni-package.json there.
-          TARGET="$SDK_HOME/$comp"
-          if [ ! -f "$TARGET/uni-package.json" ]; then
-            cat > "$TARGET/uni-package.json" << STUBEOF
+          [ -d "$SDK_HOME/$comp" ] && ln -sf "$SDK_HOME/$comp" "$SDK_HOME/toolchains/hms/$comp"
+          # uni-package.json must be inside the actual component dir (symlink target).
+          if [ ! -f "$SDK_HOME/$comp/uni-package.json" ]; then
+            cat > "$SDK_HOME/$comp/uni-package.json" << STUBEOF
         {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
         STUBEOF
           fi
         done
-        # HMS toolchains: like OH toolchains, create dir with content symlinks
-        if [ ! -d "$SDK_HOME/toolchains/hms/toolchains" ]; then
-          mkdir -p "$SDK_HOME/toolchains/hms/toolchains"
-          for item in "$SDK_HOME/toolchains/"*; do
-            bname=$(basename "$item")
-            case "$bname" in openharmony|hms) continue ;; esac
-            ln -sf "$item" "$SDK_HOME/toolchains/hms/toolchains/$bname"
-          done
-          # uni-package.json for checkComponentExistence
-          cat > "$SDK_HOME/toolchains/hms/toolchains/uni-package.json" << STUBEOF
+        # HMS toolchains: create dir with content symlinks
+        mkdir -p "$SDK_HOME/toolchains/hms/toolchains"
+        for item in "$SDK_HOME/toolchains/"*; do
+          bname=$(basename "$item")
+          case "$bname" in openharmony|hms) continue ;; esac
+          ln -sf "$item" "$SDK_HOME/toolchains/hms/toolchains/$bname"
+        done
+        cat > "$SDK_HOME/toolchains/hms/toolchains/uni-package.json" << STUBEOF
         {"apiVersion":"$API_VER","displayName":"Toolchains","meta":{"metaVersion":"3.0.0"},"path":"toolchains","releaseType":"Beta1","version":"6.0.0.47"}
         STUBEOF
-          echo "  Created toolchains/hms/toolchains with content symlinks"
-        fi
-        # hvigor's PreBuild validation reads JSON schema files from
-        # <toolchains>/modulecheck/app.json etc. The OpenHarmony SDK may not
-        # ship all schemas required for HarmonyOS (runtimeOS) builds.
+        echo "  Created toolchains/hms/ with symlinks"
+
+        # ─── Step 5: Schema stubs for HarmonyOS validation ───
+        # hvigor's PreBuild reads JSON schemas from <toolchains>/modulecheck/app.json etc.
         # Create permissive stubs for any missing schema files.
         for check_dir in modulecheck configcheck syscapcheck; do
           CHECK_PATH="$SDK_HOME/toolchains/$check_dir"
           [ ! -d "$CHECK_PATH" ] && continue
           for schema in app.json module.json; do
-            if [ ! -f "$CHECK_PATH/$schema" ]; then
-              echo '{}' > "$CHECK_PATH/$schema"
-              echo "  Created schema stub: $check_dir/$schema"
-            fi
+            [ ! -f "$CHECK_PATH/$schema" ] && echo '{}' > "$CHECK_PATH/$schema"
           done
         done
         # HMS also needs sdk-pkg.json for parseSdks to discover during scanning
         for comp in ets native previewer toolchains; do
           HMS_DIR="$SDK_HOME/toolchains/hms/$comp"
-          # Resolve symlink target for file writes
           REAL_DIR=$(readlink -f "$HMS_DIR" 2>/dev/null || echo "$HMS_DIR")
-          if [ ! -f "$REAL_DIR/sdk-pkg.json" ] && [ ! -f "$HMS_DIR/sdk-pkg.json" ]; then
+          [ ! -f "$REAL_DIR/sdk-pkg.json" ] && [ ! -f "$HMS_DIR/sdk-pkg.json" ] && \
             python3 -c "
         import json
         data = {'apiVersion': '$API_VER', 'displayName': '${comp^}', 'path': '$comp', 'releaseType': 'Beta1', 'version': '6.0.0.47'}
         with open('$REAL_DIR/sdk-pkg.json', 'w') as f:
             json.dump({'data': data, 'meta': {'version': '3.0.0'}}, f)
         "
-          fi
         done
 
         echo "SDK_API_VERSION=$API_VER" >> "$GITHUB_ENV"
