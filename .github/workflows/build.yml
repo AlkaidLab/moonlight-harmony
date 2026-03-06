@@ -606,39 +606,40 @@ jobs:
         p = os.path.expanduser('~/ohos-sdk/toolchains/id_defined.json')
         with open(p) as f:
             data = json.load(f)
-        if isinstance(data, list):
+
+        def dedup_and_reindex(records):
             seen = set()
             deduped = []
-            for item in data:
+            for item in records:
                 key = item.get('name', '') if isinstance(item, dict) else str(item)
                 if key not in seen:
                     seen.add(key)
                     deduped.append(item)
-            removed = len(data) - len(deduped)
+            # Re-sequence order field to match array index
+            for i, item in enumerate(deduped):
+                if isinstance(item, dict) and 'order' in item:
+                    item['order'] = i
+            return deduped, len(records) - len(deduped)
+
+        if isinstance(data, list):
+            deduped, removed = dedup_and_reindex(data)
             if removed:
                 with open(p, 'w') as f:
                     json.dump(deduped, f, indent=2)
-                print(f'Removed {removed} duplicate entries from id_defined.json')
+                print(f'Removed {removed} duplicates, re-indexed order fields')
             else:
-                print('No duplicates found in id_defined.json (list)')
+                print('No duplicates in id_defined.json')
         elif isinstance(data, dict):
             record = data.get('record', [])
             if isinstance(record, list):
-                seen = set()
-                deduped = []
-                for item in record:
-                    key = item.get('name', '') if isinstance(item, dict) else str(item)
-                    if key not in seen:
-                        seen.add(key)
-                        deduped.append(item)
-                removed = len(record) - len(deduped)
+                deduped, removed = dedup_and_reindex(record)
                 if removed:
                     data['record'] = deduped
                     with open(p, 'w') as f:
                         json.dump(data, f, indent=2)
-                    print(f'Removed {removed} duplicate entries from id_defined.json')
+                    print(f'Removed {removed} duplicates, re-indexed order fields')
                 else:
-                    print('No duplicates found in id_defined.json (dict.record)')
+                    print('No duplicates in id_defined.json')
         "
         else
           echo "id_defined.json not found at $ID_FILE"
