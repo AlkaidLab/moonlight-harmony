@@ -570,6 +570,31 @@ jobs:
         #endif
         AUBIO_CONFIG
 
+    # restool (resource compiler) expects libimage_transcoder_shared.so which is
+    # part of DevEco Studio but not the public OpenHarmony SDK download.
+    # Create a minimal stub .so so that restool can load it.
+    - name: Create missing SDK shared libraries
+      run: |
+        SDK_HOME=~/ohos-sdk
+
+        echo "=== restool dependencies ==="
+        ldd "$SDK_HOME/toolchains/restool" 2>&1 || true
+
+        echo "=== Testing restool directly ==="
+        "$SDK_HOME/toolchains/restool" --version 2>&1 || true
+
+        # Build stub for any missing .so that restool needs
+        for so_name in libimage_transcoder_shared.so; do
+          if ! find "$SDK_HOME" -name "$so_name" -print -quit | grep -q .; then
+            echo "Creating stub $so_name"
+            echo 'void __stub_placeholder(void) {}' | gcc -shared -x c - -o "$SDK_HOME/toolchains/lib/$so_name"
+            echo "  Created at $SDK_HOME/toolchains/lib/$so_name"
+          fi
+        done
+
+        echo "=== toolchains/lib after stubs ==="
+        ls -la "$SDK_HOME/toolchains/lib/"
+
     - name: Build HAP
       run: |
         set -o pipefail
