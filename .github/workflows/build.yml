@@ -689,7 +689,6 @@ jobs:
         ETS_API="$SDK_HOME/ets/api"
         KIT_CONFIGS="$SDK_HOME/ets/build-tools/ets-loader/kit_configs"
         ETS_LOADER="$SDK_HOME/ets/build-tools/ets-loader"
-        COMPONENT_MAP="$ETS_LOADER/lib/component_map.js"
 
         # ─── @kit.RemoteCommunicationKit (rcp module) ───
         if [ ! -f "$KIT_CONFIGS/@kit.RemoteCommunicationKit.json" ]; then
@@ -957,26 +956,46 @@ jobs:
           echo "Warning: display module declaration not found"
         fi
 
-        # ─── Register custom @Component structs in INNER_COMPONENT_NAMES ───
-        # The ets-loader validates UI syntax per-file and only recognizes custom components
-        # declared in the same file. Cross-file custom components must be pre-registered.
-        echo "Scanning project for @Component struct declarations..."
-        CUSTOM_COMPONENTS=$(grep -A1 -r "^@Component$\|^@ComponentV2$\|^@CustomDialog$" \
-          entry/src/main/ets/ --include="*.ets" 2>/dev/null \
-          | grep "struct " | sed 's/.*struct \([A-Za-z_][A-Za-z0-9_]*\).*/\1/' | sort -u)
-        if [ -n "$CUSTOM_COMPONENTS" ]; then
-          echo "Found custom components: $CUSTOM_COMPONENTS"
-          # Append to component_map.js to add these names to INNER_COMPONENT_NAMES
-          {
-            echo ""
-            echo "// [CI Patch] Register cross-file custom components"
-            for comp in $CUSTOM_COMPONENTS; do
-              echo "exports.INNER_COMPONENT_NAMES.add('$comp');"
-            done
-          } >> "$COMPONENT_MAP"
-          echo "  Patched component_map.js with $(echo "$CUSTOM_COMPONENTS" | wc -w) custom components"
+        # ─── Register cross-file custom @Component structs for UI syntax validation ───
+        # The ets-loader validates UI syntax per-file. componentCollection.customComponents only
+        # contains @Component structs from the CURRENT file. Cross-file custom components cause
+        # "does not meet UI component syntax" (10905204) errors.
+        # Fix: Patch validate_ui_syntax.js to include componentInfo.componentNames (populated
+        # from previously processed files) in the validation set.
+        VSYN="$ETS_LOADER/lib/validate_ui_syntax.js"
+        if [ -f "$VSYN" ]; then
+          echo "Patching validate_ui_syntax.js for cross-file custom components..."
+          # Patch the checkUISyntax call to also include componentInfo.componentNames
+          sed -i 's/new Set(\[\.\.\.\_component_map\.INNER_COMPONENT_NAMES,\.\.\.componentCollection\.customComponents\])/new Set([..._component_map.INNER_COMPONENT_NAMES,...componentCollection.customComponents,..._utils.componentInfo.componentNames])/g' "$VSYN"
+          echo "  Patched $(grep -c 'componentInfo.componentNames' "$VSYN") occurrence(s)"
+
+          # Also patch the checkAllNode call in process_component_build.js
+          PCB="$ETS_LOADER/lib/process_component_build.js"
+          if [ -f "$PCB" ]; then
+            sed -i 's/new Set(\[\.\.\.\_component_map\.INNER_COMPONENT_NAMES,\.\.\.\_validate_ui_syntax\.componentCollection\.customComponents\])/new Set([..._component_map.INNER_COMPONENT_NAMES,..._validate_ui_syntax.componentCollection.customComponents,..._utils.componentInfo.componentNames])/g' "$PCB"
+            echo "  Patched process_component_build.js: $(grep -c 'componentInfo.componentNames' "$PCB") occurrence(s)"
+          fi
+
+          # Pre-populate componentInfo.componentNames by scanning project files
+          echo "Pre-scanning project for @Component structs..."
+          CUSTOM_COMPONENTS=$(grep -A1 -r "^@Component$\|^@ComponentV2$\|^@CustomDialog$" \
+            entry/src/main/ets/ --include="*.ets" 2>/dev/null \
+            | grep "struct " | sed 's/.*struct \([A-Za-z_][A-Za-z0-9_]*\).*/\1/' | sort -u)
+          if [ -n "$CUSTOM_COMPONENTS" ]; then
+            echo "Found $(echo "$CUSTOM_COMPONENTS" | wc -w) custom components"
+            # Create a Node.js script that pre-populates componentInfo at require-time
+            UTILS_JS="$ETS_LOADER/lib/utils.js"
+            if [ -f "$UTILS_JS" ]; then
+              COMP_LIST=$(echo "$CUSTOM_COMPONENTS" | tr '\n' ',' | sed 's/,$//')
+              COMP_ARRAY=$(echo "$COMP_LIST" | sed "s/\([^,]*\)/'\1'/g")
+              echo "" >> "$UTILS_JS"
+              echo "// [CI Patch] Pre-populate componentInfo with project custom components" >> "$UTILS_JS"
+              echo "[$COMP_ARRAY].forEach(function(n){exports.componentInfo.componentNames.add(n)});" >> "$UTILS_JS"
+              echo "  Pre-registered components in utils.js"
+            fi
+          fi
         else
-          echo "  Warning: No custom @Component structs found"
+          echo "Warning: validate_ui_syntax.js not found"
         fi
 
         echo "✅ SDK API patches applied"
