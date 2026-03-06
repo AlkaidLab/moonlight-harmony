@@ -112,6 +112,24 @@ export class CustomKeyManager {
     await CustomKeyStore.init();
   }
 
+  /**
+   * 重置所有输入状态
+   * 在串流结束时调用，确保不残留虚拟按键状态
+   */
+  reset(): void {
+    if (this.gamepadInputMap !== 0 || this.gamepadLeftTrigger !== 0 || this.gamepadRightTrigger !== 0 ||
+        this.leftStickX !== 0 || this.leftStickY !== 0 || this.rightStickX !== 0 || this.rightStickY !== 0) {
+      this.gamepadInputMap = 0;
+      this.gamepadLeftTrigger = 0;
+      this.gamepadRightTrigger = 0;
+      this.leftStickX = 0;
+      this.leftStickY = 0;
+      this.rightStickX = 0;
+      this.rightStickY = 0;
+      this.sendGamepadState();
+    }
+  }
+
   // ── 按键动作分发 ──
 
   /**

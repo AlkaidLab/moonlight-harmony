@@ -850,7 +850,7 @@ export class GamepadManager implements UsbDriverListener {
     }
     
     const connectionType = isBluetooth ? '蓝牙' : (isUsb ? 'USB' : `其他(${bus})`);
-    const effectiveSlot = slot >= 0 ? slot : deviceId;
+    const effectiveSlot = slot >= 0 ? slot : 0;
     console.info(`[GAMEPAD] ★ 注册手柄: "${deviceInfo.name}" (ID: ${deviceId}, Slot: ${effectiveSlot}, ${connectionType})`);
     GamepadManager.DEBUG && console.info(`[GAMEPAD]   检测: joystick源=${hasJoystickSource}, 名称匹配=${nameIndicatesGamepad}`);
     
@@ -1160,8 +1160,9 @@ export class GamepadManager implements UsbDriverListener {
       // 清理状态
       this.gcDeviceStates.delete(deviceId);
       this.gcDeviceInfoCache.delete(deviceId);
-      this.gcDeviceIdToSlot.delete(deviceId);
       this.gcDpadAxisActive.delete(deviceId);
+      this.gcAxisFlushPending.delete(slot);
+      this.gcDeviceIdToSlot.delete(deviceId);
       
       if (isSharedSlotDevice) {
         console.info(`[GAMEPAD-GC] 副本设备断开: deviceId=${deviceId}, 主设备仍在，不通知断开`);
@@ -1283,8 +1284,8 @@ export class GamepadManager implements UsbDriverListener {
     const buttonFlag = gcButtonMap.get(buttonCode);
     if (buttonFlag !== undefined) {
       // D-pad 按键去重：如果该设备已经通过 Axis 通道报告了 D-pad，
-      // 则丢弃 Button 通道的 D-pad 事件，避免双发（蓝牙手柄 Axis + Button 同时上报）
-      if ((buttonFlag & MoonlightButton.DPAD_MASK) !== 0 && this.gcDpadAxisActive.has(deviceId)) {
+      // 则丢弃 Button 通道的 D-pad 按下事件，但放行释放事件以确保不卡键
+      if ((buttonFlag & MoonlightButton.DPAD_MASK) !== 0 && this.gcDpadAxisActive.has(deviceId) && isPressed) {
         return;
       }
       this.updateButtonState(state, buttonFlag, isPressed);
@@ -1314,15 +1315,18 @@ export class GamepadManager implements UsbDriverListener {
       this.gcDeviceStates.set(deviceId, state);
     }
     
+    const clampStick = (v: number) => Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(v)));
+    const clampTrigger = (v: number) => Math.max(0, Math.min(TRIGGER_MAX, Math.floor(v)));
+
     switch (axisType) {
       case AxisType.LEFT_THUMBSTICK:
-        state.leftStickX = Math.floor(x * AXIS_MAX);
-        state.leftStickY = Math.floor(-y * AXIS_MAX);  // Y轴取负与Android一致
+        state.leftStickX = clampStick(x * AXIS_MAX);
+        state.leftStickY = clampStick(-y * AXIS_MAX);  // Y轴取负与Android一致
         break;
         
       case AxisType.RIGHT_THUMBSTICK:
-        state.rightStickX = Math.floor(x * AXIS_MAX);
-        state.rightStickY = Math.floor(-y * AXIS_MAX);
+        state.rightStickX = clampStick(x * AXIS_MAX);
+        state.rightStickY = clampStick(-y * AXIS_MAX);
         break;
         
       case AxisType.DPAD:
@@ -1336,11 +1340,11 @@ export class GamepadManager implements UsbDriverListener {
         break;
         
       case AxisType.LEFT_TRIGGER:
-        state.leftTrigger = Math.floor(x * TRIGGER_MAX);
+        state.leftTrigger = clampTrigger(x * TRIGGER_MAX);
         break;
         
       case AxisType.RIGHT_TRIGGER:
-        state.rightTrigger = Math.floor(x * TRIGGER_MAX);
+        state.rightTrigger = clampTrigger(x * TRIGGER_MAX);
         break;
     }
     
@@ -1520,7 +1524,7 @@ export class GamepadManager implements UsbDriverListener {
     const state = this.deviceStates.get(deviceId);
     if (!state) return;
     
-    const intValue = Math.floor(value * AXIS_MAX);
+    const intValue = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(value * AXIS_MAX)));
     
     switch (axisCode) {
       case 0: // ABS_X - 左摇杆 X
@@ -1544,10 +1548,10 @@ export class GamepadManager implements UsbDriverListener {
         this.updateDpadVertical(state, value);
         break;
       case 9: // ABS_GAS - 右扳机
-        state.rightTrigger = Math.floor((value + 1) * (TRIGGER_MAX / 2));
+        state.rightTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor((value + 1) * (TRIGGER_MAX / 2))));
         break;
       case 10: // ABS_BRAKE - 左扳机
-        state.leftTrigger = Math.floor((value + 1) * (TRIGGER_MAX / 2));
+        state.leftTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor((value + 1) * (TRIGGER_MAX / 2))));
         break;
     }
     
@@ -1793,8 +1797,8 @@ export class GamepadManager implements UsbDriverListener {
     state.leftStickY = clampAxis(-leftStickY);  // Y轴取负与Android一致
     state.rightStickX = clampAxis(rightStickX);
     state.rightStickY = clampAxis(-rightStickY);
-    state.leftTrigger = Math.floor(leftTrigger * TRIGGER_MAX);
-    state.rightTrigger = Math.floor(rightTrigger * TRIGGER_MAX);
+    state.leftTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor(leftTrigger * TRIGGER_MAX)));
+    state.rightTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor(rightTrigger * TRIGGER_MAX)));
     
     this.notifyStateChange(controllerId, state);
   }

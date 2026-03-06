@@ -468,6 +468,9 @@ struct StreamPage {
     this.gamepadManager.setListener(null);
     this.gamepadManager.resetSession();
     
+    // 重置自定义按键状态（防止虚拟按键残留）
+    this.customKeyManager?.reset();
+    
     // 恢复窗口设置
     this.imeManager.hide();
     this.windowManager?.restoreWindow();
