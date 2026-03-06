@@ -689,6 +689,7 @@ jobs:
         ETS_API="$SDK_HOME/ets/api"
         KIT_CONFIGS="$SDK_HOME/ets/build-tools/ets-loader/kit_configs"
         ETS_LOADER="$SDK_HOME/ets/build-tools/ets-loader"
+        COMPONENT_MAP="$ETS_LOADER/lib/component_map.js"
 
         # ─── @kit.RemoteCommunicationKit (rcp module) ───
         if [ ! -f "$KIT_CONFIGS/@kit.RemoteCommunicationKit.json" ]; then
@@ -788,17 +789,117 @@ jobs:
         KITDTS
         echo "  Created RemoteCommunicationKit declarations"
 
-        # ─── Patch socket module to fix constructUDPSocketInstance return type ───
-        SOCKET_DTS=$(find "$ETS_API" -name "@ohos.net.socket.d.ts" -o -name "@ohos.net.socket.d.ets" 2>/dev/null | head -1)
-        echo "Socket declaration file: ${SOCKET_DTS:-NOT FOUND}"
-        if [ -n "$SOCKET_DTS" ]; then
-          # Check if constructUDPSocketInstance return type includes 'any'
-          echo "=== constructUDPSocketInstance declaration ==="
-          grep -B2 -A5 "constructUDPSocketInstance" "$SOCKET_DTS" | head -20
-          # Check if UDPSocket interface exists
-          echo "=== UDPSocket interface ==="
-          grep "interface UDPSocket\|export.*UDPSocket" "$SOCKET_DTS" | head -5
-        else
+        # ─── @kit.NetworkKit declare module (fixes socket/http/connection type resolution) ───
+        # The ets-loader kit config maps symbols but TypeScript needs a declare module for
+        # proper type resolution. We inline the minimum types needed by the project.
+        echo "Creating @kit.NetworkKit.d.ts declare module..."
+        cat > "$ETS_API/@kit.NetworkKit.d.ts" << 'NETKITDTS'
+        declare module '@kit.NetworkKit' {
+          namespace socket {
+            interface NetAddress {
+              address: string;
+              port?: number;
+              family?: number;
+            }
+            interface UDPSocket {
+              bind(address: NetAddress): Promise<void>;
+              send(options: UDPSendOptions): Promise<void>;
+              setExtraOptions(options: UDPExtraOptions): Promise<void>;
+              close(): Promise<void>;
+              on(type: string, callback: Function): void;
+              off(type: string, callback?: Function): void;
+            }
+            interface UDPSendOptions {
+              data: string | ArrayBuffer;
+              address: NetAddress;
+            }
+            interface UDPExtraOptions {
+              broadcast?: boolean;
+              receiveBufferSize?: number;
+              sendBufferSize?: number;
+              reuseAddress?: boolean;
+              socketTimeout?: number;
+            }
+            function constructUDPSocketInstance(): UDPSocket;
+          }
+          namespace http {
+            enum RequestMethod { OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE, CONNECT }
+            enum HttpDataType { STRING, OBJECT, ARRAY_BUFFER }
+            interface HttpRequestOptions {
+              method?: RequestMethod;
+              extraData?: string | Object | ArrayBuffer;
+              header?: Object;
+              readTimeout?: number;
+              connectTimeout?: number;
+              expectDataType?: HttpDataType;
+              usingCache?: boolean;
+            }
+            interface HttpResponse {
+              result: string | Object | ArrayBuffer;
+              responseCode: number;
+              header: Object;
+            }
+            interface HttpRequest {
+              request(url: string, options?: HttpRequestOptions, callback?: (err: Object, data: HttpResponse) => void): Promise<HttpResponse>;
+              destroy(): void;
+              on(type: string, callback: Function): void;
+              off(type: string, callback?: Function): void;
+            }
+            function createHttp(): HttpRequest;
+          }
+          namespace connection {
+            interface NetHandle {
+              netId: number;
+            }
+            interface NetConnection {
+              on(type: string, callback: Function): void;
+              off(type: string, callback?: Function): void;
+              register(callback: (err: Object) => void): void;
+              unregister(callback: (err: Object) => void): void;
+            }
+            function createNetConnection(): NetConnection;
+            function getDefaultNet(): Promise<NetHandle>;
+            function hasDefaultNet(): Promise<boolean>;
+            function getDefaultNetSync(): NetHandle;
+            function hasDefaultNetSync(): boolean;
+          }
+          namespace webSocket {
+            interface WebSocket {
+              connect(url: string, options?: Object): Promise<boolean>;
+              send(data: string | ArrayBuffer): Promise<boolean>;
+              close(): Promise<boolean>;
+              on(type: string, callback: Function): void;
+              off(type: string, callback?: Function): void;
+            }
+            function createWebSocket(): WebSocket;
+          }
+          namespace mdns {
+            interface LocalServiceInfo {
+              serviceType: string;
+              serviceName?: string;
+              port?: number;
+              host?: Object;
+            }
+            interface DiscoveryEventInfo {
+              serviceInfo: LocalServiceInfo;
+              errorCode?: number;
+            }
+            interface DiscoveryService {
+              startSearchingMDNS(): void;
+              stopSearchingMDNS(): void;
+              on(type: string, callback: Function): void;
+              off(type: string, callback?: Function): void;
+            }
+            function createDiscoveryService(context: Object, serviceType: string): DiscoveryService;
+            function resolveLocalService(context: Object, serviceInfo: LocalServiceInfo): Promise<LocalServiceInfo>;
+          }
+          export { socket, http, connection, webSocket, mdns };
+        }
+        NETKITDTS
+        echo "  Created @kit.NetworkKit.d.ts"
+
+        # ─── Create socket stub only if missing ───
+        if [ ! -f "$ETS_API/@ohos.net.socket.d.ts" ]; then
           echo "Socket module not found - creating stub..."
           cat > "$ETS_API/@ohos.net.socket.d.ts" << 'SOCKETDTS'
         declare namespace socket {
@@ -856,40 +957,27 @@ jobs:
           echo "Warning: display module declaration not found"
         fi
 
-        # ─── Debug UI component syntax error root cause ───
-        echo "=== Investigating UI component syntax validation ==="
-
-        # Deep-dive: examine componentCollection and storedFileInfo in process_component_build.js
-        PCB="$ETS_LOADER/lib/process_component_build.js"
-        echo "--- process_component_build.js analysis ---"
-        # Extract how componentCollection is checked (the error-producing code)
-        grep -oP ".{0,200}does not meet UI component syntax.{0,200}" "$PCB" 2>/dev/null | head -5
-        echo "---"
-        # How is component type determined?
-        grep -oP ".{0,100}componentCollection.{0,100}" "$PCB" 2>/dev/null | head -10
-        echo "---"
-        # Check storedFileInfo usage
-        grep -oP ".{0,100}storedFileInfo.{0,100}" "$PCB" 2>/dev/null | head -10
-        echo "---"
-        # isEtsComponent function
-        grep -oP ".{0,200}isEtsComponent.{0,200}" "$PCB" 2>/dev/null | head -5
-
-        # Check validate_ui_syntax for componentCollection population
-        VSYN="$ETS_LOADER/lib/validate_ui_syntax.js"
-        echo "--- validate_ui_syntax: how componentCollection is populated ---"
-        grep -oP ".{0,200}componentCollection\.(customComponents|localStorageCollection).{0,200}" "$VSYN" 2>/dev/null | head -10
-        echo "---"
-        grep -oP ".{0,200}storedFileInfo\.getCurrentArkTsFile.{0,200}" "$VSYN" 2>/dev/null | head -5
-
-        # Check @kit.NetworkKit.json for socket mapping
-        echo "=== NetworkKit kit config ==="
-        cat "$KIT_CONFIGS/@kit.NetworkKit.json" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({k:v for k,v in d.get('symbols',{}).items() if 'socket' in k.lower()}, indent=2))" 2>/dev/null || echo "Failed to parse"
-
-        # Check socket type resolution
-        echo "=== Socket d.ts first 5 lines ==="
-        head -5 "$ETS_API/@ohos.net.socket.d.ts" 2>/dev/null
-        echo "=== Socket d.ts - export lines ==="
-        grep -n "^export\|^declare" "$ETS_API/@ohos.net.socket.d.ts" 2>/dev/null | head -10
+        # ─── Register custom @Component structs in INNER_COMPONENT_NAMES ───
+        # The ets-loader validates UI syntax per-file and only recognizes custom components
+        # declared in the same file. Cross-file custom components must be pre-registered.
+        echo "Scanning project for @Component struct declarations..."
+        CUSTOM_COMPONENTS=$(grep -A1 -r "^@Component$\|^@ComponentV2$\|^@CustomDialog$" \
+          entry/src/main/ets/ --include="*.ets" 2>/dev/null \
+          | grep "struct " | sed 's/.*struct \([A-Za-z_][A-Za-z0-9_]*\).*/\1/' | sort -u)
+        if [ -n "$CUSTOM_COMPONENTS" ]; then
+          echo "Found custom components: $CUSTOM_COMPONENTS"
+          # Append to component_map.js to add these names to INNER_COMPONENT_NAMES
+          {
+            echo ""
+            echo "// [CI Patch] Register cross-file custom components"
+            for comp in $CUSTOM_COMPONENTS; do
+              echo "exports.INNER_COMPONENT_NAMES.add('$comp');"
+            done
+          } >> "$COMPONENT_MAP"
+          echo "  Patched component_map.js with $(echo "$CUSTOM_COMPONENTS" | wc -w) custom components"
+        else
+          echo "  Warning: No custom @Component structs found"
+        fi
 
         echo "✅ SDK API patches applied"
 
