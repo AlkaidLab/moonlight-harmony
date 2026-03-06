@@ -272,6 +272,20 @@ jobs:
         STUBEOF
           echo "  Created toolchains/hms/toolchains with content symlinks"
         fi
+        # hvigor's PreBuild validation reads JSON schema files from
+        # <toolchains>/modulecheck/app.json etc. The OpenHarmony SDK may not
+        # ship all schemas required for HarmonyOS (runtimeOS) builds.
+        # Create permissive stubs for any missing schema files.
+        for check_dir in modulecheck configcheck syscapcheck; do
+          CHECK_PATH="$SDK_HOME/toolchains/$check_dir"
+          [ ! -d "$CHECK_PATH" ] && continue
+          for schema in app.json module.json; do
+            if [ ! -f "$CHECK_PATH/$schema" ]; then
+              echo '{}' > "$CHECK_PATH/$schema"
+              echo "  Created schema stub: $check_dir/$schema"
+            fi
+          done
+        done
         # HMS also needs sdk-pkg.json for parseSdks to discover during scanning
         for comp in ets native previewer toolchains; do
           HMS_DIR="$SDK_HOME/toolchains/hms/$comp"
