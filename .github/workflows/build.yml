@@ -595,6 +595,55 @@ jobs:
         echo "=== toolchains/lib after stubs ==="
         ls -la "$SDK_HOME/toolchains/lib/"
 
+    # restool fails if id_defined.json has duplicate entries (SDK bug in 6.0-Release)
+    - name: Deduplicate id_defined.json
+      run: |
+        SDK_HOME=~/ohos-sdk
+        ID_FILE="$SDK_HOME/toolchains/id_defined.json"
+        if [ -f "$ID_FILE" ]; then
+          python3 -c "
+        import json, os
+        p = os.path.expanduser('~/ohos-sdk/toolchains/id_defined.json')
+        with open(p) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            seen = set()
+            deduped = []
+            for item in data:
+                key = item.get('name', '') if isinstance(item, dict) else str(item)
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(item)
+            removed = len(data) - len(deduped)
+            if removed:
+                with open(p, 'w') as f:
+                    json.dump(deduped, f, indent=2)
+                print(f'Removed {removed} duplicate entries from id_defined.json')
+            else:
+                print('No duplicates found in id_defined.json (list)')
+        elif isinstance(data, dict):
+            record = data.get('record', [])
+            if isinstance(record, list):
+                seen = set()
+                deduped = []
+                for item in record:
+                    key = item.get('name', '') if isinstance(item, dict) else str(item)
+                    if key not in seen:
+                        seen.add(key)
+                        deduped.append(item)
+                removed = len(record) - len(deduped)
+                if removed:
+                    data['record'] = deduped
+                    with open(p, 'w') as f:
+                        json.dump(data, f, indent=2)
+                    print(f'Removed {removed} duplicate entries from id_defined.json')
+                else:
+                    print('No duplicates found in id_defined.json (dict.record)')
+        "
+        else
+          echo "id_defined.json not found at $ID_FILE"
+        fi
+
     - name: Build HAP
       run: |
         set -o pipefail
