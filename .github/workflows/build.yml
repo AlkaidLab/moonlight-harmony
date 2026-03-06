@@ -288,6 +288,14 @@ jobs:
         echo "SDK_API_VERSION=$API_VER" >> "$GITHUB_ENV"
         echo "=== Post-normalization structure ==="
         find "$SDK_HOME" -maxdepth 4 -type d | sort
+        echo "=== Symlinks in toolchains/hms/toolchains ==="
+        ls -la "$SDK_HOME/toolchains/hms/toolchains/" 2>&1 || true
+        echo "=== Contents of toolchains/lib ==="
+        ls -la "$SDK_HOME/toolchains/lib/" 2>&1 || true
+        echo "=== restool location ==="
+        find "$SDK_HOME" -name "restool" -type f 2>/dev/null || echo "restool not found"
+        echo "=== libimage_transcoder_shared.so location ==="
+        find "$SDK_HOME" -name "libimage_transcoder_shared.so" 2>/dev/null || echo "libimage_transcoder_shared.so not found"
         echo "=== Package JSON locations ==="
         find "$SDK_HOME" \( -name "sdk-pkg.json" -o -name "oh-uni-package.json" -o -name "uni-package.json" \) | sort
 
@@ -570,6 +578,8 @@ jobs:
 
         export NODE_HOME="$(dirname "$(dirname "$(which node)")")"
         export JAVA_HOME="${JAVA_HOME_17_X64}"
+        # restool needs libimage_transcoder_shared.so — may be in toolchains/lib or previewer/common/bin
+        export LD_LIBRARY_PATH="${HOME}/ohos-sdk/toolchains/lib:${HOME}/ohos-sdk/previewer/common/bin:${LD_LIBRARY_PATH:-}"
 
         node hvigorw.js assembleHap \
           --mode module \
