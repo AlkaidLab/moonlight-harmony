@@ -17,14 +17,12 @@ on:
           - debug
           - release
 
-# 同一 PR/分支只保留最新的构建
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   NODE_OPTIONS: '--max_old_space_size=8192'
-  # ========== 版本配置（更新 SDK/工具时修改这里） ==========
   SDK_VERSION: '6.0-Release'
   CMDLINE_TOOLS_VERSION: '5.1.0.840'
   CACHE_VERSION: 'v5'
@@ -36,9 +34,7 @@ jobs:
     timeout-minutes: 90
 
     steps:
-    # ────────────────────────────────────────────
-    # 基础环境
-    # ────────────────────────────────────────────
+    # ── 基础环境 ──
     - name: Checkout
       uses: actions/checkout@v4
       with:
@@ -65,7 +61,7 @@ jobs:
           VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo "dev-${GITHUB_SHA:0:7}")"
         fi
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-        echo "📦 Version: $VERSION"
+        echo "Version: $VERSION"
 
     - name: Determine build mode
       id: build-mode
@@ -76,30 +72,23 @@ jobs:
           echo "mode=debug" >> "$GITHUB_OUTPUT"
         fi
 
-    # 检查是否配置了签名 Secrets（决定是否能构建 .app）
     - name: Check signing config
       id: signing
       run: |
         if [[ -n "${{ secrets.SIGNING_CERT }}" ]] && [[ -n "${{ secrets.SIGNING_PROFILE }}" ]] && [[ -n "${{ secrets.SIGNING_KEYSTORE }}" ]]; then
           echo "available=true" >> "$GITHUB_OUTPUT"
-          echo "✅ Signing secrets configured — will build .app"
         else
           echo "available=false" >> "$GITHUB_OUTPUT"
-          echo "ℹ️  No signing secrets — will build unsigned .hap only"
         fi
 
-    # ────────────────────────────────────────────
-    # 磁盘空间
-    # ────────────────────────────────────────────
+    # ── 磁盘空间 ──
     - name: Free disk space
       run: |
         sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
                      "$AGENT_TOOLSDIRECTORY" /opt/hostedtoolcache/CodeQL
         df -h /
 
-    # ────────────────────────────────────────────
-    # SDK & 工具缓存 + 下载
-    # ────────────────────────────────────────────
+    # ── SDK 下载 & 缓存 ──
     - name: Cache OHOS SDK & tools
       id: cache-sdk
       uses: actions/cache@v4
@@ -114,23 +103,15 @@ jobs:
       run: |
         set -euo pipefail
         SDK_URL="https://repo.huaweicloud.com/harmonyos/os/${{ env.SDK_VERSION }}/ohos-sdk-windows_linux-public.tar.gz"
-        echo "⬇️  Downloading SDK: $SDK_URL"
-
         mkdir -p ~/ohos-sdk && cd ~/ohos-sdk
         curl -L --retry 3 --retry-delay 10 -o sdk.tar.gz "$SDK_URL" --progress-bar --fail
         tar -xzf sdk.tar.gz && rm sdk.tar.gz
-
         if [ -d "linux" ]; then
-          echo "ZIP files in linux/:"
-          ls -la linux/*.zip 2>/dev/null
           for zip in linux/*.zip; do
-            [ -f "$zip" ] && unzip -q -o "$zip" -d . && echo "  ✓ $(basename "$zip")"
+            [ -f "$zip" ] && unzip -q -o "$zip" -d .
           done
           rm -rf linux windows
         fi
-        echo "Extracted SDK components:"
-        ls -la ~/ohos-sdk/
-        echo "✅ SDK ready" && df -h /
 
     - name: Download command-line-tools
       if: steps.cache-sdk.outputs.cache-hit != 'true'
@@ -139,182 +120,31 @@ jobs:
         TOOLS_VER="${{ env.CMDLINE_TOOLS_VERSION }}"
         TOOLS_PREFIX="${TOOLS_VER%.*}"
         TOOLS_URL="https://repo.huaweicloud.com/harmonyos/ohpm/${TOOLS_PREFIX}/commandline-tools-linux-x64-${TOOLS_VER}.zip"
-        echo "⬇️  Downloading tools: $TOOLS_URL"
-
         cd ~
         curl -L --retry 3 --retry-delay 10 -o cmdline-tools.zip "$TOOLS_URL" --progress-bar --fail
         unzip -q cmdline-tools.zip
         [ -d "command-line-tools" ] && mv command-line-tools ~/cmdline-tools
         rm -f cmdline-tools.zip
         chmod -R +x ~/cmdline-tools/ohpm/bin/ 2>/dev/null || true
-        echo "✅ Tools ready" && df -h /
 
-    # ────────────────────────────────────────────
-    # SDK 目录结构修正
-    # hvigor's parseSdks scans $SDK_HOME for sdk-pkg.json (flat layout).
-    # But OhosBaseSdkInfoHandler.getLocalSdks() remaps component locations:
-    #   OPENHARMONY → $SDK_HOME/toolchains/openharmony/<component>/
-    #   HARMONYOS   → $SDK_HOME/toolchains/hms/<component>/
-    # checkComponentExistence then verifies oh-uni-package.json / uni-package.json
-    # at the REMAPPED locations. We keep flat layout for scanning and create
-    # symlinks at the remapped locations for the existence check.
-    # ────────────────────────────────────────────
-    - name: Normalize SDK layout for hvigor
+    # ── SDK 结构修正 & 补丁 ──
+    - name: Normalize SDK layout
       run: |
-        set -euo pipefail
-        SDK_HOME=~/ohos-sdk
-
-        echo "=== Pre-normalization contents ==="
-        ls -la "$SDK_HOME/"
-
-        # ─── Determine API version ───
-        PKG_FILE=$(find "$SDK_HOME" -maxdepth 4 -name "oh-uni-package.json" -type f | head -1)
-        if [ -n "$PKG_FILE" ]; then
-          API_VER=$(python3 -c "import json; print(json.load(open('$PKG_FILE'))['apiVersion'])")
-        else
-          API_VER=$(find "$SDK_HOME/openharmony" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | head -1)
-        fi
-        echo "SDK API version: $API_VER"
-        [ -z "$API_VER" ] && { echo "ERROR: Could not determine API version"; exit 1; }
-
-        # ─── Step 1: Flatten nested openharmony/<ver> layout to root ───
-        # Downloaded SDK: openharmony/<apiVer>/{ets,js,native,previewer,toolchains}
-        for comp in ets js native toolchains previewer; do
-          ROOT_DIR="$SDK_HOME/$comp"
-          OH_NESTED_DIR="$SDK_HOME/openharmony/$API_VER/$comp"
-          if [ ! -d "$ROOT_DIR" ] && [ -d "$OH_NESTED_DIR" ]; then
-            mv "$OH_NESTED_DIR" "$ROOT_DIR"
-            echo "  Flattened $comp"
-          fi
-        done
-        rm -rf "$SDK_HOME/openharmony" "$SDK_HOME/HarmonyOS"
-
-        # ─── Step 2: Ensure oh-uni-package.json and sdk-pkg.json in each component ───
-        for comp in ets js native toolchains previewer; do
-          COMP_DIR="$SDK_HOME/$comp"
-          [ ! -d "$COMP_DIR" ] && mkdir -p "$COMP_DIR"
-
-          if [ ! -f "$COMP_DIR/oh-uni-package.json" ]; then
-            cat > "$COMP_DIR/oh-uni-package.json" << STUBEOF
-        {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
-        STUBEOF
-          fi
-
-          if [ ! -f "$COMP_DIR/sdk-pkg.json" ]; then
-            python3 -c "
-        import json
-        with open('$COMP_DIR/oh-uni-package.json') as f:
-            pkg = json.load(f)
-        meta_ver = pkg.get('meta', {}).get('metaVersion', '3.0.0')
-        data = {k: v for k, v in pkg.items() if k != 'meta'}
-        with open('$COMP_DIR/sdk-pkg.json', 'w') as f:
-            json.dump({'data': data, 'meta': {'version': meta_ver}}, f)
-        print(f'  Created sdk-pkg.json for $comp (meta: {meta_ver})')
-        "
-          fi
-        done
-
-        # ─── Step 3: Create OPENHARMONY remapped locations ───
-        # OhosBaseSdkInfoHandler remaps to: $SDK_HOME/toolchains/openharmony/<comp>/
-        # checkComponentExistence looks for oh-uni-package.json there.
-        # Always rebuild to handle stale cache layouts.
-        rm -rf "$SDK_HOME/toolchains/openharmony"
-        mkdir -p "$SDK_HOME/toolchains/openharmony"
-        for comp in ets js native previewer; do
-          [ -d "$SDK_HOME/$comp" ] && ln -sf "$SDK_HOME/$comp" "$SDK_HOME/toolchains/openharmony/$comp"
-        done
-        # toolchains component: cannot symlink to ancestor dir, so create
-        # a directory with symlinks to all actual toolchains content.
-        mkdir -p "$SDK_HOME/toolchains/openharmony/toolchains"
-        for item in "$SDK_HOME/toolchains/"*; do
-          bname=$(basename "$item")
-          case "$bname" in openharmony|hms) continue ;; esac
-          ln -sf "$item" "$SDK_HOME/toolchains/openharmony/toolchains/$bname"
-        done
-        echo "  Created toolchains/openharmony/ with symlinks"
-
-        # ─── Step 4: Create HARMONYOS (HMS) remapped locations ───
-        # HosSdkInfoHandler remaps to: $SDK_HOME/toolchains/hms/<comp>/
-        # checkComponentExistence looks for uni-package.json there.
-        # hvigor also uses these directories for actual build tools (modulecheck, etc.),
-        # so we must provide real content — not just stubs.
-        # Always rebuild to handle stale cache layouts.
-        rm -rf "$SDK_HOME/toolchains/hms"
-        mkdir -p "$SDK_HOME/toolchains/hms"
-        for comp in ets native previewer; do
-          [ -d "$SDK_HOME/$comp" ] && ln -sf "$SDK_HOME/$comp" "$SDK_HOME/toolchains/hms/$comp"
-          # uni-package.json must be inside the actual component dir (symlink target).
-          if [ ! -f "$SDK_HOME/$comp/uni-package.json" ]; then
-            cat > "$SDK_HOME/$comp/uni-package.json" << STUBEOF
-        {"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
-        STUBEOF
-          fi
-        done
-        # HMS toolchains: create dir with content symlinks
-        # Skip id_defined.json — restool reads it from both OH and HMS paths,
-        # causing "duplicate ID" errors if both point to the same file.
-        mkdir -p "$SDK_HOME/toolchains/hms/toolchains"
-        for item in "$SDK_HOME/toolchains/"*; do
-          bname=$(basename "$item")
-          case "$bname" in openharmony|hms|id_defined.json) continue ;; esac
-          ln -sf "$item" "$SDK_HOME/toolchains/hms/toolchains/$bname"
-        done
-        cat > "$SDK_HOME/toolchains/hms/toolchains/uni-package.json" << STUBEOF
-        {"apiVersion":"$API_VER","displayName":"Toolchains","meta":{"metaVersion":"3.0.0"},"path":"toolchains","releaseType":"Beta1","version":"6.0.0.47"}
-        STUBEOF
-        echo "  Created toolchains/hms/ with symlinks"
-
-        # ─── Step 5: Schema stubs for HarmonyOS validation ───
-        # hvigor's PreBuild reads JSON schemas from <toolchains>/modulecheck/app.json etc.
-        # Create permissive stubs for any missing schema files.
-        for check_dir in modulecheck configcheck syscapcheck; do
-          CHECK_PATH="$SDK_HOME/toolchains/$check_dir"
-          [ ! -d "$CHECK_PATH" ] && continue
-          for schema in app.json module.json; do
-            [ ! -f "$CHECK_PATH/$schema" ] && echo '{}' > "$CHECK_PATH/$schema"
-          done
-        done
-        # HMS also needs sdk-pkg.json for parseSdks to discover during scanning
-        for comp in ets native previewer toolchains; do
-          HMS_DIR="$SDK_HOME/toolchains/hms/$comp"
-          REAL_DIR=$(readlink -f "$HMS_DIR" 2>/dev/null || echo "$HMS_DIR")
-          [ ! -f "$REAL_DIR/sdk-pkg.json" ] && [ ! -f "$HMS_DIR/sdk-pkg.json" ] && \
-            python3 -c "
-        import json
-        data = {'apiVersion': '$API_VER', 'displayName': '${comp^}', 'path': '$comp', 'releaseType': 'Beta1', 'version': '6.0.0.47'}
-        with open('$REAL_DIR/sdk-pkg.json', 'w') as f:
-            json.dump({'data': data, 'meta': {'version': '3.0.0'}}, f)
-        "
-        done
-
+        chmod +x ci/normalize-sdk.sh
+        OUTPUT=$(ci/normalize-sdk.sh ~/ohos-sdk)
+        echo "$OUTPUT"
+        API_VER=$(echo "$OUTPUT" | grep "SDK_API_VERSION=" | cut -d= -f2)
         echo "SDK_API_VERSION=$API_VER" >> "$GITHUB_ENV"
-        echo "=== Post-normalization structure ==="
-        find "$SDK_HOME" -maxdepth 4 -type d | sort
-        echo "=== Symlinks in toolchains/hms/toolchains ==="
-        ls -la "$SDK_HOME/toolchains/hms/toolchains/" 2>&1 || true
-        echo "=== Contents of toolchains/lib ==="
-        ls -la "$SDK_HOME/toolchains/lib/" 2>&1 || true
-        echo "=== restool location ==="
-        find "$SDK_HOME" -name "restool" -type f 2>/dev/null || echo "restool not found"
-        echo "=== libimage_transcoder_shared.so location ==="
-        find "$SDK_HOME" -name "libimage_transcoder_shared.so" 2>/dev/null || echo "libimage_transcoder_shared.so not found"
-        echo "=== Package JSON locations ==="
-        find "$SDK_HOME" \( -name "sdk-pkg.json" -o -name "oh-uni-package.json" -o -name "uni-package.json" \) | sort
 
-    # ────────────────────────────────────────────
-    # 环境配置
-    # ────────────────────────────────────────────
     - name: Setup environment
       run: |
         SDK_HOME=~/ohos-sdk
         NATIVE_DIR="$(find "$SDK_HOME" -maxdepth 3 -name "native" -type d | head -1)"
         TOOLCHAINS_DIR="$(find "$SDK_HOME" -maxdepth 3 -name "toolchains" -type d | head -1)"
-
         [ -n "$TOOLCHAINS_DIR" ] && echo "$TOOLCHAINS_DIR" >> "$GITHUB_PATH"
         [ -n "$NATIVE_DIR" ] && echo "${NATIVE_DIR}/build-tools/cmake/bin" >> "$GITHUB_PATH"
         echo "$HOME/cmdline-tools/ohpm/bin" >> "$GITHUB_PATH"
         echo "$HOME/cmdline-tools/hvigor/bin" >> "$GITHUB_PATH"
-
         {
           echo "OHOS_SDK_HOME=$SDK_HOME"
           echo "HOS_SDK_HOME=$SDK_HOME"
@@ -322,11 +152,7 @@ jobs:
           echo "DEVECO_SDK_HOME=$SDK_HOME"
         } >> "$GITHUB_ENV"
 
-        echo "✅ Environment configured"
-
-    # ────────────────────────────────────────────
-    # build-profile.json5
-    # ────────────────────────────────────────────
+    # ── build-profile.json5 ──
     - name: Create build profile (unsigned)
       if: steps.signing.outputs.available != 'true'
       run: |
@@ -367,12 +193,10 @@ jobs:
           ]
         }
         EOF
-        echo "✅ Created unsigned build profile"
 
     - name: Create build profile (signed)
       if: steps.signing.outputs.available == 'true'
       run: |
-        # 从 Secrets 解码签名文件（Base64 编码存储）
         mkdir -p .signing
         echo "${{ secrets.SIGNING_CERT }}" | base64 -d > .signing/cert.cer
         echo "${{ secrets.SIGNING_PROFILE }}" | base64 -d > .signing/profile.p7b
@@ -437,11 +261,8 @@ jobs:
           ]
         }
         PROFILE_EOF
-        echo "✅ Created signed build profile"
 
-    # ────────────────────────────────────────────
-    # 依赖安装
-    # ────────────────────────────────────────────
+    # ── 依赖安装 ──
     - name: Cache ohpm packages
       uses: actions/cache@v4
       with:
@@ -457,45 +278,14 @@ jobs:
       run: |
         set -euo pipefail
         CMDTOOLS_HVIGOR="$HOME/cmdline-tools/hvigor"
-
-        # Create ~/.npmrc to satisfy hvigorw requirement
         echo "@ohos:registry=https://repo.huaweicloud.com/repository/npm/" > ~/.npmrc
-
-        # Create node_modules/@ohos inside command-line-tools so internal
-        # cross-references between hvigor packages resolve correctly
-        # (Node.js resolves from real path after following symlinks)
         mkdir -p "$CMDTOOLS_HVIGOR/node_modules/@ohos"
         ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$CMDTOOLS_HVIGOR/node_modules/@ohos/hvigor"
         ln -sf "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin" "$CMDTOOLS_HVIGOR/node_modules/@ohos/hvigor-ohos-plugin"
-
-        # Symlink into project directories for hvigorfile.ts imports
         for dir in . hvigor entry nativelib; do
           mkdir -p "$dir/node_modules/@ohos"
           ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$dir/node_modules/@ohos/hvigor"
           ln -sf "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin" "$dir/node_modules/@ohos/hvigor-ohos-plugin"
-        done
-
-        echo "✅ hvigor setup done"
-
-    - name: Patch hos-config.json for API 20
-      run: |
-        # command-line-tools 5.1.0 only maps up to API 18 (5.1.0).
-        # SDK 6.0-Release uses API 20, so we must add the mapping.
-        echo "=== Patching hos-config.json for API 20 support ==="
-        find ~/cmdline-tools -name "hos-config.json" -type f | while read -r cfg; do
-          echo "Patching: $cfg"
-          CONFIG_PATH="$cfg" python3 -c "
-        import json, os
-        p = os.environ['CONFIG_PATH']
-        with open(p) as f:
-            c = json.load(f)
-        c.setdefault('osVersionMapper', {})['6.0.0'] = '20'
-        c.setdefault('osNameMapper', {})['6.0.0'] = 'HarmonyOS NEXT3'
-        c.setdefault('pathVersionMapper', {})['6.0.0'] = 'HarmonyOS-NEXT3'
-        with open(p, 'w') as f:
-            json.dump(c, f, indent=2)
-        print('  Patched successfully')
-        "
         done
 
     - name: Install ohpm dependencies
@@ -503,512 +293,21 @@ jobs:
         ohpm config set registry https://ohpm.openharmony.cn/ohpm/
         ohpm config set strict_ssl false
         ohpm install --all
-        echo "✅ Dependencies installed"
 
-    # ────────────────────────────────────────────
-    # 构建
-    # ────────────────────────────────────────────
-    - name: Debug SDK structure
+    # ── SDK 补丁 ──
+    - name: Patch SDK
       run: |
-        echo "=== Verify hos-config.json patch ==="
-        find ~/cmdline-tools -name "hos-config.json" -type f | while read -r cfg; do
-          python3 -c "import json,sys; c=json.load(open(sys.argv[1], encoding='utf-8')); m=c.get('osVersionMapper', {}); print(sys.argv[1], '=>', '6.0.0' in m, 'API', m.get('6.0.0', 'MISSING'))" "$cfg"
-        done
+        chmod +x ci/patch-sdk.sh
+        ci/patch-sdk.sh ~/ohos-sdk
 
-        echo "=== SDK handler checkComponentExistence test ==="
-        node -e "
-        process.env.NODE_PATH = '$HOME/cmdline-tools/hvigor/hvigor-ohos-plugin/node_modules:$HOME/cmdline-tools/hvigor/node_modules/@ohos/hvigor/node_modules';
-        require('module').Module._initPaths();
-        try {
-          const {HosPrjSdkConfig, SimpleHosPrjSdkHandler, HosPrjSdkType} = require('@ohos/hos-sdkmanager-common');
-          const fs = require('fs');
-          const path = require('path');
-          const sdkDir = process.env.DEVECO_SDK_HOME;
-          console.log('DEVECO_SDK_HOME:', sdkDir);
-          const logs = [];
-          const progress = { debug:(m)=>logs.push('D: '+m), warn:(m)=>logs.push('W: '+m), info:(m)=>logs.push('I: '+m), error:(m)=>logs.push('E: '+m) };
-          const config = HosPrjSdkConfig.builder(sdkDir);
-          const handler = new SimpleHosPrjSdkHandler(config, progress);
-          // Test OPENHARMONY
-          const oh = handler.getSdkHandler(HosPrjSdkType.OPENHARMONY);
-          const sdks = oh.getLocalSdks('20');
-          console.log('OH localSdks: size =', sdks?.size);
-          if (sdks) { for (const [k,v] of sdks.entries()) {
-            const loc = v?.getLocation?.() || '';
-            const ohUni = fs.existsSync(path.join(loc, 'oh-uni-package.json'));
-            console.log(' ', k, '->', loc, 'oh-uni=', ohUni);
-          }}
-          // Test HARMONYOS
-          const hms = handler.getSdkHandler(HosPrjSdkType.HARMONYOS);
-          const hmsSdks = hms.getLocalSdks('20');
-          console.log('HMS localSdks: size =', hmsSdks?.size);
-          if (hmsSdks) { for (const [k,v] of hmsSdks.entries()) {
-            const loc = v?.getLocation?.() || '';
-            const uni = fs.existsSync(path.join(loc, 'uni-package.json'));
-            console.log(' HMS', k, '->', loc, 'uni=', uni);
-          }}
-          console.log('=== Scanner logs ===');
-          logs.forEach(l => console.log(l));
-        } catch(e) { console.log('Error:', e.message, e.stack); }
-        " 2>&1 || true
-
-    # aubio is a git submodule — config.h is not tracked upstream.
-    # Generate the minimal config needed for HarmonyOS onset-detection build.
-    - name: Generate aubio config.h
-      run: |
-        cat > nativelib/src/main/cpp/aubio/src/config.h << 'AUBIO_CONFIG'
-        #ifndef AUBIO_CONFIG_H
-        #define AUBIO_CONFIG_H
-        #define HAVE_STDLIB_H  1
-        #define HAVE_STDIO_H   1
-        #define HAVE_COMPLEX_H 1
-        #define HAVE_MATH_H    1
-        #define HAVE_STRING_H  1
-        #define HAVE_ERRNO_H   1
-        #define HAVE_LIMITS_H  1
-        #define HAVE_STDARG_H  1
-        #define HAVE_OOURA     1
-        #define PACKAGE "aubio"
-        #endif
-        AUBIO_CONFIG
-
-    # restool (resource compiler) expects libimage_transcoder_shared.so which is
-    # part of DevEco Studio but not the public OpenHarmony SDK download.
-    # Create a minimal stub .so so that restool can load it.
-    - name: Create missing SDK shared libraries
-      run: |
-        SDK_HOME=~/ohos-sdk
-
-        echo "=== restool dependencies ==="
-        ldd "$SDK_HOME/toolchains/restool" 2>&1 || true
-
-        echo "=== Testing restool directly ==="
-        "$SDK_HOME/toolchains/restool" --version 2>&1 || true
-
-        # Build stub for any missing .so that restool needs
-        for so_name in libimage_transcoder_shared.so; do
-          if ! find "$SDK_HOME" -name "$so_name" -print -quit | grep -q .; then
-            echo "Creating stub $so_name"
-            echo 'void __stub_placeholder(void) {}' | gcc -shared -x c - -o "$SDK_HOME/toolchains/lib/$so_name"
-            echo "  Created at $SDK_HOME/toolchains/lib/$so_name"
-          fi
-        done
-
-        echo "=== toolchains/lib after stubs ==="
-        ls -la "$SDK_HOME/toolchains/lib/"
-
-    # restool fails if id_defined.json has duplicate entries (SDK bug in 6.0-Release)
-    - name: Deduplicate id_defined.json
-      run: |
-        SDK_HOME=~/ohos-sdk
-        ID_FILE="$SDK_HOME/toolchains/id_defined.json"
-        if [ -f "$ID_FILE" ]; then
-          python3 -c "
-        import json, os
-        p = os.path.expanduser('~/ohos-sdk/toolchains/id_defined.json')
-        with open(p) as f:
-            data = json.load(f)
-
-        def dedup_records(records):
-            seen_names = set()
-            deduped = []
-            for item in records:
-                key = None
-                if isinstance(item, dict):
-                    for field in ['name', 'Name', 'key', 'type']:
-                        if field in item:
-                            key = str(item[field])
-                            break
-                    if key is None:
-                        key = json.dumps(item, sort_keys=True)
-                else:
-                    key = str(item)
-                if key not in seen_names:
-                    seen_names.add(key)
-                    deduped.append(item)
-                # Re-sequence order field
-            for i, item in enumerate(deduped):
-                if isinstance(item, dict) and 'order' in item:
-                    item['order'] = i
-            return deduped, len(records) - len(deduped)
-
-        changed = False
-        if isinstance(data, dict):
-            for k, v in data.items():
-                if isinstance(v, list) and len(v) > 0:
-                    deduped, removed = dedup_records(v)
-                    if removed:
-                        data[k] = deduped
-                        changed = True
-                        print(f'{k}: removed {removed} duplicates, re-indexed order')
-        elif isinstance(data, list):
-            deduped, removed = dedup_records(data)
-            if removed:
-                data = deduped
-                changed = True
-                print(f'Removed {removed} duplicates, re-indexed order')
-
-        if changed:
-            with open(p, 'w') as f:
-                json.dump(data, f, indent=2)
-        else:
-            print('No duplicates found in id_defined.json')
-        "
-        else
-          echo "id_defined.json not found at $ID_FILE"
-        fi
-
-    - name: Create ets-loader externalconfig.json
-      run: |
-        SDK_HOME=~/ohos-sdk
-        # process_visual.js reads externalconfig.json from each external component path.
-        # When externalApiPaths is set by hvigor, the resolved components directory exists
-        # (due to our symlinks), but externalconfig.json doesn't exist in the public SDK.
-        # ts.readConfigFile returns {config: {}} for a missing file, causing
-        # concatenateEtsOptions to crash on undefined.compilerOptions.
-        COMPONENTS_DIR="$SDK_HOME/ets/build-tools/ets-loader/components"
-        if [ ! -f "$COMPONENTS_DIR/externalconfig.json" ]; then
-          cat > "$COMPONENTS_DIR/externalconfig.json" << 'EXTCFG'
-        {
-          "compilerOptions": {
-            "ets": {
-              "components": [],
-              "extend": {
-                "components": []
-              }
-            }
-          }
-        }
-        EXTCFG
-          echo "Created externalconfig.json in ets-loader components"
-        fi
-
-    - name: Patch SDK for missing HarmonyOS APIs
-      run: |
-        SDK_HOME=~/ohos-sdk
-        ETS_API="$SDK_HOME/ets/api"
-        KIT_CONFIGS="$SDK_HOME/ets/build-tools/ets-loader/kit_configs"
-        ETS_LOADER="$SDK_HOME/ets/build-tools/ets-loader"
-
-        # ─── @kit.RemoteCommunicationKit (rcp module) ───
-        if [ ! -f "$KIT_CONFIGS/@kit.RemoteCommunicationKit.json" ]; then
-          echo "Creating @kit.RemoteCommunicationKit kit config..."
-          cat > "$KIT_CONFIGS/@kit.RemoteCommunicationKit.json" << 'KITCFG'
-        {
-          "symbols": {
-            "rcp": {
-              "source": "@ohos.net.rcp.d.ts",
-              "bindings": "default"
-            }
-          }
-        }
-        KITCFG
-        fi
-
-        if [ ! -f "$ETS_API/@ohos.net.rcp.d.ts" ]; then
-          echo "Creating @ohos.net.rcp.d.ts..."
-          cat > "$ETS_API/@ohos.net.rcp.d.ts" << 'RCPDTS'
-        declare namespace rcp {
-          interface CertificateConfig {
-            type: string;
-            filePath: string;
-            key: string;
-          }
-          interface SecurityConfiguration {
-            remoteValidation?: 'skip' | 'system';
-            certificate?: CertificateConfig;
-          }
-          interface TimeoutConfig {
-            connectMs?: number;
-            transferMs?: number;
-          }
-          interface TransferConfig {
-            timeout?: TimeoutConfig;
-          }
-          interface RequestConfiguration {
-            security?: SecurityConfiguration;
-            transfer?: TransferConfig;
-          }
-          interface SessionConfiguration {
-            requestConfiguration?: RequestConfiguration;
-          }
-          interface Response {
-            statusCode: number;
-            body: ArrayBuffer;
-          }
-          interface Session {
-            get(url: string): Promise<Response>;
-            close(): void;
-          }
-          function createSession(config?: SessionConfiguration): Session;
-        }
-        export default rcp;
-        export { rcp };
-        RCPDTS
-        fi
-
-        cat > "$ETS_API/@kit.RemoteCommunicationKit.d.ts" << 'KITDTS'
-        declare module '@kit.RemoteCommunicationKit' {
-          namespace rcp {
-            interface CertificateConfig {
-              type: string;
-              filePath: string;
-              key: string;
-            }
-            interface SecurityConfiguration {
-              remoteValidation?: 'skip' | 'system';
-              certificate?: CertificateConfig;
-            }
-            interface TimeoutConfig {
-              connectMs?: number;
-              transferMs?: number;
-            }
-            interface TransferConfig {
-              timeout?: TimeoutConfig;
-            }
-            interface RequestConfiguration {
-              security?: SecurityConfiguration;
-              transfer?: TransferConfig;
-            }
-            interface SessionConfiguration {
-              requestConfiguration?: RequestConfiguration;
-            }
-            interface Response {
-              statusCode: number;
-              body: ArrayBuffer;
-            }
-            interface Session {
-              get(url: string): Promise<Response>;
-              close(): void;
-            }
-            function createSession(config?: SessionConfiguration): Session;
-          }
-          export { rcp };
-        }
-        KITDTS
-        echo "  Created RemoteCommunicationKit declarations"
-
-        # ─── @kit.NetworkKit declare module (fixes socket/http/connection type resolution) ───
-        # The ets-loader kit config maps symbols but TypeScript needs a declare module for
-        # proper type resolution. We inline the minimum types needed by the project.
-        echo "Creating @kit.NetworkKit.d.ts declare module..."
-        cat > "$ETS_API/@kit.NetworkKit.d.ts" << 'NETKITDTS'
-        declare module '@kit.NetworkKit' {
-          namespace socket {
-            interface NetAddress {
-              address: string;
-              port?: number;
-              family?: number;
-            }
-            interface UDPSocket {
-              bind(address: NetAddress): Promise<void>;
-              send(options: UDPSendOptions): Promise<void>;
-              setExtraOptions(options: UDPExtraOptions): Promise<void>;
-              close(): Promise<void>;
-              on(type: string, callback: Function): void;
-              off(type: string, callback?: Function): void;
-            }
-            interface UDPSendOptions {
-              data: string | ArrayBuffer;
-              address: NetAddress;
-            }
-            interface UDPExtraOptions {
-              broadcast?: boolean;
-              receiveBufferSize?: number;
-              sendBufferSize?: number;
-              reuseAddress?: boolean;
-              socketTimeout?: number;
-            }
-            function constructUDPSocketInstance(): UDPSocket;
-          }
-          namespace http {
-            enum RequestMethod { OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE, CONNECT }
-            enum HttpDataType { STRING, OBJECT, ARRAY_BUFFER }
-            interface HttpRequestOptions {
-              method?: RequestMethod;
-              extraData?: string | Object | ArrayBuffer;
-              header?: Object;
-              readTimeout?: number;
-              connectTimeout?: number;
-              expectDataType?: HttpDataType;
-              usingCache?: boolean;
-            }
-            interface HttpResponse {
-              result: string | Object | ArrayBuffer;
-              responseCode: number;
-              header: Object;
-            }
-            interface HttpRequest {
-              request(url: string, options?: HttpRequestOptions, callback?: (err: Object, data: HttpResponse) => void): Promise<HttpResponse>;
-              destroy(): void;
-              on(type: string, callback: Function): void;
-              off(type: string, callback?: Function): void;
-            }
-            function createHttp(): HttpRequest;
-          }
-          namespace connection {
-            interface NetHandle {
-              netId: number;
-            }
-            interface NetConnection {
-              on(type: string, callback: Function): void;
-              off(type: string, callback?: Function): void;
-              register(callback: (err: Object) => void): void;
-              unregister(callback: (err: Object) => void): void;
-            }
-            function createNetConnection(): NetConnection;
-            function getDefaultNet(): Promise<NetHandle>;
-            function hasDefaultNet(): Promise<boolean>;
-            function getDefaultNetSync(): NetHandle;
-            function hasDefaultNetSync(): boolean;
-          }
-          namespace webSocket {
-            interface WebSocket {
-              connect(url: string, options?: Object): Promise<boolean>;
-              send(data: string | ArrayBuffer): Promise<boolean>;
-              close(): Promise<boolean>;
-              on(type: string, callback: Function): void;
-              off(type: string, callback?: Function): void;
-            }
-            function createWebSocket(): WebSocket;
-          }
-          namespace mdns {
-            interface LocalServiceInfo {
-              serviceType: string;
-              serviceName?: string;
-              port?: number;
-              host?: Object;
-            }
-            interface DiscoveryEventInfo {
-              serviceInfo: LocalServiceInfo;
-              errorCode?: number;
-            }
-            interface DiscoveryService {
-              startSearchingMDNS(): void;
-              stopSearchingMDNS(): void;
-              on(type: string, callback: Function): void;
-              off(type: string, callback?: Function): void;
-            }
-            function createDiscoveryService(context: Object, serviceType: string): DiscoveryService;
-            function resolveLocalService(context: Object, serviceInfo: LocalServiceInfo): Promise<LocalServiceInfo>;
-          }
-          export { socket, http, connection, webSocket, mdns };
-        }
-        NETKITDTS
-        echo "  Created @kit.NetworkKit.d.ts"
-
-        # ─── Create socket stub only if missing ───
-        if [ ! -f "$ETS_API/@ohos.net.socket.d.ts" ]; then
-          echo "Socket module not found - creating stub..."
-          cat > "$ETS_API/@ohos.net.socket.d.ts" << 'SOCKETDTS'
-        declare namespace socket {
-          interface NetAddress {
-            address: string;
-            port?: number;
-            family?: number;
-          }
-          interface UDPSocket {
-            bind(address: NetAddress): Promise<void>;
-            send(options: UDPSendOptions): Promise<void>;
-            setExtraOptions(options: UDPExtraOptions): Promise<void>;
-            close(): Promise<void>;
-            on(type: string, callback: Function): void;
-            off(type: string, callback?: Function): void;
-          }
-          interface UDPSendOptions {
-            data: string | ArrayBuffer;
-            address: NetAddress;
-          }
-          interface UDPExtraOptions {
-            broadcast?: boolean;
-            receiveBufferSize?: number;
-            sendBufferSize?: number;
-            reuseAddress?: boolean;
-            socketTimeout?: number;
-          }
-          function constructUDPSocketInstance(): UDPSocket;
-        }
-        export default socket;
-        export { socket };
-        SOCKETDTS
-          echo "  Created socket stub"
-        fi
-
-        # ─── Add getBrightnessInfo to display module ───
-        DISPLAY_DTS=$(find "$ETS_API" -name "@ohos.display.d.ts" -o -name "@ohos.display.d.ets" 2>/dev/null | head -1)
-        if [ -n "$DISPLAY_DTS" ]; then
-          if ! grep -q "getBrightnessInfo" "$DISPLAY_DTS"; then
-            echo "Patching display module with getBrightnessInfo..."
-            cat >> "$DISPLAY_DTS" << 'DISPLAYPATCH'
-
-        declare namespace display {
-          interface BrightnessInfo {
-            sdrNits: number;
-            currentHeadroom: number;
-            maxHeadroom: number;
-          }
-          function getBrightnessInfo(displayId: number): BrightnessInfo;
-        }
-        DISPLAYPATCH
-            echo "  Patched display module"
-          fi
-        else
-          echo "Warning: display module declaration not found"
-        fi
-
-        # ─── Register cross-file custom @Component structs for UI syntax validation ───
-        # The ets-loader validates UI syntax per-file. componentCollection.customComponents only
-        # contains @Component structs from the CURRENT file. Cross-file custom components cause
-        # "does not meet UI component syntax" (10905204) errors.
-        # Fix: Patch validate_ui_syntax.js to include componentInfo.componentNames (populated
-        # from previously processed files) in the validation set.
-        VSYN="$ETS_LOADER/lib/validate_ui_syntax.js"
-        if [ -f "$VSYN" ]; then
-          echo "Patching validate_ui_syntax.js for cross-file custom components..."
-          # Patch the checkUISyntax call to also include componentInfo.componentNames
-          sed -i 's/new Set(\[\.\.\.\_component_map\.INNER_COMPONENT_NAMES,\.\.\.componentCollection\.customComponents\])/new Set([..._component_map.INNER_COMPONENT_NAMES,...componentCollection.customComponents,..._utils.componentInfo.componentNames])/g' "$VSYN"
-          echo "  Patched $(grep -c 'componentInfo.componentNames' "$VSYN") occurrence(s)"
-
-          # Also patch the checkAllNode call in process_component_build.js
-          PCB="$ETS_LOADER/lib/process_component_build.js"
-          if [ -f "$PCB" ]; then
-            sed -i 's/new Set(\[\.\.\.\_component_map\.INNER_COMPONENT_NAMES,\.\.\.\_validate_ui_syntax\.componentCollection\.customComponents\])/new Set([..._component_map.INNER_COMPONENT_NAMES,..._validate_ui_syntax.componentCollection.customComponents,..._utils.componentInfo.componentNames])/g' "$PCB"
-            echo "  Patched process_component_build.js: $(grep -c 'componentInfo.componentNames' "$PCB") occurrence(s)"
-          fi
-
-          # Pre-populate componentInfo.componentNames by scanning project files
-          echo "Pre-scanning project for @Component structs..."
-          CUSTOM_COMPONENTS=$(grep -A1 -r "^@Component$\|^@ComponentV2$\|^@CustomDialog$" \
-            entry/src/main/ets/ --include="*.ets" 2>/dev/null \
-            | grep "struct " | sed 's/.*struct \([A-Za-z_][A-Za-z0-9_]*\).*/\1/' | sort -u)
-          if [ -n "$CUSTOM_COMPONENTS" ]; then
-            echo "Found $(echo "$CUSTOM_COMPONENTS" | wc -w) custom components"
-            # Create a Node.js script that pre-populates componentInfo at require-time
-            UTILS_JS="$ETS_LOADER/lib/utils.js"
-            if [ -f "$UTILS_JS" ]; then
-              COMP_LIST=$(echo "$CUSTOM_COMPONENTS" | tr '\n' ',' | sed 's/,$//')
-              COMP_ARRAY=$(echo "$COMP_LIST" | sed "s/\([^,]*\)/'\1'/g")
-              echo "" >> "$UTILS_JS"
-              echo "// [CI Patch] Pre-populate componentInfo with project custom components" >> "$UTILS_JS"
-              echo "[$COMP_ARRAY].forEach(function(n){exports.componentInfo.componentNames.add(n)});" >> "$UTILS_JS"
-              echo "  Pre-registered components in utils.js"
-            fi
-          fi
-        else
-          echo "Warning: validate_ui_syntax.js not found"
-        fi
-
-        echo "✅ SDK API patches applied"
-
+    # ── 构建 ──
     - name: Build HAP
       run: |
         set -o pipefail
         BUILD_MODE="${{ steps.build-mode.outputs.mode }}"
-        echo "🔨 Building ${BUILD_MODE} HAP..."
 
         export NODE_HOME="$(dirname "$(dirname "$(which node)")")"
         export JAVA_HOME="${JAVA_HOME_17_X64}"
-        # restool needs libimage_transcoder_shared.so — may be in toolchains/lib or previewer/common/bin
         export LD_LIBRARY_PATH="${HOME}/ohos-sdk/toolchains/lib:${HOME}/ohos-sdk/previewer/common/bin:${LD_LIBRARY_PATH:-}"
 
         node hvigorw.js assembleHap \
@@ -1019,7 +318,6 @@ jobs:
           --stacktrace \
           2>&1 | tee build-hap.log
 
-        echo "✅ HAP build completed:"
         find . -name "*.hap" -type f -exec sh -c 'echo "  $(du -h "$1" | cut -f1)  $1"' _ {} \;
 
     - name: Build APP (signed)
@@ -1027,8 +325,6 @@ jobs:
       run: |
         set -o pipefail
         BUILD_MODE="${{ steps.build-mode.outputs.mode }}"
-        echo "🔨 Building ${BUILD_MODE} APP (signed)..."
-
         export NODE_HOME="$(dirname "$(dirname "$(which node)")")"
         export JAVA_HOME="${JAVA_HOME_17_X64}"
 
@@ -1039,26 +335,19 @@ jobs:
           --no-daemon \
           2>&1 | tee build-app.log
 
-        echo "✅ APP build completed:"
         find . -name "*.app" -type f -exec sh -c 'echo "  $(du -h "$1" | cut -f1)  $1"' _ {} \;
 
-    # ────────────────────────────────────────────
-    # 清理签名文件
-    # ────────────────────────────────────────────
+    # ── 清理 & 上传 ──
     - name: Cleanup signing files
       if: always()
       run: rm -rf .signing/
 
-    # ────────────────────────────────────────────
-    # 上传产物
-    # ────────────────────────────────────────────
     - name: Upload HAP artifact
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: moonlight-hap-${{ steps.version.outputs.version }}-${{ steps.build-mode.outputs.mode }}
-        path: |
-          entry/build/default/outputs/**/*.hap
+        path: entry/build/default/outputs/**/*.hap
         if-no-files-found: warn
         retention-days: 30
 
@@ -1083,9 +372,7 @@ jobs:
           build-app.log
         retention-days: 7
 
-  # ================================================================
-  # Release — 仅 tag push 触发
-  # ================================================================
+  # ── Release ──
   release:
     name: Create Release
     needs: build
@@ -1101,12 +388,6 @@ jobs:
         pattern: moonlight-*
         path: ./artifacts
         merge-multiple: true
-
-    - name: List artifacts
-      run: |
-        echo "📦 Release artifacts:"
-        find ./artifacts -type f \( -name "*.hap" -o -name "*.app" \) \
-          -exec sh -c 'echo "  $(du -h "$1" | cut -f1)  $1"' _ {} \;
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2

@@ -8,7 +8,7 @@
  * (at your option) any later version.
  */
 
-import { socket } from '@kit.NetworkKit';
+import socket from '@ohos.net.socket';
 import { NvHttp } from './NvHttp';
 
 /**

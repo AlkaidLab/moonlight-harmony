@@ -1,0 +1,2 @@
+# Ensure shell scripts keep LF line endings (run on Linux CI)
+ci/*.sh text eol=lf

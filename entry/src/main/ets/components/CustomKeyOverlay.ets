@@ -313,53 +313,57 @@ export struct CustomKeyOverlay {
         ForEach(this.keys, (key: CustomKeyDef) => {
           if (key.action.type === 'analogStick' && !this.editMode) {
             // 模拟摇杆：非编辑模式时渲染真正的虚拟摇杆 UI
-            VirtualJoystick({
-              joystickSize: Math.max(key.width, key.height),
-              ringColor: key.normalColor,
-              stickColor: key.bgColor,
-              pressedColor: key.pressedColor,
-              opacity_: key.opacity,
-              onMovement: (x: number, y: number): void => {
-                const stickAction = key.action as AnalogStickAction;
-                this.onAnalogStickMovement(stickAction.stick, x, y);
-              },
-              onStickClick: (): void => {
-                // 单击仅开始追踪，不发送任何按键
-              },
-              onDoubleClick: (): void => {
-                // 双击触发 L3/R3 短按+自动释放（与 AnalogStick 一致）
-                const stickAction = key.action as AnalogStickAction;
-                this.onAnalogStickClick(stickAction.stick);
-              },
-              onRevoke: (): void => {
-                // 手指抬起：无需额外操作（L3/R3 已自动释放）
-              },
-              isEditMode: (): boolean => this.editMode,
-            })
+            Column() {
+              VirtualJoystick({
+                joystickSize: Math.max(key.width, key.height),
+                ringColor: key.normalColor,
+                stickColor: key.bgColor,
+                pressedColor: key.pressedColor,
+                opacity_: key.opacity,
+                onMovement: (x: number, y: number): void => {
+                  const stickAction = key.action as AnalogStickAction;
+                  this.onAnalogStickMovement(stickAction.stick, x, y);
+                },
+                onStickClick: (): void => {
+                  // 单击仅开始追踪，不发送任何按键
+                },
+                onDoubleClick: (): void => {
+                  // 双击触发 L3/R3 短按+自动释放（与 AnalogStick 一致）
+                  const stickAction = key.action as AnalogStickAction;
+                  this.onAnalogStickClick(stickAction.stick);
+                },
+                onRevoke: (): void => {
+                  // 手指抬起：无需额外操作（L3/R3 已自动释放）
+                },
+                isEditMode: (): boolean => this.editMode,
+              })
+            }
               .position({
                 x: key.xPercent * this.screenWidthVp - Math.max(key.width, key.height) / 2,
                 y: key.yPercent * this.screenHeightVp - Math.max(key.width, key.height) / 2,
               })
           } else {
             // 普通按键（含编辑模式下的 analogStick 占位）
-            CustomKeyBtn({
-              keyDef: key,
-              editMode: this.editMode,
-              isSelected: this.selectedKeyId === key.id,
-              onAction: (action: KeyAction, isDown: boolean): void => {
-                this.onKeyAction(action, isDown);
-              },
-              onDragFinish: (keyId: string, deltaX: number, deltaY: number): void => {
-                this.handleDragEnd(keyId, deltaX, deltaY);
-              },
-              onSelect: (keyId: string): void => {
-                this.selectedKeyId = keyId;
-              },
-              onLongPress: (keyId: string): void => {
-                this.selectedKeyId = keyId;
-                this.showPropertyPanel = true;
-              },
-            })
+            Column() {
+              CustomKeyBtn({
+                keyDef: key,
+                editMode: this.editMode,
+                isSelected: this.selectedKeyId === key.id,
+                onAction: (action: KeyAction, isDown: boolean): void => {
+                  this.onKeyAction(action, isDown);
+                },
+                onDragFinish: (keyId: string, deltaX: number, deltaY: number): void => {
+                  this.handleDragEnd(keyId, deltaX, deltaY);
+                },
+                onSelect: (keyId: string): void => {
+                  this.selectedKeyId = keyId;
+                },
+                onLongPress: (keyId: string): void => {
+                  this.selectedKeyId = keyId;
+                  this.showPropertyPanel = true;
+                },
+              })
+            }
               .position({
                 x: key.xPercent * this.screenWidthVp - key.width / 2,
                 y: key.yPercent * this.screenHeightVp - key.height / 2,

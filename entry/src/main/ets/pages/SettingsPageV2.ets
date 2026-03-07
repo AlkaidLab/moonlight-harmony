@@ -2270,17 +2270,19 @@ struct SettingsPageV2 {
         .width('100%')
 
         // 分段选择器 - 居中显示，宽屏下受 maxWidth 448vp 约束
-        InlineSegmentPicker({
-          labels: item.segmentLabels ?? [],
-          selectedValue: item.value as string ?? '',
-          values: item.segmentValues ?? [],
-          disabled: item.disabled ?? false,
-          onValueChange: (value: string) => {
-            if (item.onSegmentChange) {
-              item.onSegmentChange(value);
+        Column() {
+          InlineSegmentPicker({
+            labels: item.segmentLabels ?? [],
+            selectedValue: item.value as string ?? '',
+            values: item.segmentValues ?? [],
+            disabled: item.disabled ?? false,
+            onValueChange: (value: string) => {
+              if (item.onSegmentChange) {
+                item.onSegmentChange(value);
+              }
             }
-          }
-        })
+          })
+        }
           .margin({ top: AppSpacing.Medium })
 
         // 辅助说明文字（置于分段按钮下方，作为脚注）
@@ -2340,24 +2342,26 @@ struct SettingsPageV2 {
             })
         } else if (item.type === 'slider') {
           // 使用公共滑块组件
-          SettingSlider({
-            config: {
-              value: item.value as number,
-              min: item.min ?? 0,
-              max: item.max ?? 100,
-              step: item.step,
-              unit: item.unit,
-              isLogarithmic: item.isLogarithmic,
-              snapValues: item.snapValues,
-              snapThreshold: item.snapThreshold,
-              formatValue: item.formatValue,
-              onChange: (value: number) => {
-                if (item.onSliderChange) {
-                  item.onSliderChange(value);
+          Column() {
+            SettingSlider({
+              config: {
+                value: item.value as number,
+                min: item.min ?? 0,
+                max: item.max ?? 100,
+                step: item.step,
+                unit: item.unit,
+                isLogarithmic: item.isLogarithmic,
+                snapValues: item.snapValues,
+                snapThreshold: item.snapThreshold,
+                formatValue: item.formatValue,
+                onChange: (value: number) => {
+                  if (item.onSliderChange) {
+                    item.onSliderChange(value);
+                  }
                 }
               }
-            }
-          })
+            })
+          }
             .width(210)
             .opacity(item.disabled ? 0.5 : 1.0)
         } else if (item.type === 'select' || item.type === 'action') {

@@ -1185,21 +1185,23 @@ struct StreamPage {
 
       // 自定义按键覆盖层
       if (this.showCustomKeys && this.viewModel.isConnected) {
-        CustomKeyOverlay({
-          editMode: $customKeyEditMode,
-          onKeyAction: (action: KeyAction, isDown: boolean): void => {
-            this.customKeyManager?.handleAction(action, isDown);
-          },
-          onAnalogStickMovement: (stick: string, x: number, y: number): void => {
-            this.customKeyManager?.handleAnalogStickMovement(stick, x, y);
-          },
-          onAnalogStickClick: (stick: string): void => {
-            this.customKeyManager?.handleAnalogStickClick(stick);
-          },
-          onEditModeChanged: (editing: boolean): void => {
-            this.customKeyEditMode = editing;
-          },
-        })
+        Column() {
+          CustomKeyOverlay({
+            editMode: $customKeyEditMode,
+            onKeyAction: (action: KeyAction, isDown: boolean): void => {
+              this.customKeyManager?.handleAction(action, isDown);
+            },
+            onAnalogStickMovement: (stick: string, x: number, y: number): void => {
+              this.customKeyManager?.handleAnalogStickMovement(stick, x, y);
+            },
+            onAnalogStickClick: (stick: string): void => {
+              this.customKeyManager?.handleAnalogStickClick(stick);
+            },
+            onEditModeChanged: (editing: boolean): void => {
+              this.customKeyEditMode = editing;
+            },
+          })
+        }
           .width('100%')
           .height('100%')
           .hitTestBehavior(HitTestMode.Transparent)
@@ -1215,17 +1217,19 @@ struct StreamPage {
 
       // PC 虚拟键盘
       if (this.showVirtualKeyboard && this.viewModel.isConnected) {
-        VirtualKeyboard({
-          onVirtualKeyEvent: (vk: number, isDown: boolean): void => {
-            const session = this.viewModel.getSession();
-            if (session) {
-              session.sendKeyboardInput(vk, isDown ? 0x03 : 0x04);
-            }
-          },
-          onClose: (): void => {
-            this.showVirtualKeyboard = false;
-          },
-        })
+        Column() {
+          VirtualKeyboard({
+            onVirtualKeyEvent: (vk: number, isDown: boolean): void => {
+              const session = this.viewModel.getSession();
+              if (session) {
+                session.sendKeyboardInput(vk, isDown ? 0x03 : 0x04);
+              }
+            },
+            onClose: (): void => {
+              this.showVirtualKeyboard = false;
+            },
+          })
+        }
           .position({ left: 0, bottom: 0 })
           .width('100%')
       }

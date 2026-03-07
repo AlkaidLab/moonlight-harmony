@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "ets": {
+      "components": [],
+      "extend": {
+        "components": []
+      }
+    }
+  }
+}
