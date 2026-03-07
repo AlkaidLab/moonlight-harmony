@@ -1373,12 +1373,15 @@ export class GamepadManager implements UsbDriverListener {
       this.gcAxisFlushPending.clear();
       return;
     }
+    // 多 HID 蓝牙手柄的多个 deviceId 共享同一 slot 和 state，用 flushedSlots 避免重复发送
+    const flushedSlots = new Set<number>();
     this.gcDeviceIdToSlot.forEach((slot: number, deviceId: string) => {
-      if (!this.gcAxisFlushPending.has(slot)) {
+      if (!this.gcAxisFlushPending.has(slot) || flushedSlots.has(slot)) {
         return;
       }
       const state = this.gcDeviceStates.get(deviceId);
       if (state) {
+        flushedSlots.add(slot);
         this.notifyGCStateChange(slot, state);
       }
     });
