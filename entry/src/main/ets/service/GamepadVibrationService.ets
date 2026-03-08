@@ -45,6 +45,8 @@ export class GamepadVibrationService {
   private rumbleWatchdogTimer: number = -1;
   private lastRumbleControllerNumber: number = 0;
   private static readonly RUMBLE_WATCHDOG_MS = 3000;
+  // USB 停止确认: 延迟重发 stop(0,0) 防止 USB 传输丢失
+  private stopConfirmTimer: number = -1;
 
   constructor(usbDriverService: UsbDriverService, deviceKeyToSlot: Map<string, number>) {
     this.usbDriverService = usbDriverService;
@@ -72,6 +74,11 @@ export class GamepadVibrationService {
     if (this.rumbleWatchdogTimer !== -1) {
       clearTimeout(this.rumbleWatchdogTimer);
       this.rumbleWatchdogTimer = -1;
+    }
+    // 取消旧的 stop 确认定时器 (新命令到达, 无论零/非零都以最新为准)
+    if (this.stopConfirmTimer !== -1) {
+      clearTimeout(this.stopConfirmTimer);
+      this.stopConfirmTimer = -1;
     }
     if (lowFreqMotor !== 0 || highFreqMotor !== 0) {
       this.lastRumbleControllerNumber = controllerNumber;
@@ -112,6 +119,15 @@ export class GamepadVibrationService {
         }
         break;
     }
+
+    // USB 停止确认: 100ms 后重发 stop(0,0)，防止首次 USB 传输被覆盖或丢失
+    if (lowFreqMotor === 0 && highFreqMotor === 0 && hasUsbController) {
+      this.stopConfirmTimer = setTimeout(() => {
+        this.stopConfirmTimer = -1;
+        const ctrls = this.usbDriverService.getControllers();
+        this.rumbleUsbControllers(ctrls, controllerNumber, 0, 0);
+      }, 100);
+    }
   }
 
   /**
@@ -150,6 +166,11 @@ export class GamepadVibrationService {
     if (this.rumbleWatchdogTimer !== -1) {
       clearTimeout(this.rumbleWatchdogTimer);
       this.rumbleWatchdogTimer = -1;
+    }
+    // 清除 stop 确认定时器
+    if (this.stopConfirmTimer !== -1) {
+      clearTimeout(this.stopConfirmTimer);
+      this.stopConfirmTimer = -1;
     }
 
     // 停止设备马达

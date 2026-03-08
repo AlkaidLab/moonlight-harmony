@@ -130,7 +130,7 @@ private:
                                   OH_AudioInterrupt_Hint hint);
     static void OnError(OH_AudioRenderer* renderer, void* userData,
                          OH_AudioStream_Result error);
-    
+
     // 音频渲染器实例
     OH_AudioRenderer* renderer_ = nullptr;
     OH_AudioStreamBuilder* builder_ = nullptr;

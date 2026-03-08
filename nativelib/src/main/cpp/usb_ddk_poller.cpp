@@ -391,6 +391,10 @@ static void *ddkPollThread(void *arg) {
             if (outRet != USB_DDK_SUCCESS) {
                 OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 轮询线程 sendOutput 失败: ep=0x%{public}x len=%{public}u ret=%{public}d (%{public}s)",
                             LOG_TAG, pollerId, outPipe.endpoint, outLen, outRet, ddkErrStr(outRet));
+                // 发送失败时自动重试: 若 JS 未设置新数据则重新标记为 pending
+                // CAS: 仅当 hasPendingOutput 仍为 false 时才标记 (JS 新数据优先)
+                bool expected = false;
+                ctx->hasPendingOutput.compare_exchange_strong(expected, true, std::memory_order_release);
             }
         }
 

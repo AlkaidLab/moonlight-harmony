@@ -610,7 +610,7 @@ OH_AudioData_Callback_Result AudioRenderer::OnWriteData(OH_AudioRenderer* render
     
     int head = self->ringHead_.load(std::memory_order_relaxed);
     int tail = self->ringTail_.load(std::memory_order_acquire);
-    
+
     // 计算可读数据量
     int available;
     if (tail >= head) {
@@ -745,7 +745,7 @@ namespace {
 namespace AudioRendererInstance {
 
 // 空间音频配置（可通过 NAPI 设置）
-static bool g_enableSpatialAudio = true;
+static bool g_enableSpatialAudio = false;
 
 void SetSpatialAudioEnabled(bool enabled) {
     g_enableSpatialAudio = enabled;

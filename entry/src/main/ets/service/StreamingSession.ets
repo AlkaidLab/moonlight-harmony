@@ -802,8 +802,8 @@ export class StreamingSession {
   }
 
   private applyPreConnectionSettings(config: StreamConfig): void {
+    this.nativeModule.setSpatialAudioEnabled(config.enableSpatializer);
     if (config.enableSpatializer) {
-      this.nativeModule.setSpatialAudioEnabled(true);
       console.info('空间音频已启用');
     }
     if (config.performanceMode) {
