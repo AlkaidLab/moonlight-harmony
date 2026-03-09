@@ -20,6 +20,7 @@ import { StreamWindowManager } from '../service/StreamWindowManager';
 import { AppStateService, AppState } from '../service/AppStateService';
 import { BackgroundStreamService, BroadcastControlCallbacks } from '../service/BackgroundStreamService';
 import { common } from '@kit.AbilityKit';
+import { MoonBridge, ML_TEST_RESULT_INCONCLUSIVE, CONNECTION_TEST_SERVER } from '../service/MoonBridge';
 
 /**
  * StreamPage 需要实现的回调接口
@@ -394,26 +395,53 @@ export class StreamLifecycleManager {
       // 服务器正常关闭（用户在服务器端退出游戏），stopStreaming 内部会显示延迟统计
       this.callbacks?.stopStreaming();
     } else {
-      // 连接异常终止，显示错误信息
+      // 连接异常终止，进行端口诊断并显示错误信息
+      const portFlags = MoonBridge.getPortFlagsFromTerminationErrorCode(errorCode);
+      let portTestResult = ML_TEST_RESULT_INCONCLUSIVE;
+      if (portFlags !== 0) {
+        try {
+          portTestResult = MoonBridge.testClientConnectivity(CONNECTION_TEST_SERVER, 443, portFlags);
+        } catch (e) {
+          console.warn(`端口诊断失败: ${e}`);
+        }
+      }
+
       let message: string;
-      switch (errorCode) {
-        case ML_ERROR_NO_VIDEO_TRAFFIC:
-          message = '未收到视频数据。请检查防火墙或端口转发规则（UDP 47998）。';
-          break;
-        case ML_ERROR_NO_VIDEO_FRAME:
-          message = '未收到完整视频帧。网络可能不稳定或码率设置过高。';
-          break;
-        case ML_ERROR_UNEXPECTED_EARLY_TERMINATION:
-        case ML_ERROR_PROTECTED_CONTENT:
-          message = '串流意外终止。可能是受保护内容或编码器无法捕获视频。';
-          break;
-        case ML_ERROR_FRAME_CONVERSION:
-          message = '帧转换错误。请尝试调整分辨率或关闭 HDR。';
-          break;
-        default:
-          const errorHex = Math.abs(errorCode) > 1000 ? `0x${errorCode.toString(16)}` : errorCode.toString();
-          message = `连接已断开 (错误码: ${errorHex})`;
-          break;
+      if (portTestResult !== ML_TEST_RESULT_INCONCLUSIVE && portTestResult !== 0) {
+        // 端口被封锁
+        message = '检测到端口被封锁，请检查防火墙或端口转发规则。';
+      } else {
+        switch (errorCode) {
+          case ML_ERROR_NO_VIDEO_TRAFFIC:
+            message = '未收到视频数据。请检查防火墙或端口转发规则（UDP 47998）。';
+            break;
+          case ML_ERROR_NO_VIDEO_FRAME:
+            message = '未收到完整视频帧。网络可能不稳定或码率设置过高。';
+            break;
+          case ML_ERROR_UNEXPECTED_EARLY_TERMINATION:
+          case ML_ERROR_PROTECTED_CONTENT:
+            message = '串流意外终止。可能是受保护内容或编码器无法捕获视频。';
+            break;
+          case ML_ERROR_FRAME_CONVERSION:
+            message = '帧转换错误。请尝试调整分辨率或关闭 HDR。';
+            break;
+          default:
+            const errorHex = Math.abs(errorCode) > 1000 ? `0x${errorCode.toString(16)}` : errorCode.toString();
+            message = `连接已断开 (错误码: ${errorHex})`;
+            break;
+        }
+      }
+
+      // 附加被封锁的端口信息
+      if (portFlags !== 0) {
+        try {
+          const portInfo = MoonBridge.stringifyPortFlags(portFlags, '\n');
+          if (portInfo) {
+            message += `\n\n请确保以下端口已开放:\n${portInfo}`;
+          }
+        } catch (e) {
+          console.warn(`端口信息格式化失败: ${e}`);
+        }
       }
 
       promptAction.showDialog({
