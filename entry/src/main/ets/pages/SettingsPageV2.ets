@@ -171,6 +171,7 @@ struct SettingsPageV2 {
   @State gcButtonHomeMapping: string = 'guide';  // 2313键（Home键）动作映射
   @State usbDriverEnabled: boolean = false;  // 默认关闭 USB 手柄驱动
   @State forceUsbDriverOnly: boolean = false;  // 强制纯 USB 驱动模式
+  @State ddkHighSpeedPolling: boolean = false;  // USB 驱动高速轮询
   
   // 输入 - 屏幕控制器
   @State enableOnscreenControls: boolean = false;
@@ -480,6 +481,7 @@ struct SettingsPageV2 {
       this.gcButtonHomeMapping = await PreferencesUtil.get<string>(SettingsKeys.GC_BUTTON_HOME_MAPPING, 'guide');
       this.usbDriverEnabled = await this.loadBoolean(SettingsKeys.USB_DRIVER_ENABLED, false);
       this.forceUsbDriverOnly = await this.loadBoolean(SettingsKeys.FORCE_USB_DRIVER_ONLY, false);
+      this.ddkHighSpeedPolling = await this.loadBoolean(SettingsKeys.DDK_HIGH_SPEED_POLLING, false);
       
       // 输入 - 屏幕控制器
       this.enableOnscreenControls = await this.loadBoolean(SettingsKeys.ENABLE_ONSCREEN_CONTROLS, false);
@@ -1366,6 +1368,21 @@ struct SettingsPageV2 {
                 action: () => {
                   this.forceUsbDriverOnly = !this.forceUsbDriverOnly;
                   this.saveSetting(SettingsKeys.FORCE_USB_DRIVER_ONLY, this.forceUsbDriverOnly);
+                  promptAction.showToast({
+                    message: '下次串流时生效',
+                    duration: 2500
+                  });
+                }
+              },
+              {
+                title: 'USB 驱动高速轮询',
+                subtitle: '使用 DDK 内核级轮询降低输入延迟，但部分手柄（如 Razer）可能出现振动失效。关闭后使用标准 USB 通道',
+                type: 'toggle',
+                value: this.ddkHighSpeedPolling,
+                visible: this.usbDriverEnabled,
+                action: () => {
+                  this.ddkHighSpeedPolling = !this.ddkHighSpeedPolling;
+                  this.saveSetting(SettingsKeys.DDK_HIGH_SPEED_POLLING, this.ddkHighSpeedPolling);
                   promptAction.showToast({
                     message: '下次串流时生效',
                     duration: 2500

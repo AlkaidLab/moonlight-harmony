@@ -573,6 +573,12 @@ export class UsbDriverService implements UsbDriverListener {
         controller.setIgnoreDisconnect(true);
         console.info(`${TAG} 设备 ${device.name} 已启用忽略断开信号`);
       }
+
+      // 应用 DDK 高速轮询设置
+      if (inputSettings.ddkHighSpeedPolling) {
+        controller.setDdkPollingEnabled(true);
+        console.info(`${TAG} 设备 ${device.name} 已启用 DDK 高速轮询`);
+      }
       
       console.info(`${TAG} 使用驱动 [${driverName}] 处理设备: ${device.name}, Key=${controller.getDeviceKey()}`);
     } else {

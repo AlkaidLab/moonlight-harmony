@@ -378,7 +378,7 @@ export abstract class AbstractDualSenseController extends AbstractController {
     }
     
     // ====== 优先尝试 DDK 路径 ======
-    if (DdkUsbPoller.isAvailable() && this.inEndpoint) {
+    if (this.ddkPollingEnabled && DdkUsbPoller.isAvailable() && this.inEndpoint) {
       const ddkStarted = this.tryDdkPath();
       if (ddkStarted) {
         return true;

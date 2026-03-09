@@ -286,7 +286,7 @@ export abstract class AbstractXboxController extends AbstractController {
     }
 
     // ====== 优先尝试 DDK 路径 (绕过 usbManager IPC 瓶颈) ======
-    if (DdkUsbPoller.isAvailable() && this.inEndpoint) {
+    if (this.ddkPollingEnabled && DdkUsbPoller.isAvailable() && this.inEndpoint) {
       const ddkStarted = this.tryDdkPath();
       if (ddkStarted) {
         return true;
