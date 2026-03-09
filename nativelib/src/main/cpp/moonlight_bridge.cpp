@@ -1348,6 +1348,11 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     napi_create_double(env, stats.currentBitrate, &bitrate);
     napi_create_double(env, stats.avgHostProcessingLatency, &hostLatency);  // 主机处理延迟
     
+    // 网络丢帧统计
+    napi_value framesLost, totalFrames;
+    napi_create_uint32(env, static_cast<uint32_t>(stats.framesLost), &framesLost);
+    napi_create_uint32(env, static_cast<uint32_t>(stats.totalFrames), &totalFrames);
+    
     // 累积值（用于串流结束后计算全局平均）
     napi_value globalAvgFps;
     napi_create_double(env, stats.totalDecodeTimeMs, &totalDecodeTime);
@@ -1363,6 +1368,8 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     napi_set_named_property(env, result, "renderedFps", renderedFps); // 渲染帧率 (Rd)
     napi_set_named_property(env, result, "bitrate", bitrate);
     napi_set_named_property(env, result, "hostLatency", hostLatency);  // 主机处理延迟（编码时间）
+    napi_set_named_property(env, result, "framesLost", framesLost);
+    napi_set_named_property(env, result, "totalFrames", totalFrames);
     
     // 累积值
     napi_set_named_property(env, result, "totalDecodeTimeMs", totalDecodeTime);

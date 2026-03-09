@@ -125,6 +125,8 @@ struct VideoDecoderStats {
     uint64_t totalFrames;        // 接收到的帧数
     uint64_t decodedFrames;      // 解码完成的帧数（渲染的帧）
     uint64_t droppedFrames;
+    uint64_t framesLost;         // 网络丢失的帧数（通过帧号跳跃检测）
+    int lastFrameNumber;         // 上一帧的帧号（用于丢包检测）
     double averageDecodeTimeMs;
     double maxDecodeTimeMs;
     // 用于接收 FPS 计算
@@ -280,14 +282,14 @@ private:
     int SyncProcessOutput(int64_t timeoutUs);
     
     // 更新接收帧统计
-    void UpdateReceivedStats(int size, uint16_t hostProcessingLatency);
+    void UpdateReceivedStats(int size, int frameNumber, uint16_t hostProcessingLatency);
     
     // 更新解码帧统计
     void UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32_t flags);
     
     // 延迟恢复：检查是否应丢弃输入帧并请求 IDR
     // 返回 -1 表示应丢弃（需要 IDR），0 表示正常处理
-    int CheckLatencyRecovery(VideoFrameType frameType, int size, uint16_t hostProcessingLatency);
+    int CheckLatencyRecovery(VideoFrameType frameType, int size, int frameNumber, uint16_t hostProcessingLatency);
     
     // 记录帧入队时间戳（用于计算解码延迟）
     void RecordEnqueueTimestamp(int64_t timestamp);

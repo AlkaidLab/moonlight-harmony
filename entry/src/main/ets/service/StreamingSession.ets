@@ -188,6 +188,9 @@ interface VideoStats {
   totalHostLatencyMs: number;
   framesWithHostLatency: number;
   globalAvgFps: number;
+  // 网络丢帧统计
+  framesLost: number;
+  totalFrames: number;
   // 分级丢帧统计
   droppedByL1: number;
   droppedByL2: number;
@@ -331,6 +334,7 @@ export class StreamingSession {
   private connectionTerminatedCallback: ((errorCode: number) => void) | null = null;
   private resolutionChangedCallback: ResolutionChangedCallback | null = null;
   private stageProgressCallback: ((stage: number, stageName: string) => void) | null = null;
+  private connectionStatusCallback: ((connectionStatus: number) => void) | null = null;
 
   // ---------------------------------------------------------------------------
   // 成员变量 — 手柄状态
@@ -404,6 +408,10 @@ export class StreamingSession {
 
   setStageProgressCallback(callback: ((stage: number, stageName: string) => void) | null): void {
     this.stageProgressCallback = callback;
+  }
+
+  setConnectionStatusCallback(callback: ((connectionStatus: number) => void) | null): void {
+    this.connectionStatusCallback = callback;
   }
 
   // ---------------------------------------------------------------------------
@@ -701,6 +709,10 @@ export class StreamingSession {
       this.stats.bitrate = vs.bitrate || 0;
       this.stats.latency = vs.avgDecodeTimeMs || 0;
       this.stats.hostLatency = vs.hostLatency || 0;
+      // 网络丢帧率（对齐 Android: framesLost / totalFrames * 100）
+      const totalFrames = vs.totalFrames || 0;
+      const framesLost = vs.framesLost || 0;
+      this.stats.packetLoss = totalFrames > 0 ? (framesLost / totalFrames * 100) : 0;
       // 分级丢帧统计
       this.stats.droppedByL1 = vs.droppedByL1 || 0;
       this.stats.droppedByL2 = vs.droppedByL2 || 0;
@@ -884,7 +896,12 @@ export class StreamingSession {
           this.connectionTerminatedCallback(errorCode);
         }
       },
-      connectionStatusUpdate: (status: number): void => { console.info(`连接状态更新: ${status}`); },
+      connectionStatusUpdate: (status: number): void => {
+        console.info(`连接状态更新: ${status}`);
+        if (this.connectionStatusCallback) {
+          this.connectionStatusCallback(status);
+        }
+      },
       setHdrMode: (enabled: boolean): void => {
         console.info(`HDR 模式变化通知: ${enabled}`);
         if (this.config && this.config.hdr !== enabled) {

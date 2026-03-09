@@ -1010,7 +1010,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
                     }
                 }
                 latencyRecoveryActive_.store(true);
-                UpdateReceivedStats(totalSize, hostProcessingLatency);
+                UpdateReceivedStats(totalSize, frameNumber, hostProcessingLatency);
                 {
                     std::lock_guard<std::mutex> lock(statsMutex_);
                     stats_.droppedFrames++;
@@ -1027,14 +1027,14 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
     
     // === L3 延迟恢复：临界延迟检查 ===
     // 当解码延迟过高时，丢弃 P 帧并触发 IDR 请求
-    int recoveryResult = CheckLatencyRecovery(frameType, totalSize, hostProcessingLatency);
+    int recoveryResult = CheckLatencyRecovery(frameType, totalSize, frameNumber, hostProcessingLatency);
     if (recoveryResult < 0) {
         return recoveryResult;  // -1 = DR_NEED_IDR
     }
     
     // 同步模式：直接提交到解码器（scatter-gather 直写 AVBuffer）
     if (config_.decoderMode == DecoderMode::SYNC) {
-        UpdateReceivedStats(totalSize, hostProcessingLatency);
+        UpdateReceivedStats(totalSize, frameNumber, hostProcessingLatency);
         
         if (!firstFrameReceived_) {
             firstFrameReceived_ = true;
@@ -1170,7 +1170,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
         return -1;
     }
     
-    UpdateReceivedStats(totalSize, hostProcessingLatency);
+    UpdateReceivedStats(totalSize, frameNumber, hostProcessingLatency);
     
     if (!firstFrameReceived_) {
         firstFrameReceived_ = true;
@@ -1192,10 +1192,22 @@ int VideoDecoder::SubmitDecodeUnit(const uint8_t* data, int size,
 }
 
 // 更新接收帧统计（提取公共逻辑）
-void VideoDecoder::UpdateReceivedStats(int size, uint16_t hostProcessingLatency) {
+void VideoDecoder::UpdateReceivedStats(int size, int frameNumber, uint16_t hostProcessingLatency) {
     std::lock_guard<std::mutex> lock(statsMutex_);
     stats_.totalFrames++;
     stats_.totalBytesReceived += size;
+    
+    // 帧号跳跃检测：如果帧号不连续，说明网络丢包导致帧丢失
+    // 对齐 Android MediaCodecDecoderRenderer.submitDecodeUnit() 的丢包统计逻辑
+    if (stats_.lastFrameNumber != 0 && frameNumber != stats_.lastFrameNumber
+        && frameNumber != stats_.lastFrameNumber + 1) {
+        int lost = frameNumber - stats_.lastFrameNumber - 1;
+        if (lost > 0) {
+            stats_.framesLost += lost;
+            stats_.totalFrames += lost;
+        }
+    }
+    stats_.lastFrameNumber = frameNumber;
     
     auto currentTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -1519,7 +1531,7 @@ bool VideoDecoder::CheckDecoderValid() {
 // 配合输出端 drain-to-latest，可在最短时间内恢复到正常延迟
 // =============================================================================
 
-int VideoDecoder::CheckLatencyRecovery(VideoFrameType frameType, int size, uint16_t hostProcessingLatency) {
+int VideoDecoder::CheckLatencyRecovery(VideoFrameType frameType, int size, int frameNumber, uint16_t hostProcessingLatency) {
     bool isIFrame = (frameType == VideoFrameType::I_FRAME);
     
     // 收到 IDR 帧时重置恢复状态
@@ -1538,7 +1550,7 @@ int VideoDecoder::CheckLatencyRecovery(VideoFrameType frameType, int size, uint1
     // 恢复模式已激活（由 L3 临界延迟或队列溢出触发），持续丢弃 P 帧直到 IDR 到达
     // 避免向解码器提交缺少参考帧的 P 帧，那样会导致输出损坏或卡顿
     if (latencyRecoveryActive_.load()) {
-        UpdateReceivedStats(size, hostProcessingLatency);
+        UpdateReceivedStats(size, frameNumber, hostProcessingLatency);
         {
             std::lock_guard<std::mutex> lock(statsMutex_);
             stats_.droppedFrames++;
@@ -1569,7 +1581,7 @@ int VideoDecoder::CheckLatencyRecovery(VideoFrameType frameType, int size, uint1
         }
         
         // 更新接收统计（帧被接收但被丢弃）
-        UpdateReceivedStats(size, hostProcessingLatency);
+        UpdateReceivedStats(size, frameNumber, hostProcessingLatency);
         {
             std::lock_guard<std::mutex> lock(statsMutex_);
             stats_.droppedFrames++;
