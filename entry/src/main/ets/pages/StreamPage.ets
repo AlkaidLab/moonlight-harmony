@@ -1162,6 +1162,11 @@ struct StreamPage {
         this.ErrorOverlay()
       }
 
+      // 网络质量警告层（对齐 Android connectionStatusUpdate 行为）
+      if (this.viewModel.isConnected && this.viewModel.connectionPoor) {
+        this.ConnectionWarningOverlay()
+      }
+
       // 性能监控层
       if (this.viewModel.isConnected && this.viewModel.showOverlay) {
         PerformanceOverlay({
@@ -1374,6 +1379,32 @@ struct StreamPage {
         this.imeManager.hide();
       })
       .position({ right: 8, bottom: this.keyboardHeight + 44 })
+  }
+
+  @Builder
+  @Builder
+  ConnectionWarningOverlay() {
+    Column() {
+      Row() {
+        Text('⚠')
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+        Text(this.viewModel.streamConfig && this.viewModel.streamConfig.bitrate > 5000
+          ? '网速慢，请尝试降低码率或使用有线连接'
+          : '网络连接不稳定')
+          .fontSize(12)
+          .fontColor('#FFFFFF')
+          .margin({ left: 6 })
+      }
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .borderRadius(16)
+      .backgroundColor('#CCEF4444')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 8 })
+    .hitTestBehavior(HitTestMode.None)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 300 }))
   }
 
   @Builder

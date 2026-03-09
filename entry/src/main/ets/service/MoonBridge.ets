@@ -167,6 +167,12 @@ export const STAGE_MAX = 12;
 export const CONN_STATUS_OKAY = 0;
 export const CONN_STATUS_POOR = 1;
 
+// 端口测试结果
+export const ML_TEST_RESULT_INCONCLUSIVE = 0xFFFFFFFF;
+
+// 连接测试服务器（与 Android 客户端保持一致）
+export const CONNECTION_TEST_SERVER = 'android.conntest.moonlight-stream.org';
+
 // 视频能力
 export const CAPABILITY_DIRECT_SUBMIT = 0x01;
 export const CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC = 0x02;

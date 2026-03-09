@@ -18,7 +18,7 @@ import { SettingsService, InputSettings, DisplaySettings, SettingsKeys } from '.
 import { StreamingSession, StreamStats } from '../service/StreamingSession';
 import { InputEvent } from '../model/InputEvent';
 import { OverlayConfig, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/GamepadManager';
-import { CONTROLLER_TYPE_XBOX } from '../service/MoonBridge';
+import { CONTROLLER_TYPE_XBOX, CONN_STATUS_POOR, CONN_STATUS_OKAY } from '../service/MoonBridge';
 import { common } from '@kit.AbilityKit';
 import { inputDevice } from '@kit.InputKit';
 
@@ -148,6 +148,9 @@ export class StreamViewModel {
   showOverlay: boolean = false;
   showController: boolean = false;
   
+  // 网络质量警告（CONN_STATUS_POOR 时显示）
+  connectionPoor: boolean = false;
+  
   // 私有服务
   private settingsService: SettingsService = SettingsService.getInstance();
   private streamingSession: StreamingSession | null = null;
@@ -156,6 +159,8 @@ export class StreamViewModel {
   private connectionTerminatedCallback: ((errorCode: number) => void) | null = null;
   // 分辨率变化回调（服务端分辨率/旋转变化时通知 StreamPage 更新布局）
   private resolutionChangedCallback: ((width: number, height: number) => void) | null = null;
+  // 连接状态回调（用于端口诊断等）
+  private connectionStatusCallback: ((connectionStatus: number) => void) | null = null;
   
   // 便捷属性
   get isConnecting(): boolean {
@@ -184,6 +189,14 @@ export class StreamViewModel {
    */
   setResolutionChangedCallback(callback: ((width: number, height: number) => void) | null): void {
     this.resolutionChangedCallback = callback;
+  }
+
+  /**
+   * 设置连接状态回调
+   * 用于端口诊断等外部处理
+   */
+  setConnectionStatusCallback(callback: ((connectionStatus: number) => void) | null): void {
+    this.connectionStatusCallback = callback;
   }
 
   /**
@@ -308,6 +321,14 @@ export class StreamViewModel {
         // 通知 StreamPage 更新布局
         if (this.resolutionChangedCallback) {
           this.resolutionChangedCallback(width, height);
+        }
+      });
+      
+      // 设置连接状态回调（网络质量警告）
+      this.streamingSession.setConnectionStatusCallback((connectionStatus: number) => {
+        this.connectionPoor = (connectionStatus === CONN_STATUS_POOR);
+        if (this.connectionStatusCallback) {
+          this.connectionStatusCallback(connectionStatus);
         }
       });
       
