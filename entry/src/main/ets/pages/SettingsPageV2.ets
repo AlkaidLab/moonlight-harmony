@@ -75,6 +75,7 @@ interface PickerConfig {
 interface SettingItem {
   title: string;
   subtitle?: string;
+  tooltip?: string;
   type: 'toggle' | 'select' | 'input' | 'action' | 'slider' | 'segment';
   key?: string;
   value?: string | boolean | number;
@@ -233,6 +234,7 @@ struct SettingsPageV2 {
   
   // 应用版本
   @State appVersion: string = '';
+  @State activePopupKey: string = '';  // 当前显示气泡提示的设置项 key
   
   // 加载状态
   @State isLoading: boolean = true;
@@ -1002,7 +1004,9 @@ struct SettingsPageV2 {
               },
               {
                 title: 'HDR 模式',
-                subtitle: this.hdrMode === 'HLG' ? '需要 Sunshine Foundation' : undefined,
+                tooltip: this.hdrMode === 'HLG'
+                  ? 'HLG (Hybrid Log-Gamma)\n• 需要 Sunshine Foundation 版本\n• 无需色调映射，亮度更自然\n• 兼容 HDR Vivid 显示设备\n• 推荐搭配全范围色彩使用'
+                  : 'HDR10 (PQ)\n• 兼容所有主流串流服务端\n• 使用 PQ 传输曲线，高亮细节更丰富\n• 部分设备可能出现偏暗',
                 type: 'segment',
                 value: this.hdrMode,
                 visible: this.enableHdr,
@@ -1065,6 +1069,7 @@ struct SettingsPageV2 {
               {
                 title: '可旋转屏幕',
                 subtitle: '允许屏幕旋转',
+                tooltip: '需要 Sunshine Foundation + 虚拟显示器\n开启后串流中可自由旋转屏幕，主机会通过虚拟显示器同步切换分辨率',
                 type: 'toggle',
                 value: this.rotableScreen,
                 action: () => {
@@ -1083,6 +1088,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '音频配置',
+                subtitle: '设置音频声道配置',
                 type: 'segment',
                 value: this.audioConfig,
                 segmentLabels: ['立体声', '5.1 环绕', '7.1 环绕'],
@@ -2272,6 +2278,28 @@ struct SettingsPageV2 {
             .fontSize(AppSizes.FontBody)
             .fontColor(item.disabled ? AppColors.TextSecondary : AppColors.TextPrimary)
 
+          if (item.tooltip) {
+            SymbolGlyph($r('sys.symbol.info_circle'))
+              .fontSize(14)
+              .fontColor([item.disabled ? AppColors.TextSecondary : AppColors.TextTertiary])
+              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+              .margin({ left: 6 })
+              .onClick(() => {
+                const popupId = item.key ?? item.title
+                this.activePopupKey = this.activePopupKey === popupId ? '' : popupId
+              })
+              .bindPopup(this.activePopupKey === (item.key ?? item.title), {
+                message: item.tooltip as string,
+                placement: Placement.Top,
+                enableArrow: true,
+                onStateChange: (e) => {
+                  if (!e.isVisible) {
+                    this.activePopupKey = ''
+                  }
+                }
+              })
+          }
+
           // Pro 标记
           if (item.isPro) {
             Text('Pro')
@@ -2313,7 +2341,7 @@ struct SettingsPageV2 {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
-      .padding({ left: AppSpacing.Large, right: AppSpacing.Large, top: AppSpacing.Medium, bottom: AppSpacing.Medium })
+      .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium, top: AppSpacing.Medium, bottom: AppSpacing.Medium })
     } else {
       // 原有布局：标题左侧 + 控件右侧
       Row() {
@@ -2323,6 +2351,28 @@ struct SettingsPageV2 {
             Text(item.title)
               .fontSize(AppSizes.FontBody)
               .fontColor(item.disabled ? AppColors.TextSecondary : AppColors.TextPrimary)
+
+            if (item.tooltip) {
+              SymbolGlyph($r('sys.symbol.info_circle'))
+                .fontSize(14)
+                .fontColor([item.disabled ? AppColors.TextSecondary : AppColors.TextTertiary])
+                .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+                .margin({ left: 6 })
+                .onClick(() => {
+                  const popupId = item.key ?? item.title
+                  this.activePopupKey = this.activePopupKey === popupId ? '' : popupId
+                })
+                .bindPopup(this.activePopupKey === (item.key ?? item.title), {
+                  message: item.tooltip as string,
+                  placement: Placement.Top,
+                  enableArrow: true,
+                  onStateChange: (e) => {
+                    if (!e.isVisible) {
+                      this.activePopupKey = ''
+                    }
+                  }
+                })
+            }
             
             // Pro 标记
             if (item.isPro) {
@@ -2485,11 +2535,9 @@ struct SettingsPageV2 {
     // 添加"管理自定义"选项（仅已有自定义分辨率时显示）
     const manageOptions: PickerOption[] = [];
     if (this.customResolutions.length > 0) {
-      manageOptions.push({
-        title: '管理自定义分辨率',
-        subtitle: `已添加 ${this.customResolutions.length} 个，点击管理`,
-        value: 'manage_custom'
-      } as PickerOption);
+      manageOptions.push(
+        { title: '管理自定义分辨率', subtitle: `已添加 ${this.customResolutions.length} 个，点击管理`, value: 'manage_custom' } as PickerOption
+      );
     }
     
     const allOptions = [...presetOptions, ...nativeOptions, ...customOptions, customActionOption, ...manageOptions];
