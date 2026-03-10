@@ -547,11 +547,8 @@ struct StreamPage {
         this.gameMenuDialogController?.close();
         setTimeout(() => this.showShortcutEditor(shortcut), 300);
       },
-      onDeleteShortcut: async (shortcut) => {
-        const success = await this.shortcutManager.deleteShortcut(shortcut.id);
-        if (success) {
-          promptAction.showToast({ message: `快捷键 "${shortcut.name}" 已删除` });
-        }
+      onDeleteShortcut: (shortcut) => {
+        promptAction.showToast({ message: `快捷键 "${shortcut.name}" 已删除` });
       },
       onSendSuperCmd: (cmdId: string) => {
         this.sendSuperCmd(cmdId);
@@ -1159,12 +1156,24 @@ struct StreamPage {
 
       // 错误提示层
       if (this.viewModel.hasError) {
-        this.ErrorOverlay()
+        Column() {
+          this.ErrorOverlay()
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .position({ bottom: 48 })
+        .hitTestBehavior(HitTestMode.Transparent)
       }
 
       // 网络质量警告层（对齐 Android connectionStatusUpdate 行为）
       if (this.viewModel.isConnected && this.viewModel.connectionPoor) {
-        this.ConnectionWarningOverlay()
+        Column() {
+          this.ConnectionWarningOverlay()
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .position({ bottom: 48 })
+        .hitTestBehavior(HitTestMode.None)
       }
 
       // 性能监控层
@@ -1382,27 +1391,23 @@ struct StreamPage {
   }
 
   @Builder
-  @Builder
   ConnectionWarningOverlay() {
-    Column() {
-      Row() {
-        Text('⚠')
-          .fontSize(14)
-          .fontColor('#FFFFFF')
-        Text(this.viewModel.streamConfig && this.viewModel.streamConfig.bitrate > 5000
-          ? '网速慢，请尝试降低码率或使用有线连接'
-          : '网络连接不稳定')
-          .fontSize(12)
-          .fontColor('#FFFFFF')
-          .margin({ left: 6 })
-      }
-      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-      .borderRadius(16)
-      .backgroundColor('#CCEF4444')
+    Row({ space: 8 }) {
+      Text('⚠')
+        .fontSize(16)
+        .fontColor('#FFFFB74D')
+      Text(this.viewModel.streamConfig && this.viewModel.streamConfig.bitrate > 5000
+        ? '网速慢，请尝试降低码率或使用有线连接'
+        : '网络连接不稳定')
+        .fontSize(13)
+        .fontColor('#EEFFFFFF')
     }
-    .width('100%')
-    .alignItems(HorizontalAlign.Center)
-    .padding({ top: 8 })
+    .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    .borderRadius(20)
+    .backgroundColor('#B01A1A2E')
+    .backdropBlur(30)
+    .border({ width: 1, color: '#18FFFFFF' })
+    .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
     .hitTestBehavior(HitTestMode.None)
     .transition(TransitionEffect.OPACITY.animation({ duration: 300 }))
   }
@@ -1430,33 +1435,35 @@ struct StreamPage {
 
   @Builder
   ErrorOverlay() {
-    Column() {
-      Image($r('app.media.ic_error'))
-        .width(64)
-        .height(64)
-        .fillColor($r('app.color.error_red'))
-      Text(this.viewModel.errorMessage)
-        .fontSize(16)
-        .fontColor(Color.White)
-        .margin({ top: 16 })
-        .textAlign(TextAlign.Center)
-        .padding({ left: 32, right: 32 })
+    Column({ space: 12 }) {
+      Row({ space: 8 }) {
+        Text('✕')
+          .fontSize(16)
+          .fontColor('#FFEF5350')
+        Text(this.viewModel.errorMessage)
+          .fontSize(13)
+          .fontColor('#EEFFFFFF')
+          .constraintSize({ maxWidth: 280 })
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
 
-      Button('返回')
-        .fontSize(16)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.primary'))
-        .width(120)
-        .height(44)
-        .borderRadius(12)
-        .margin({ top: 24 })
+      Text('返回')
+        .fontSize(12)
+        .fontColor('#EEFFFFFF')
+        .padding({ left: 20, right: 20, top: 6, bottom: 6 })
+        .borderRadius(14)
+        .backgroundColor('#30FFFFFF')
         .onClick(() => {
           router.back();
         })
     }
-    .width('100%')
-    .height('100%')
-    .backgroundColor('#CC000000')
-    .justifyContent(FlexAlign.Center)
+    .padding({ left: 20, right: 20, top: 14, bottom: 14 })
+    .borderRadius(20)
+    .backgroundColor('#B01A1A2E')
+    .backdropBlur(30)
+    .border({ width: 1, color: '#18FFFFFF' })
+    .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
+    .transition(TransitionEffect.OPACITY.animation({ duration: 300 }))
   }
 }

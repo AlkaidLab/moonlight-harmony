@@ -52,6 +52,8 @@ export class ShortcutManager {
   
   private static readonly PREFS_NAME = 'shortcut_config';
   private static readonly KEY_SHORTCUTS = 'user_shortcuts';
+  private static readonly KEY_DELETED_BUILTINS = 'deleted_builtins';
+  private deletedBuiltinIds: string[] = [];
   
   /**
    * 获取单例
@@ -129,9 +131,6 @@ export class ShortcutManager {
     const index = this.shortcuts.findIndex(s => s.id === id);
     if (index === -1) return false;
     
-    // 内置快捷键不允许修改
-    if (this.shortcuts[index].isBuiltin) return false;
-    
     const current = this.shortcuts[index];
     this.shortcuts[index] = {
       id: current.id,
@@ -153,8 +152,10 @@ export class ShortcutManager {
     const index = this.shortcuts.findIndex(s => s.id === id);
     if (index === -1) return false;
     
-    // 内置快捷键不允许删除
-    if (this.shortcuts[index].isBuiltin) return false;
+    // 记录被删除的内置快捷键ID，防止重启后恢复
+    if (this.shortcuts[index].isBuiltin) {
+      this.deletedBuiltinIds.push(id);
+    }
     
     this.shortcuts.splice(index, 1);
     await this.saveShortcuts();
@@ -162,11 +163,48 @@ export class ShortcutManager {
   }
   
   /**
+   * 移动快捷键到新位置
+   */
+  async reorderShortcut(fromIndex: number, toIndex: number): Promise<void> {
+    if (fromIndex < 0 || fromIndex >= this.shortcuts.length ||
+        toIndex < 0 || toIndex >= this.shortcuts.length ||
+        fromIndex === toIndex) return;
+    
+    const item = this.shortcuts.splice(fromIndex, 1)[0];
+    this.shortcuts.splice(toIndex, 0, item);
+    await this.saveShortcuts();
+  }
+  
+  /**
    * 重置为默认配置
    */
   async resetToDefault(): Promise<void> {
+    this.deletedBuiltinIds = [];
     this.shortcuts = this.getDefaultShortcuts();
     await this.saveShortcuts();
+  }
+
+  /**
+   * 获取已删除的内置快捷键列表
+   */
+  getDeletedBuiltinShortcuts(): Shortcut[] {
+    return this.getDefaultShortcuts().filter(s => this.deletedBuiltinIds.includes(s.id));
+  }
+
+  /**
+   * 恢复被删除的内置快捷键
+   */
+  async restoreBuiltinShortcut(id: string): Promise<boolean> {
+    const idx = this.deletedBuiltinIds.indexOf(id);
+    if (idx === -1) return false;
+
+    const shortcut = this.getDefaultShortcuts().find(s => s.id === id);
+    if (!shortcut) return false;
+
+    this.deletedBuiltinIds.splice(idx, 1);
+    this.shortcuts.push(shortcut);
+    await this.saveShortcuts();
+    return true;
   }
   
   /**
@@ -202,13 +240,21 @@ export class ShortcutManager {
     }
     
     try {
+      const deletedStr = await this.prefs.get(ShortcutManager.KEY_DELETED_BUILTINS, '') as string;
+      this.deletedBuiltinIds = deletedStr ? JSON.parse(deletedStr) as string[] : [];
+      
       const jsonStr = await this.prefs.get(ShortcutManager.KEY_SHORTCUTS, '') as string;
       if (jsonStr) {
-        const userShortcuts: Shortcut[] = JSON.parse(jsonStr);
-        // 合并内置和用户自定义
-        this.shortcuts = [...this.getDefaultShortcuts(), ...userShortcuts];
+        const saved: Shortcut[] = JSON.parse(jsonStr);
+        // 检查是否有新增的默认快捷键（版本更新时）
+        const savedIds = new Set(saved.map(s => s.id));
+        const newDefaults = this.getDefaultShortcuts()
+          .filter(s => !savedIds.has(s.id) && !this.deletedBuiltinIds.includes(s.id));
+        this.shortcuts = [...saved, ...newDefaults];
       } else {
-        this.shortcuts = this.getDefaultShortcuts();
+        // 首次启动，过滤掉已删除的内置快捷键
+        this.shortcuts = this.getDefaultShortcuts()
+          .filter(s => !this.deletedBuiltinIds.includes(s.id));
       }
     } catch (error) {
       console.error('ShortcutManager', `加载快捷键失败: ${error}`);
@@ -217,15 +263,14 @@ export class ShortcutManager {
   }
   
   /**
-   * 保存快捷键配置
+   * 保存快捷键配置（完整列表，保留排序）
    */
   private async saveShortcuts(): Promise<void> {
     if (!this.prefs) return;
     
     try {
-      // 只保存用户自定义的快捷键
-      const userShortcuts = this.shortcuts.filter(s => !s.isBuiltin);
-      await this.prefs.put(ShortcutManager.KEY_SHORTCUTS, JSON.stringify(userShortcuts));
+      await this.prefs.put(ShortcutManager.KEY_SHORTCUTS, JSON.stringify(this.shortcuts));
+      await this.prefs.put(ShortcutManager.KEY_DELETED_BUILTINS, JSON.stringify(this.deletedBuiltinIds));
       await this.prefs.flush();
     } catch (error) {
       console.error('ShortcutManager', `保存快捷键失败: ${error}`);

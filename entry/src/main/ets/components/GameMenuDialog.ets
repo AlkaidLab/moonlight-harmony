@@ -133,11 +133,11 @@ export struct GameMenuDialog {
   @State private positions: number[] = Array(MENU_ITEM_COUNT).fill(200);
   @State private scales: number[] = Array(MENU_ITEM_COUNT).fill(1.0);
 
-  // 二级菜单状态
-  @State private expandedMenu: string = '';
-
   // 快捷键
   @State private shortcuts: Shortcut[] = [];
+  @State private dragFromIndex: number = -1;
+  @State private dragOverIndex: number = -1;
+  @State private isEditMode: boolean = false;
   private shortcutManager = ShortcutManager.getInstance();
 
   // 码率调整状态
@@ -171,6 +171,15 @@ export struct GameMenuDialog {
   private exitDialogController?: CustomDialogController;
   private touchModeDialogController?: CustomDialogController;
   private usbDriverDialogController?: CustomDialogController;
+
+  // 通用卡片样式
+  @Styles cardStyle() {
+    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
+    .backdropBlur(OV_CARD_BLUR)
+    .borderRadius(OV_CARD_RADIUS)
+    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
+    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
+  }
 
   aboutToAppear(): void {
     this.shortcuts = this.shortcutManager.getShortcuts();
@@ -246,6 +255,55 @@ export struct GameMenuDialog {
     if (session) {
       sendShortcutKeys((keys: number[]) => session.sendKeys(keys), shortcut.keys, shortcut.keySequence);
     }
+  }
+
+  private showAddShortcutMenu(): void {
+    const deletedBuiltins = this.shortcutManager.getDeletedBuiltinShortcuts();
+    if (deletedBuiltins.length === 0) {
+      this.callbacks.onOpenShortcutEditor?.();
+      return;
+    }
+    const buttons: promptAction.Button[] = [
+      { text: '新建快捷键', color: '#10B981' },
+      { text: '恢复预置快捷键', color: '#5BA3D0' },
+      { text: '取消', color: '#6B7280' }
+    ];
+    promptAction.showDialog({
+      title: '添加快捷键',
+      message: `有 ${deletedBuiltins.length} 个预置快捷键可恢复`,
+      buttons: buttons
+    }).then((result) => {
+      if (result.index === 0) {
+        this.callbacks.onOpenShortcutEditor?.();
+      } else if (result.index === 1) {
+        this.showRestoreBuiltinMenu(deletedBuiltins);
+      }
+    });
+  }
+
+  private showRestoreBuiltinMenu(deletedBuiltins: Shortcut[]): void {
+    const buttons: promptAction.Button[] = deletedBuiltins.map(s => {
+      const btn: promptAction.Button = { text: `${s.icon || ''} ${s.name}`, color: s.color || '#5BA3D0' };
+      return btn;
+    });
+    buttons.push({ text: '全部恢复', color: '#10B981' });
+    buttons.push({ text: '取消', color: '#6B7280' });
+    promptAction.showDialog({
+      title: '恢复预置快捷键',
+      message: '选择要恢复的快捷键',
+      buttons: buttons
+    }).then(async (result) => {
+      if (result.index < deletedBuiltins.length) {
+        await this.shortcutManager.restoreBuiltinShortcut(deletedBuiltins[result.index].id);
+        this.shortcuts = this.shortcutManager.getShortcuts();
+      } else if (result.index === deletedBuiltins.length) {
+        // 全部恢复
+        for (const s of deletedBuiltins) {
+          await this.shortcutManager.restoreBuiltinShortcut(s.id);
+        }
+        this.shortcuts = this.shortcutManager.getShortcuts();
+      }
+    });
   }
 
   // 码率辅助方法
@@ -483,11 +541,7 @@ export struct GameMenuDialog {
         .width('100%')
         .height('100%')
         .onClick(() => {
-          if (this.expandedMenu === '') {
-            this.animateOut();
-          } else {
-            this.expandedMenu = '';
-          }
+          this.animateOut();
         })
 
       // 右侧菜单按钮
@@ -511,15 +565,6 @@ export struct GameMenuDialog {
         this.TwoColumnLayout()
       } else {
         this.SingleColumnLayout()
-      }
-
-      // 二级菜单遮罩
-      if (this.expandedMenu !== '') {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#00000099')
-          .onClick(() => { this.expandedMenu = ''; })
       }
     }
     .width('100%')
@@ -607,11 +652,7 @@ export struct GameMenuDialog {
     .width(BUTTON_CARD_SIZE)
     .height(BUTTON_CARD_SIZE)
     .padding(10)
-    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
-    .backdropBlur(OV_CARD_BLUR)
-    .borderRadius(OV_CARD_RADIUS)
-    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
+    .cardStyle()
     .onClick(() => {
       this.callbacks.onUnlockOverlay?.();
       this.callbacks.onClose?.();
@@ -693,11 +734,7 @@ export struct GameMenuDialog {
       .padding({ bottom: 14 })
     }
     .width(OV_CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
-    .backdropBlur(OV_CARD_BLUR)
-    .borderRadius(OV_CARD_RADIUS)
-    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
+    .cardStyle()
   }
 
   @Builder
@@ -848,11 +885,7 @@ export struct GameMenuDialog {
       }
     }
     .width(OV_CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
-    .backdropBlur(OV_CARD_BLUR)
-    .borderRadius(OV_CARD_RADIUS)
-    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
+    .cardStyle()
   }
 
   @Builder
@@ -917,11 +950,7 @@ export struct GameMenuDialog {
       .padding({ left: 14, right: 14, bottom: 12 })
     }
     .width(OV_CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
-    .backdropBlur(OV_CARD_BLUR)
-    .borderRadius(OV_CARD_RADIUS)
-    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
+    .cardStyle()
   }
 
   @Builder
@@ -1030,11 +1059,7 @@ export struct GameMenuDialog {
       }
     }
     .width(OV_CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
-    .backdropBlur(OV_CARD_BLUR)
-    .borderRadius(OV_CARD_RADIUS)
-    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
+    .cardStyle()
   }
 
   @Builder
@@ -1103,11 +1128,7 @@ export struct GameMenuDialog {
       .padding({ left: 14, right: 14, top: 10, bottom: 14 })
     }
     .width(OV_CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
-    .backdropBlur(OV_CARD_BLUR)
-    .borderRadius(OV_CARD_RADIUS)
-    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
+    .cardStyle()
   }
 
   @Builder
@@ -1120,6 +1141,19 @@ export struct GameMenuDialog {
           .fontWeight(FontWeight.Medium)
           .fontColor(OV_TEXT_BRIGHT)
         Blank()
+        // 编辑模式切换按钮
+        Text(this.isEditMode ? '✓' : '✎')
+          .fontSize(this.isEditMode ? 14 : 12)
+          .fontColor(this.isEditMode ? '#4ADE80' : OV_TEXT_WHITE)
+          .fontWeight(FontWeight.Bold)
+          .width(24)
+          .height(24)
+          .textAlign(TextAlign.Center)
+          .borderRadius(12)
+          .backgroundColor(this.isEditMode ? '#404ADE80' : '#40A8E8B0')
+          .margin({ right: 6 })
+          .onClick(() => { this.isEditMode = !this.isEditMode; })
+        // 添加按钮
         Text('＋')
           .fontSize(14)
           .fontColor(OV_TEXT_WHITE)
@@ -1129,7 +1163,7 @@ export struct GameMenuDialog {
           .textAlign(TextAlign.Center)
           .borderRadius(12)
           .backgroundColor('#40A8E8B0')
-          .onClick(() => this.callbacks.onOpenShortcutEditor?.())
+          .onClick(() => this.showAddShortcutMenu())
       }
       .width('100%')
       .padding({ left: 16, right: 12, top: 14 })
@@ -1148,11 +1182,7 @@ export struct GameMenuDialog {
       .padding({ left: 14, right: 14, top: 10, bottom: 14 })
     }
     .width(OV_CARD_WIDTH)
-    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
-    .backdropBlur(OV_CARD_BLUR)
-    .borderRadius(OV_CARD_RADIUS)
-    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
+    .cardStyle()
   }
 
   @Builder
@@ -1220,16 +1250,45 @@ export struct GameMenuDialog {
 
   @Builder
   ShortcutPill(shortcut: Shortcut) {
-    Row() {
-      if (shortcut.icon) {
-        Text(shortcut.icon).fontSize(OV_FONT_MD).margin({ right: 4 })
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Row() {
+        if (shortcut.icon) {
+          Text(shortcut.icon).fontSize(OV_FONT_MD).margin({ right: 4 })
+        }
+        Text(shortcut.name).fontSize(OV_FONT_MD).fontColor(OV_TEXT_ULTRA)
       }
-      Text(shortcut.name).fontSize(OV_FONT_MD).fontColor(OV_TEXT_ULTRA)
+      .height(28)
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 12, right: this.isEditMode ? 16 : 12 })
+      .backgroundColor(`#50${(shortcut.color || '#9DABB2').replace('#', '')}`)
+      .border({
+        width: this.isEditMode && this.dragOverIndex === this.shortcuts.indexOf(shortcut) ? 2 : 1,
+        color: this.isEditMode && this.dragOverIndex === this.shortcuts.indexOf(shortcut)
+          ? '#4ADE80'
+          : `#80${(shortcut.color || '#9DABB2').replace('#', '')}`
+      })
+      .borderRadius(14)
+      .opacity(this.isEditMode && this.dragFromIndex === this.shortcuts.indexOf(shortcut) ? 0.4 : 1.0)
+
+      // 编辑模式下的删除 badge
+      if (this.isEditMode) {
+        Text('×')
+          .fontSize(10)
+          .fontColor('#FFF')
+          .fontWeight(FontWeight.Bold)
+          .width(16)
+          .height(16)
+          .textAlign(TextAlign.Center)
+          .backgroundColor('#EF4444')
+          .borderRadius(8)
+          .offset({ x: 4, y: -4 })
+          .onClick(async () => {
+            await this.shortcutManager.deleteShortcut(shortcut.id);
+            this.shortcuts = this.shortcutManager.getShortcuts();
+            this.callbacks.onDeleteShortcut?.(shortcut);
+          })
+      }
     }
-    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-    .backgroundColor(`#50${(shortcut.color || '#9DABB2').replace('#', '')}`)
-    .border({ width: 1, color: `#80${(shortcut.color || '#9DABB2').replace('#', '')}` })
-    .borderRadius(14)
     .margin({ right: 6, bottom: 6 })
     .focusable(true)
     .focusOnTouch(true)
@@ -1241,60 +1300,56 @@ export struct GameMenuDialog {
     .onKeyEvent((event: KeyEvent) => {
       if (event.type === KeyType.Down) {
         if (event.keyCode === 2054 || event.keyCode === 2050) {
-          this.sendShortcut(shortcut);
-          this.animateOut();
-          return true;
-        }
-        if (event.keyCode === 2051 && !shortcut.isBuiltin) {
-          this.showShortcutOptions(shortcut);
+          if (!this.isEditMode) {
+            this.sendShortcut(shortcut);
+            this.animateOut();
+          }
           return true;
         }
       }
       return false;
     })
     .onClick(() => {
+      if (this.isEditMode || this.dragFromIndex >= 0) return;
       this.sendShortcut(shortcut);
       this.animateOut();
     })
     .gesture(
       LongPressGesture({ duration: 500 })
         .onAction(() => {
-          if (!shortcut.isBuiltin) this.showShortcutOptions(shortcut);
+          if (this.isEditMode || this.dragFromIndex >= 0) return;
+          // 长按打开编辑器
+          this.callbacks.onEditShortcut?.(shortcut);
         })
     )
-  }
-
-  private showShortcutOptions(shortcut: Shortcut): void {
-    promptAction.showDialog({
-      title: shortcut.name,
-      message: '选择操作',
-      buttons: [
-        { text: '编辑', color: '#10B981' },
-        { text: '删除', color: '#EF4444' },
-        { text: '取消', color: '#6B7280' }
-      ]
-    }).then((result) => {
-      if (result.index === 0) {
-        this.callbacks.onEditShortcut?.(shortcut);
-      } else if (result.index === 1) {
-        this.confirmDeleteShortcut(shortcut);
+    .onDragStart(() => {
+      if (!this.isEditMode) return;
+      this.dragFromIndex = this.shortcuts.indexOf(shortcut);
+    })
+    .onDragEnd(() => {
+      this.dragFromIndex = -1;
+      this.dragOverIndex = -1;
+    })
+    .allowDrop([])
+    .onDragEnter(() => {
+      if (!this.isEditMode) return;
+      this.dragOverIndex = this.shortcuts.indexOf(shortcut);
+    })
+    .onDragLeave(() => {
+      if (this.dragOverIndex === this.shortcuts.indexOf(shortcut)) {
+        this.dragOverIndex = -1;
       }
-    });
-  }
-
-  private confirmDeleteShortcut(shortcut: Shortcut): void {
-    promptAction.showDialog({
-      title: '删除快捷键',
-      message: `确定要删除快捷键"${shortcut.name}"吗？`,
-      buttons: [
-        { text: '删除', color: '#EF4444' },
-        { text: '取消', color: '#6B7280' }
-      ]
-    }).then((result) => {
-      if (result.index === 0) {
-        this.callbacks.onDeleteShortcut?.(shortcut);
+    })
+    .onDrop(async () => {
+      if (!this.isEditMode) return;
+      const toIndex = this.shortcuts.indexOf(shortcut);
+      if (this.dragFromIndex >= 0 && this.dragFromIndex !== toIndex) {
+        await this.shortcutManager.reorderShortcut(this.dragFromIndex, toIndex);
+        this.shortcuts = this.shortcutManager.getShortcuts();
       }
-    });
+      this.dragFromIndex = -1;
+      this.dragOverIndex = -1;
+    })
   }
 
   @Builder
