@@ -38,7 +38,7 @@ import {
   OV_ACCENT_BLUE, OV_TEXT_BRIGHT, OV_TEXT_MEDIUM, OV_TEXT_DIM,
   OV_TEXT_WHITE, OV_TEXT_SUBTLE, OV_BG_TRACK, OV_BG_CARD_LIGHTER,
   OV_BG_CARD_DARK, OV_BLUE_40, OV_BLUE_50,
-  OV_FONT_MD, OV_FONT_LG,
+  OV_FONT_SM, OV_FONT_MD, OV_FONT_LG,
 } from '../common/OverlayConstants';
 
 // =============================================================================
@@ -735,10 +735,10 @@ export struct CustomKeyOverlay {
       .padding({ left: 16, right: 16, top: 12, bottom: 8 })
 
       Scroll() {
-        Column({ space: 10 }) {
+        Column({ space: 8 }) {
           // 标签编辑
           Row() {
-            Text('标签').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
+            Text('标签').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(36)
             TextInput({ text: this.getSelectedKey()?.label ?? '' })
               .layoutWeight(1).height(32).fontSize(OV_FONT_LG)
               .fontColor(OV_TEXT_WHITE).backgroundColor(OV_BG_CARD_LIGHTER)
@@ -748,62 +748,67 @@ export struct CustomKeyOverlay {
           }
           .width('100%').padding({ left: 4, right: 4 })
 
-          this.PropertySlider('宽度', 30, 200, this.getSelectedKey()?.width ?? 60, 'width')
-          this.PropertySlider('高度', 30, 200, this.getSelectedKey()?.height ?? 60, 'height')
-          this.PropertySlider('透明度', 10, 100, this.getSelectedKey()?.opacity ?? 80, 'opacity')
-          this.PropertySlider('字号', 8, 30, this.getSelectedKey()?.fontSize ?? 14, 'fontSize')
-          this.PropertySlider('圆角', 0, 50, this.getSelectedKey()?.borderRadius ?? 12, 'borderRadius')
-
-          // 背景色
-          Row() {
-            Text('底色').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
-            Row({ space: 6 }) {
-              ForEach(BG_COLOR_PRESETS, (color: string) => {
-                Text('')
-                  .width(22).height(22).borderRadius(11)
-                  .backgroundColor(color)
-                  .border({
-                    width: this.getSelectedKey()?.bgColor === color ? 2 : 1,
-                    color: this.getSelectedKey()?.bgColor === color ? '#FFFFD700' : '#30FFFFFF',
-                  })
-                  .onClick(() => { this.updateSelectedKeyProp('bgColor', color); })
-              })
-            }
+          // 尺寸/样式 滑块 — 两列紧凑排列
+          Row({ space: 12 }) {
+            this.PropertySliderCompact('宽', 30, 200, this.getSelectedKey()?.width ?? 60, 'width')
+            this.PropertySliderCompact('高', 30, 200, this.getSelectedKey()?.height ?? 60, 'height')
           }
           .width('100%').padding({ left: 4, right: 4 })
 
-          // 文字色
-          Row() {
-            Text('字色').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
-            Row({ space: 6 }) {
-              ForEach(TEXT_COLOR_PRESETS, (color: string) => {
-                Text('')
-                  .width(22).height(22).borderRadius(11)
-                  .backgroundColor(color)
-                  .border({
-                    width: this.getSelectedKey()?.textColor === color ? 2 : 1,
-                    color: this.getSelectedKey()?.textColor === color ? '#FFFFD700' : '#30FFFFFF',
-                  })
-                  .onClick(() => { this.updateSelectedKeyProp('textColor', color); })
-              })
-            }
+          Row({ space: 12 }) {
+            this.PropertySliderCompact('透明', 10, 100, this.getSelectedKey()?.opacity ?? 80, 'opacity')
+            this.PropertySliderCompact('字号', 8, 30, this.getSelectedKey()?.fontSize ?? 14, 'fontSize')
           }
           .width('100%').padding({ left: 4, right: 4 })
 
-          Row() {
-            Text('模式').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
-            Row({ space: 8 }) {
+          Row({ space: 12 }) {
+            this.PropertySliderCompact('圆角', 0, 50, this.getSelectedKey()?.borderRadius ?? 12, 'borderRadius')
+
+            // 形状 + 模式 — 紧凑行内
+            Row({ space: 6 }) {
+              this.ShapeChip('方', 'rect')
+              this.ShapeChip('圆', 'circle')
+              Text('|').fontSize(10).fontColor('#30FFFFFF')
               this.BehaviorChip('点触', 'momentary')
               this.BehaviorChip('切换', 'toggle')
             }
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.End)
           }
           .width('100%').padding({ left: 4, right: 4 })
 
-          Row() {
-            Text('形状').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(50)
-            Row({ space: 8 }) {
-              this.ShapeChip('方形', 'rect')
-              this.ShapeChip('圆形', 'circle')
+          // 颜色行 — 底色 + 字色 并排
+          Row({ space: 16 }) {
+            Row() {
+              Text('底色').fontSize(12).fontColor(OV_TEXT_MEDIUM).margin({ right: 6 })
+              Row({ space: 5 }) {
+                ForEach(BG_COLOR_PRESETS, (color: string) => {
+                  Text('')
+                    .width(20).height(20).borderRadius(10)
+                    .backgroundColor(color)
+                    .border({
+                      width: this.getSelectedKey()?.bgColor === color ? 2 : 1,
+                      color: this.getSelectedKey()?.bgColor === color ? '#FFFFD700' : '#30FFFFFF',
+                    })
+                    .onClick(() => { this.updateSelectedKeyProp('bgColor', color); })
+                })
+              }
+            }
+
+            Row() {
+              Text('字色').fontSize(12).fontColor(OV_TEXT_MEDIUM).margin({ right: 6 })
+              Row({ space: 5 }) {
+                ForEach(TEXT_COLOR_PRESETS, (color: string) => {
+                  Text('')
+                    .width(20).height(20).borderRadius(10)
+                    .backgroundColor(color)
+                    .border({
+                      width: this.getSelectedKey()?.textColor === color ? 2 : 1,
+                      color: this.getSelectedKey()?.textColor === color ? '#FFFFD700' : '#30FFFFFF',
+                    })
+                    .onClick(() => { this.updateSelectedKeyProp('textColor', color); })
+                })
+              }
             }
           }
           .width('100%').padding({ left: 4, right: 4 })
@@ -821,6 +826,22 @@ export struct CustomKeyOverlay {
     .border({ width: { top: 1, left: 1, right: 1 }, color: '#20FFFFFF' })
     .onTouch((event: TouchEvent) => { event.stopPropagation(); })
     .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation({ duration: 200 }))
+  }
+
+  @Builder
+  PropertySliderCompact(label: string, min: number, max: number, value: number, propName: string) {
+    Row() {
+      Text(label).fontSize(11).fontColor(OV_TEXT_MEDIUM).width(28)
+      Slider({ value: value, min: min, max: max, step: 1, style: SliderStyle.OutSet })
+        .layoutWeight(1)
+        .blockColor(OV_ACCENT_BLUE).blockSize({ width: 12, height: 12 })
+        .trackColor(OV_BG_TRACK).selectedColor(OV_ACCENT_BLUE).trackThickness(2)
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+        .onChange((v: number) => { this.updateSelectedKeyProp(propName, Math.round(v)); })
+      Text(Math.round(value).toString())
+        .fontSize(OV_FONT_SM).fontColor(OV_TEXT_DIM).width(26).textAlign(TextAlign.End)
+    }
+    .layoutWeight(1)
   }
 
   @Builder
