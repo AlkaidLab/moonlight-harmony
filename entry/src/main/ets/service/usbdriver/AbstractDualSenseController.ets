@@ -369,7 +369,7 @@ export abstract class AbstractDualSenseController extends AbstractController {
    * 启动控制器
    */
   start(): boolean {
-    console.info(`${TAG} 启动控制器: VID=0x${this.vendorId.toString(16)}, PID=0x${this.productId.toString(16)}`);
+    console.info(`${TAG} 启动控制器: VID=0x${this.vendorId.toString(16)}, PID=0x${this.productId.toString(16)}, DDK=${this.ddkPollingEnabled}`);
     
     // 查找端点
     if (!this.findEndpoints()) {
@@ -378,6 +378,7 @@ export abstract class AbstractDualSenseController extends AbstractController {
     }
     
     // ====== 优先尝试 DDK 路径 ======
+    console.info(`${TAG} DDK 条件: enabled=${this.ddkPollingEnabled}, available=${DdkUsbPoller.isAvailable()}, inEp=${this.inEndpoint !== null}`);
     if (this.ddkPollingEnabled && DdkUsbPoller.isAvailable() && this.inEndpoint) {
       const ddkStarted = this.tryDdkPath();
       if (ddkStarted) {

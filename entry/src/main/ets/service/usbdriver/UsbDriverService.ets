@@ -575,6 +575,7 @@ export class UsbDriverService implements UsbDriverListener {
       }
 
       // 应用 DDK 高速轮询设置
+      console.info(`${TAG} DDK 高速轮询设置: ${inputSettings.ddkHighSpeedPolling}`);
       if (inputSettings.ddkHighSpeedPolling) {
         controller.setDdkPollingEnabled(true);
         console.info(`${TAG} 设备 ${device.name} 已启用 DDK 高速轮询`);
