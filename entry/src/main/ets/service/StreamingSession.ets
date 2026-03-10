@@ -366,6 +366,13 @@ export class StreamingSession {
   };
   private lastValidStats: StreamStats | null = null;
 
+  // 滑动窗口丢包率统计（对齐 Android: lastTwo = lastWindow + activeWindow）
+  private prevSnapshotLost: number = 0;    // 上一窗口起始时的累计 framesLost
+  private prevSnapshotTotal: number = 0;   // 上一窗口起始时的累计 totalFrames
+  private activeSnapshotLost: number = 0;  // 当前窗口起始时的累计 framesLost
+  private activeSnapshotTotal: number = 0; // 当前窗口起始时的累计 totalFrames
+  private lastWindowFlipTime: number = 0;  // 上次窗口翻转的时间戳
+
   // ---------------------------------------------------------------------------
   // 成员变量 — 音频与麦克风
   // ---------------------------------------------------------------------------
@@ -709,10 +716,31 @@ export class StreamingSession {
       this.stats.bitrate = vs.bitrate || 0;
       this.stats.latency = vs.avgDecodeTimeMs || 0;
       this.stats.hostLatency = vs.hostLatency || 0;
-      // 网络丢帧率（对齐 Android: framesLost / totalFrames * 100）
+
+      // 滑动窗口丢包率（对齐 Android: ~2秒窗口 = lastWindow + activeWindow）
       const totalFrames = vs.totalFrames || 0;
       const framesLost = vs.framesLost || 0;
-      this.stats.packetLoss = totalFrames > 0 ? (framesLost / totalFrames * 100) : 0;
+      const now = Date.now();
+      if (this.lastWindowFlipTime === 0) {
+        // 首次调用：初始化窗口
+        this.lastWindowFlipTime = now;
+        this.activeSnapshotLost = framesLost;
+        this.activeSnapshotTotal = totalFrames;
+        this.prevSnapshotLost = framesLost;
+        this.prevSnapshotTotal = totalFrames;
+      } else if (now - this.lastWindowFlipTime >= 1000) {
+        // 每秒翻转窗口：prev <- active, active <- 当前累计值
+        this.prevSnapshotLost = this.activeSnapshotLost;
+        this.prevSnapshotTotal = this.activeSnapshotTotal;
+        this.activeSnapshotLost = framesLost;
+        this.activeSnapshotTotal = totalFrames;
+        this.lastWindowFlipTime = now;
+      }
+      // 用最近两个窗口的增量计算丢包率
+      const windowLost = framesLost - this.prevSnapshotLost;
+      const windowTotal = totalFrames - this.prevSnapshotTotal;
+      this.stats.packetLoss = windowTotal > 0 ? (windowLost / windowTotal * 100) : 0;
+
       // 分级丢帧统计
       this.stats.droppedByL1 = vs.droppedByL1 || 0;
       this.stats.droppedByL2 = vs.droppedByL2 || 0;

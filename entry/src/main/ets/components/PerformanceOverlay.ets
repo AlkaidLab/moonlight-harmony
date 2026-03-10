@@ -193,10 +193,21 @@ export struct PerformanceOverlay {
       this.overlayWidth = newValue.width as number;
       this.overlayHeight = newValue.height as number;
       
-      // 首次渲染时重新计算位置（因为 aboutToAppear 时尺寸还不准确）
       if (oldWidth === 200 && oldHeight === 200 && 
           (this.overlayWidth !== 200 || this.overlayHeight !== 200)) {
+        // 首次渲染时重新计算位置（因为 aboutToAppear 时尺寸还不准确）
         this.initPosition();
+      } else if (oldWidth !== this.overlayWidth || oldHeight !== this.overlayHeight) {
+        // 尺寸变化（数值位数改变等），重新对齐到当前吸附位置
+        const snapPos = calculateSnapPosition(
+          this.currentSnapPosition,
+          this.screenWidth,
+          this.screenHeight,
+          this.overlayWidth,
+          this.overlayHeight
+        );
+        this.overlayX = snapPos.x;
+        this.overlayY = snapPos.y;
       }
     })
     .gesture(
@@ -324,7 +335,7 @@ export struct PerformanceOverlay {
     // 解码延迟行
     if (this.enabledItemsList.includes(PerformanceItem.DECODE_LATENCY)) {
       Row() {
-        Text(this.perfLatency < 15 ? PerfIcons.DECODE_NORMAL : PerfIcons.DECODE_HOT)
+        Text(this.perfLatency < 20 ? PerfIcons.DECODE_NORMAL : PerfIcons.DECODE_HOT)
           .fontSize(13)
         Text(` ${this.perfLatency.toFixed(2)}`)
           .fontSize(12)
@@ -442,7 +453,7 @@ export struct PerformanceOverlay {
       
       // 解码延迟
       if (this.enabledItemsList.includes(PerformanceItem.DECODE_LATENCY)) {
-        Text(this.perfLatency < 15 ? PerfIcons.DECODE_NORMAL : PerfIcons.DECODE_HOT)
+        Text(this.perfLatency < 20 ? PerfIcons.DECODE_NORMAL : PerfIcons.DECODE_HOT)
           .fontSize(12)
         Text(` ${this.perfLatency.toFixed(1)} ms`)
           .fontSize(11)
