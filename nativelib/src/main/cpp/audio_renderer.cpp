@@ -453,15 +453,26 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
     int head = ringHead_.load(std::memory_order_acquire);
     
     // 延迟上限检查（匹配 Android 的 40ms 上限）
-    // 如果缓冲区中已有数据超过阈值，丢弃新数据以抑制延迟积累
+    // 如果缓冲区中已有数据超过阈值，丢弃旧数据（前移 head）以腾出空间写入最新数据
+    // 这样保证音频始终连续且是最新内容，避免丢弃新帧导致的波形断裂爆音
     int buffered = (tail >= head) ? (tail - head) : (ringCapacity_ - head + tail);
     int bufferedFrames = buffered / std::max(config_.channelCount, 1);
     double latencyMs = (config_.sampleRate > 0)
         ? ((double)bufferedFrames * 1000.0 / config_.sampleRate)
         : 0.0;
     if (latencyMs > MAX_AUDIO_LATENCY_MS) {
-        droppedSamples_.fetch_add(sampleCount, std::memory_order_relaxed);
-        return 0;
+        // 计算需要丢弃的旧数据量：丢弃到只保留 MAX_AUDIO_LATENCY_MS/2 的数据
+        int targetSamples = config_.sampleRate * config_.channelCount * MAX_AUDIO_LATENCY_MS / 2 / 1000;
+        int toDrop = buffered - targetSamples;
+        if (toDrop > 0) {
+            // 对齐到帧边界避免声道错位
+            int frameSize = std::max(config_.channelCount, 1);
+            toDrop = (toDrop / frameSize) * frameSize;
+            int newHead = (head + toDrop) % ringCapacity_;
+            ringHead_.store(newHead, std::memory_order_release);
+            head = newHead;
+            droppedSamples_.fetch_add(toDrop / frameSize, std::memory_order_relaxed);
+        }
     }
     
     // 计算可用空间（保留1个元素的间隔以区分满/空）
@@ -473,9 +484,13 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
     }
     
     if (available < dataSize) {
-        // 缓冲区空间不足 → 丢弃新数据
-        droppedSamples_.fetch_add(sampleCount, std::memory_order_relaxed);
-        return 0;
+        // 缓冲区空间不足 → 丢弃旧数据腾出空间
+        int toDrop = dataSize - available;
+        int frameSize = std::max(config_.channelCount, 1);
+        toDrop = ((toDrop + frameSize - 1) / frameSize) * frameSize; // 向上对齐到帧边界
+        head = (head + toDrop) % ringCapacity_;
+        ringHead_.store(head, std::memory_order_release);
+        droppedSamples_.fetch_add(toDrop / frameSize, std::memory_order_relaxed);
     }
     
     // 写入数据到环形缓冲区
