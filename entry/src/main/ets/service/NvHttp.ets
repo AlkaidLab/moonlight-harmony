@@ -356,7 +356,7 @@ export class NvHttp {
    * @param useClientCert 是否使用客户端证书（HTTPS请求需要）
    */
   private async doRequest(url: string, timeout: number = NvHttp.READ_TIMEOUT, useClientCert: boolean = false): Promise<string> {
-    console.info(`NvHttp: 请求 ${url}`);
+    console.debug(`NvHttp: 请求 ${url}`);
 
     if (useClientCert && this.certFilePath && this.keyFilePath) {
       return HttpClient.getWithClientCert(url, this.certFilePath, this.keyFilePath, {
@@ -382,7 +382,7 @@ export class NvHttp {
       // 如果有服务器证书且客户端证书文件存在（已配对），尝试 HTTPS 并使用客户端证书
       if (this.serverCert && this.hasCertificateFiles()) {
         try {
-          console.info(`NvHttp: getServerInfo 尝试 HTTPS + 客户端证书`);
+          console.debug(`NvHttp: getServerInfo 尝试 HTTPS + 客户端证书`);
           const url = this.buildUrl(await this.getHttpsBaseUrl(), 'serverinfo');
           response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
         } catch (err) {
@@ -393,7 +393,7 @@ export class NvHttp {
         }
       } else {
         // 未配对，使用 HTTP
-        console.info(`NvHttp: getServerInfo 使用 HTTP (serverCert=${!!this.serverCert}, hasCertFiles=${this.hasCertificateFiles()})`);
+        console.debug(`NvHttp: getServerInfo 使用 HTTP (serverCert=${!!this.serverCert}, hasCertFiles=${this.hasCertificateFiles()})`);
         const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
         response = await this.doRequest(url);
       }
@@ -402,7 +402,7 @@ export class NvHttp {
     }
 
     const serverInfo = this.parseServerInfo(response);
-    console.info(`NvHttp: serverInfo - hostname=${serverInfo.hostname}, paired=${serverInfo.paired}, mac=${serverInfo.macAddress}`);
+    console.debug(`NvHttp: serverInfo - hostname=${serverInfo.hostname}, paired=${serverInfo.paired}, mac=${serverInfo.macAddress}`);
 
     // 缓存 HTTPS 端口
     if (serverInfo.httpsPort > 0) {

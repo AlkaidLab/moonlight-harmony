@@ -54,6 +54,8 @@ export class ComputerManager {
   private pollingTimerId: number = -1;
   private isPollingActive: boolean = false;
   private netConnection: connection.NetConnection | null = null;
+  /** 离线轮询退避：记录连续离线次数，每 N 轮才真正轮询一次离线主机 */
+  private offlineStreak: Map<string, number> = new Map();
 
   // ═══════════════════════════════════════════════════════════
   // 初始化 & 单例
@@ -477,9 +479,27 @@ export class ComputerManager {
       await Promise.all(
         Array.from(this.computers.values()).map(async (computer) => {
           try {
-            await this.pollComputer(computer);
+            // 离线退避：连续离线次数越多，跳过的轮询轮次越多
+            const streak = this.offlineStreak.get(computer.uuid) ?? 0;
+            if (streak > 0) {
+              // streak=1→每2轮poll一次, streak>=3→每4轮poll一次（上限）
+              const skipInterval = Math.min(streak + 1, 4);
+              // 用 streak 本身做计数器，只在整除时轮询
+              this.offlineStreak.set(computer.uuid, streak + 1);
+              if (streak % skipInterval !== 0) {
+                return; // 跳过本轮
+              }
+            }
+
+            const online = await this.pollComputer(computer);
+            if (online) {
+              this.offlineStreak.delete(computer.uuid);
+            } else {
+              this.offlineStreak.set(computer.uuid, (this.offlineStreak.get(computer.uuid) ?? 0) || 1);
+            }
           } catch {
             computer.state = ComputerState.OFFLINE;
+            this.offlineStreak.set(computer.uuid, (this.offlineStreak.get(computer.uuid) ?? 0) + 1);
           }
           this.notifyListChanged();
         })
@@ -534,6 +554,7 @@ export class ComputerManager {
       this.netConnection.on('netAvailable', () => {
         console.info('ComputerManager: 网络变为可用，重置并重新轮询');
         this.computers.forEach(c => { c.state = ComputerState.UNKNOWN; });
+        this.offlineStreak.clear(); // 网络恢复，重置退避
 
         if (this.isPollingActive) {
           this.refreshAllComputers().catch((err: Error) => {

@@ -69,8 +69,7 @@ export class HttpClient {
     const connectTimeout = config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT;
     const transferTimeout = config?.transferTimeout ?? HttpClient.DEFAULT_TRANSFER_TIMEOUT;
 
-    console.info(`HttpClient: 请求 ${url}`);
-    console.info(`HttpClient: 超时设置 connect=${connectTimeout}ms, transfer=${transferTimeout}ms`);
+    console.debug(`HttpClient: 请求 ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms)`);
 
     // 构建安全配置
     const securityConfig: rcp.SecurityConfiguration = {
@@ -104,7 +103,7 @@ export class HttpClient {
 
     try {
       const response = await session.get(url);
-      console.info(`HttpClient: 响应状态码 = ${response.statusCode}`);
+      console.debug(`HttpClient: 响应状态码 = ${response.statusCode}`);
 
       if (response.statusCode !== 200) {
         throw new Error(`HTTP ${response.statusCode}`);
@@ -115,7 +114,7 @@ export class HttpClient {
       }
 
       const body = StringUtil.arrayBufferToString(response.body);
-      console.info(`HttpClient: 响应长度 = ${body.length}`);
+      console.debug(`HttpClient: 响应长度 = ${body.length}`);
 
       return {
         statusCode: response.statusCode,
@@ -123,7 +122,12 @@ export class HttpClient {
       };
     } catch (err) {
       const error = err as Error;
-      console.error(`HttpClient: 请求失败 - ${error.message}`);
+      const isTimeout = error.message?.includes('Timeout');
+      if (isTimeout) {
+        console.warn(`HttpClient: 请求超时 - ${url}`);
+      } else {
+        console.error(`HttpClient: 请求失败 - ${error.message}`);
+      }
       throw new Error(`HTTP 请求失败: ${error.message}`);
     } finally {
       session.close();
