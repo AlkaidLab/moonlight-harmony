@@ -164,6 +164,7 @@ struct SettingsPageV2 {
   @State deadzone: number = 7;
   @State gamepadMotionSensors: boolean = true;
   @State gamepadMotionFallback: boolean = false;
+  @State gamepadTouchpadMouse: boolean = false;
   @State enableStartKeyMenu: boolean = true;
   @State ignoreDeviceDisconnect: boolean = false;
   @State enableKeyInterceptor: boolean = false;
@@ -468,6 +469,7 @@ struct SettingsPageV2 {
       this.deadzone = await PreferencesUtil.get<number>(SettingsKeys.DEADZONE, 7);
       this.gamepadMotionSensors = await this.loadBoolean(SettingsKeys.GAMEPAD_MOTION_SENSORS, true);
       this.gamepadMotionFallback = await this.loadBoolean(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false);
+      this.gamepadTouchpadMouse = await this.loadBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
       this.enableStartKeyMenu = await this.loadBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true);
       this.ignoreDeviceDisconnect = await this.loadBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false);
       this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false);
@@ -1290,6 +1292,16 @@ struct SettingsPageV2 {
                 action: () => {
                   this.gamepadMotionFallback = !this.gamepadMotionFallback;
                   this.saveSetting(SettingsKeys.GAMEPAD_MOTION_FALLBACK, this.gamepadMotionFallback);
+                }
+              },
+              {
+                title: '触摸板作为鼠标',
+                subtitle: 'DualSense/DS4 触摸板模拟鼠标（需 USB 驱动）',
+                type: 'toggle',
+                value: this.gamepadTouchpadMouse,
+                action: () => {
+                  this.gamepadTouchpadMouse = !this.gamepadTouchpadMouse;
+                  this.saveSetting(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, this.gamepadTouchpadMouse);
                 }
               },
               {

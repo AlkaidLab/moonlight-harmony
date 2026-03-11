@@ -147,6 +147,18 @@ export class DualSenseController extends AbstractDualSenseController {
     this.setButtonFlag(ButtonFlags.TOUCHPAD_FLAG, b10 & 0x02);  // Touchpad click
     this.setButtonFlag(ButtonFlags.MISC_FLAG, b10 & 0x04);  // Mute
     
+    // 触摸板数据 (bytes 33-36: touch point 0)
+    // DualSense touchpad resolution: 1920 x 1080
+    if (buffer.length >= 37) {
+      const contactByte = buffer[33];
+      const isActive = (contactByte & 0x80) === 0; // bit 7 = 0 表示有手指
+      this.touchpadActive = isActive;
+      if (isActive) {
+        this.touchpadX = buffer[34] | ((buffer[35] & 0x0F) << 8);
+        this.touchpadY = ((buffer[35] & 0xF0) >> 4) | (buffer[36] << 4);
+      }
+    }
+    
     // IMU 数据 (从 offset 开始)
     if (buffer.length >= offset + 12) {
       const GYRO_SCALE = 2000.0 / 32768.0;

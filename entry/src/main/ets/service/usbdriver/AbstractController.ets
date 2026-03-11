@@ -46,6 +46,11 @@ export abstract class AbstractController {
   protected leftStickY: number = 0;
   protected rightStickX: number = 0;
   protected rightStickY: number = 0;
+
+  // 触摸板状态 (DualSense/DualShock4)
+  protected touchpadActive: boolean = false;  // 是否有手指触摸
+  protected touchpadX: number = 0;            // 触摸 X (0-1919)
+  protected touchpadY: number = 0;            // 触摸 Y (0-1079 DS5 / 0-942 DS4)
   
   // 控制器属性
   protected capabilities: number = 0;
@@ -222,6 +227,15 @@ export abstract class AbstractController {
   protected notifyControllerMotion(motionType: number, x: number, y: number, z: number): void {
     if (this.listener) {
       this.listener.reportControllerMotion(this.deviceId, motionType, x, y, z);
+    }
+  }
+
+  /**
+   * 报告触摸板数据
+   */
+  protected notifyTouchpadInput(active: boolean, x: number, y: number): void {
+    if (this.listener) {
+      this.listener.reportTouchpadInput(this.deviceId, active, x, y);
     }
   }
   

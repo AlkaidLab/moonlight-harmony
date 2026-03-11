@@ -59,6 +59,20 @@ export interface UsbDriverListener {
   ): void;
 
   /**
+   * 报告触摸板输入数据
+   * @param controllerId 控制器 ID
+   * @param active 是否有手指触摸
+   * @param x 触摸 X 坐标 (原始值)
+   * @param y 触摸 Y 坐标 (原始值)
+   */
+  reportTouchpadInput(
+    controllerId: number,
+    active: boolean,
+    x: number,
+    y: number
+  ): void;
+
+  /**
    * 设备移除回调
    * @param controller 被移除的控制器
    */

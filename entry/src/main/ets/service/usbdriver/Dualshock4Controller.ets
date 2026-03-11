@@ -121,6 +121,18 @@ export class Dualshock4Controller extends AbstractDualSenseController {
     this.setButtonFlag(ButtonFlags.SPECIAL_BUTTON_FLAG, b7 & 0x01);  // PS
     this.setButtonFlag(ButtonFlags.TOUCHPAD_FLAG, b7 & 0x02);  // Touchpad click
     
+    // 触摸板数据 (bytes 35-38: touch point 0)
+    // DualShock 4 touchpad resolution: 1920 x 942
+    if (buffer.length >= 39) {
+      const contactByte = buffer[35];
+      const isActive = (contactByte & 0x80) === 0; // bit 7 = 0 表示有手指
+      this.touchpadActive = isActive;
+      if (isActive) {
+        this.touchpadX = buffer[36] | ((buffer[37] & 0x0F) << 8);
+        this.touchpadY = ((buffer[37] & 0xF0) >> 4) | (buffer[38] << 4);
+      }
+    }
+    
     // 摇杆 (Y 轴需要反转，因为 HID 报告中向下为正)
     this.leftStickX = this.normalizeThumbStickAxis(buffer[1]);
     this.leftStickY = -this.normalizeThumbStickAxis(buffer[2]);  // 反转 Y 轴

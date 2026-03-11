@@ -678,6 +678,17 @@ export class UsbDriverService implements UsbDriverListener {
       this.listener.reportControllerMotion(controllerId, motionType, x, y, z);
     }
   }
+
+  reportTouchpadInput(
+    controllerId: number,
+    active: boolean,
+    x: number,
+    y: number
+  ): void {
+    if (this.listener) {
+      this.listener.reportTouchpadInput(controllerId, active, x, y);
+    }
+  }
   
   deviceRemoved(controller: AbstractController): void {
     // 从列表中移除

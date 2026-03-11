@@ -282,6 +282,11 @@ export abstract class AbstractDualSenseController extends AbstractController {
             if (this.capabilities & ControllerCapabilities.ACCEL) {
               this.notifyControllerMotion(MotionType.ACCEL, this.accelX, this.accelY, this.accelZ);
             }
+            
+            // 报告触摸板数据
+            if (this.capabilities & ControllerCapabilities.TOUCHPAD) {
+              this.notifyTouchpadInput(this.touchpadActive, this.touchpadX, this.touchpadY);
+            }
           }
         } else if (readCount % 100 === 0) {
           console.warn(`${TAG} 读取空数据，已尝试 ${readCount} 次`);
@@ -467,6 +472,10 @@ export abstract class AbstractDualSenseController extends AbstractController {
         if (this.stopped) return;
         if (this.handleRead(data.slice(0, length))) {
           this.reportInput();
+          // DDK 路径也报告触摸板数据
+          if (this.capabilities & ControllerCapabilities.TOUCHPAD) {
+            this.notifyTouchpadInput(this.touchpadActive, this.touchpadX, this.touchpadY);
+          }
         }
       },
       (errorCode: number) => {

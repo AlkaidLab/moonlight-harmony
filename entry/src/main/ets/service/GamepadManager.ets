@@ -89,6 +89,14 @@ export class GamepadManager implements UsbDriverListener {
   // 传感器数据发送回调（由 StreamingSession 设置）
   private sensorDataCallback: ((controllerNumber: number, motionType: number, x: number, y: number, z: number) => void) | null = null;
 
+  // 触摸板鼠标模拟
+  private touchpadMouseEnabled: boolean = false;
+  private touchpadLastX: number = -1;
+  private touchpadLastY: number = -1;
+  private touchpadMouseCallback: ((deltaX: number, deltaY: number) => void) | null = null;
+  // 触摸板灵敏度：原始坐标差值 → 鼠标像素的缩放系数
+  private static readonly TOUCHPAD_SENSITIVITY: number = 0.5;
+
   // 2313 自定义动作设置
   private gcButton2313Action: GCButton2313Action = 'guide';
   private gcButton2313ActionCallback: GCButton2313ActionCallback | null = null;
@@ -147,6 +155,7 @@ export class GamepadManager implements UsbDriverListener {
     this.loadSensorSettings();
     this.loadUsbDriverSetting();
     this.loadStartKeyMenuSetting();
+    this.loadTouchpadMouseSetting();
   }
 
   /**
@@ -1681,6 +1690,10 @@ export class GamepadManager implements UsbDriverListener {
     this.mouseEmulationService.cleanup();
     this.vibrationService.stopAll();
 
+    // 重置触摸板鼠标状态
+    this.touchpadLastX = -1;
+    this.touchpadLastY = -1;
+
     if (this.gcAxisFlushTimerId !== -1) {
       clearTimeout(this.gcAxisFlushTimerId);
       this.gcAxisFlushTimerId = -1;
@@ -1822,6 +1835,53 @@ export class GamepadManager implements UsbDriverListener {
     if (this.sensorDataCallback) {
       this.sensorDataCallback(slot, motionType, x, y, z);
     }
+  }
+
+  /**
+   * USB 控制器触摸板数据报告
+   * 当启用触摸板鼠标模拟时，将触摸位移转换为鼠标移动
+   */
+  reportTouchpadInput(
+    controllerId: number,
+    active: boolean,
+    x: number,
+    y: number
+  ): void {
+    if (!this.touchpadMouseEnabled || !this.touchpadMouseCallback) {
+      return;
+    }
+
+    if (active) {
+      if (this.touchpadLastX >= 0 && this.touchpadLastY >= 0) {
+        // 计算位移差值并转换为鼠标移动
+        const deltaX = (x - this.touchpadLastX) * GamepadManager.TOUCHPAD_SENSITIVITY;
+        const deltaY = (y - this.touchpadLastY) * GamepadManager.TOUCHPAD_SENSITIVITY;
+        if (deltaX !== 0 || deltaY !== 0) {
+          this.touchpadMouseCallback(Math.round(deltaX), Math.round(deltaY));
+        }
+      }
+      this.touchpadLastX = x;
+      this.touchpadLastY = y;
+    } else {
+      // 手指离开，重置上次位置
+      this.touchpadLastX = -1;
+      this.touchpadLastY = -1;
+    }
+  }
+
+  /**
+   * 设置触摸板鼠标回调
+   */
+  setTouchpadMouseCallback(callback: ((deltaX: number, deltaY: number) => void) | null): void {
+    this.touchpadMouseCallback = callback;
+  }
+
+  /**
+   * 加载触摸板鼠标设置
+   */
+  async loadTouchpadMouseSetting(): Promise<void> {
+    this.touchpadMouseEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
+    console.info(`[GAMEPAD] 触摸板鼠标模拟: ${this.touchpadMouseEnabled}`);
   }
 
   // ==================== 设备传感器回退 ====================

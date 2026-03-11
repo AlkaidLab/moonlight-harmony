@@ -89,6 +89,10 @@ class TestViewDriverListener implements UsbDriverListener {
     x: number, y: number, z: number): void {
   }
 
+  reportTouchpadInput(controllerId: number, active: boolean,
+    x: number, y: number): void {
+  }
+
   deviceAdded(controller: AbstractController): void {
     this.view.onDeviceAdded(controller);
   }

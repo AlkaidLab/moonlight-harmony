@@ -326,6 +326,11 @@ struct StreamPage {
     // 设置鼠标模拟回调 — 手柄摇杆→鼠标移动/按键→鼠标按键
     this.gamepadManager.setMouseEmulationCallback(new MoonBridgeMouseCallback());
 
+    // 设置触摸板鼠标回调 — DualSense/DS4 触摸板→鼠标移动
+    this.gamepadManager.setTouchpadMouseCallback((deltaX: number, deltaY: number) => {
+      MoonBridge.sendMouseMove(deltaX, deltaY);
+    });
+
     // 设置长按 Start 显示菜单的回调
     this.gamepadManager.setShowGameMenuCallback(() => {
       this.showStreamMenu();
