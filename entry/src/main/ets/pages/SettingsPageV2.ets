@@ -164,7 +164,6 @@ struct SettingsPageV2 {
   @State deadzone: number = 7;
   @State gamepadMotionSensors: boolean = true;
   @State gamepadMotionFallback: boolean = false;
-  @State gamepadTouchpadMouse: boolean = false;
   @State enableStartKeyMenu: boolean = true;
   @State ignoreDeviceDisconnect: boolean = false;
   @State enableKeyInterceptor: boolean = false;
@@ -218,7 +217,6 @@ struct SettingsPageV2 {
   @State perfOverlayItems: string[] = ['resolution', 'decoder', 'render_fps', 'packet_loss', 'bitrate', 'network_latency', 'decode_latency'];
   @State latencyToast: boolean = false;
   @State disableWarnings: boolean = false;
-  @State reduceRefreshRate: boolean = false;
   @State enableStun: boolean = false;
   @State enableEscMenu: boolean = true;
   @State escMenuKey: string = 'ESC';
@@ -470,7 +468,6 @@ struct SettingsPageV2 {
       this.deadzone = await PreferencesUtil.get<number>(SettingsKeys.DEADZONE, 7);
       this.gamepadMotionSensors = await this.loadBoolean(SettingsKeys.GAMEPAD_MOTION_SENSORS, true);
       this.gamepadMotionFallback = await this.loadBoolean(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false);
-      this.gamepadTouchpadMouse = await this.loadBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
       this.enableStartKeyMenu = await this.loadBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true);
       this.ignoreDeviceDisconnect = await this.loadBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false);
       this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false);
@@ -530,7 +527,6 @@ struct SettingsPageV2 {
       this.perfOverlayItems = itemsStr.split(',').filter(item => item.length > 0);
       this.latencyToast = await this.loadBoolean(SettingsKeys.LATENCY_TOAST, false);
       this.disableWarnings = await this.loadBoolean(SettingsKeys.DISABLE_WARNINGS, false);
-      this.reduceRefreshRate = await this.loadBoolean(SettingsKeys.REDUCE_REFRESH_RATE, false);
       this.enableStun = await this.loadBoolean(SettingsKeys.ENABLE_STUN, false);
       this.enableEscMenu = await this.loadBoolean(SettingsKeys.ENABLE_ESC_MENU, true);
       this.escMenuKey = await PreferencesUtil.get<string>(SettingsKeys.ESC_MENU_KEY, 'ESC');
@@ -1297,16 +1293,6 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '触摸板作为鼠标',
-                subtitle: '手柄触摸板模拟鼠标',
-                type: 'toggle',
-                value: this.gamepadTouchpadMouse,
-                action: () => {
-                  this.gamepadTouchpadMouse = !this.gamepadTouchpadMouse;
-                  this.saveSetting(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, this.gamepadTouchpadMouse);
-                }
-              },
-              {
                 title: '长按 Start 菜单',
                 subtitle: '长按 Start 键显示菜单',
                 type: 'toggle',
@@ -1834,16 +1820,6 @@ struct SettingsPageV2 {
                 action: () => {
                   this.disableWarnings = !this.disableWarnings;
                   this.saveSetting(SettingsKeys.DISABLE_WARNINGS, this.disableWarnings);
-                }
-              },
-              {
-                title: '降低刷新率',
-                subtitle: '串流时降低显示器刷新率',
-                type: 'toggle',
-                value: this.reduceRefreshRate,
-                action: () => {
-                  this.reduceRefreshRate = !this.reduceRefreshRate;
-                  this.saveSetting(SettingsKeys.REDUCE_REFRESH_RATE, this.reduceRefreshRate);
                 }
               },
               {
