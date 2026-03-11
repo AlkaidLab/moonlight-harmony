@@ -34,7 +34,6 @@ export abstract class AbstractDualSenseController extends AbstractController {
   
   private stopped: boolean = false;
   
-  // Native 高速轮询器
   // DDK 高速轮询器 (绕过 usbManager IPC)
   private ddkPoller: DdkUsbPoller | null = null;
   private useDdkPolling: boolean = false;
@@ -536,15 +535,16 @@ export abstract class AbstractDualSenseController extends AbstractController {
     // 先发送振动停止命令（必须在 DDK 释放前，否则无法发送）
     this.rumble(0, 0);
 
-    // 停止 DDK 轮询器
+    // 保存 DDK 状态，再停止 DDK 轮询器
+    const wasDdkPolling = this.useDdkPolling;
     if (this.ddkPoller) {
       this.ddkPoller.stop();
       this.ddkPoller = null;
       this.useDdkPolling = false;
     }
     
-    // 释放接口 (仅 usbManager 路径)
-    if (!this.useDdkPolling && this.pipe && this.usbInterface) {
+    // 释放接口 (仅 usbManager 路径，DDK 路径由 stopPoller 内部释放)
+    if (!wasDdkPolling && this.pipe && this.usbInterface) {
       try {
         usbManager.releaseInterface(this.pipe, this.usbInterface);
       } catch (err) {

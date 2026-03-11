@@ -71,6 +71,8 @@ export class UsbDriverService implements UsbDriverListener {
   private rescanTimerId: number | null = null;
   // 重新扫描间隔（毫秒）- 每 5 秒检查一次
   private static readonly RESCAN_INTERVAL_MS: number = 5000;
+  // DDK 高速轮询是否启用（缓存，用于 stop() 决定是否重绑内核驱动）
+  private ddkEnabled: boolean = false;
   
   private constructor() {
     console.info(`${TAG} 创建 USB 驱动服务实例`);
@@ -352,11 +354,16 @@ export class UsbDriverService implements UsbDriverListener {
     // 背景：claimInterface(force=true) 会解绑内核 HID 驱动，
     // 但 releaseInterface() + closePipe() 后内核不会自动重新绑定。
     // 策略：重新打开设备，通过 native ioctl (USBDEVFS_CONNECT) 显式通知内核重绑定。
-    if (stoppedCount > 0) {
+    // 注意：DDK 模式下跳过重绑定，避免下次启动时 ClaimInterface 竞争
+    if (stoppedCount > 0 && !this.ddkEnabled) {
       setTimeout(() => {
         this.resetReleasedUsbDevices(releasedDeviceKeys);
       }, 300);  // 等待 300ms 确保管道完全关闭
+    } else if (this.ddkEnabled) {
+      console.info(`${TAG} DDK 模式，跳过内核 HID 驱动重绑定`);
     }
+    
+    this.ddkEnabled = false;
   }
   
   /**
@@ -577,6 +584,7 @@ export class UsbDriverService implements UsbDriverListener {
       // 应用 DDK 高速轮询设置
       console.info(`${TAG} DDK 高速轮询设置: ${inputSettings.ddkHighSpeedPolling}`);
       if (inputSettings.ddkHighSpeedPolling) {
+        this.ddkEnabled = true;
         controller.setDdkPollingEnabled(true);
         console.info(`${TAG} 设备 ${device.name} 已启用 DDK 高速轮询`);
       }
