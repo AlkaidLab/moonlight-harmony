@@ -57,6 +57,14 @@ interface DigitalDirState {
   right: boolean;
 }
 
+/** 吸附计算结果 */
+interface SnapResult {
+  /** 吸附后的 vp 偏移 X */
+  dx: number;
+  /** 吸附后的 vp 偏移 Y */
+  dy: number;
+}
+
 // =============================================================================
 // 常量
 // =============================================================================
@@ -120,6 +128,12 @@ struct CustomKeyBtn {
   onDragFinish: (keyId: string, deltaX: number, deltaY: number) => void = () => {};
   onSelect: (keyId: string) => void = () => {};
   onLongPress: (keyId: string) => void = () => {};
+
+  /**
+   * 吸附计算回调：传入按键 ID 和原始 vp 偏移，返回吸附后的 vp 偏移
+   * 返回 null 表示不吸附
+   */
+  snapCalculator: (keyId: string, rawDx: number, rawDy: number) => SnapResult | null = () => null;
 
   // ── 内部状态（独立 @State —— 触摸时变化只触发自身重渲染） ──
   @State private isPressed: boolean = false;
@@ -229,8 +243,14 @@ struct CustomKeyBtn {
           this.cancelLongPress();
         }
         if (this.dragging) {
-          this.dragOffsetX = dx;
-          this.dragOffsetY = dy;
+          const snapResult = this.snapCalculator(this.keyDef.id, dx, dy);
+          if (snapResult) {
+            this.dragOffsetX = snapResult.dx;
+            this.dragOffsetY = snapResult.dy;
+          } else {
+            this.dragOffsetX = dx;
+            this.dragOffsetY = dy;
+          }
         }
         break;
       }
@@ -313,9 +333,13 @@ export struct CustomKeyOverlay {
   private resizeStartY: number = 0;
   private resizeOrigWidth: number = 0;
   private resizeOrigHeight: number = 0;
-  /** 网格吸附 */
-  @State private gridSnap: boolean = false;
-  private static readonly GRID_STEP = 0.05;
+  /** 元素对齐吸附 */
+  @State private snapEnabled: boolean = false;
+  /** 吸附阈值 (vp) */
+  private static readonly SNAP_THRESHOLD_VP = 8;
+  /** 对齐辅助线位置 (vp)，-1 表示隐藏 */
+  @State private alignGuideX: number = -1;
+  @State private alignGuideY: number = -1;
 
   /** 二维码分享面板 */
   @State private showSharePanel: boolean = false;
@@ -387,6 +411,11 @@ export struct CustomKeyOverlay {
     Column() {
       // 主区域
       Stack() {
+        // 对齐辅助线（拖拽吸附时显示）
+        if (this.editMode && this.snapEnabled) {
+          this.AlignmentGuides()
+        }
+
         // 自定义按键 —— 每个是独立 @Component，有自己的触摸生命周期
         // 按 layer 升序排列，layer 大的在上层
         ForEach(this.getSortedKeys(), (key: CustomKeyDef) => {
@@ -508,10 +537,15 @@ export struct CustomKeyOverlay {
                 keyDef: key,
                 editMode: this.editMode,
                 isSelected: this.selectedKeyId === key.id,
+                snapCalculator: (keyId: string, rawDx: number, rawDy: number): SnapResult | null => {
+                  return this.calcAlignmentSnap(keyId, rawDx, rawDy);
+                },
                 onAction: (action: KeyAction, isDown: boolean): void => {
                   this.onKeyAction(action, isDown);
                 },
                 onDragFinish: (keyId: string, deltaX: number, deltaY: number): void => {
+                  this.alignGuideX = -1;
+                  this.alignGuideY = -1;
                   this.handleDragEnd(keyId, deltaX, deltaY);
                 },
                 onSelect: (keyId: string): void => {
@@ -602,15 +636,15 @@ export struct CustomKeyOverlay {
 
           Row({ space: 4 }) {
             Text('⊞')
-              .fontSize(16).fontColor(this.gridSnap ? Color.White : '#60FFFFFF')
+              .fontSize(16).fontColor(this.snapEnabled ? Color.White : '#60FFFFFF')
             Text('吸附')
-              .fontSize(OV_FONT_LG).fontColor(this.gridSnap ? OV_TEXT_WHITE : '#60FFFFFF').fontWeight(FontWeight.Medium)
+              .fontSize(OV_FONT_LG).fontColor(this.snapEnabled ? OV_TEXT_WHITE : '#60FFFFFF').fontWeight(FontWeight.Medium)
           }
           .height(32).padding({ left: 10, right: 12 })
-          .borderRadius(16).backgroundColor(this.gridSnap ? '#5090B0' : '#40404060')
+          .borderRadius(16).backgroundColor(this.snapEnabled ? '#5090B0' : '#40404060')
           .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
           .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-          .onClick(() => { this.gridSnap = !this.gridSnap; })
+          .onClick(() => { this.snapEnabled = !this.snapEnabled; })
 
           Row({ space: 4 }) {
             Text('📱')
@@ -777,6 +811,85 @@ export struct CustomKeyOverlay {
     if (state.right) { this.onKeyAction(action.rightAction, false); state.right = false; }
   }
 
+  /**
+   * PPT 风格元素对齐吸附计算。
+   * 检查拖拽中按键的边缘/中心是否与其他按键的边缘/中心对齐，
+   * 在阈值范围内则吸附到对齐位置，并更新辅助线坐标。
+   */
+  private calcAlignmentSnap(keyId: string, rawDx: number, rawDy: number): SnapResult | null {
+    if (!this.snapEnabled) return null;
+    const key = this.keys.find(k => k.id === keyId);
+    if (!key || this.screenWidthVp <= 0) return null;
+
+    const THRESHOLD = CustomKeyOverlay.SNAP_THRESHOLD_VP;
+    const W = this.screenWidthVp;
+    const H = this.screenHeightVp;
+
+    // 当前拖拽候选位置（中心，vp）
+    const candCx = key.xPercent * W + rawDx;
+    const candCy = key.yPercent * H + rawDy;
+    const halfW = key.width / 2;
+    const halfH = key.height / 2;
+
+    // 收集其他元素的对齐目标（vp）
+    const targetsX: number[] = [0, W / 2, W]; // 屏幕左、中、右
+    const targetsY: number[] = [0, H / 2, H]; // 屏幕上、中、下
+
+    for (const other of this.keys) {
+      if (other.id === keyId) continue;
+      const ocx = other.xPercent * W;
+      const ocy = other.yPercent * H;
+      const ohw = other.width / 2;
+      const ohh = other.height / 2;
+      targetsX.push(ocx - ohw, ocx, ocx + ohw); // 左边缘、中心、右边缘
+      targetsY.push(ocy - ohh, ocy, ocy + ohh); // 上边缘、中心、下边缘
+    }
+
+    // X 轴：检查左边缘、中心、右边缘与目标的距离
+    const candXPoints: number[] = [candCx - halfW, candCx, candCx + halfW];
+    let bestDx = rawDx;
+    let bestDistX = THRESHOLD;
+    let guideX = -1;
+
+    for (let i = 0; i < candXPoints.length; i++) {
+      for (const target of targetsX) {
+        const dist = Math.abs(candXPoints[i] - target);
+        if (dist < bestDistX) {
+          bestDistX = dist;
+          bestDx = rawDx + (target - candXPoints[i]); // 修正偏移使候选点对齐到目标
+          guideX = target;
+        }
+      }
+    }
+
+    // Y 轴：检查上边缘、中心、下边缘与目标的距离
+    const candYPoints: number[] = [candCy - halfH, candCy, candCy + halfH];
+    let bestDy = rawDy;
+    let bestDistY = THRESHOLD;
+    let guideY = -1;
+
+    for (let i = 0; i < candYPoints.length; i++) {
+      for (const target of targetsY) {
+        const dist = Math.abs(candYPoints[i] - target);
+        if (dist < bestDistY) {
+          bestDistY = dist;
+          bestDy = rawDy + (target - candYPoints[i]);
+          guideY = target;
+        }
+      }
+    }
+
+    // 更新辅助线（-1 = 隐藏）
+    this.alignGuideX = guideX;
+    this.alignGuideY = guideY;
+
+    // 有任何一个轴发生吸附就返回结果
+    if (guideX >= 0 || guideY >= 0) {
+      return { dx: bestDx, dy: bestDy };
+    }
+    return null;
+  }
+
   private handleDragEnd(keyId: string, deltaX: number, deltaY: number): void {
     const idx = this.keys.findIndex(k => k.id === keyId);
     if (idx === -1) return;
@@ -789,12 +902,6 @@ export struct CustomKeyOverlay {
       // 边界约束: 0.0~1.0
       updated.xPercent = Math.max(0.0, Math.min(1.0, updated.xPercent));
       updated.yPercent = Math.max(0.0, Math.min(1.0, updated.yPercent));
-      // 网格吸附
-      if (this.gridSnap) {
-        const step = CustomKeyOverlay.GRID_STEP;
-        updated.xPercent = Math.round(updated.xPercent / step) * step;
-        updated.yPercent = Math.round(updated.yPercent / step) * step;
-      }
     }
     const newKeys: CustomKeyDef[] = this.keys.slice();
     newKeys[idx] = updated;
@@ -1124,6 +1231,32 @@ export struct CustomKeyOverlay {
       message: `已合并 ${this.importPreviewCount} 个按键`,
       duration: 2000,
     });
+  }
+
+  @Builder
+  AlignmentGuides() {
+    // 对齐辅助线 — 拖拽吸附时在对齐位置绘制蓝色参考线
+    Stack() {
+      if (this.alignGuideX >= 0) {
+        Divider()
+          .vertical(true)
+          .strokeWidth(1)
+          .color('#80A8D8EA')
+          .height('100%')
+          .position({ x: this.alignGuideX, y: 0 })
+      }
+      if (this.alignGuideY >= 0) {
+        Divider()
+          .vertical(false)
+          .strokeWidth(1)
+          .color('#80A8D8EA')
+          .width('100%')
+          .position({ x: 0, y: this.alignGuideY })
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
