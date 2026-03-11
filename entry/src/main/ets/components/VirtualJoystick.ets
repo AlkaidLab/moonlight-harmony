@@ -132,6 +132,7 @@ export struct VirtualJoystick {
     .opacity(this.opacity_ / 100)
     .hitTestBehavior(HitTestMode.Block)
     .onTouch((event: TouchEvent): void => {
+      event.stopPropagation();
       if (this.isEditMode()) return;
       this.handleTouch(event);
     })

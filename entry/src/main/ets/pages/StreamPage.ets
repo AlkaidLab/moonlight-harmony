@@ -1237,7 +1237,8 @@ struct StreamPage {
         }
           .width('100%')
           .height('100%')
-          .hitTestBehavior(HitTestMode.Transparent)
+          // Default: 按键区域(Block)阻断穿透，空白区域穿透给 XComponent
+          .hitTestBehavior(HitTestMode.Default)
           .opacity(this.customKeyHitReady > 0 ? 1 : 0.99) // 父层刷新命中测试区域
       }
 
