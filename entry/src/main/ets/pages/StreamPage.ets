@@ -879,6 +879,10 @@ struct StreamPage {
       this.controllerOpacityValue = await VirtualControllerOverlay.loadOpacity();
       await this.gamepadManager.reloadSettings();
 
+      // 配置 ESC 菜单按键（可替换为 F1/F12/~ 等）
+      const escMenuKey = await PreferencesUtil.get<string>(SettingsKeys.ESC_MENU_KEY, 'ESC');
+      this.inputHandler.setMenuKey(escMenuKey);
+
       // 初始化自定义按键存储
       await this.customKeyManager?.init();
 
