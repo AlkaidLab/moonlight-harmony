@@ -19,7 +19,7 @@
  */
 
 import { vibrator } from '@kit.SensorServiceKit';
-import { display, LengthMetrics, promptAction } from '@kit.ArkUI';
+import { componentSnapshot, display, LengthMetrics, promptAction } from '@kit.ArkUI';
 import {
   CustomKeyDef,
   KeyAction,
@@ -42,6 +42,9 @@ import { VirtualDPad } from './VirtualDPad';
 import { VirtualWheelPad } from './VirtualWheelPad';
 import { image } from '@kit.ImageKit';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { systemShare } from '@kit.ShareKit';
+import { fileIo, fileUri } from '@kit.CoreFileKit';
+import { common } from '@kit.AbilityKit';
 import {
   OV_ACCENT_BLUE, OV_TEXT_BRIGHT, OV_TEXT_MEDIUM, OV_TEXT_DIM,
   OV_TEXT_WHITE, OV_TEXT_SUBTLE, OV_BG_TRACK, OV_BG_CARD_LIGHTER,
@@ -1164,6 +1167,118 @@ export struct CustomKeyOverlay {
     }
   }
 
+  /** 通过系统分享面板分享美化卡片（含二维码 + 标题） */
+  private async shareToFriend(): Promise<void> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const profileName = await CustomKeyStore.getActiveProfileName();
+      const keyCount = this.keys.length;
+      const qrPixel = this.qrPixelMap;
+
+      // 先关闭自身面板，避免与系统分享面板冲突
+      this.showSharePanel = false;
+
+      let shareData: systemShare.SharedData;
+
+      if (qrPixel) {
+        // 用 componentSnapshot 渲染美化卡片
+        const cardPixelMap = await componentSnapshot.createFromBuilder((): void => {
+          this.ShareCardBuilder(qrPixel, profileName, keyCount);
+        }, 300, true);
+
+        const tempPath = context.tempDir + '/moonlight_share_card.png';
+        const packer = image.createImagePacker();
+        const buf = await packer.packing(cardPixelMap, { format: 'image/png', quality: 100 });
+        packer.release();
+        const file = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+        fileIo.writeSync(file.fd, buf);
+        fileIo.closeSync(file.fd);
+
+        shareData = new systemShare.SharedData({
+          utd: 'general.png',
+          uri: fileUri.getUriFromPath(tempPath),
+          title: `Moonlight · ${profileName}`,
+          description: `${keyCount} 个自定义按键`,
+        });
+      } else {
+        // 无二维码：分享文本
+        shareData = new systemShare.SharedData({
+          utd: 'general.plain-text',
+          content: this.shareJson,
+          title: `Moonlight · ${profileName}`,
+        });
+      }
+
+      const controller = new systemShare.ShareController(shareData);
+      await controller.show(context, {
+        selectionMode: systemShare.SelectionMode.SINGLE,
+        previewMode: systemShare.SharePreviewMode.DEFAULT,
+      });
+    } catch (e) {
+      console.error('[CustomKeyOverlay] 分享失败:', JSON.stringify(e));
+      promptAction.showToast({ message: '分享失败', duration: 1500 });
+    }
+  }
+
+  @Builder
+  ShareCardBuilder(qrPixel: image.PixelMap, profileName: string, keyCount: number) {
+    Column() {
+      // 顶部品牌区
+      Row({ space: 10 }) {
+        Image($r('app.media.app_icon'))
+          .width(36).height(36)
+          .borderRadius(8)
+        Column({ space: 2 }) {
+          Text('Moonlight V+')
+            .fontSize(18).fontColor('#FFA8D8EA').fontWeight(FontWeight.Bold)
+          Text('王冠的自定义按键')
+            .fontSize(11).fontColor('#80FFFFFF')
+        }
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .padding({ left: 24, right: 24, top: 24, bottom: 16 })
+
+      // 二维码区域（带背景容器）
+      Column() {
+        Image(qrPixel)
+          .width(200).height(200)
+          .objectFit(ImageFit.Contain)
+      }
+      .padding(20)
+      .backgroundColor('#F5F5F5')
+      .borderRadius(16)
+      .margin({ left: 28, right: 28 })
+
+      // 配置名称 + 按键数
+      Column({ space: 6 }) {
+        Text(`✨ ${profileName}`)
+          .fontSize(16).fontColor('#FFFFFFFF').fontWeight(FontWeight.Bold)
+          .textAlign(TextAlign.Center)
+        Text(`包含 ${keyCount} 个按键 · 为你精心调配`)
+          .fontSize(12).fontColor('#99A8D8EA')
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+      .padding({ top: 16, bottom: 14 })
+
+      // 底部提示
+      Divider().color('#20A8D8EA').width('70%')
+      Text('打开 Moonlight V+ → 扫一扫即可导入 🎮')
+        .fontSize(11).fontColor('#60FFFFFF')
+        .textAlign(TextAlign.Center)
+        .padding({ top: 10, bottom: 24 })
+    }
+    .width(320)
+    .linearGradient({
+      angle: 180,
+      colors: [['#FF1E2340', 0], ['#FF1A1A2E', 0.5], ['#FF15192B', 1]],
+    })
+    .borderRadius(20)
+    .border({ width: 1, color: '#30A8D8EA' })
+  }
+
   /** 从剪贴板粘贴导入 */
   private async pasteFromClipboard(): Promise<void> {
     try {
@@ -1358,14 +1473,23 @@ export struct CustomKeyOverlay {
                 .border({ width: 1, color: '#20FFFFFF' })
                   .borderRadius(8).backgroundColor('#20FFFFFF')
               }
-              // 复制到剪贴板按钮
-              Text('📋 复制到剪贴板')
-                .fontSize(12).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
-                .padding({ left: 12, right: 12 }).height(30)
-                .borderRadius(15).backgroundColor('#506080A0')
-                .border({ width: 1, color: '#306080A0' })
-                .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-                .onClick(() => { this.copyToClipboard(); })
+              // 操作按钮
+              Row({ space: 8 }) {
+                Text('📋 复制')
+                  .fontSize(12).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+                  .padding({ left: 10, right: 10 }).height(30)
+                  .borderRadius(15).backgroundColor('#506080A0')
+                  .border({ width: 1, color: '#306080A0' })
+                  .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                  .onClick(() => { this.copyToClipboard(); })
+                Text('📤 分享')
+                  .fontSize(12).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+                  .padding({ left: 10, right: 10 }).height(30)
+                  .borderRadius(15).backgroundColor('#5090B0')
+                  .border({ width: 1, color: '#306090B0' })
+                  .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                  .onClick(() => { this.shareToFriend(); })
+              }
 
               Text(`${this.keys.length} 个按键 · ${this.shareJson.length} 字符`)
                 .fontSize(10).fontColor(OV_TEXT_DIM)
