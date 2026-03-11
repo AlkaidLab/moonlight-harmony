@@ -310,114 +310,116 @@ export struct VirtualController {
   }
 
   // ==================== 十字键（Cross D-Pad）====================
+  // 当前 DPad 方向状态（位标志），用于在 Move 事件中跟踪变化
+  private dpadDirection: number = 0;
+
   @Builder
   buildCrossDpad() {
-    // 十字键：3x3 网格，只填充十字位置，外角圆润
-    // 每个格子 36x36，间距 1px
-    Column() {
-      // 第一行：空 | 上 | 空
-      Row() {
-        Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
-        Column() {
-          Text('▴')
-            .fontSize(14 * this.controllerScale)
-            .fontColor(this.withAlpha('#FFFFFF', 0.5))
-            .fontWeight(FontWeight.Bold)
+    // 采用 Android 风格的单一触摸区域 + 九宫格坐标判定
+    // 支持 8 方向 + 手指滑动无缝换向
+    Stack() {
+      // 视觉层：纯展示的 3x3 十字键外观
+      Column() {
+        // 第一行：角 | 上 | 角
+        Row() {
+          Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
+            .borderRadius({ topLeft: 14, topRight: 0, bottomLeft: 0, bottomRight: 0 })
+          Column() {
+            Text('▴')
+              .fontSize(14 * this.controllerScale)
+              .fontColor(this.withAlpha('#FFFFFF', 0.5))
+              .fontWeight(FontWeight.Bold)
+          }
+          .width(36 * this.controllerScale)
+          .height(36 * this.controllerScale)
+          .justifyContent(FlexAlign.Center)
+          .borderRadius({ topLeft: 14, topRight: 14, bottomLeft: 0, bottomRight: 0 })
+          .border({
+            width: { top: 1, left: 1, right: 1, bottom: 0 },
+            color: this.withAlpha('#FFFFFF', 0.18)
+          })
+          Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
+            .borderRadius({ topLeft: 0, topRight: 14, bottomLeft: 0, bottomRight: 0 })
         }
-        .width(36 * this.controllerScale)
-        .height(36 * this.controllerScale)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(Color.Transparent)
-        .borderRadius({ topLeft: 14, topRight: 14, bottomLeft: 0, bottomRight: 0 })
-        .border({
-          width: { top: 1, left: 1, right: 1, bottom: 0 },
-          color: this.withAlpha('#FFFFFF', 0.18)
-        })
-        .hitTestBehavior(HitTestMode.Block)
-        .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.UP, event))
 
-        Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
+        // 第二行：左 | 中心 | 右
+        Row() {
+          Column() {
+            Text('◂')
+              .fontSize(14 * this.controllerScale)
+              .fontColor(this.withAlpha('#FFFFFF', 0.5))
+              .fontWeight(FontWeight.Bold)
+          }
+          .width(36 * this.controllerScale)
+          .height(36 * this.controllerScale)
+          .justifyContent(FlexAlign.Center)
+          .borderRadius({ topLeft: 14, topRight: 0, bottomLeft: 14, bottomRight: 0 })
+          .border({
+            width: { top: 1, left: 1, right: 0, bottom: 1 },
+            color: this.withAlpha('#FFFFFF', 0.18)
+          })
+
+          Column() {
+            Circle()
+              .width(8 * this.controllerScale)
+              .height(8 * this.controllerScale)
+              .fill('#FFFFFF')
+              .fillOpacity(0.12)
+          }
+          .width(36 * this.controllerScale)
+          .height(36 * this.controllerScale)
+          .justifyContent(FlexAlign.Center)
+
+          Column() {
+            Text('▸')
+              .fontSize(14 * this.controllerScale)
+              .fontColor(this.withAlpha('#FFFFFF', 0.5))
+              .fontWeight(FontWeight.Bold)
+          }
+          .width(36 * this.controllerScale)
+          .height(36 * this.controllerScale)
+          .justifyContent(FlexAlign.Center)
+          .borderRadius({ topLeft: 0, topRight: 14, bottomLeft: 0, bottomRight: 14 })
+          .border({
+            width: { top: 1, left: 0, right: 1, bottom: 1 },
+            color: this.withAlpha('#FFFFFF', 0.18)
+          })
+        }
+
+        // 第三行：角 | 下 | 角
+        Row() {
+          Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
+            .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 14, bottomRight: 0 })
+          Column() {
+            Text('▾')
+              .fontSize(14 * this.controllerScale)
+              .fontColor(this.withAlpha('#FFFFFF', 0.5))
+              .fontWeight(FontWeight.Bold)
+          }
+          .width(36 * this.controllerScale)
+          .height(36 * this.controllerScale)
+          .justifyContent(FlexAlign.Center)
+          .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 14, bottomRight: 14 })
+          .border({
+            width: { top: 0, left: 1, right: 1, bottom: 1 },
+            color: this.withAlpha('#FFFFFF', 0.18)
+          })
+          Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
+            .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 14 })
+        }
       }
+      .hitTestBehavior(HitTestMode.None) // 视觉层不拦截触摸
 
-      // 第二行：左 | 中心 | 右
-      Row() {
-        Column() {
-          Text('◂')
-            .fontSize(14 * this.controllerScale)
-            .fontColor(this.withAlpha('#FFFFFF', 0.5))
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(36 * this.controllerScale)
-        .height(36 * this.controllerScale)
-        .justifyContent(FlexAlign.Center)
+      // 触摸层：覆盖整个 3x3 区域，统一处理触摸 + 坐标判定方向
+      Column()
+        .width(108 * this.controllerScale)
+        .height(108 * this.controllerScale)
         .backgroundColor(Color.Transparent)
-        .borderRadius({ topLeft: 14, topRight: 0, bottomLeft: 14, bottomRight: 0 })
-        .border({
-          width: { top: 1, left: 1, right: 0, bottom: 1 },
-          color: this.withAlpha('#FFFFFF', 0.18)
-        })
         .hitTestBehavior(HitTestMode.Block)
-        .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.LEFT, event))
-
-        // 中心格（十字交叉点）
-        Column() {
-          Circle()
-            .width(8 * this.controllerScale)
-            .height(8 * this.controllerScale)
-            .fill('#FFFFFF')
-            .fillOpacity(0.12)
-        }
-        .width(36 * this.controllerScale)
-        .height(36 * this.controllerScale)
-        .justifyContent(FlexAlign.Center)
-        .border({
-          width: { top: 0, left: 0, right: 0, bottom: 0 },
-          color: this.withAlpha('#FFFFFF', 0.18)
-        })
-
-        Column() {
-          Text('▸')
-            .fontSize(14 * this.controllerScale)
-            .fontColor(this.withAlpha('#FFFFFF', 0.5))
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(36 * this.controllerScale)
-        .height(36 * this.controllerScale)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(Color.Transparent)
-        .borderRadius({ topLeft: 0, topRight: 14, bottomLeft: 0, bottomRight: 14 })
-        .border({
-          width: { top: 1, left: 0, right: 1, bottom: 1 },
-          color: this.withAlpha('#FFFFFF', 0.18)
-        })
-        .hitTestBehavior(HitTestMode.Block)
-        .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.RIGHT, event))
-      }
-
-      // 第三行：空 | 下 | 空
-      Row() {
-        Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
-        Column() {
-          Text('▾')
-            .fontSize(14 * this.controllerScale)
-            .fontColor(this.withAlpha('#FFFFFF', 0.5))
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(36 * this.controllerScale)
-        .height(36 * this.controllerScale)
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(Color.Transparent)
-        .borderRadius({ topLeft: 0, topRight: 0, bottomLeft: 14, bottomRight: 14 })
-        .border({
-          width: { top: 0, left: 1, right: 1, bottom: 1 },
-          color: this.withAlpha('#FFFFFF', 0.18)
-        })
-        .hitTestBehavior(HitTestMode.Block)
-        .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.DOWN, event))
-
-        Column().width(36 * this.controllerScale).height(36 * this.controllerScale)
-      }
+        .onTouch((event: TouchEvent) => this.handleDpadTouch(event))
     }
+    .width(108 * this.controllerScale)
+    .height(108 * this.controllerScale)
   }
 
   // ==================== 中间功能键（Back/Start）====================
@@ -464,6 +466,97 @@ export struct VirtualController {
   }
 
   // ==================== 事件处理 ====================
+
+  /**
+   * DPad 统一触摸处理（Android 风格九宫格坐标判定）
+   * 支持 8 方向 + 手指滑动无缝换向
+   */
+  private handleDpadTouch(event: TouchEvent): void {
+    event.stopPropagation();
+
+    // Up/Cancel 先处理：释放所有方向（不依赖触摸坐标）
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      const allDirs: number[] = [
+        ControllerButton.UP as number,
+        ControllerButton.DOWN as number,
+        ControllerButton.LEFT as number,
+        ControllerButton.RIGHT as number
+      ];
+      for (const dir of allDirs) {
+        if (this.dpadDirection & dir) {
+          this.onInput({
+            type: InputType.CONTROLLER_BUTTON,
+            timestamp: Date.now(),
+            controllerIndex: 0,
+            button: dir as ControllerButton,
+            isPressed: false
+          } as ControllerButtonEvent);
+        }
+      }
+      this.dpadDirection = 0;
+      return;
+    }
+
+    // Down/Move：根据坐标判定方向
+    const touch = event.touches[0];
+    if (!touch) return;
+
+    if (event.type === TouchType.Down || event.type === TouchType.Move) {
+      const totalSize = 108 * this.controllerScale;
+      const oneThird = totalSize / 3;
+      const twoThirds = oneThird * 2;
+
+      let newDirection = 0;
+      if (touch.x < oneThird)  newDirection |= ControllerButton.LEFT as number;
+      if (touch.x > twoThirds) newDirection |= ControllerButton.RIGHT as number;
+      if (touch.y < oneThird)  newDirection |= ControllerButton.UP as number;
+      if (touch.y > twoThirds) newDirection |= ControllerButton.DOWN as number;
+
+      if (newDirection !== this.dpadDirection) {
+        // 释放不再按下的方向
+        const released = this.dpadDirection & ~newDirection;
+        // 按下新增的方向
+        const pressed = newDirection & ~this.dpadDirection;
+
+        const allDirs: number[] = [
+          ControllerButton.UP as number,
+          ControllerButton.DOWN as number,
+          ControllerButton.LEFT as number,
+          ControllerButton.RIGHT as number
+        ];
+
+        for (const dir of allDirs) {
+          if (released & dir) {
+            this.onInput({
+              type: InputType.CONTROLLER_BUTTON,
+              timestamp: Date.now(),
+              controllerIndex: 0,
+              button: dir as ControllerButton,
+              isPressed: false
+            } as ControllerButtonEvent);
+          }
+        }
+        for (const dir of allDirs) {
+          if (pressed & dir) {
+            this.onInput({
+              type: InputType.CONTROLLER_BUTTON,
+              timestamp: Date.now(),
+              controllerIndex: 0,
+              button: dir as ControllerButton,
+              isPressed: true
+            } as ControllerButtonEvent);
+          }
+        }
+
+        if (pressed && this.config.enableVibration !== false) {
+          this.triggerVibration();
+        }
+
+        this.dpadDirection = newDirection;
+      }
+    }
+  }
+
   private handleButtonTouch(button: ControllerButton, event: TouchEvent): void {
     event.stopPropagation();
     const isPressed = event.type === TouchType.Down;
