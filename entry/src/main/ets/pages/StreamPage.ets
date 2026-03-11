@@ -872,6 +872,9 @@ struct StreamPage {
       this.lifecycleManager.setLatencyToastEnabled(
         await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false)
       );
+      this.lifecycleManager.setDisableWarnings(
+        await PreferencesUtil.get<boolean>(SettingsKeys.DISABLE_WARNINGS, false)
+      );
       this.enableBackgroundTask = await PreferencesUtil.get<boolean>(SettingsKeys.ENABLE_BACKGROUND_TASK, true);
       this.lifecycleManager.setEnableBackgroundTask(this.enableBackgroundTask);
       this.useVirtualKeyboard = await PreferencesUtil.get<boolean>(SettingsKeys.ENABLE_ONSCREEN_KEYBOARD, false);
@@ -1195,6 +1198,10 @@ struct StreamPage {
           touchPassthrough: $touchPassthrough,
           controllerScale: $controllerScaleValue,
           controllerOpacity: $controllerOpacityValue,
+          onlyL3R3: this.viewModel.inputSettings?.onlyL3R3 ?? false,
+          showGuideButton: this.viewModel.inputSettings?.showGuideButton ?? true,
+          vibrateOsc: this.viewModel.inputSettings?.vibrateOsc ?? true,
+          halfHeightPortrait: this.viewModel.inputSettings?.halfHeightOscPortrait ?? true,
           onInput: (input) => {
             this.viewModel.sendInput(input);
           }

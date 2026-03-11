@@ -56,6 +56,8 @@ export class StreamLifecycleManager {
 
   // ── 延迟统计 ──
   private latencyToastEnabled: boolean = false;
+  /** 禁用串流期间的连接警告消息 */
+  private disableWarnings: boolean = false;
 
   /**
    * 初始化依赖项
@@ -72,6 +74,13 @@ export class StreamLifecycleManager {
    */
   setLatencyToastEnabled(enabled: boolean): void {
     this.latencyToastEnabled = enabled;
+  }
+
+  /**
+   * 设置是否禁用串流期间的连接警告消息
+   */
+  setDisableWarnings(disabled: boolean): void {
+    this.disableWarnings = disabled;
   }
 
   /**
@@ -393,6 +402,9 @@ export class StreamLifecycleManager {
 
     if (errorCode === ML_ERROR_GRACEFUL_TERMINATION) {
       // 服务器正常关闭（用户在服务器端退出游戏），stopStreaming 内部会显示延迟统计
+      this.callbacks?.stopStreaming();
+    } else if (this.disableWarnings) {
+      // 禁用警告：不弹出错误对话框，直接停止串流
       this.callbacks?.stopStreaming();
     } else {
       // 连接异常终止，进行端口诊断并显示错误信息

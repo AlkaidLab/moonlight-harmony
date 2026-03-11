@@ -16,6 +16,7 @@ import { InputEvent, InputType, ControllerButton, ControllerButtonEvent, Control
 import { AnalogStick, AnalogStickConfig } from './AnalogStick';
 import { vibrator } from '@kit.SensorServiceKit';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { display } from '@kit.ArkUI';
 
 const SCALE_KEY = 'virtual_controller_scale';
 const OPACITY_KEY = 'virtual_controller_opacity';
@@ -40,6 +41,8 @@ export interface VirtualControllerConfig {
   showShoulder?: boolean;
   /** 是否显示 Start/Back/Guide */
   showCenter?: boolean;
+  /** 是否显示 Guide 按钮（showCenter 为 true 时生效） */
+  showGuideButton?: boolean;
   /** 是否显示独立 L3/R3 按钮 */
   showL3R3?: boolean;
   /** 启用震动反馈 */
@@ -252,20 +255,22 @@ export struct VirtualController {
           // Back
           this.buildCenterButton('◂', 'BACK', ControllerButton.BACK)
 
-          // Guide
-          Column() {
-            Text('◉')
-              .fontSize(18 * this.controllerScale)
-              .fontColor(this.withAlpha('#7EB8E0', 0.6))
+          // Guide（可通过设置隐藏）
+          if (this.config.showGuideButton !== false) {
+            Column() {
+              Text('◉')
+                .fontSize(18 * this.controllerScale)
+                .fontColor(this.withAlpha('#7EB8E0', 0.6))
+            }
+            .width(42 * this.controllerScale)
+            .height(42 * this.controllerScale)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(Color.Transparent)
+            .borderRadius(21 * this.controllerScale)
+            .border({ width: 1.5, color: this.withAlpha('#7EB8E0', 0.25) })
+            .hitTestBehavior(HitTestMode.Block)
+            .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.SPECIAL, event))
           }
-          .width(42 * this.controllerScale)
-          .height(42 * this.controllerScale)
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor(Color.Transparent)
-          .borderRadius(21 * this.controllerScale)
-          .border({ width: 1.5, color: this.withAlpha('#7EB8E0', 0.25) })
-          .hitTestBehavior(HitTestMode.Block)
-          .onTouch((event: TouchEvent) => this.handleButtonTouch(ControllerButton.SPECIAL, event))
 
           // Start
           this.buildCenterButton('▸', 'START', ControllerButton.START)
@@ -645,14 +650,29 @@ export struct VirtualControllerOverlay {
   /** 控制器整体透明度（双向 — 外部菜单可调节） */
   @Link controllerOpacity: number;
 
+  /** 是否仅显示 L3/R3 按钮 */
+  onlyL3R3: boolean = false;
+  /** 是否显示 Guide 按钮 */
+  showGuideButton: boolean = true;
+  /** 虚拟控制器按钮触摸震动 */
+  vibrateOsc: boolean = true;
+  /** 竖屏时半高显示 */
+  halfHeightPortrait: boolean = true;
+
   /**
    * 触摸注册修复触发器。ArkUI 首次渲染时按钮的命中测试区域可能未正确建立，
    * 通过在父容器（而非 VirtualController）触发一次重渲染来刷新命中测试树。
    * 父容器重渲染不会导致 V2 重渲染（@Prop 值不变），但 ArkUI 会重算整棵树的命中区域。
    */
   @State private hitTestReady: number = 0;
+  @State private isPortrait: boolean = false;
 
   aboutToAppear(): void {
+    // 检测竖屏
+    try {
+      const d = display.getDefaultDisplaySync();
+      this.isPortrait = d.height > d.width;
+    } catch (_) {}
     // 延迟 100ms 在父层触发一次重渲染，刷新整个 Stack 的命中测试区域
     setTimeout(() => {
       this.hitTestReady = 1;
@@ -669,14 +689,15 @@ export struct VirtualControllerOverlay {
           config: {
             opacity: 1.0,
             deadzone: 0.15,
-            showLeftStick: true,
-            showRightStick: true,
-            showDpad: true,
-            showButtons: true,
-            showShoulder: true,
-            showCenter: true,
-            showL3R3: false,
-            enableVibration: true
+            showLeftStick: !this.onlyL3R3,
+            showRightStick: !this.onlyL3R3,
+            showDpad: !this.onlyL3R3,
+            showButtons: !this.onlyL3R3,
+            showShoulder: !this.onlyL3R3,
+            showCenter: !this.onlyL3R3,
+            showGuideButton: this.showGuideButton,
+            showL3R3: this.onlyL3R3,
+            enableVibration: this.vibrateOsc
           } as VirtualControllerConfig,
           onInput: (input: InputEvent) => {
             this.onInput(input);
@@ -684,7 +705,7 @@ export struct VirtualControllerOverlay {
         })
       }
       .width('100%')
-      .height('100%')
+      .height(this.halfHeightPortrait && this.isPortrait ? '50%' : '100%')
       .justifyContent(FlexAlign.End)
       .opacity(this.controllerOpacity)
     }
