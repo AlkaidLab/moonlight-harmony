@@ -73,6 +73,66 @@ export interface AnalogStickAction {
   type: 'analogStick';
   /** 摇杆：'left' = 左摇杆, 'right' = 右摇杆 */
   stick: 'left' | 'right';
+  /**
+   * 隐形摇杆模式（参照 Android InvisibleAnalogStick.java）
+   * true: 常态不可见，触摸后以按下位置为中心显示摇杆
+   * false/undefined: 普通固定位置摇杆
+   */
+  invisible?: boolean;
+  /**
+   * 灵敏度乘数（0.1~3.0，默认 1.0）
+   * 值越大摇杆输出幅度越大，越容易到达满偏
+   */
+  sensitivity?: number;
+}
+
+/**
+ * 十字键盘动作（D-Pad 单一控件输出 4/8 方向）
+ * 参照 Android DigitalPad.java —— 一个控件代替 4 个独立方向按钮。
+ * 支持对角线组合（最多同时按 2 个方向），输出 GamepadButton.UP/DOWN/LEFT/RIGHT 位掩码。
+ */
+export interface DPadAction {
+  type: 'dpad';
+}
+
+/** 轮盘菜单分区定义 */
+export interface WheelPadSegment {
+  /** 分区显示文字 */
+  label: string;
+  /** 绑定的按键动作 */
+  action: KeyAction;
+}
+
+/**
+ * 轮盘菜单动作（放射状分区菜单）
+ * 参照 Android WheelPad.java —— 圆形放射状菜单，N 个分区从12点方向顺时针排列。
+ * 触摸后按角度判定激活的分区，滑动切换分区时自动释放旧分区 + 按下新分区。
+ * 中心为死区，不触发任何动作。
+ */
+export interface WheelPadAction {
+  type: 'wheelPad';
+  /** 分区列表（从12点方向顺时针排列） */
+  segments: WheelPadSegment[];
+}
+
+/**
+ * 数字摇杆动作（外观=模拟摇杆，输出=四方向数字开关）
+ * 参照 Android DigitalStick.java —— 拖动时根据阈值判断当前方向，
+ * 每个方向独立发送 pressed/released，支持同时激活相邻方向（对角线）。
+ * 与 AnalogStick 共享 VirtualJoystick 视觉组件，仅在输出层做离散化。
+ */
+export interface DigitalStickAction {
+  type: 'digitalStick';
+  /** 上方向绑定动作 */
+  upAction: KeyAction;
+  /** 下方向绑定动作 */
+  downAction: KeyAction;
+  /** 左方向绑定动作 */
+  leftAction: KeyAction;
+  /** 右方向绑定动作 */
+  rightAction: KeyAction;
+  /** 双击绑定动作（可选，如 L3/R3） */
+  clickAction?: KeyAction;
 }
 
 /** 组合键动作：同时发送多个按键 */
@@ -120,6 +180,9 @@ export type KeyAction =
   | GamepadTriggerAction
   | GamepadStickAction
   | AnalogStickAction
+  | DPadAction
+  | WheelPadAction
+  | DigitalStickAction
   | ComboAction
   | ShortcutAction
   | SpecialAction;
@@ -184,6 +247,10 @@ export interface CustomKeyDef {
   textColor: string;
   /** 文字大小 (fp) */
   fontSize: number;
+  /** 边框线条宽度 (vp)，0 = 无边框 */
+  borderWidth: number;
+  /** 振动反馈等级: none=无, light=轻(15ms), medium=中(40ms), heavy=重(80ms) */
+  haptic: string;
 }
 
 // =============================================================================
@@ -227,6 +294,8 @@ export function cloneKeyDef(src: CustomKeyDef): CustomKeyDef {
     bgColor: src.bgColor,
     textColor: src.textColor,
     fontSize: src.fontSize,
+    borderWidth: src.borderWidth ?? 1,
+    haptic: src.haptic ?? 'light',
   };
   return dst;
 }
@@ -251,6 +320,8 @@ export function createDefaultKeyDef(partial?: Partial<CustomKeyDef>): CustomKeyD
     bgColor: '#30FFFFFF',
     textColor: '#E0FFFFFF',
     fontSize: 14,
+    borderWidth: 1,
+    haptic: 'light',
   };
   if (partial) {
     if (partial.id !== undefined) def.id = partial.id;
@@ -270,6 +341,8 @@ export function createDefaultKeyDef(partial?: Partial<CustomKeyDef>): CustomKeyD
     if (partial.bgColor !== undefined) def.bgColor = partial.bgColor;
     if (partial.textColor !== undefined) def.textColor = partial.textColor;
     if (partial.fontSize !== undefined) def.fontSize = partial.fontSize;
+    if (partial.borderWidth !== undefined) def.borderWidth = partial.borderWidth;
+    if (partial.haptic !== undefined) def.haptic = partial.haptic;
   }
   return def;
 }
@@ -508,8 +581,27 @@ export function getActionDisplayName(action: KeyAction): string {
       const dirMap: Record<string, string> = { 'up': '↑', 'down': '↓', 'left': '←', 'right': '→' };
       return `${stickName}${dirMap[action.direction] ?? action.direction}`;
     }
-    case 'analogStick':
-      return action.stick === 'left' ? '左摇杆' : '右摇杆';
+    case 'analogStick': {
+      const asAction = action as AnalogStickAction;
+      const stickName = asAction.stick === 'left' ? '左摇杆' : '右摇杆';
+      let name = asAction.invisible ? `隐形${stickName}` : stickName;
+      if (asAction.sensitivity !== undefined && asAction.sensitivity !== 1.0) {
+        name += `(${asAction.sensitivity.toFixed(1)}x)`;
+      }
+      return name;
+    }
+    case 'dpad':
+      return '十字键';
+    case 'wheelPad': {
+      const wpAction = action as WheelPadAction;
+      return `轮盘(${wpAction.segments.length})`;
+    }
+    case 'digitalStick': {
+      const dsAction = action as DigitalStickAction;
+      const dirs = [dsAction.upAction, dsAction.downAction, dsAction.leftAction, dsAction.rightAction]
+        .map(a => getActionDisplayName(a));
+      return `数字摇杆(${dirs.join('/')})`;
+    }
     case 'combo':
       return action.actions.map(a => getActionDisplayName(a)).join('+');
     case 'shortcut': {
@@ -637,6 +729,11 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
       // 模拟摇杆（完整虚拟摇杆 UI）
       { label: '左摇杆', action: { type: 'analogStick', stick: 'left' } as AnalogStickAction },
       { label: '右摇杆', action: { type: 'analogStick', stick: 'right' } as AnalogStickAction },
+      // 隐形摇杆（触摸区域内按下即显现）
+      { label: '隐形左摇杆', action: { type: 'analogStick', stick: 'left', invisible: true } as AnalogStickAction },
+      { label: '隐形右摇杆', action: { type: 'analogStick', stick: 'right', invisible: true } as AnalogStickAction },
+      // 十字键盘（D-Pad 单一控件）
+      { label: '十字键', action: { type: 'dpad' } as DPadAction },
     ],
   },
   {
@@ -700,6 +797,14 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
       { label: '休眠', action: { type: 'shortcut', keys: [], keySequence: [[0x5B, 0x58], [0x55], [0x53]] } as ShortcutAction },
     ],
   },
+  {
+    name: '轮盘',
+    presets: buildWheelPadPresets(),
+  },
+  {
+    name: '数字摇杆',
+    presets: buildDigitalStickPresets(),
+  },
 ];
 
 /** 构建字母 A-Z 预设列表 */
@@ -715,6 +820,53 @@ function buildLetterPresets(): KeyPreset[] {
   return list;
 }
 
+/** 构建数字 0-9 预设列表 */
+function buildNumberPresets(): KeyPreset[] {
+  const list: KeyPreset[] = [];
+  for (let i = 0; i < 10; i++) {
+    const preset: KeyPreset = {
+      label: i.toString(),
+      action: { type: 'keyboard', vk: 0x30 + i } as KeyboardAction,
+    };
+    list.push(preset);
+  }
+  return list;
+}
+
+/** 构建轮盘菜单预设列表 */
+function buildWheelPadPresets(): KeyPreset[] {
+  const seg1: WheelPadSegment = { label: '1', action: { type: 'keyboard', vk: 0x31 } as KeyboardAction };
+  const seg2: WheelPadSegment = { label: '2', action: { type: 'keyboard', vk: 0x32 } as KeyboardAction };
+  const seg3: WheelPadSegment = { label: '3', action: { type: 'keyboard', vk: 0x33 } as KeyboardAction };
+  const seg4: WheelPadSegment = { label: '4', action: { type: 'keyboard', vk: 0x34 } as KeyboardAction };
+
+  const segA: WheelPadSegment = { label: 'A', action: { type: 'gamepadButton', mask: GamepadButton.A } as GamepadButtonAction };
+  const segB: WheelPadSegment = { label: 'B', action: { type: 'gamepadButton', mask: GamepadButton.B } as GamepadButtonAction };
+  const segX: WheelPadSegment = { label: 'X', action: { type: 'gamepadButton', mask: GamepadButton.X } as GamepadButtonAction };
+  const segY: WheelPadSegment = { label: 'Y', action: { type: 'gamepadButton', mask: GamepadButton.Y } as GamepadButtonAction };
+
+  const segW: WheelPadSegment = { label: 'W', action: { type: 'keyboard', vk: 0x57 } as KeyboardAction };
+  const segAKey: WheelPadSegment = { label: 'A', action: { type: 'keyboard', vk: 0x41 } as KeyboardAction };
+  const segS: WheelPadSegment = { label: 'S', action: { type: 'keyboard', vk: 0x53 } as KeyboardAction };
+  const segD: WheelPadSegment = { label: 'D', action: { type: 'keyboard', vk: 0x44 } as KeyboardAction };
+
+  const list: KeyPreset[] = [
+    {
+      label: '技能轮盘',
+      action: { type: 'wheelPad', segments: [seg1, seg2, seg3, seg4] } as WheelPadAction,
+    },
+    {
+      label: 'ABXY轮盘',
+      action: { type: 'wheelPad', segments: [segA, segB, segX, segY] } as WheelPadAction,
+    },
+    {
+      label: 'WASD轮盘',
+      action: { type: 'wheelPad', segments: [segW, segD, segS, segAKey] } as WheelPadAction,
+    },
+  ];
+  return list;
+}
+
 // =============================================================================
 // 统一快捷键执行引擎
 // =============================================================================
@@ -724,10 +876,6 @@ function buildLetterPresets(): KeyPreset[] {
  *
  * 支持单次组合键和多步按键序列（每步间隔 200ms）。
  * 使用回调参数避免 ArkTS 结构化类型限制。
- *
- * @param sendKeysFn 发送按键组合的回调（通常是 session.sendKeys）
- * @param keys       同时按下的键码数组
- * @param keySequence 可选的多步按键序列
  */
 export function sendShortcutKeys(
   sendKeysFn: (keyCodes: number[]) => void,
@@ -744,15 +892,41 @@ export function sendShortcutKeys(
     sendKeysFn(keys);
   }
 }
-/** 构建数字 0-9 预设列表 */
-function buildNumberPresets(): KeyPreset[] {
-  const list: KeyPreset[] = [];
-  for (let i = 0; i < 10; i++) {
-    const preset: KeyPreset = {
-      label: i.toString(),
-      action: { type: 'keyboard', vk: 0x30 + i } as KeyboardAction,
-    };
-    list.push(preset);
-  }
+
+/** 构建数字摇杆预设列表 */
+function buildDigitalStickPresets(): KeyPreset[] {
+  const list: KeyPreset[] = [
+    {
+      label: 'WASD数字摇杆',
+      action: {
+        type: 'digitalStick',
+        upAction: { type: 'keyboard', vk: 0x57 } as KeyboardAction,
+        downAction: { type: 'keyboard', vk: 0x53 } as KeyboardAction,
+        leftAction: { type: 'keyboard', vk: 0x41 } as KeyboardAction,
+        rightAction: { type: 'keyboard', vk: 0x44 } as KeyboardAction,
+      } as DigitalStickAction,
+    },
+    {
+      label: '方向键数字摇杆',
+      action: {
+        type: 'digitalStick',
+        upAction: { type: 'keyboard', vk: 0x26 } as KeyboardAction,
+        downAction: { type: 'keyboard', vk: 0x28 } as KeyboardAction,
+        leftAction: { type: 'keyboard', vk: 0x25 } as KeyboardAction,
+        rightAction: { type: 'keyboard', vk: 0x27 } as KeyboardAction,
+      } as DigitalStickAction,
+    },
+    {
+      label: 'DPAD数字摇杆',
+      action: {
+        type: 'digitalStick',
+        upAction: { type: 'gamepadButton', mask: GamepadButton.UP } as GamepadButtonAction,
+        downAction: { type: 'gamepadButton', mask: GamepadButton.DOWN } as GamepadButtonAction,
+        leftAction: { type: 'gamepadButton', mask: GamepadButton.LEFT } as GamepadButtonAction,
+        rightAction: { type: 'gamepadButton', mask: GamepadButton.RIGHT } as GamepadButtonAction,
+        clickAction: { type: 'gamepadButton', mask: GamepadButton.LS } as GamepadButtonAction,
+      } as DigitalStickAction,
+    },
+  ];
   return list;
 }

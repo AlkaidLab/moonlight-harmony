@@ -38,6 +38,7 @@ import {
   ComboAction,
   ShortcutAction,
   SpecialAction,
+  DPadAction,
   sendShortcutKeys,
 } from './CustomKeyTypes';
 
@@ -283,6 +284,18 @@ export class CustomKeyManager {
       this.gamepadInputMap &= ~mask;
       this.sendGamepadState();
     }, 50);
+  }
+
+  /**
+   * 处理十字键盘 (D-Pad) 方向变化
+   * 由 VirtualDPad 组件直接调用。
+   * direction 为方向位掩码组合（GamepadButton.UP/DOWN/LEFT/RIGHT），0 = 松开/无方向。
+   */
+  handleDPadDirectionChange(direction: number): void {
+    // 清除旧的 D-Pad 位，设置新方向
+    const dpadMask: number = GamepadButton.DPAD_MASK;
+    this.gamepadInputMap = (this.gamepadInputMap & (~dpadMask)) | (direction & dpadMask);
+    this.sendGamepadState();
   }
 
   /**

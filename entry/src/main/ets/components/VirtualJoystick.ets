@@ -47,6 +47,8 @@ export struct VirtualJoystick {
   @Prop pressedColor: string = '#C070E090';
   /** 透明度 0-100 */
   @Prop opacity_: number = 80;
+  /** 隐形模式：未按下时不可见，触摸位置成为摇杆中心 */
+  @Prop invisibleMode: boolean = false;
 
   // 回调
   onMovement: JoystickMovementCallback = (_x: number, _y: number): void => {};
@@ -59,6 +61,10 @@ export struct VirtualJoystick {
   @State private stickX: number = 0;   // 视觉归一化偏移 -1~1
   @State private stickY: number = 0;
   @State private isPressed: boolean = false;
+
+  // 隐形模式：触摸按下位置相对于组件中心的偏移
+  @State private dynamicOffsetX: number = 0;
+  @State private dynamicOffsetY: number = 0;
 
   // 预计算的尺寸值（在 aboutToAppear 中初始化，避免 private get 在 struct 中不可靠）
   private stickOuterRadius: number = 60;
@@ -76,13 +82,26 @@ export struct VirtualJoystick {
   private static readonly DOUBLE_TAP_MS: number = 300;
 
   aboutToAppear(): void {
-    this.stickOuterRadius = this.joystickSize / 2;
+    if (this.invisibleMode) {
+      // 隐形模式：视觉大小固定为标准摇杆尺寸，触摸区域使用 joystickSize
+      this.stickOuterRadius = 60;
+    } else {
+      this.stickOuterRadius = this.joystickSize / 2;
+    }
     this.stickInnerRadius = this.stickOuterRadius * 0.25;
     this.stickMaxTravel = this.stickOuterRadius - this.stickInnerRadius;
   }
 
   build() {
     Stack() {
+      // 隐形模式下需要一个不可见但可点击的全尺寸触摸区
+      if (this.invisibleMode) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#01000000')
+      }
+
       // 外圆环
       Circle()
         .width(this.stickOuterRadius * 2)
@@ -90,6 +109,8 @@ export struct VirtualJoystick {
         .fill('#01000000')
         .stroke(this.isPressed ? this.pressedColor : this.ringColor)
         .strokeWidth(1.5)
+        .translate(this.invisibleMode ? { x: this.dynamicOffsetX, y: this.dynamicOffsetY } : {})
+        .opacity(this.invisibleMode && !this.isPressed ? 0 : 1)
 
       // 内摇杆头
       Circle()
@@ -99,12 +120,14 @@ export struct VirtualJoystick {
         .stroke(this.isPressed ? this.pressedColor : this.ringColor)
         .strokeWidth(1)
         .translate({
-          x: this.stickX * this.stickMaxTravel,
-          y: this.stickY * this.stickMaxTravel
+          x: this.stickX * this.stickMaxTravel + (this.invisibleMode ? this.dynamicOffsetX : 0),
+          y: this.stickY * this.stickMaxTravel + (this.invisibleMode ? this.dynamicOffsetY : 0)
         })
+        .opacity(this.invisibleMode && !this.isPressed ? 0 : 1)
     }
-    .width(this.stickOuterRadius * 2)
-    .height(this.stickOuterRadius * 2)
+    .width(this.invisibleMode ? this.joystickSize : this.stickOuterRadius * 2)
+    .height(this.invisibleMode ? this.joystickSize : this.stickOuterRadius * 2)
+    .clip(false)
     .alignContent(Alignment.Center)
     .opacity(this.opacity_ / 100)
     .hitTestBehavior(HitTestMode.Block)
@@ -115,8 +138,9 @@ export struct VirtualJoystick {
   }
 
   private handleTouch(event: TouchEvent): void {
-    const centerX: number = this.stickOuterRadius;
-    const centerY: number = this.stickOuterRadius;
+    // 隐形模式下组件尺寸可能大于视觉圆，中心为组件中心
+    const compCenterX: number = this.invisibleMode ? this.joystickSize / 2 : this.stickOuterRadius;
+    const compCenterY: number = this.invisibleMode ? this.joystickSize / 2 : this.stickOuterRadius;
 
     if (event.type === TouchType.Down) {
       // 使用 changedTouches 获取按下的手指（与 AnalogStick 一致）
@@ -129,7 +153,15 @@ export struct VirtualJoystick {
 
       this.trackingTouchId = touch.id;
       this.isPressed = true;
-      this.updateStickPosition(touch.x - centerX, touch.y - centerY);
+
+      if (this.invisibleMode) {
+        // 隐形模式：触摸位置成为摇杆中心，不发送初始偏移
+        this.dynamicOffsetX = touch.x - compCenterX;
+        this.dynamicOffsetY = touch.y - compCenterY;
+        // 初始位置在中心—不发送移动
+      } else {
+        this.updateStickPosition(touch.x - compCenterX, touch.y - compCenterY);
+      }
       this.checkDoubleTap();
       return;
     }
@@ -138,7 +170,14 @@ export struct VirtualJoystick {
       if (this.trackingTouchId < 0) return;
       const touch: TouchObject | null = this.findTrackedTouch(event.touches);
       if (touch !== null) {
-        this.updateStickPosition(touch.x - centerX, touch.y - centerY);
+        if (this.invisibleMode) {
+          // 隐形模式：相对于动态中心计算
+          const dynCenterX: number = compCenterX + this.dynamicOffsetX;
+          const dynCenterY: number = compCenterY + this.dynamicOffsetY;
+          this.updateStickPosition(touch.x - dynCenterX, touch.y - dynCenterY);
+        } else {
+          this.updateStickPosition(touch.x - compCenterX, touch.y - compCenterY);
+        }
       }
       return;
     }

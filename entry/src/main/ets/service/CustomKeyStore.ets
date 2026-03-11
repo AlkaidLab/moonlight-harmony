@@ -25,6 +25,7 @@ import {
   CustomKeyProfile,
   CustomKeyDef,
   createDefaultProfile,
+  generateKeyId,
   KeyAction,
 } from './CustomKeyTypes';
 
@@ -301,6 +302,37 @@ export class CustomKeyStore {
     } catch (e) {
       console.error('[CustomKeyStore] import failed:', JSON.stringify(e));
       return false;
+    }
+  }
+
+  /**
+   * 合并导入：将 JSON 中的按键合并到当前活跃配置
+   * 与 importProfile 不同，不创建新配置，而是将按键追加到当前配置中。
+   * 每个导入按键分配新 ID，略微偏移位置避免完全重叠。
+   * @returns 合并的按键数量，失败返回 -1
+   */
+  static async mergeImportKeys(json: string): Promise<number> {
+    try {
+      const data = JSON.parse(json) as ExportData;
+      if (!data.profile || !Array.isArray(data.profile.keys) || data.profile.keys.length === 0) {
+        return -1;
+      }
+      CustomKeyStore.migrateProfileKeys(data.profile);
+      const profile = await CustomKeyStore.getActiveProfile();
+      let count = 0;
+      for (const key of data.profile.keys) {
+        key.id = generateKeyId();
+        // 略微偏移避免完全重叠
+        key.xPercent = Math.max(0, Math.min(1, (key.xPercent ?? 0.5) + 0.02));
+        key.yPercent = Math.max(0, Math.min(1, (key.yPercent ?? 0.5) + 0.02));
+        profile.keys.push(key);
+        count++;
+      }
+      await CustomKeyStore.save();
+      return count;
+    } catch (e) {
+      console.error('[CustomKeyStore] merge import failed:', JSON.stringify(e));
+      return -1;
     }
   }
 }
