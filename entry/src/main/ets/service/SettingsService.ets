@@ -130,7 +130,6 @@ export class SettingsKeys {
   static readonly PERF_OVERLAY_BG_OPACITY: string = 'settings_perf_overlay_bg_opacity';
   static readonly LATENCY_TOAST: string = 'settings_latency_toast';
   static readonly DISABLE_WARNINGS: string = 'settings_disable_warnings';
-  static readonly REDUCE_REFRESH_RATE: string = 'settings_reduce_refresh_rate';
   static readonly ENABLE_STUN: string = 'settings_enable_stun';
   static readonly ENABLE_ESC_MENU: string = 'settings_enable_esc_menu';
   static readonly ESC_MENU_KEY: string = 'settings_esc_menu_key';
@@ -243,7 +242,6 @@ export interface AdvancedSettings {
   enableVrr: boolean;  // VRR 可变刷新率模式
   latencyToast: boolean;
   disableWarnings: boolean;
-  reduceRefreshRate: boolean;
   enableStun: boolean;
   enableEscMenu: boolean;
   escMenuKey: string;
@@ -773,7 +771,6 @@ export class SettingsService {
       enableVrr: await this.getBoolean(SettingsKeys.ENABLE_VRR, false),  // VRR 默认禁用
       latencyToast: await this.getBoolean(SettingsKeys.LATENCY_TOAST, false),
       disableWarnings: await this.getBoolean(SettingsKeys.DISABLE_WARNINGS, false),
-      reduceRefreshRate: await this.getBoolean(SettingsKeys.REDUCE_REFRESH_RATE, false),
       enableStun: await this.getBoolean(SettingsKeys.ENABLE_STUN, false),
       enableEscMenu: await this.getBoolean(SettingsKeys.ENABLE_ESC_MENU, true),
       escMenuKey: await this.getString(SettingsKeys.ESC_MENU_KEY, 'ESC'),

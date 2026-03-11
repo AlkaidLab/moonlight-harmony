@@ -133,11 +133,11 @@ export class Dualshock4Controller extends AbstractDualSenseController {
       }
     }
     
-    // 摇杆 (Y 轴需要反转，因为 HID 报告中向下为正)
+    // 摇杆 (bytes 1-4) - 不在此反转 Y 轴，由 GamepadManager 统一处理
     this.leftStickX = this.normalizeThumbStickAxis(buffer[1]);
-    this.leftStickY = -this.normalizeThumbStickAxis(buffer[2]);  // 反转 Y 轴
+    this.leftStickY = this.normalizeThumbStickAxis(buffer[2]);
     this.rightStickX = this.normalizeThumbStickAxis(buffer[3]);
-    this.rightStickY = -this.normalizeThumbStickAxis(buffer[4]); // 反转 Y 轴
+    this.rightStickY = this.normalizeThumbStickAxis(buffer[4]);
     
     // 扳机
     this.leftTrigger = this.normalizeTriggerAxis(buffer[8]);
