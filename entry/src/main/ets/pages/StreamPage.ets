@@ -1211,6 +1211,9 @@ struct StreamPage {
             onAnalogStickClick: (stick: string): void => {
               this.customKeyManager?.handleAnalogStickClick(stick);
             },
+            onDPadDirectionChange: (direction: number): void => {
+              this.customKeyManager?.handleDPadDirectionChange(direction);
+            },
             onEditModeChanged: (editing: boolean): void => {
               this.customKeyEditMode = editing;
             },

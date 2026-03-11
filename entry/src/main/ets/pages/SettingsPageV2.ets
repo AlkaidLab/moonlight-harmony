@@ -1088,7 +1088,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '音频配置',
-                subtitle: '设置音频声道配置',
+                tooltip: '选「5.1 / 7.1 环绕」后打开空间音频选项系统会把多声道下混成空间音频~\n即刻就能感受到身临其境的环绕声效果 🎧',
                 type: 'segment',
                 value: this.audioConfig,
                 segmentLabels: ['立体声', '5.1 环绕', '7.1 环绕'],
@@ -1673,6 +1673,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '屏幕组合模式',
+                tooltip: '· 自动：让主机自己决定怎么用显示器\n· 仅主显示器：只用一个屏幕\n· 扩展：多屏拼起来变成超大桌面\n· 复制：所有屏幕显示同样的画面',
                 type: 'segment',
                 value: this.screenCombinationMode,
                 segmentLabels: ['自动', '仅主显示器', '扩展', '复制'],
