@@ -40,6 +40,7 @@ export class AudioVibrationService {
 
   // 状态
   private lastIntensity: number = 0;
+  private lastLowFreqRatio: number = 50; // 低频占比 (0-100)
 
   // 设备振动状态
   private hdHapticSupported: boolean | null = null;
@@ -50,7 +51,8 @@ export class AudioVibrationService {
 
   // 防抖：避免过于频繁的振动 API 调用
   private lastVibrationTime: number = 0;
-  private static readonly MIN_VIBRATION_INTERVAL_MS = 40; // 最短间隔 40ms
+  private static readonly MIN_VIBRATION_INTERVAL_MS = 20; // 游戏模式最短间隔 20ms (~50次/秒)
+  private static readonly MIN_VIBRATION_INTERVAL_MUSIC_MS = 15; // 音乐模式最短间隔 15ms (~66次/秒)
 
   /**
    * 更新设置
@@ -82,8 +84,9 @@ export class AudioVibrationService {
   /**
    * 处理 C++ 层传来的低频能量值
    * @param intensity 低频能量强度 (0-100)
+   * @param lowFreqRatio 低频占比 (0-100)，用于精确分配 low/high motor
    */
-  handleBassEnergy(intensity: number): void {
+  handleBassEnergy(intensity: number, lowFreqRatio: number = 50): void {
     if (!this.enabled) return;
 
     // 强度为 0 → 停止振动
@@ -105,21 +108,22 @@ export class AudioVibrationService {
 
     // 防抖检查
     const now = Date.now();
-    // 音乐模式防抖间隔更短 (25ms vs 40ms)，保证节拍脉冲不丢失
     const minInterval = this.isMusicScene()
-      ? 25 : AudioVibrationService.MIN_VIBRATION_INTERVAL_MS;
+      ? AudioVibrationService.MIN_VIBRATION_INTERVAL_MUSIC_MS
+      : AudioVibrationService.MIN_VIBRATION_INTERVAL_MS;
     if (now - this.lastVibrationTime < minInterval) {
       return;
     }
 
-    // 强度变化不大，跳过（音乐模式降低阈值，脉冲需要更灵敏）
-    const changeTolerance = this.isMusicScene() ? 3 : 8;
+    // 强度变化阈值（音乐模式更灵敏）
+    const changeTolerance = this.isMusicScene() ? 2 : 4;
     if ((this.isDeviceVibrating || this.isUsbRumbling) &&
         Math.abs(effectiveIntensity - this.lastIntensity) < changeTolerance) {
       return;
     }
 
     this.lastIntensity = effectiveIntensity;
+    this.lastLowFreqRatio = lowFreqRatio;
     this.lastVibrationTime = now;
 
     // 根据振动模式分路由
@@ -133,7 +137,7 @@ export class AudioVibrationService {
     }
 
     if (shouldUsb) {
-      this.triggerUsbRumble(effectiveIntensity);
+      this.triggerUsbRumble(effectiveIntensity, lowFreqRatio);
     } else if (this.isUsbRumbling) {
       this.stopUsbRumble();
     }
@@ -321,24 +325,19 @@ export class AudioVibrationService {
   // ==================== USB 手柄振动（场景感知） ====================
 
   /**
-   * USB 手柄振动 — 根据场景调整 low/high freq 比例
-   * 游戏模式: lowFreq 为主（低沉触感），highFreq 25%
-   * 音乐模式: highFreq 更高（60%），更有弹性敲击感
+   * USB 手柄振动 — 根据实际音频频段分配 low/high motor
+   * lowFreqRatio 由 C++ 层实时计算，反映低频在总能量中的真实占比
    */
-  private triggerUsbRumble(intensity: number): void {
+  private triggerUsbRumble(intensity: number, lowFreqRatio: number = 50): void {
     const base = Math.floor(intensity * RUMBLE_MAX / 100);
-    let lowFreq: number;
-    let highFreq: number;
+    // 将 C++ 的低频占比 (0-100) 映射为 motor 分配比例
+    // ratio=100 → 全部低频, ratio=0 → 全部高频
+    // 加权平滑: 避免极端分配，至少保留 15% 给另一个 motor
+    const lowWeight = Math.max(0.15, Math.min(0.85, lowFreqRatio / 100));
+    const highWeight = 1.0 - lowWeight;
 
-    if (this.sceneMode === '音乐/节奏') {
-      // 音乐模式: highFreq 占 60%，节拍感更强
-      lowFreq = Math.floor(base * 0.4);
-      highFreq = Math.floor(base * 0.6);
-    } else {
-      // 游戏模式: lowFreq 为主
-      lowFreq = base;
-      highFreq = Math.floor(base * 0.25);
-    }
+    const lowFreq = Math.floor(base * lowWeight);
+    const highFreq = Math.floor(base * highWeight);
 
     GamepadManager.getInstance().rumbleUsbControllers(0, lowFreq, highFreq);
     this.isUsbRumbling = true;

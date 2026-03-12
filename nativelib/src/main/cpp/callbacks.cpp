@@ -348,12 +348,13 @@ static void CallJs_Void(napi_env env, napi_value js_callback, void* context, voi
 static void CallJs_BassEnergy(napi_env env, napi_value js_callback, void* context, void* data) {
     CallbackData* cbData = (CallbackData*)data;
     if (env != nullptr && js_callback != nullptr) {
-        napi_value argv[1];
+        napi_value argv[2];
         napi_create_int32(env, cbData->intParams[0], &argv[0]); // intensity (0-100)
+        napi_create_int32(env, cbData->intParams[1], &argv[1]); // lowFreqRatio (0-100)
 
         napi_value undefined;
         napi_get_undefined(env, &undefined);
-        napi_call_function(env, undefined, js_callback, 1, argv, nullptr);
+        napi_call_function(env, undefined, js_callback, 2, argv, nullptr);
     }
     delete cbData;
 }
@@ -801,10 +802,12 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
         
         // 低频能量分析（音频振动）
         int bassIntensity = 0;
-        if (g_bassAnalyzer.ProcessFrame(g_decodedAudioBuffer, decodeLen, bassIntensity)) {
+        int bassLowFreqRatio = 50;
+        if (g_bassAnalyzer.ProcessFrame(g_decodedAudioBuffer, decodeLen, bassIntensity, bassLowFreqRatio)) {
             if (g_audioCallbacks.tsfn_bassEnergy) {
                 CallbackData* data = new CallbackData();
                 data->intParams[0] = bassIntensity;
+                data->intParams[1] = bassLowFreqRatio;
                 napi_status st = napi_call_threadsafe_function(g_audioCallbacks.tsfn_bassEnergy, data, napi_tsfn_nonblocking);
                 if (st != napi_ok) delete data;
             }

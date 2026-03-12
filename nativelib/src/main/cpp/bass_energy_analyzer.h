@@ -217,11 +217,14 @@ public:
      * @param pcmData PCM 数据 (int16, 交错多声道)
      * @param sampleCount 每声道采样数 (per-channel frame count)
      * @param outIntensity 输出振动强度 (0-100)
+     * @param outLowFreqRatio 输出低频占比 (0-100)，用于 low/high motor 分配
      * @return true 如果应该触发 TSFN 回调（经过节流控制）
      */
-    bool ProcessFrame(const int16_t* pcmData, int sampleCount, int& outIntensity) {
+    bool ProcessFrame(const int16_t* pcmData, int sampleCount, int& outIntensity,
+                      int& outLowFreqRatio) {
         if (!enabled_ || pcmData == nullptr || sampleCount <= 0) {
             outIntensity = 0;
+            outLowFreqRatio = 50;
             return false;
         }
 
@@ -319,12 +322,22 @@ public:
 
         outIntensity = intensity;
 
+        // ---- 低频占比计算 ----
+        // frameEnergy = LPF 后的低频能量, fullBandEnergy = 全频段能量
+        // 比值表示低频在总能量中的占比，用于精确分配 low/high motor
+        if (fullBandEnergy > 1e-6f) {
+            float ratio = frameEnergy / fullBandEnergy;
+            outLowFreqRatio = std::max(0, std::min(100, static_cast<int>(ratio * 100.0f)));
+        } else {
+            outLowFreqRatio = 50; // 无信号时默认均分
+        }
+
         // ---- 节流控制 ----
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastCallbackTime_).count();
 
-        // 音乐模式需要更快的回调频率 (~40次/秒, 25ms)
-        int minInterval = (activeMode == SCENE_MUSIC) ? 25 : 40;
+        // 游戏模式 ~50次/秒(20ms), 音乐模式 ~66次/秒(15ms)
+        int minInterval = (activeMode == SCENE_MUSIC) ? 15 : 20;
         if (elapsed < minInterval) {
             return false;
         }
@@ -332,7 +345,7 @@ public:
         int delta = std::abs(intensity - lastIntensity_);
         bool shouldCallback = (lastIntensity_ > 0 && intensity == 0)
                            || (intensity > 0 && lastIntensity_ == 0)
-                           || (delta >= 5);
+                           || (delta >= 3);
 
         if (!shouldCallback) {
             return false;
@@ -430,17 +443,19 @@ private:
             );
             onsetPulseIntensity_ = std::max(15, std::min(100, onsetPulseIntensity_));
 
-            // 衰减步数: 5 步 ≈ 125ms
-            onsetPulseDecay_ = 5;
+            // 衰减步数: 8 步，配合 15ms 节流 ≈ 120ms 自然释放
+            onsetPulseDecay_ = 8;
 
             // 冷却期
             onsetCooldownRemaining_ = onsetCooldownFrames_;
         }
 
-        // ---- 脉冲输出 + 衰减 ----
+        // ---- 脉冲输出 + 指数衰减 ----
         if (onsetPulseDecay_ > 0) {
-            float decayFactor = static_cast<float>(onsetPulseDecay_) / 5.0f;
-            decayFactor = decayFactor * decayFactor;  // 二次衰减
+            // 指数衰减: e^(-3 * (1 - t)) 比二次衰减更自然
+            // t=1(起始)→1.0, t=0(结束)→~0.05
+            float t = static_cast<float>(onsetPulseDecay_) / 8.0f;
+            float decayFactor = std::exp(-3.0f * (1.0f - t));
             int output = static_cast<int>(onsetPulseIntensity_ * decayFactor);
             onsetPulseDecay_--;
             return std::max(0, std::min(100, output));
