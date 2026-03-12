@@ -29,6 +29,9 @@ import { fileIo } from '@kit.CoreFileKit';
 // 新增：使用抽取的辅助类
 import { ComputerMenuHelper, ComputerMenuCallbacks } from '../viewmodel/ComputerMenuHelper';
 import { PcListActions } from '../viewmodel/PcListActions';
+import { QrShareService } from '../service/QrShareService';
+import { CustomKeyStore } from '../service/CustomKeyStore';
+import { CustomKeyDef } from '../service/CustomKeyTypes';
 
 /**
  * 电脑列表页面 (现代化版本)
@@ -497,6 +500,23 @@ struct PcListPageV2 {
       .margin({ right: AppSpacing.Small })
       .onClick(() => {
         this.showAboutDialog = true;
+      })
+
+      // 扫码导入按键配置
+      Button({ type: ButtonType.Circle }) {
+        Image($r('app.media.ic_scan'))
+          .width(AppSizes.IconMedium)
+          .height(AppSizes.IconMedium)
+          .fillColor(AppColors.Primary)
+      }
+      .width(44)
+      .height(44)
+      .backgroundColor(AppColors.Surface)
+      .borderWidth(1)
+      .borderColor(AppColors.CardBorder)
+      .margin({ right: AppSpacing.Small })
+      .onClick(() => {
+        this.scanAndImportKeys();
       })
 
       // 设置按钮
@@ -1057,6 +1077,50 @@ struct PcListPageV2 {
     } finally {
       this.isRefreshing = false;
     }
+  }
+
+  /** 扫码导入按键配置 */
+  private async scanAndImportKeys(): Promise<void> {
+    const result = await QrShareService.scanQrCode();
+    if (!result) {
+      promptAction.showToast({ message: '扫码取消或失败', duration: 1500 });
+      return;
+    }
+    const parsed = QrShareService.deserialize(result);
+    if (!parsed) {
+      promptAction.showToast({ message: '无效的配置数据', duration: 2000 });
+      return;
+    }
+    const name = parsed[0];
+    const keys = parsed[1];
+    this.optionPickerDialogConfig = {
+      title: `导入配置: ${name}`,
+      subtitle: `包含 ${keys.length} 个按键`,
+      options: [
+        { title: '替换导入', value: 'replace' } as OptionItem,
+        { title: '合并导入', value: 'merge' } as OptionItem,
+      ],
+      selectedValue: '',
+      onSelect: async (option: OptionItem) => {
+        if (option.value === 'replace') {
+          await CustomKeyStore.saveKeys(keys);
+          promptAction.showToast({ message: `已导入 "${name}" (${keys.length} 个按键)`, duration: 2000 });
+        } else {
+          const existing = await CustomKeyStore.getKeys();
+          await CustomKeyStore.saveKeys(existing.concat(keys));
+          promptAction.showToast({ message: `已合并 ${keys.length} 个按键`, duration: 2000 });
+        }
+      }
+    };
+    this.optionPickerDialogController = new CustomDialogController({
+      builder: OptionPickerDialog({
+        config: this.optionPickerDialogConfig
+      }),
+      alignment: DialogAlignment.Bottom,
+      customStyle: true,
+      backgroundColor: Color.Transparent
+    });
+    this.optionPickerDialogController.open();
   }
 
   private async scanNetwork(): Promise<void> {
