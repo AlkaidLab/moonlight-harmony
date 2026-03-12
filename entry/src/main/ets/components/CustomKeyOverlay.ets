@@ -650,8 +650,9 @@ export struct CustomKeyOverlay {
           .onClick(() => { this.snapEnabled = !this.snapEnabled; })
 
           Row({ space: 4 }) {
-            Text('📱')
-              .fontSize(14)
+            SymbolGlyph($r('sys.symbol.share'))
+              .fontSize(16)
+              .fontColor([Color.White])
             Text('分享')
               .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }

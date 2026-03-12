@@ -16,7 +16,7 @@
 import { promptAction } from '@kit.ArkUI';
 import { common, bundleManager, Want } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { ObservableComputer } from './ComputerViewModel';
 import { ComputerManager } from '../service/ComputerManager';
 import { PairingManager, PairState as PMPairState } from '../service/PairingManager';
@@ -90,21 +90,10 @@ export class PcListActions {
   /**
    * 加入 QQ 群
    */
-  joinQQGroup(key: string): void {
-    try {
-      const qqUri = `mqqopensdkapi://bizAgent/qm/qr?url=http%3A%2F%2Fqm.qq.com%2Fcgi-bin%2Fqm%2Fqr%3Ffrom%3Dapp%26p%3Dandroid%26jump_from%3Dwebapi%26k%3D${key}`;
-      const want: Want = {
-        action: 'ohos.want.action.viewData',
-        uri: qqUri
-      };
-      this.context.startAbility(want).catch((err: BusinessError) => {
-        console.info('QQ 未安装，打开网页版', err);
-        this.openUrl('https://qm.qq.com/cgi-bin/qm/qr?k=' + key);
-      });
-    } catch (err) {
-      console.error('加入 QQ 群失败', err);
-      promptAction.showToast({ message: '无法打开 QQ' });
-    }
+  copyQQGroupNumber(groupNumber: string): void {
+    const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, groupNumber);
+    pasteboard.getSystemPasteboard().setDataSync(pasteData);
+    promptAction.showToast({ message: `群号 ${groupNumber} 已复制，请在 QQ 中搜索加入` });
   }
   
   /**

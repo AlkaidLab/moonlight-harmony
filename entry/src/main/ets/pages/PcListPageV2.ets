@@ -23,7 +23,7 @@ import { BackgroundImage } from '../components/BackgroundImage';
 import { sensor } from '@kit.SensorServiceKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig, InfoDialog, InfoDialogConfig } from '../components/ConfirmDialog';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 // 新增：使用抽取的辅助类
@@ -967,7 +967,7 @@ struct PcListPageV2 {
             this.openUrl('https://github.com/AlkaidLab/moonlight-harmony');
           })
         
-        Button('加入QQ群')
+        Button('复制QQ群号')
           .height(40)
           .fontSize(AppSizes.FontBody)
           .fontColor(Color.White)
@@ -976,7 +976,7 @@ struct PcListPageV2 {
           .layoutWeight(1)
           .margin({ left: AppSpacing.Medium })
           .onClick(() => {
-            this.joinQQGroup('MeQFXB4ZoznvRzz7q_38LTmW5HrcfzcL');
+            this.copyQQGroupNumber('962507488');
           })
       }
       .width('100%')
@@ -1041,24 +1041,10 @@ struct PcListPageV2 {
   /**
    * 加入 QQ 群
    */
-  private joinQQGroup(key: string): void {
-    try {
-      const context = getContext(this) as common.UIAbilityContext;
-      // 尝试使用 QQ 的 URI scheme
-      const qqUri = `mqqopensdkapi://bizAgent/qm/qr?url=http%3A%2F%2Fqm.qq.com%2Fcgi-bin%2Fqm%2Fqr%3Ffrom%3Dapp%26p%3Dandroid%26jump_from%3Dwebapi%26k%3D${key}`;
-      const want: Want = {
-        action: 'ohos.want.action.viewData',
-        uri: qqUri
-      };
-      context.startAbility(want).catch((err: BusinessError) => {
-        // 如果 QQ 未安装，打开网页版
-        console.info('QQ 未安装，打开网页版', err);
-        this.openUrl('https://qm.qq.com/cgi-bin/qm/qr?k=' + key);
-      });
-    } catch (err) {
-      console.error('加入 QQ 群失败', err);
-      promptAction.showToast({ message: '无法打开 QQ' });
-    }
+  private copyQQGroupNumber(groupNumber: string): void {
+    const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, groupNumber);
+    pasteboard.getSystemPasteboard().setDataSync(pasteData);
+    promptAction.showToast({ message: `群号 ${groupNumber} 已复制，请在 QQ 中搜索加入` });
   }
   
   private async refreshComputers(): Promise<void> {

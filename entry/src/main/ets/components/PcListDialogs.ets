@@ -43,8 +43,8 @@ export interface AboutDialogConfig {
   onClose: () => void;
   /** 打开 URL 回调 */
   onOpenUrl: (url: string) => void;
-  /** 加入 QQ 群回调 */
-  onJoinQQGroup: (key: string) => void;
+  /** 复制 QQ 群号回调 */
+  onCopyQQGroup: (groupNumber: string) => void;
 }
 
 /**
@@ -142,7 +142,7 @@ export struct AboutDialog {
     versionInfo: '',
     onClose: () => {},
     onOpenUrl: () => {},
-    onJoinQQGroup: () => {}
+    onCopyQQGroup: () => {}
   };
 
   build() {
@@ -206,7 +206,7 @@ export struct AboutDialog {
                 this.config.onOpenUrl('https://github.com/qiin2333/moonlight-vplus');
               })
             
-            Button('加入QQ群')
+            Button('复制QQ群号')
               .height(40)
               .fontSize(AppSizes.FontBody)
               .fontColor(Color.White)
@@ -215,7 +215,7 @@ export struct AboutDialog {
               .layoutWeight(1)
               .margin({ left: AppSpacing.Medium })
               .onClick(() => {
-                this.config.onJoinQQGroup('MeQFXB4ZoznvRzz7q_38LTmW5HrcfzcL');
+                this.config.onCopyQQGroup('962507488');
               })
           }
           .width('100%')
