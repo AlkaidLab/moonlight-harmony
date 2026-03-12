@@ -1555,6 +1555,9 @@ export struct CustomKeyOverlay {
           .fontSize(12)
           .fontColor(Color.White)
           .textAlign(TextAlign.Center)
+          .width('100%')
+          .height('100%')
+          .lineHeight(CustomKeyOverlay.RESIZE_HANDLE_SIZE)
       }
       .width(CustomKeyOverlay.RESIZE_HANDLE_SIZE)
       .height(CustomKeyOverlay.RESIZE_HANDLE_SIZE)
