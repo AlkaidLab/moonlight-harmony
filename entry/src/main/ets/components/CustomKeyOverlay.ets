@@ -1459,7 +1459,7 @@ export struct CustomKeyOverlay {
                   .objectFit(ImageFit.Contain)
               } else {
                 Column({ space: 4 }) {
-                  Text('📋')
+                  Text('⚠')
                     .fontSize(28)
                   Text('模拟器不支持')
                     .fontSize(11).fontColor(OV_TEXT_DIM)
@@ -1476,14 +1476,14 @@ export struct CustomKeyOverlay {
               }
               // 操作按钮
               Row({ space: 8 }) {
-                Text('📋 复制')
+                Text('复制')
                   .fontSize(12).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
                   .padding({ left: 10, right: 10 }).height(30)
                   .borderRadius(15).backgroundColor('#506080A0')
                   .border({ width: 1, color: '#306080A0' })
                   .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
                   .onClick(() => { this.copyToClipboard(); })
-                Text('📤 分享')
+                Text('分享')
                   .fontSize(12).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
                   .padding({ left: 10, right: 10 }).height(30)
                   .borderRadius(15).backgroundColor('#5090B0')
@@ -1501,14 +1501,14 @@ export struct CustomKeyOverlay {
               Text('导入配置')
                 .fontSize(12).fontColor(OV_TEXT_MEDIUM)
 
-              Text('📷 扫码导入')
+              Text('扫码导入')
                 .fontSize(13).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
                 .width(130).height(36).textAlign(TextAlign.Center)
                 .borderRadius(18).backgroundColor('#6098C0')
                 .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
                 .onClick(() => { this.scanAndImport(); })
 
-              Text('📋 从剪贴板导入')
+              Text('从剪贴板导入')
                 .fontSize(13).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
                 .width(130).height(36).textAlign(TextAlign.Center)
                 .borderRadius(18).backgroundColor('#7060A0')
