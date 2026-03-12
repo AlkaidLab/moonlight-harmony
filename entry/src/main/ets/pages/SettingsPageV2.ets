@@ -2012,6 +2012,7 @@ struct SettingsPageV2 {
         }
         .layoutWeight(1)
         .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
         .align(Alignment.Top)
       }
       .layoutWeight(1)
@@ -2124,6 +2125,7 @@ struct SettingsPageV2 {
     .width(180)
     .height('100%')
     .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
     .align(Alignment.Top)
   }
 
