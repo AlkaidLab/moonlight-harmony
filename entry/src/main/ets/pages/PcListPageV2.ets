@@ -9,29 +9,26 @@
  */
 
 import { router, promptAction } from '@kit.ArkUI';
-import { ComputerInfo, ComputerState, PairState, selectBestAddress } from '../model/ComputerInfo';
+import { ComputerInfo } from '../model/ComputerInfo';
 import { ComputerManager } from '../service/ComputerManager';
 import { ComputerCard } from '../components/ComputerCard';
 import { ComputerListViewModel, ObservableComputer, ComputerDataSource } from '../viewmodel/ComputerViewModel';
-import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
-import { PairingManager, PairState as PMPairState } from '../service/PairingManager';
-import { NvHttp } from '../service/NvHttp';
-import { common, bundleManager, Want } from '@kit.AbilityKit';
-import { buffer } from '@kit.ArkTS';
+import { AppColors, AppSizes, AppSpacing } from '../common/Theme';
+import { common } from '@kit.AbilityKit';
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { BackgroundImage } from '../components/BackgroundImage';
 import { sensor } from '@kit.SensorServiceKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig, InfoDialog, InfoDialogConfig } from '../components/ConfirmDialog';
-import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
-// 新增：使用抽取的辅助类
 import { ComputerMenuHelper, ComputerMenuCallbacks } from '../viewmodel/ComputerMenuHelper';
-import { PcListActions } from '../viewmodel/PcListActions';
+import { PcListActions, PcListUICallbacks } from '../viewmodel/PcListActions';
 import { QrShareService } from '../service/QrShareService';
 import { CustomKeyStore } from '../service/CustomKeyStore';
-import { CustomKeyDef } from '../service/CustomKeyTypes';
+import { PcListTitleBar, TitleBarConfig } from '../components/PcListTitleBar';
+import { PinDialogView, AboutDialogView } from '../components/PcListDialogs';
 
 /**
  * 电脑列表页面 (现代化版本)
@@ -64,6 +61,7 @@ struct PcListPageV2 {
   
   private computerManager: ComputerManager = ComputerManager.getInstance();
   private backgroundUtil: BackgroundImageUtil = BackgroundImageUtil.getInstance();
+  private actions: PcListActions | null = null;
   
   // 摇一摇相关
   private lastShakeTime: number = 0;
@@ -127,6 +125,19 @@ struct PcListPageV2 {
     // 先设置 context 以便后续使用本地缓存
     const context = getContext(this) as common.UIAbilityContext;
     this.backgroundUtil.setContext(context);
+
+    // 初始化业务逻辑处理类
+    this.actions = new PcListActions({
+      showConfirmDialog: (config: ConfirmDialogConfig) => this.showConfirmDialog(config),
+      showInfoDialog: (config: InfoDialogConfig) => this.showInfoDialog(config),
+      syncViewModel: () => { this.syncViewModelFromManager(); },
+      showPinDialog: (pin: string, computerName: string) => {
+        this.currentPin = pin;
+        this.pairingComputerName = computerName;
+        this.showPinDialog = true;
+      },
+      hidePinDialog: () => { this.showPinDialog = false; }
+    } as PcListUICallbacks);
     
     this.initializeAsync();
     this.loadBackgroundImage();
@@ -402,7 +413,15 @@ struct PcListPageV2 {
       // 主内容
       Column() {
         // 标题栏
-        this.TitleBar()
+        PcListTitleBar({
+          config: {
+            onlineCount: this.viewModel.onlineCount,
+            totalCount: this.viewModel.computerCount,
+            onAboutClick: () => { this.showAboutDialog = true; },
+            onScanImport: () => { this.scanAndImportKeys(); },
+            onSettingsClick: () => { router.pushUrl({ url: 'pages/SettingsPageV2' }); }
+          } as TitleBarConfig
+        })
         
         // 电脑列表或空状态
         if (this.isInitializing) {
@@ -423,12 +442,18 @@ struct PcListPageV2 {
       
       // PIN 对话框
       if (this.showPinDialog) {
-        this.PinDialog()
+        PinDialogView({
+          pin: this.currentPin,
+          computerName: this.pairingComputerName,
+          onClose: () => { this.showPinDialog = false; }
+        })
       }
       
       // 关于对话框
       if (this.showAboutDialog) {
-        this.AboutDialog()
+        AboutDialogView({
+          onClose: () => { this.showAboutDialog = false; }
+        })
       }
     }
     .width('100%')
@@ -439,108 +464,6 @@ struct PcListPageV2 {
       const height = newValue.height as number;
       this.screenWidth = width;
       this.isLandscape = width > height;
-    })
-  }
-
-  @Builder
-  TitleBar() {
-    Row() {
-      Column() {
-        Row() {
-          // 应用图标/Logo - 使用 V+ Logo
-          Image($r('app.media.vplus'))
-            .width(44)
-            .height(44)
-            .borderRadius(12)
-            .objectFit(ImageFit.Cover)
-            .margin({ right: AppSpacing.Medium })
-
-          Column() {
-            Text('Moonlight V+')
-              .fontSize(AppSizes.FontLargeTitle)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(AppColors.Primary)
-
-            if (this.viewModel.computers.length > 0) {
-              Row() {
-                Circle()
-                  .width(6)
-                  .height(6)
-                  .fill(AppColors.Online)
-                  .margin({ right: 6 })
-                Text(`${this.viewModel.onlineCount} 在线`)
-                  .fontSize(AppSizes.FontCaption)
-                  .fontColor(AppColors.Online)
-                Text(` / ${this.viewModel.computerCount} 台设备`)
-                  .fontSize(AppSizes.FontCaption)
-                  .fontColor(AppColors.TextSecondary)
-              }
-              .margin({ top: 4 })
-            }
-          }
-          .alignItems(HorizontalAlign.Start)
-        }
-      }
-      .alignItems(HorizontalAlign.Start)
-
-      Blank()
-
-      // 关于按钮
-      Button({ type: ButtonType.Circle }) {
-        Image($r('app.media.ic_info'))
-          .width(AppSizes.IconMedium)
-          .height(AppSizes.IconMedium)
-          .fillColor(AppColors.Primary)
-      }
-      .width(44)
-      .height(44)
-      .backgroundColor(AppColors.Surface)
-      .borderWidth(1)
-      .borderColor(AppColors.CardBorder)
-      .margin({ right: AppSpacing.Small })
-      .onClick(() => {
-        this.showAboutDialog = true;
-      })
-
-      // 扫码导入按键配置
-      Button({ type: ButtonType.Circle }) {
-        Image($r('app.media.ic_scan'))
-          .width(AppSizes.IconMedium)
-          .height(AppSizes.IconMedium)
-          .fillColor(AppColors.Primary)
-      }
-      .width(44)
-      .height(44)
-      .backgroundColor(AppColors.Surface)
-      .borderWidth(1)
-      .borderColor(AppColors.CardBorder)
-      .margin({ right: AppSpacing.Small })
-      .onClick(() => {
-        this.scanAndImportKeys();
-      })
-
-      // 设置按钮
-      Button({ type: ButtonType.Circle }) {
-        Image($r('app.media.ic_settings'))
-          .width(AppSizes.IconMedium)
-          .height(AppSizes.IconMedium)
-          .fillColor(AppColors.Primary)
-      }
-      .width(44)
-      .height(44)
-      .backgroundColor(AppColors.Surface)
-      .borderWidth(1)
-      .borderColor(AppColors.CardBorder)
-      .onClick(() => {
-        router.pushUrl({ url: 'pages/SettingsPageV2' });
-      })
-    }
-    .width('100%')
-    .padding({
-      left: AppSpacing.Large,
-      right: AppSpacing.Large,
-      top: this.topSafeHeight,
-      bottom: AppSpacing.Large
     })
   }
 
@@ -665,9 +588,15 @@ struct PcListPageV2 {
             GridItem() {
               ComputerCard({
                 computer: computer,
-                onTap: () => this.handleComputerTap(computer),
+                onTap: () => {
+                  if (!computer.isOnline) {
+                    this.showComputerMenu(computer);
+                  } else {
+                    this.actions!.handleComputerTap(computer);
+                  }
+                },
                 onLongPress: () => this.showComputerMenu(computer),
-                onQuickStream: () => this.handleQuickStream(computer)
+                onQuickStream: () => this.actions!.handleQuickStream(computer)
               })
             }
           }, (computer: ObservableComputer) => computer.uuid)
@@ -686,9 +615,15 @@ struct PcListPageV2 {
             ListItem() {
               ComputerCard({
                 computer: computer,
-                onTap: () => this.handleComputerTap(computer),
+                onTap: () => {
+                  if (!computer.isOnline) {
+                    this.showComputerMenu(computer);
+                  } else {
+                    this.actions!.handleComputerTap(computer);
+                  }
+                },
                 onLongPress: () => this.showComputerMenu(computer),
-                onQuickStream: () => this.handleQuickStream(computer)
+                onQuickStream: () => this.actions!.handleQuickStream(computer)
               })
             }
           }, (computer: ObservableComputer) => computer.uuid)
@@ -841,231 +776,8 @@ struct PcListPageV2 {
       promptAction.showToast({ message: '保存授权失败' });
     }
   };
-  
-  @Builder
-  PinDialog() {
-    Column() {
-      // 背景遮罩
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#66000000')
-        .onClick(() => {
-          this.showPinDialog = false;
-        })
-    }
-    .width('100%')
-    .height('100%')
-    .position({ x: 0, y: 0 })
-    .zIndex(100)
-    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut }))
-    
-    // 对话框
-    Column() {
-      // 标题
-      Text('配对 PIN 码')
-        .fontSize(AppSizes.FontHeadline)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(AppColors.TextPrimary)
-        .margin({ bottom: AppSpacing.Medium })
-      
-      Text(`请在 ${this.pairingComputerName} 上输入以下 PIN 码：`)
-        .fontSize(AppSizes.FontBody)
-        .fontColor(AppColors.TextSecondary)
-        .textAlign(TextAlign.Center)
-        .margin({ bottom: AppSpacing.Large })
-      
-      // PIN 码显示
-      Row() {
-        ForEach(this.currentPin.split(''), (digit: string) => {
-          Text(digit)
-            .fontSize(36)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(AppColors.Primary)
-            .width(56)
-            .height(72)
-            .textAlign(TextAlign.Center)
-            .backgroundColor(AppColors.PrimaryGlow)
-            .borderRadius(AppSizes.RadiusMedium)
-        })
-      }
-      .justifyContent(FlexAlign.SpaceEvenly)
-      .width('100%')
-      .margin({ bottom: AppSpacing.XLarge })
-      
-      // 提示
-      Text('正在等待配对完成...')
-        .fontSize(AppSizes.FontCaption)
-        .fontColor(AppColors.TextSecondary)
-        
-      // 关闭按钮
-      Button('取消')
-        .width('100%')
-        .height(44)
-        .fontSize(AppSizes.FontBody)
-        .fontColor(AppColors.TextSecondary)
-        .backgroundColor(Color.Transparent)
-        .margin({ top: AppSpacing.Large })
-        .onClick(() => {
-          this.showPinDialog = false;
-        })
-    }
-    .width('85%')
-    .padding(AppSpacing.XLarge)
-    .backgroundColor(AppColors.Surface)
-    .borderRadius(AppSizes.RadiusXLarge)
-    .position({ x: '7.5%', y: '30%' })
-    .zIndex(101)
-    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
-      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
-  }
-  
-  @Builder
-  AboutDialog() {
-    Column() {
-      // 背景遮罩
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#66000000')
-        .onClick(() => {
-          this.showAboutDialog = false;
-        })
-    }
-    .width('100%')
-    .height('100%')
-    .position({ x: 0, y: 0 })
-    .zIndex(100)
-    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut }))
-    
-    // 对话框
-    Column() {
-      // Logo
-      Image($r('app.media.vplus'))
-        .width(80)
-        .height(80)
-        .borderRadius(16)
-        .objectFit(ImageFit.Cover)
-        .margin({ bottom: AppSpacing.Medium })
-      
-      // 应用名称
-      Text('Moonlight V+')
-        .fontSize(AppSizes.FontLargeTitle)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(AppColors.Primary)
-        .margin({ bottom: AppSpacing.Small })
-      
-      // 版本信息
-      Text(this.getVersionInfo())
-        .fontSize(AppSizes.FontBody)
-        .fontColor(AppColors.TextSecondary)
-        .margin({ bottom: AppSpacing.Large })
-      
-      // 描述
-      Text('开源游戏串流客户端，基于 Moonlight 开发')
-        .fontSize(AppSizes.FontBody)
-        .fontColor(AppColors.TextSecondary)
-        .textAlign(TextAlign.Center)
-        .margin({ bottom: AppSpacing.Small })
-        
-      Text('支持 NVIDIA GeForce Experience 和 Sunshine')
-        .fontSize(AppSizes.FontCaption)
-        .fontColor(AppColors.TextTertiary)
-        .textAlign(TextAlign.Center)
-        .margin({ bottom: AppSpacing.XLarge })
-      
-      // 按钮组
-      Row() {
-        Button('GitHub')
-          .height(40)
-          .fontSize(AppSizes.FontBody)
-          .fontColor(Color.White)
-          .backgroundColor('#24292e')
-          .borderRadius(AppSizes.RadiusMedium)
-          .layoutWeight(1)
-          .onClick(() => {
-            this.openUrl('https://github.com/AlkaidLab/moonlight-harmony');
-          })
-        
-        Button('复制QQ群号')
-          .height(40)
-          .fontSize(AppSizes.FontBody)
-          .fontColor(Color.White)
-          .backgroundColor('#12B7F5')
-          .borderRadius(AppSizes.RadiusMedium)
-          .layoutWeight(1)
-          .margin({ left: AppSpacing.Medium })
-          .onClick(() => {
-            this.copyQQGroupNumber('962507488');
-          })
-      }
-      .width('100%')
-      .margin({ bottom: AppSpacing.Medium })
-      
-      // 关闭按钮
-      Button('关闭')
-        .width('100%')
-        .height(44)
-        .fontSize(AppSizes.FontBody)
-        .fontColor(AppColors.TextSecondary)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showAboutDialog = false;
-        })
-    }
-    .width('85%')
-    .padding(AppSpacing.XLarge)
-    .backgroundColor(AppColors.Surface)
-    .borderRadius(AppSizes.RadiusXLarge)
-    .alignItems(HorizontalAlign.Center)
-    .position({ x: '7.5%', y: '20%' })
-    .zIndex(101)
-    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
-      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
-  }
 
   // ==================== 业务逻辑 ====================
-  
-  /**
-   * 获取版本信息
-   */
-  private getVersionInfo(): string {
-    try {
-      const bundleInfo = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
-      const versionName = bundleInfo.versionName;
-      const versionCode = bundleInfo.versionCode;
-      return `版本 ${versionName} (Build ${versionCode})`;
-    } catch (err) {
-      console.error('获取版本信息失败', err);
-      return '版本未知';
-    }
-  }
-  
-  /**
-   * 打开 URL
-   */
-  private openUrl(url: string): void {
-    try {
-      const context = getContext(this) as common.UIAbilityContext;
-      const want: Want = {
-        action: 'ohos.want.action.viewData',
-        uri: url
-      };
-      context.startAbility(want);
-    } catch (err) {
-      console.error('打开 URL 失败', err);
-      promptAction.showToast({ message: '无法打开链接' });
-    }
-  }
-  
-  /**
-   * 加入 QQ 群
-   */
-  private copyQQGroupNumber(groupNumber: string): void {
-    const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, groupNumber);
-    pasteboard.getSystemPasteboard().setDataSync(pasteData);
-    promptAction.showToast({ message: `群号 ${groupNumber} 已复制，请在 QQ 中搜索加入` });
-  }
   
   private async refreshComputers(): Promise<void> {
     this.isRefreshing = true;
@@ -1137,174 +849,22 @@ struct PcListPageV2 {
     }
   }
 
-  private handleComputerTap(computer: ObservableComputer): void {
-    // 离线 -> 显示菜单
-    if (!computer.isOnline) {
-      this.showComputerMenu(computer);
-      return;
-    }
-    
-    // 已配对 -> 进入应用列表
-    if (computer.isPaired) {
-      router.pushUrl({
-        url: 'pages/AppListPageV2',
-        params: { computerId: computer.uuid }
-      });
-      return;
-    }
-    
-    // 在线未配对 -> 配对
-    this.pairWithComputer(computer);
-  }
-
-  /**
-   * 快速串流处理
-   * 点击快速串流按钮时：
-   * 1. 如果有正在运行的游戏，恢复该游戏
-   * 2. 否则获取应用列表，启动第一个应用
-   */
-  private async handleQuickStream(computer: ObservableComputer): Promise<void> {
-    if (!computer.isOnline || !computer.isPaired) {
-      promptAction.showToast({ message: '设备未就绪' });
-      return;
-    }
-
-    try {
-      // 显示加载提示
-      promptAction.showToast({ message: '正在准备串流...', duration: 1000 });
-
-      // 获取完整电脑信息（包含 serverCert）
-      const computerInfo = this.computerManager.getComputer(computer.uuid);
-      if (!computerInfo || computerInfo.pairState !== PairState.PAIRED) {
-        promptAction.showToast({ message: '设备未配对' });
-        return;
-      }
-
-      // 如果有正在运行的游戏，直接恢复
-      if (computer.runningGameId > 0) {
-        console.info(`PcListPageV2: 快速恢复游戏 ID=${computer.runningGameId}`);
-        router.pushUrl({
-          url: 'pages/StreamPage',
-          params: {
-            computerId: computer.uuid,
-            appId: computer.runningGameId,
-            appName: '正在运行',  // 占位，实际会从服务器获取
-            resume: true
-          }
-        });
-        return;
-      }
-
-      // 获取应用列表
-      const context = getContext(this) as common.UIAbilityContext;
-      const nvHttp = new NvHttp(selectBestAddress(computerInfo), computerInfo.serverCert, context, computerInfo.httpPort);
-      const apps = await nvHttp.getAppList();
-
-      if (apps.length === 0) {
-        promptAction.showToast({ message: '没有可用的应用' });
-        return;
-      }
-
-      // 启动第一个应用
-      const firstApp = apps[0];
-      console.info(`PcListPageV2: 快速启动应用 ${firstApp.name} (ID=${firstApp.id})`);
-      router.pushUrl({
-        url: 'pages/StreamPage',
-        params: {
-          computerId: computer.uuid,
-          appId: firstApp.id,
-          appName: firstApp.name,
-          resume: false
-        }
-      });
-    } catch (err) {
-      console.error(`PcListPageV2: 快速串流失败`, err);
-      promptAction.showToast({ message: `启动失败: ${(err as Error).message}` });
-    }
-  }
-
-  private async pairWithComputer(computer: ObservableComputer): Promise<void> {
-    // 检查是否在线
-    if (!computer.isOnline) {
-      promptAction.showToast({ message: '电脑离线，无法配对' });
-      return;
-    }
-
-    // 生成PIN码
-    const pin = PairingManager.generatePin();
-    this.currentPin = pin;
-    this.pairingComputerName = computer.name;
-    this.showPinDialog = true;
-
-    try {
-      console.info(`PcListPageV2: 开始配对 ${computer.name}, PIN: ${pin}, httpPort: ${computer.httpPort}`);
-
-      // 执行配对（使用保存的自定义端口）
-      const context = getContext(this) as common.UIAbilityContext;
-      const pairingManager = new PairingManager(selectBestAddress(computer), computer.uuid, context, computer.httpPort);
-      const result = await pairingManager.pair(pin);
-
-      console.info(`PcListPageV2: 配对结果 ${result.state}`);
-      this.showPinDialog = false;
-
-      if (result.state === PMPairState.PAIRED) {
-        // 使用 updateComputer 方法更新原始电脑数据
-        let serverCertBase64 = '';
-        if (result.serverCert) {
-          const buf = buffer.from(result.serverCert);
-          serverCertBase64 = buf.toString('base64');
-        }
-        
-        await this.computerManager.updateComputer(computer.uuid, {
-          pairState: PairState.PAIRED,
-          serverCert: serverCertBase64,
-          pairName: result.pairName || ''
-        });
-        
-        console.info(`PcListPageV2: 配对成功，serverCert 长度: ${serverCertBase64.length}`);
-        
-        // 刷新列表
-        await this.syncViewModelFromManager();
-
-        // 显示成功消息
-        promptAction.showToast({ message: '配对成功！' });
-
-        // 自动进入应用列表
-        router.pushUrl({
-          url: 'pages/AppListPageV2',
-          params: { computerId: computer.uuid }
-        });
-      } else if (result.state === PMPairState.PIN_WRONG) {
-        promptAction.showToast({ message: 'PIN 码错误，请重试' });
-      } else if (result.state === PMPairState.ALREADY_IN_PROGRESS) {
-        promptAction.showToast({ message: '另一个设备正在配对中' });
-      } else {
-        promptAction.showToast({ message: `配对失败: ${result.state}` });
-      }
-    } catch (error) {
-      const err = error as Error;
-      this.showPinDialog = false;
-      console.error('PcListPageV2: 配对异常', err);
-      promptAction.showToast({ message: `配对失败: ${err.message}` });
-    }
-  }
-
   private showComputerMenu(computer: ObservableComputer): void {
     // 使用 ComputerMenuHelper 生成菜单
     const callbacks: ComputerMenuCallbacks = {
-      onWake: (c) => this.wakeComputer(c),
-      onPair: (c) => this.pairWithComputer(c),
-      onResumeGame: (c) => this.resumeGame(c),
-      onQuitGame: (c) => this.quitGame(c),
+      onWake: (c) => this.actions!.wakeComputer(c),
+      onPair: (c) => this.actions!.pairWithComputer(c),
+      onResumeGame: (c) => this.actions!.resumeGame(c),
+      onQuitGame: (c) => this.actions!.quitGame(c),
       onAppList: (c) => router.pushUrl({
         url: 'pages/AppListPageV2',
         params: { computerId: c.uuid }
       }),
-      onUnpair: (c) => this.unpairComputer(c),
-      onSleep: (c) => this.sleepComputer(c),
-      onTestNetwork: (c) => this.testNetwork(c),
-      onShowDetails: (c) => this.showComputerDetails(c),
-      onDelete: (c) => this.deleteComputer(c)
+      onUnpair: (c) => this.actions!.unpairComputer(c),
+      onSleep: (c) => this.actions!.sleepComputer(c),
+      onTestNetwork: (c) => this.actions!.testNetwork(c),
+      onShowDetails: (c) => this.actions!.showComputerDetails(c),
+      onDelete: (c) => this.actions!.deleteComputer(c)
     };
     
     const menuResult = ComputerMenuHelper.generateMenu(computer, callbacks);
@@ -1333,238 +893,5 @@ struct PcListPageV2 {
       backgroundColor: Color.Transparent
     });
     this.optionPickerDialogController.open();
-  }
-
-  private async wakeComputer(computer: ObservableComputer): Promise<void> {
-    console.info(`PcListPageV2: wakeComputer 被调用 - ${computer.name}, MAC: ${computer.macAddress}`);
-    
-    if (!computer.macAddress || computer.macAddress === '00:00:00:00:00:00') {
-      console.warn(`PcListPageV2: ${computer.name} 缺少有效的 MAC 地址`);
-      promptAction.showToast({ message: '缺少有效的 MAC 地址。请先在电脑在线时配对，以获取 MAC 地址。' });
-      return;
-    }
-    
-    try {
-      console.info(`PcListPageV2: 正在发送 WOL 唤醒包...`);
-      await this.computerManager.wakeComputer(computer.uuid);
-      console.info(`PcListPageV2: WOL 唤醒包已发送成功`);
-      promptAction.showToast({ message: '唤醒包已发送' });
-    } catch (err) {
-      console.error(`PcListPageV2: WOL 发送失败:`, err);
-      const errMessage = err instanceof Error ? err.message : String(err);
-      promptAction.showToast({ message: `发送失败: ${errMessage}` });
-    }
-  }
-
-  private async quitGame(computer: ObservableComputer): Promise<void> {
-    if (!computer.isOnline) {
-      const toastOpts: promptAction.ShowToastOptions = { message: '电脑离线，无法退出游戏' };
-      promptAction.showToast(toastOpts);
-      return;
-    }
-
-    if (!computer.isPaired) {
-      const toastOpts: promptAction.ShowToastOptions = { message: '未配对，无法退出游戏' };
-      promptAction.showToast(toastOpts);
-      return;
-    }
-
-    if (!computer.runningGameId || computer.runningGameId <= 0) {
-      const toastOpts: promptAction.ShowToastOptions = { message: '没有正在运行的游戏' };
-      promptAction.showToast(toastOpts);
-      return;
-    }
-
-    this.showConfirmDialog({
-      title: '退出游戏',
-      message: '确定要退出当前运行的游戏吗？',
-      confirmButton: {
-        text: '退出',
-        color: AppColors.Error,
-        onClick: async () => {
-          try {
-            const toastOptions: promptAction.ShowToastOptions = { message: '正在退出游戏...' };
-            promptAction.showToast(toastOptions);
-
-            const context = getContext(this) as common.UIAbilityContext;
-            const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, context, computer.httpPort);
-            const success = await nvHttp.quitApp();
-
-            if (success) {
-              const successToast: promptAction.ShowToastOptions = { message: '游戏已退出' };
-              promptAction.showToast(successToast);
-              await this.computerManager.pollComputer(computer.toComputerInfo());
-              await this.syncViewModelFromManager();
-            } else {
-              const failToast: promptAction.ShowToastOptions = { message: '退出游戏失败' };
-              promptAction.showToast(failToast);
-            }
-          } catch (error) {
-            const err = error as Error;
-            const errorToast: promptAction.ShowToastOptions = { message: `退出游戏失败: ${err.message}` };
-            promptAction.showToast(errorToast);
-          }
-        }
-      }
-    });
-  }
-
-  private async sleepComputer(computer: ObservableComputer): Promise<void> {
-    if (!computer.isOnline) {
-      const toastOpts: promptAction.ShowToastOptions = { message: '电脑离线，无法休眠' };
-      promptAction.showToast(toastOpts);
-      return;
-    }
-
-    if (!computer.isPaired) {
-      const toastOpts: promptAction.ShowToastOptions = { message: '未配对，无法发送休眠命令' };
-      promptAction.showToast(toastOpts);
-      return;
-    }
-
-    this.showConfirmDialog({
-      title: '休眠电脑',
-      message: `确定要让 "${computer.name}" 进入睡眠模式吗？`,
-      confirmButton: {
-        text: '休眠',
-        onClick: async () => {
-          try {
-            const toastOpts: promptAction.ShowToastOptions = { message: '正在发送休眠命令...' };
-            promptAction.showToast(toastOpts);
-
-            const context = getContext(this) as common.UIAbilityContext;
-            const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, context, computer.httpPort);
-            const success = await nvHttp.pcSleep();
-
-            if (success) {
-              promptAction.showToast({ message: '睡眠命令已发送' });
-              // 电脑将进入睡眠，先本地标记为离线，再刷新列表
-              computer.state = ComputerState.OFFLINE;
-              await this.syncViewModelFromManager();
-            } else {
-              promptAction.showToast({ message: '发送睡眠命令失败' });
-            }
-          } catch (error) {
-            const err = error as Error;
-            promptAction.showToast({ message: `发送睡眠命令失败: ${err.message}` });
-          }
-        }
-      }
-    });
-  }
-
-  private resumeGame(computer: ObservableComputer): void {
-    router.pushUrl({
-      url: 'pages/StreamPage',
-      params: {
-        computerId: computer.uuid,
-        appId: computer.runningGameId,
-        resume: true
-      }
-    });
-  }
-
-  private async unpairComputer(computer: ObservableComputer): Promise<void> {
-    this.showConfirmDialog({
-      title: '取消配对',
-      message: `确定要取消与 ${computer.name} 的配对吗？`,
-      confirmButton: {
-        text: '确定',
-        color: AppColors.Error,
-        onClick: async () => {
-          try {
-            await this.computerManager.unpairComputer(computer.uuid);
-            promptAction.showToast({ message: '已取消配对' });
-            this.syncViewModelFromManager();
-          } catch (err) {
-            promptAction.showToast({ message: '操作失败' });
-          }
-        }
-      }
-    });
-  }
-
-  private async deleteComputer(computer: ObservableComputer): Promise<void> {
-    this.showConfirmDialog({
-      title: '删除电脑',
-      message: `确定要删除 ${computer.name} 吗？`,
-      confirmButton: {
-        text: '删除',
-        color: AppColors.Error,
-        onClick: async () => {
-          try {
-            await this.computerManager.removeComputer(computer.uuid);
-            promptAction.showToast({ message: '已删除' });
-            this.syncViewModelFromManager();
-          } catch (err) {
-            promptAction.showToast({ message: '删除失败' });
-          }
-        }
-      }
-    });
-  }
-
-  private async testNetwork(computer: ObservableComputer): Promise<void> {
-    promptAction.showToast({ message: '正在测试网络...' });
-    
-    try {
-      // 简单地尝试 poll 电脑获取状态
-      const computerInfo = computer.toComputerInfo();
-      await this.computerManager.pollComputer(computerInfo);
-      
-      this.showInfoDialog({
-        title: '网络测试结果',
-        content: `电脑 ${computer.name} 响应正常`
-      });
-    } catch (error) {
-      const err = error as Error;
-      this.showInfoDialog({
-        title: '网络测试结果',
-        content: `电脑 ${computer.name} 无法连接\n${err.message}`
-      });
-    }
-  }
-
-  private showComputerDetails(computer: ObservableComputer): void {
-    const stateText = computer.isOnline ? '在线' : '离线';
-    const pairText = computer.isPaired ? '已配对' : '未配对';
-    const gamingText = computer.isGaming ? `正在运行游戏 (ID: ${computer.runningGameId})` : '空闲';
-    
-    // 构建地址信息（显示所有类型）
-    const addressLines: string[] = [];
-    const info = computer.toComputerInfo();
-    if (info.manualAddress) {
-      addressLines.push(`手动地址: ${info.manualAddress}`);
-    }
-    if (info.localAddress) {
-      addressLines.push(`本地地址: ${info.localAddress}`);
-    }
-    if (info.remoteAddress) {
-      addressLines.push(`远程地址: ${info.remoteAddress}`);
-    }
-    if (info.address && info.address !== info.localAddress && info.address !== info.remoteAddress && info.address !== info.manualAddress) {
-      addressLines.push(`当前地址: ${info.address}`);
-    }
-    if (addressLines.length === 0) {
-      addressLines.push(`地址: 未知`);
-    }
-    
-    const details = [
-      `名称: ${computer.name}`,
-      `状态: ${stateText}`,
-      `配对: ${pairText}`,
-      `游戏: ${gamingText}`,
-      ``,
-      `UUID: ${computer.uuid}`,
-      ...addressLines,
-      `MAC 地址: ${computer.macAddress || '未知'}`,
-      `HTTPS 端口: ${NvHttp.DEFAULT_HTTPS_PORT}`,
-      `HTTP 端口: ${info.httpPort || NvHttp.DEFAULT_HTTP_PORT}`,
-    ].join('\n');
-    
-    this.showInfoDialog({
-      title: computer.name,
-      content: details
-    });
   }
 }

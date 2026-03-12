@@ -10,125 +10,91 @@
 
 /**
  * PC 列表页面对话框组件
- * 
+ *
  * 包含:
  * - PIN 码配对对话框
  * - 关于对话框
  */
-import { AppColors, AppSizes, AppSpacing } from '../common/Theme';
+import { promptAction } from '@kit.ArkUI';
+import { common, bundleManager, Want } from '@kit.AbilityKit';
+import { pasteboard } from '@kit.BasicServicesKit';
+import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../common/Theme';
+
+const GITHUB_URL = 'https://github.com/AlkaidLab/moonlight-harmony';
+const QQ_GROUP_NUMBER = '962507488';
 
 /**
- * PIN 码对话框配置
- */
-export interface PinDialogConfig {
-  /** 是否显示 */
-  visible: boolean;
-  /** PIN 码 */
-  pin: string;
-  /** 配对的电脑名称 */
-  computerName: string;
-  /** 关闭回调 */
-  onClose: () => void;
-}
-
-/**
- * 关于对话框配置
- */
-export interface AboutDialogConfig {
-  /** 是否显示 */
-  visible: boolean;
-  /** 版本信息 */
-  versionInfo: string;
-  /** 关闭回调 */
-  onClose: () => void;
-  /** 打开 URL 回调 */
-  onOpenUrl: (url: string) => void;
-  /** 复制 QQ 群号回调 */
-  onCopyQQGroup: (groupNumber: string) => void;
-}
-
-/**
- * PIN 码配对对话框
+ * PIN 码对话框
  */
 @Component
-export struct PinDialog {
-  @Prop config: PinDialogConfig = {
-    visible: false,
-    pin: '',
-    computerName: '',
-    onClose: () => {}
-  };
+export struct PinDialogView {
+  @Prop pin: string = '';
+  @Prop computerName: string = '';
+  onClose: () => void = () => {};
 
   build() {
-    if (this.config.visible) {
-      Stack() {
-        // 背景遮罩
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#66000000')
-          .onClick(() => {
-            this.config.onClose();
+    Stack() {
+      // 背景遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#66000000')
+        .onClick(() => { this.onClose(); })
+
+      // 对话框
+      Column() {
+        Text('配对 PIN 码')
+          .fontSize(AppSizes.FontHeadline)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.TextPrimary)
+          .margin({ bottom: AppSpacing.Medium })
+
+        Text(`请在 ${this.computerName} 上输入以下 PIN 码：`)
+          .fontSize(AppSizes.FontBody)
+          .fontColor(AppColors.TextSecondary)
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: AppSpacing.Large })
+
+        // PIN 码显示
+        Row() {
+          ForEach(this.pin.split(''), (digit: string) => {
+            Text(digit)
+              .fontSize(36)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColors.Primary)
+              .width(56)
+              .height(72)
+              .textAlign(TextAlign.Center)
+              .backgroundColor(AppColors.PrimaryGlow)
+              .borderRadius(AppSizes.RadiusMedium)
           })
-        
-        // 对话框内容
-        Column() {
-          // 标题
-          Text('配对 PIN 码')
-            .fontSize(AppSizes.FontHeadline)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(AppColors.TextPrimary)
-            .margin({ bottom: AppSpacing.Medium })
-          
-          Text(`请在 ${this.config.computerName} 上输入以下 PIN 码：`)
-            .fontSize(AppSizes.FontBody)
-            .fontColor(AppColors.TextSecondary)
-            .textAlign(TextAlign.Center)
-            .margin({ bottom: AppSpacing.Large })
-          
-          // PIN 码显示
-          Row() {
-            ForEach(this.config.pin.split(''), (digit: string) => {
-              Text(digit)
-                .fontSize(36)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(AppColors.Primary)
-                .width(56)
-                .height(72)
-                .textAlign(TextAlign.Center)
-                .backgroundColor(AppColors.PrimaryGlow)
-                .borderRadius(AppSizes.RadiusMedium)
-            })
-          }
-          .justifyContent(FlexAlign.SpaceEvenly)
-          .width('100%')
-          .margin({ bottom: AppSpacing.XLarge })
-          
-          // 提示
-          Text('正在等待配对完成...')
-            .fontSize(AppSizes.FontCaption)
-            .fontColor(AppColors.TextSecondary)
-            
-          // 关闭按钮
-          Button('取消')
-            .width('100%')
-            .height(44)
-            .fontSize(AppSizes.FontBody)
-            .fontColor(AppColors.TextSecondary)
-            .backgroundColor(Color.Transparent)
-            .margin({ top: AppSpacing.Large })
-            .onClick(() => {
-              this.config.onClose();
-            })
         }
-        .width('85%')
-        .padding(AppSpacing.XLarge)
-        .backgroundColor(AppColors.Surface)
-        .borderRadius(AppSizes.RadiusXLarge)
+        .justifyContent(FlexAlign.SpaceEvenly)
+        .width('100%')
+        .margin({ bottom: AppSpacing.XLarge })
+
+        Text('正在等待配对完成...')
+          .fontSize(AppSizes.FontCaption)
+          .fontColor(AppColors.TextSecondary)
+
+        Button('取消')
+          .width('100%')
+          .height(44)
+          .fontSize(AppSizes.FontBody)
+          .fontColor(AppColors.TextSecondary)
+          .backgroundColor(Color.Transparent)
+          .margin({ top: AppSpacing.Large })
+          .onClick(() => { this.onClose(); })
       }
-      .width('100%')
-      .height('100%')
+      .width('85%')
+      .padding(AppSpacing.XLarge)
+      .backgroundColor(AppColors.Surface)
+      .borderRadius(AppSizes.RadiusXLarge)
     }
+    .width('100%')
+    .height('100%')
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
 }
 
@@ -136,110 +102,116 @@ export struct PinDialog {
  * 关于对话框
  */
 @Component
-export struct AboutDialog {
-  @Prop config: AboutDialogConfig = {
-    visible: false,
-    versionInfo: '',
-    onClose: () => {},
-    onOpenUrl: () => {},
-    onCopyQQGroup: () => {}
-  };
+export struct AboutDialogView {
+  onClose: () => void = () => {};
 
   build() {
-    if (this.config.visible) {
-      Stack() {
-        // 背景遮罩
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#66000000')
-          .onClick(() => {
-            this.config.onClose();
-          })
-        
-        // 对话框内容
-        Column() {
-          // Logo
-          Image($r('app.media.vplus'))
-            .width(80)
-            .height(80)
-            .borderRadius(16)
-            .objectFit(ImageFit.Cover)
-            .margin({ bottom: AppSpacing.Medium })
-          
-          // 应用名称
-          Text('Moonlight V+')
-            .fontSize(AppSizes.FontLargeTitle)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(AppColors.Primary)
-            .margin({ bottom: AppSpacing.Small })
-          
-          // 版本信息
-          Text(this.config.versionInfo)
-            .fontSize(AppSizes.FontBody)
-            .fontColor(AppColors.TextSecondary)
-            .margin({ bottom: AppSpacing.Large })
-          
-          // 描述
-          Text('开源游戏串流客户端，基于 Moonlight 开发')
-            .fontSize(AppSizes.FontBody)
-            .fontColor(AppColors.TextSecondary)
-            .textAlign(TextAlign.Center)
-            .margin({ bottom: AppSpacing.Small })
-            
-          Text('支持 NVIDIA GeForce Experience 和 Sunshine')
-            .fontSize(AppSizes.FontCaption)
-            .fontColor(AppColors.TextTertiary)
-            .textAlign(TextAlign.Center)
-            .margin({ bottom: AppSpacing.XLarge })
-          
-          // 按钮组
-          Row() {
-            Button('GitHub')
-              .height(40)
-              .fontSize(AppSizes.FontBody)
-              .fontColor(Color.White)
-              .backgroundColor('#24292e')
-              .borderRadius(AppSizes.RadiusMedium)
-              .layoutWeight(1)
-              .onClick(() => {
-                this.config.onOpenUrl('https://github.com/qiin2333/moonlight-vplus');
-              })
-            
-            Button('复制QQ群号')
-              .height(40)
-              .fontSize(AppSizes.FontBody)
-              .fontColor(Color.White)
-              .backgroundColor('#12B7F5')
-              .borderRadius(AppSizes.RadiusMedium)
-              .layoutWeight(1)
-              .margin({ left: AppSpacing.Medium })
-              .onClick(() => {
-                this.config.onCopyQQGroup('962507488');
-              })
-          }
-          .width('100%')
+    Stack() {
+      // 背景遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#66000000')
+        .onClick(() => { this.onClose(); })
+
+      // 对话框
+      Column() {
+        Image($r('app.media.vplus'))
+          .width(80)
+          .height(80)
+          .borderRadius(16)
+          .objectFit(ImageFit.Cover)
           .margin({ bottom: AppSpacing.Medium })
-          
-          // 关闭按钮
-          Button('关闭')
-            .width('100%')
-            .height(44)
+
+        Text('Moonlight V+')
+          .fontSize(AppSizes.FontLargeTitle)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColors.Primary)
+          .margin({ bottom: AppSpacing.Small })
+
+        Text(AboutDialogView.getVersionInfo())
+          .fontSize(AppSizes.FontBody)
+          .fontColor(AppColors.TextSecondary)
+          .margin({ bottom: AppSpacing.Large })
+
+        Text('开源游戏串流客户端，基于 Moonlight 开发')
+          .fontSize(AppSizes.FontBody)
+          .fontColor(AppColors.TextSecondary)
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: AppSpacing.Small })
+
+        Text('支持 NVIDIA GeForce Experience 和 Sunshine')
+          .fontSize(AppSizes.FontCaption)
+          .fontColor(AppColors.TextTertiary)
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: AppSpacing.XLarge })
+
+        // 按钮组
+        Row() {
+          Button('GitHub')
+            .height(40)
             .fontSize(AppSizes.FontBody)
-            .fontColor(AppColors.TextSecondary)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              this.config.onClose();
-            })
+            .fontColor(Color.White)
+            .backgroundColor('#24292e')
+            .borderRadius(AppSizes.RadiusMedium)
+            .layoutWeight(1)
+            .onClick(() => { AboutDialogView.openUrl(GITHUB_URL); })
+
+          Button('复制QQ群号')
+            .height(40)
+            .fontSize(AppSizes.FontBody)
+            .fontColor(Color.White)
+            .backgroundColor('#12B7F5')
+            .borderRadius(AppSizes.RadiusMedium)
+            .layoutWeight(1)
+            .margin({ left: AppSpacing.Medium })
+            .onClick(() => { AboutDialogView.copyQQGroupNumber(); })
         }
-        .width('85%')
-        .padding(AppSpacing.XLarge)
-        .backgroundColor(AppColors.Surface)
-        .borderRadius(AppSizes.RadiusXLarge)
-        .alignItems(HorizontalAlign.Center)
+        .width('100%')
+        .margin({ bottom: AppSpacing.Medium })
+
+        Button('关闭')
+          .width('100%')
+          .height(44)
+          .fontSize(AppSizes.FontBody)
+          .fontColor(AppColors.TextSecondary)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => { this.onClose(); })
       }
-      .width('100%')
-      .height('100%')
+      .width('85%')
+      .padding(AppSpacing.XLarge)
+      .backgroundColor(AppColors.Surface)
+      .borderRadius(AppSizes.RadiusXLarge)
+      .alignItems(HorizontalAlign.Center)
     }
+    .width('100%')
+    .height('100%')
+    .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
+  }
+
+  static getVersionInfo(): string {
+    try {
+      const bundleInfo = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
+      return `版本 ${bundleInfo.versionName} (Build ${bundleInfo.versionCode})`;
+    } catch (_e) {
+      return '版本未知';
+    }
+  }
+
+  static openUrl(url: string): void {
+    try {
+      const context = getContext() as common.UIAbilityContext;
+      const want: Want = { action: 'ohos.want.action.viewData', uri: url };
+      context.startAbility(want);
+    } catch (_e) {
+      promptAction.showToast({ message: '无法打开链接' });
+    }
+  }
+
+  static copyQQGroupNumber(): void {
+    const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, QQ_GROUP_NUMBER);
+    pasteboard.getSystemPasteboard().setDataSync(pasteData);
+    promptAction.showToast({ message: `群号 ${QQ_GROUP_NUMBER} 已复制，请在 QQ 中搜索加入` });
   }
 }

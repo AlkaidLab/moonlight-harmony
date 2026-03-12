@@ -24,6 +24,8 @@ export interface TitleBarConfig {
   totalCount: number;
   /** 关于按钮点击回调 */
   onAboutClick: () => void;
+  /** 扫码导入按钮点击回调 */
+  onScanImport: () => void;
   /** 设置按钮点击回调 */
   onSettingsClick: () => void;
 }
@@ -38,6 +40,7 @@ export struct PcListTitleBar {
     onlineCount: 0,
     totalCount: 0,
     onAboutClick: () => {},
+    onScanImport: () => {},
     onSettingsClick: () => {}
   };
 
@@ -98,6 +101,23 @@ export struct PcListTitleBar {
       .margin({ right: AppSpacing.Small })
       .onClick(() => {
         this.config.onAboutClick();
+      })
+
+      // 扫码导入按钮
+      Button({ type: ButtonType.Circle }) {
+        Image($r('app.media.ic_scan'))
+          .width(AppSizes.IconMedium)
+          .height(AppSizes.IconMedium)
+          .fillColor(AppColors.Primary)
+      }
+      .width(44)
+      .height(44)
+      .backgroundColor(AppColors.Surface)
+      .borderWidth(1)
+      .borderColor(AppColors.CardBorder)
+      .margin({ right: AppSpacing.Small })
+      .onClick(() => {
+        this.config.onScanImport();
       })
 
       // 设置按钮
