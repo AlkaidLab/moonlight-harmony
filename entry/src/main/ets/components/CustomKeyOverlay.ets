@@ -1223,61 +1223,109 @@ export struct CustomKeyOverlay {
 
   @Builder
   ShareCardBuilder(qrPixel: image.PixelMap, profileName: string, keyCount: number) {
-    Column() {
-      // 顶部品牌区
-      Row({ space: 10 }) {
-        Image($r('app.media.app_icon'))
-          .width(36).height(36)
-          .borderRadius(8)
-        Column({ space: 2 }) {
-          Text('Moonlight V+')
-            .fontSize(18).fontColor('#FFA8D8EA').fontWeight(FontWeight.Bold)
-          Text('王冠的自定义按键')
-            .fontSize(11).fontColor('#80FFFFFF')
-        }
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
-      .padding({ left: 24, right: 24, top: 24, bottom: 16 })
+    Stack() {
+      // ── 装饰背景层 ──
+      // 主渐变背景
+      Column()
+        .width('100%').height('100%')
+        .linearGradient({
+          angle: 135,
+          colors: [['#FF0F1628', 0], ['#FF162040', 0.35], ['#FF1A1040', 0.65], ['#FF10101E', 1]],
+        })
 
-      // 二维码区域（带背景容器）
+      // 右上角装饰光晕
+      Circle()
+        .width(180).height(180)
+        .fill('#00000000')
+        .radialGradient({
+          center: [90, 90],
+          radius: 90,
+          colors: [['#18A8D8EA', 0], ['#00A8D8EA', 1]],
+        })
+        .position({ right: -40, top: -40 })
+
+      // 左下角装饰光晕
+      Circle()
+        .width(140).height(140)
+        .fill('#00000000')
+        .radialGradient({
+          center: [70, 70],
+          radius: 70,
+          colors: [['#128060C0', 0], ['#008060C0', 1]],
+        })
+        .position({ left: -30, bottom: -30 })
+
+      // ── 内容层 ──
       Column() {
-        Image(qrPixel)
-          .width(200).height(200)
-          .objectFit(ImageFit.Contain)
-      }
-      .padding(20)
-      .backgroundColor('#F5F5F5')
-      .borderRadius(16)
-      .margin({ left: 28, right: 28 })
+        // 顶部品牌区
+        Row({ space: 10 }) {
+          Image($r('app.media.app_icon'))
+            .width(36).height(36)
+            .borderRadius(8)
+          Column({ space: 2 }) {
+            Text('Moonlight V+')
+              .fontSize(18).fontColor('#FFA8D8EA').fontWeight(FontWeight.Bold)
+            Text('王冠的自定义按键配置分享')
+              .fontSize(11).fontColor('#80FFFFFF')
+          }
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .padding({ left: 24, right: 24, top: 24, bottom: 16 })
 
-      // 配置名称 + 按键数
-      Column({ space: 6 }) {
-        Text(`✨ ${profileName}`)
-          .fontSize(16).fontColor('#FFFFFFFF').fontWeight(FontWeight.Bold)
-          .textAlign(TextAlign.Center)
-        Text(`包含 ${keyCount} 个按键 · 为你精心调配`)
-          .fontSize(12).fontColor('#99A8D8EA')
-          .textAlign(TextAlign.Center)
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Center)
-      .padding({ top: 16, bottom: 14 })
+        // 二维码区域 — 带渐变边框和内阴影效果
+        Stack() {
+          // 外层渐变边框
+          Column()
+            .width(244).height(244)
+            .borderRadius(18)
+            .linearGradient({
+              angle: 135,
+              colors: [['#40A8D8EA', 0], ['#208060C0', 0.5], ['#30A8D8EA', 1]],
+            })
 
-      // 底部提示
-      Divider().color('#20A8D8EA').width('70%')
-      Text('打开 Moonlight V+ → 扫一扫即可导入 🎮')
-        .fontSize(11).fontColor('#60FFFFFF')
-        .textAlign(TextAlign.Center)
-        .padding({ top: 10, bottom: 24 })
+          // 白色内容区
+          Column() {
+            Image(qrPixel)
+              .width(200).height(200)
+              .objectFit(ImageFit.Contain)
+          }
+          .width(236).height(236)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('#FFFFFFFF')
+          .borderRadius(16)
+        }
+        .alignContent(Alignment.Center)
+
+        // 配置名称 + 按键数
+        Column({ space: 6 }) {
+          Text(profileName)
+            .fontSize(16).fontColor('#FFFFFFFF').fontWeight(FontWeight.Bold)
+            .textAlign(TextAlign.Center)
+          Row({ space: 6 }) {
+            Text(`${keyCount}`)
+              .fontSize(13).fontColor('#FFA8D8EA').fontWeight(FontWeight.Bold)
+            Text('个按键')
+              .fontSize(12).fontColor('#99A8D8EA')
+          }
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .padding({ top: 16, bottom: 14 })
+
+        // 底部提示
+        Divider().color('#20A8D8EA').width('60%')
+        Text('打开 Moonlight V+ → 扫一扫即可导入')
+          .fontSize(11).fontColor('#60FFFFFF')
+          .textAlign(TextAlign.Center)
+          .padding({ top: 10, bottom: 24 })
+      }
     }
     .width(320)
-    .linearGradient({
-      angle: 180,
-      colors: [['#FF1E2340', 0], ['#FF1A1A2E', 0.5], ['#FF15192B', 1]],
-    })
+    .height(420)
     .borderRadius(20)
-    .border({ width: 1, color: '#30A8D8EA' })
+    .border({ width: 1, color: '#25A8D8EA' })
+    .clip(true)
   }
 
   /** 从剪贴板粘贴导入 */
