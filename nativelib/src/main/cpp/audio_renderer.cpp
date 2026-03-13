@@ -448,32 +448,11 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
     }
     
     // 写入环形缓冲区（无锁 SPSC）
+    // 生产者只写 ringTail_，不触碰 ringHead_（消费者的变量），保证无锁正确性
+    // 延迟控制由消费者 OnWriteData 负责（在读取前跳过旧数据）
     int dataSize = sampleCount * config_.channelCount;
     int tail = ringTail_.load(std::memory_order_relaxed);
     int head = ringHead_.load(std::memory_order_acquire);
-    
-    // 延迟上限检查（匹配 Android 的 40ms 上限）
-    // 如果缓冲区中已有数据超过阈值，丢弃旧数据（前移 head）以腾出空间写入最新数据
-    // 这样保证音频始终连续且是最新内容，避免丢弃新帧导致的波形断裂爆音
-    int buffered = (tail >= head) ? (tail - head) : (ringCapacity_ - head + tail);
-    int bufferedFrames = buffered / std::max(config_.channelCount, 1);
-    double latencyMs = (config_.sampleRate > 0)
-        ? ((double)bufferedFrames * 1000.0 / config_.sampleRate)
-        : 0.0;
-    if (latencyMs > MAX_AUDIO_LATENCY_MS) {
-        // 计算需要丢弃的旧数据量：丢弃到只保留 MAX_AUDIO_LATENCY_MS/2 的数据
-        int targetSamples = config_.sampleRate * config_.channelCount * MAX_AUDIO_LATENCY_MS / 2 / 1000;
-        int toDrop = buffered - targetSamples;
-        if (toDrop > 0) {
-            // 对齐到帧边界避免声道错位
-            int frameSize = std::max(config_.channelCount, 1);
-            toDrop = (toDrop / frameSize) * frameSize;
-            int newHead = (head + toDrop) % ringCapacity_;
-            ringHead_.store(newHead, std::memory_order_release);
-            head = newHead;
-            droppedSamples_.fetch_add(toDrop / frameSize, std::memory_order_relaxed);
-        }
-    }
     
     // 计算可用空间（保留1个元素的间隔以区分满/空）
     int available;
@@ -484,13 +463,11 @@ int AudioRenderer::PlaySamples(const int16_t* pcmData, int sampleCount) {
     }
     
     if (available < dataSize) {
-        // 缓冲区空间不足 → 丢弃旧数据腾出空间
-        int toDrop = dataSize - available;
-        int frameSize = std::max(config_.channelCount, 1);
-        toDrop = ((toDrop + frameSize - 1) / frameSize) * frameSize; // 向上对齐到帧边界
-        head = (head + toDrop) % ringCapacity_;
-        ringHead_.store(head, std::memory_order_release);
-        droppedSamples_.fetch_add(toDrop / frameSize, std::memory_order_relaxed);
+        // 缓冲区空间不足 → 丢弃新数据
+        // 不推进 head（消费者的写变量），保持 SPSC 无锁约定
+        // 消费者端的延迟裁剪会确保缓冲区不会持续积累
+        droppedSamples_.fetch_add(sampleCount, std::memory_order_relaxed);
+        return 0;
     }
     
     // 写入数据到环形缓冲区
@@ -625,6 +602,7 @@ OH_AudioData_Callback_Result AudioRenderer::OnWriteData(OH_AudioRenderer* render
     
     int head = self->ringHead_.load(std::memory_order_relaxed);
     int tail = self->ringTail_.load(std::memory_order_acquire);
+    int channelCount = std::max(self->config_.channelCount, 1);
 
     // 计算可读数据量
     int available;
@@ -634,11 +612,44 @@ OH_AudioData_Callback_Result AudioRenderer::OnWriteData(OH_AudioRenderer* render
         available = self->ringCapacity_ - head + tail;
     }
     
+    // 延迟裁剪（消费者端）：如果缓冲区积累过多，跳过旧数据到合理位置
+    // 在消费者线程推进 head 是 SPSC 安全的（head 本就是消费者的写变量）
+    if (available > 0 && self->config_.sampleRate > 0) {
+        int bufferedFrames = available / channelCount;
+        double latencyMs = (double)bufferedFrames * 1000.0 / self->config_.sampleRate;
+        if (latencyMs > MAX_AUDIO_LATENCY_MS) {
+            // 跳到只保留 MAX_AUDIO_LATENCY_MS/2 的数据，给后续帧留余量
+            int targetSamples = self->config_.sampleRate * channelCount * MAX_AUDIO_LATENCY_MS / 2 / 1000;
+            // 对齐到帧边界
+            targetSamples = (targetSamples / channelCount) * channelCount;
+            int toDrop = available - targetSamples;
+            if (toDrop > 0) {
+                toDrop = (toDrop / channelCount) * channelCount;
+                head = (head + toDrop) % self->ringCapacity_;
+                self->ringHead_.store(head, std::memory_order_release);
+                available -= toDrop;
+                self->droppedSamples_.fetch_add(toDrop / channelCount, std::memory_order_relaxed);
+                // 标记需要 fade-in（跳过数据后波形不连续）
+                self->wasUnderrun_.store(true, std::memory_order_relaxed);
+            }
+        }
+    }
+    
     int toCopy = std::min(available, samplesNeeded);
-    int channelCount = std::max(self->config_.channelCount, 1);
-    // 渐变长度（按采样帧计，非采样点）：约 2ms @48kHz = 96 采样帧
-    // 使用较短的渐变避免过度修改有效音频数据
-    static constexpr int FADE_FRAMES = 96;
+    // 自适应渐变长度：根据 gap 大小调整，大 gap 需要更长渐变以减少爆音
+    // 基础: 96 帧 (~2ms @48kHz)，最大: 480 帧 (~10ms @48kHz)
+    static constexpr int FADE_FRAMES_MIN = 96;
+    static constexpr int FADE_FRAMES_MAX = 480;
+    int gap = samplesNeeded - toCopy;
+    // gap 越大（数据越少），渐变越长
+    int FADE_FRAMES;
+    if (gap <= 0 || samplesNeeded <= 0) {
+        FADE_FRAMES = FADE_FRAMES_MIN;
+    } else {
+        // 线性插值：gap 从 0 到 samplesNeeded 时，fade 从 MIN 到 MAX
+        float gapRatio = (float)gap / (float)samplesNeeded;
+        FADE_FRAMES = FADE_FRAMES_MIN + (int)((FADE_FRAMES_MAX - FADE_FRAMES_MIN) * gapRatio);
+    }
     
     if (toCopy > 0) {
         // 从环形缓冲区读取
