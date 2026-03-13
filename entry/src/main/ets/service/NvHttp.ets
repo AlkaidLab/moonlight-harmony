@@ -386,10 +386,22 @@ export class NvHttp {
           const url = this.buildUrl(await this.getHttpsBaseUrl(), 'serverinfo');
           response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
         } catch (err) {
-          console.warn(`NvHttp: HTTPS serverinfo 失败: ${err}, 降级到 HTTP`);
-          // 证书可能不匹配，降级到 HTTP
-          const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
-          response = await this.doRequest(url);
+          const errMsg = String(err).toLowerCase();
+          // 匹配 Android 行为：仅在证书不匹配（401/certificate/handshake/ssl/tls）时降级到 HTTP
+          // 网络超时、连接拒绝等瞬态错误不应降级，否则 HTTP 返回 PairStatus=0 会导致状态异常
+          const isCertError = errMsg.includes('401') ||
+            errMsg.includes('certificate') ||
+            errMsg.includes('handshake') ||
+            errMsg.includes('ssl') ||
+            errMsg.includes('tls');
+          if (isCertError) {
+            console.warn(`NvHttp: HTTPS serverinfo 证书错误: ${err}, 降级到 HTTP`);
+            const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
+            response = await this.doRequest(url);
+          } else {
+            console.warn(`NvHttp: HTTPS serverinfo 失败 (非证书错误，不降级): ${err}`);
+            throw new Error(`HTTPS serverinfo 失败: ${err}`);
+          }
         }
       } else {
         // 未配对，使用 HTTP

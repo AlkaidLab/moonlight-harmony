@@ -21,7 +21,7 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../common/Theme';
 
 const GITHUB_URL = 'https://github.com/AlkaidLab/moonlight-harmony';
-const QQ_GROUP_NUMBER = '962507488';
+const QQ_GROUP_NUMBER = '103206957';
 
 /**
  * PIN 码对话框

@@ -55,12 +55,18 @@ export struct PcListTitleBar {
             .borderRadius(12)
             .objectFit(ImageFit.Cover)
             .margin({ right: AppSpacing.Medium })
+            .flexShrink(0)
 
           Column() {
             Text('Moonlight V+')
               .fontSize(AppSizes.FontLargeTitle)
               .fontWeight(FontWeight.Bold)
               .fontColor(AppColors.Primary)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .minFontSize(14)
+              .maxFontSize(AppSizes.FontLargeTitle)
+              .heightAdaptivePolicy(TextHeightAdaptivePolicy.MIN_FONT_SIZE_FIRST)
 
             if (this.config.totalCount > 0) {
               Row() {
@@ -80,11 +86,12 @@ export struct PcListTitleBar {
             }
           }
           .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
         }
       }
       .alignItems(HorizontalAlign.Start)
-
-      Blank()
+      .layoutWeight(1)
+      .margin({ right: AppSpacing.Small })
 
       // 关于按钮
       Button({ type: ButtonType.Circle }) {
@@ -98,6 +105,7 @@ export struct PcListTitleBar {
       .backgroundColor(AppColors.Surface)
       .borderWidth(1)
       .borderColor(AppColors.CardBorder)
+      .flexShrink(0)
       .margin({ right: AppSpacing.Small })
       .onClick(() => {
         this.config.onAboutClick();
@@ -115,6 +123,7 @@ export struct PcListTitleBar {
       .backgroundColor(AppColors.Surface)
       .borderWidth(1)
       .borderColor(AppColors.CardBorder)
+      .flexShrink(0)
       .margin({ right: AppSpacing.Small })
       .onClick(() => {
         this.config.onScanImport();
@@ -132,6 +141,7 @@ export struct PcListTitleBar {
       .backgroundColor(AppColors.Surface)
       .borderWidth(1)
       .borderColor(AppColors.CardBorder)
+      .flexShrink(0)
       .onClick(() => {
         this.config.onSettingsClick();
       })
