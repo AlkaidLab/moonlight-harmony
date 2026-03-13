@@ -723,21 +723,27 @@ struct StreamPage {
   /**
    * 启动鼠标高帧率保持
    *
-   * 使用 DisplaySync 直接向系统合成器请求 120Hz 刷新率，
+   * 使用 DisplaySync 直接向系统合成器请求高刷新率，
    * 保持 ArkUI 渲染循环高帧率，使 .onMouse 以屏幕刷新率投递。
    * 仅在 C++ Mouse Monitor 不可用时使用。
    */
   private startMouseKeepAlive(): void {
     if (this.mouseDisplaySync) return;
     try {
+      let deviceRefreshRate = 120;
+      try {
+        const displayInfo = display.getDefaultDisplaySync();
+        deviceRefreshRate = Math.max(Math.round(displayInfo.refreshRate || 120), 60);
+      } catch (_) {}
+
       this.mouseDisplaySync = displaySync.create();
       this.mouseDisplaySync.setExpectedFrameRateRange({
         min: 60,
-        max: 120,
-        expected: 120,
+        max: deviceRefreshRate,
+        expected: deviceRefreshRate,
       });
       this.mouseDisplaySync.start();
-      console.info('StreamPage: DisplaySync 已启动（请求 60-120Hz 高刷新率）');
+      console.info(`StreamPage: DisplaySync 已启动（请求 60-${deviceRefreshRate}Hz 高刷新率）`);
     } catch (e) {
       console.warn('StreamPage: DisplaySync 创建失败:', JSON.stringify(e));
       this.mouseDisplaySync = null;
