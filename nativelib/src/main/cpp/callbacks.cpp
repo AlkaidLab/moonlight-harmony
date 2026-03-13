@@ -23,6 +23,9 @@
 #include "bass_energy_analyzer.h"
 #include <hilog/log.h>
 #include <cstring>
+
+// 外部函数：更新 mic 编码器丢包率（定义在 moonlight_bridge.cpp）
+extern void MicCapturerUpdatePacketLossPercent(int percent);
 #include <cstdarg>
 #include <mutex>
 #include <qos/qos.h>
@@ -873,6 +876,22 @@ void BridgeClRumble(unsigned short controllerNumber, unsigned short lowFreqMotor
 
 void BridgeClConnectionStatusUpdate(int connectionStatus) {
     OH_LOG_INFO(LOG_APP, "Connection status: %{public}d", connectionStatus);
+    
+    // 网络质量差时主动请求 IDR 帧，加速画面恢复
+    // CONN_STATUS_POOR = 1，此时很可能有帧丢失导致解码器参考帧损坏
+    // 提前请求 IDR 可避免等待超时才触发恢复
+    if (connectionStatus == 1) { // CONN_STATUS_POOR
+        LiRequestIdrFrame();
+        OH_LOG_WARN(LOG_APP, "Poor connection detected, proactively requesting IDR frame");
+    }
+    
+    // 动态更新所有 mic 编码器的丢包率预估
+    // POOR → 15%（增加 FEC 冗余），OKAY → 1%（恢复正常）
+    {
+        int lossPercent = (connectionStatus == 1) ? 15 : 1;
+        MicCapturerUpdatePacketLossPercent(lossPercent);
+    }
+    
     if (g_connCallbacks.tsfn_connectionStatusUpdate) {
         CallbackData* data = new CallbackData();
         data->intParams[0] = connectionStatus;

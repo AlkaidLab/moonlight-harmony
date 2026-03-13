@@ -75,6 +75,14 @@ public:
      */
     bool HasError() const { return hasError_.load(std::memory_order_acquire); }
 
+    /**
+     * 动态更新预估丢包率 (0-100)
+     * 影响 FEC 冗余比例：丢包率越高，编码器分配越多比特给 FEC
+     * 线程安全：可从任意线程调用
+     * @param percent 丢包率百分比
+     */
+    void UpdatePacketLossPercent(int percent);
+
 private:
     ::OpusEncoder* encoder_ = nullptr;
     int sampleRate_ = 48000;
@@ -84,6 +92,7 @@ private:
 
     std::atomic<bool> initialized_{false};
     std::atomic<bool> hasError_{false};
+    std::atomic<int> currentLossPercent_{1}; // 当前预估丢包率
 };
 
 #endif // OPUS_ENCODER_H

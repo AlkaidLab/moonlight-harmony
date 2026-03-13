@@ -29,6 +29,7 @@
 #include <opus.h>
 #include <hilog/log.h>
 #include <cstring>
+#include <algorithm>
 
 #define LOG_TAG "OpusEncoder"
 
@@ -144,6 +145,19 @@ int OhosOpusEncoder::Encode(const uint8_t* pcmData, int pcmLength, uint8_t* opus
     return encodedLen;
 }
 
+void OhosOpusEncoder::UpdatePacketLossPercent(int percent) {
+    if (!initialized_.load(std::memory_order_acquire) || encoder_ == nullptr) {
+        return;
+    }
+    // 限制范围 0-100
+    percent = std::max(0, std::min(100, percent));
+    int prev = currentLossPercent_.exchange(percent, std::memory_order_relaxed);
+    if (prev != percent) {
+        opus_encoder_ctl(encoder_, OPUS_SET_PACKET_LOSS_PERC(percent));
+        OH_LOG_INFO(LOG_APP, "Opus encoder packet loss updated: %{public}d%% -> %{public}d%%", prev, percent);
+    }
+}
+
 void OhosOpusEncoder::Cleanup() {
     OH_LOG_INFO(LOG_APP, "Cleanup (libopus)");
 
@@ -155,6 +169,7 @@ void OhosOpusEncoder::Cleanup() {
     }
 
     hasError_.store(false, std::memory_order_release);
+    currentLossPercent_.store(1, std::memory_order_relaxed);
     OH_LOG_INFO(LOG_APP, "Cleanup completed");
 }
 

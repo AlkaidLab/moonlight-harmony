@@ -60,6 +60,15 @@ static int64_t g_opusEncoderNextHandle = 1;
 
 // Native 麦克风采集器 (低时延)
 static std::unique_ptr<MicCapturer> g_micCapturer;
+static std::mutex g_micCapturerMutex;
+
+// 全局接口：更新 mic 编码器丢包率（供 callbacks.cpp 调用）
+void MicCapturerUpdatePacketLossPercent(int percent) {
+    std::lock_guard<std::mutex> lock(g_micCapturerMutex);
+    if (g_micCapturer) {
+        g_micCapturer->UpdatePacketLossPercent(percent);
+    }
+}
 
 // 回调结构体
 static DECODER_RENDERER_CALLBACKS g_videoCallbacksStruct = {

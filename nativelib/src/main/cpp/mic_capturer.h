@@ -104,6 +104,12 @@ public:
 
     MicCapturerStats GetStats() const;
 
+    /**
+     * 动态更新 Opus 编码器的丢包率预估
+     * 线程安全：可从任意线程调用
+     */
+    void UpdatePacketLossPercent(int percent) { encoder_.UpdatePacketLossPercent(percent); }
+
 private:
     // OHAudio 回调
     static OH_AudioData_Callback_Result OnReadData(
