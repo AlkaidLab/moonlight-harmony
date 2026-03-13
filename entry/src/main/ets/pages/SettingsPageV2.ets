@@ -225,7 +225,6 @@ struct SettingsPageV2 {
   
   // UI 设置
   @State smallIconMode: boolean = false;
-  @State language: string = '跟随系统';
   @State backgroundImageType: string = 'default';
   @State backgroundImageUrl: string = '';
   @State resumeStream: boolean = false;
@@ -536,7 +535,6 @@ struct SettingsPageV2 {
       
       // UI 设置
       this.smallIconMode = await this.loadBoolean(SettingsKeys.SMALL_ICON_MODE, false);
-      this.language = await PreferencesUtil.get<string>(SettingsKeys.LANGUAGE, '跟随系统');
       this.backgroundImageType = await PreferencesUtil.get<string>(SettingsKeys.BACKGROUND_IMAGE_TYPE, 'default');
       this.backgroundImageUrl = await PreferencesUtil.get<string>(SettingsKeys.BACKGROUND_IMAGE_URL, '');
       this.resumeStream = await this.loadBoolean(SettingsKeys.RESUME_STREAM, false);
@@ -1895,12 +1893,6 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '语言',
-                subtitle: this.language,
-                type: 'select',
-                action: () => this.showLanguagePicker()
-              },
-              {
                 title: '背景图片',
                 subtitle: this.getBackgroundImageTypeLabel(),
                 type: 'select',
@@ -3091,28 +3083,6 @@ struct SettingsPageV2 {
       onSelect: (option: PickerOption) => {
         this.analogScrolling = option.value as string;
         this.saveSetting(SettingsKeys.ANALOG_SCROLLING, option.value as string);
-      }
-    };
-    this.showPicker(config);
-  }
-  
-  private showLanguagePicker(): void {
-    const options: PickerOption[] = [
-      { title: '跟随系统', value: '跟随系统' } as PickerOption,
-      { title: '简体中文', value: '简体中文' } as PickerOption,
-      { title: '繁體中文', value: '繁體中文' } as PickerOption,
-      { title: 'English', value: 'English' } as PickerOption,
-      { title: '日本語', value: '日本語' } as PickerOption,
-      { title: '한국어', value: '한국어' } as PickerOption
-    ];
-    const config: PickerConfig = {
-      title: '选择语言',
-      subtitle: '选择应用显示语言',
-      selectedValue: this.language,
-      options: options,
-      onSelect: (option: PickerOption) => {
-        this.language = option.value as string;
-        this.saveSetting(SettingsKeys.LANGUAGE, option.value as string);
       }
     };
     this.showPicker(config);

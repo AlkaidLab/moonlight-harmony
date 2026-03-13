@@ -148,8 +148,9 @@ private:
     // 对于 5.1   @48kHz: 48000×6×50/1000 = 14400 采样 = 50ms
     // 对于 7.1   @48kHz: 48000×8×50/1000 = 19200 采样 = 50ms
     //
-    // 延迟控制：PlaySamples 中检查缓冲区填充水平，
-    // 超过 MAX_AUDIO_LATENCY_MS (40ms) 时丢弃新数据，匹配 Android 40ms 上限
+    // 延迟控制：消费者 OnWriteData 在读取前检查缓冲区填充水平，
+    // 超过 MAX_AUDIO_LATENCY_MS (40ms) 时跳过旧数据，匹配 Android 40ms 上限
+    // 生产者 PlaySamples 不触碰 ringHead_，保持 SPSC 无锁正确性
     static constexpr int TARGET_BUFFER_MS = 50;        // 环形缓冲区容量（毫秒）
     static constexpr int MAX_AUDIO_LATENCY_MS = 40;    // 延迟丢弃阈值（毫秒），匹配 Android
     

@@ -137,7 +137,6 @@ export class SettingsKeys {
 
   // UI 设置
   static readonly SMALL_ICON_MODE: string = 'settings_small_icon_mode';
-  static readonly LANGUAGE: string = 'settings_language';
   static readonly BACKGROUND_IMAGE_URL: string = 'settings_background_image_url';
   static readonly BACKGROUND_IMAGE_TYPE: string = 'settings_background_image_type';
   static readonly RESUME_STREAM: string = 'settings_resume_stream';
