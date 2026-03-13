@@ -497,8 +497,8 @@ export class NvHttp {
    */
   async quitApp(): Promise<boolean> {
     const url = this.buildUrl(await this.getHttpsBaseUrl(), 'cancel');
-    // 使用客户端证书
-    const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+    // 服务端处理 /cancel 需要等待应用进程退出（默认5秒超时），使用较长超时避免客户端提前放弃
+    const response = await this.doRequest(url, 60000, true);
 
     const cancel = XmlUtil.getValue(response, 'cancel');
     return cancel !== '0';
