@@ -802,14 +802,16 @@ struct PcListPageV2 {
     }
 
     // 检测 moonlight://pair URL（Sunshine QR 配对）
-    if (result.startsWith('moonlight://pair')) {
-      await this.handleQrPairing(result);
+    const trimmed = result.trim();
+    console.info(`[Scan] 扫码结果 (${trimmed.length}字符): ${trimmed.substring(0, 100)}`);
+    if (trimmed.startsWith('moonlight://pair')) {
+      await this.handleQrPairing(trimmed);
       return;
     }
 
-    const parsed = QrShareService.deserialize(result);
+    const parsed = QrShareService.deserialize(trimmed);
     if (!parsed) {
-      promptAction.showToast({ message: '无效的配置数据', duration: 2000 });
+      promptAction.showToast({ message: '无法识别的二维码内容', duration: 2000 });
       return;
     }
     const name = parsed[0];
