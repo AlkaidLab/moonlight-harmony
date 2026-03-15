@@ -9,12 +9,13 @@
  */
 
 import { router, promptAction } from '@kit.ArkUI';
-import { ComputerInfo } from '../model/ComputerInfo';
+import { ComputerInfo, PairState, selectBestAddress } from '../model/ComputerInfo';
 import { ComputerManager } from '../service/ComputerManager';
 import { ComputerCard } from '../components/ComputerCard';
 import { ComputerListViewModel, ObservableComputer, ComputerDataSource } from '../viewmodel/ComputerViewModel';
 import { AppColors, AppSizes, AppSpacing } from '../common/Theme';
 import { common } from '@kit.AbilityKit';
+import { buffer } from '@kit.ArkTS';
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { BackgroundImage } from '../components/BackgroundImage';
 import { sensor } from '@kit.SensorServiceKit';
@@ -25,6 +26,7 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { ComputerMenuHelper, ComputerMenuCallbacks } from '../viewmodel/ComputerMenuHelper';
 import { PcListActions, PcListUICallbacks } from '../viewmodel/PcListActions';
+import { PairingManager, PairState as PMPairState } from '../service/PairingManager';
 import { QrShareService } from '../service/QrShareService';
 import { CustomKeyStore } from '../service/CustomKeyStore';
 import { PcListTitleBar, TitleBarConfig } from '../components/PcListTitleBar';
@@ -791,13 +793,20 @@ struct PcListPageV2 {
     }
   }
 
-  /** 扫码导入按键配置 */
+  /** 扫码：自动识别配对 URL 或按键配置 */
   private async scanAndImportKeys(): Promise<void> {
     const result = await QrShareService.scanQrCode();
     if (!result) {
       promptAction.showToast({ message: '扫码取消或失败', duration: 1500 });
       return;
     }
+
+    // 检测 moonlight://pair URL（Sunshine QR 配对）
+    if (result.startsWith('moonlight://pair')) {
+      await this.handleQrPairing(result);
+      return;
+    }
+
     const parsed = QrShareService.deserialize(result);
     if (!parsed) {
       promptAction.showToast({ message: '无效的配置数据', duration: 2000 });
@@ -833,6 +842,74 @@ struct PcListPageV2 {
       backgroundColor: Color.Transparent
     });
     this.optionPickerDialogController.open();
+  }
+
+  /** 处理 Sunshine QR 配对 URL */
+  private async handleQrPairing(url: string): Promise<void> {
+    // 解析 moonlight://pair?host=...&port=...&pin=...&name=...
+    const paramStr = url.substring(url.indexOf('?') + 1);
+    const params = new Map<string, string>();
+    for (const part of paramStr.split('&')) {
+      const eq = part.indexOf('=');
+      if (eq > 0) {
+        params.set(part.substring(0, eq), decodeURIComponent(part.substring(eq + 1)));
+      }
+    }
+
+    const host = params.get('host') ?? '';
+    const portStr = params.get('port') ?? '';
+    const pin = params.get('pin') ?? '';
+    const serverName = params.get('name') ?? host;
+
+    if (!host || !pin) {
+      promptAction.showToast({ message: '二维码缺少必要信息', duration: 2000 });
+      return;
+    }
+
+    const address = portStr ? `${host}:${portStr}` : host;
+    promptAction.showToast({ message: `正在连接 ${serverName}...`, duration: 2000 });
+
+    try {
+      // 1. 添加电脑
+      const computer = await this.computerManager.addComputer(address);
+      this.syncViewModelFromManager();
+
+      if (computer.pairState === PairState.PAIRED) {
+        promptAction.showToast({ message: `${serverName} 已配对`, duration: 2000 });
+        return;
+      }
+
+      // 2. 使用 QR 码中的 PIN 自动配对（服务端已 preset，无需用户输入）
+      promptAction.showToast({ message: `正在与 ${serverName} 配对...`, duration: 2000 });
+      const context = getContext() as common.UIAbilityContext;
+      const pairingManager = new PairingManager(
+        selectBestAddress(computer), computer.uuid, context, computer.httpPort
+      );
+      const result = await pairingManager.pair(pin);
+
+      if (result.state === PMPairState.PAIRED) {
+        let serverCertBase64 = '';
+        if (result.serverCert) {
+          serverCertBase64 = buffer.from(result.serverCert).toString('base64');
+        }
+        await this.computerManager.updateComputer(computer.uuid, {
+          pairState: PairState.PAIRED,
+          serverCert: serverCertBase64,
+          pairName: result.pairName || ''
+        });
+        this.syncViewModelFromManager();
+        promptAction.showToast({ message: `已成功配对 ${serverName}！` });
+        router.pushUrl({ url: 'pages/AppListPageV2', params: { computerId: computer.uuid } });
+      } else if (result.state === PMPairState.PIN_WRONG) {
+        promptAction.showToast({ message: '二维码已过期，请在 Sunshine 重新生成', duration: 3000 });
+      } else if (result.state === PMPairState.ALREADY_IN_PROGRESS) {
+        promptAction.showToast({ message: '另一个设备正在配对中', duration: 2000 });
+      } else {
+        promptAction.showToast({ message: `配对失败: ${result.state}`, duration: 2000 });
+      }
+    } catch (error) {
+      promptAction.showToast({ message: `连接失败: ${(error as Error).message}`, duration: 3000 });
+    }
   }
 
   private async scanNetwork(): Promise<void> {
