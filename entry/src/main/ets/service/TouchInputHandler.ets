@@ -126,7 +126,7 @@ export class TouchInputHandler {
 
   // 双指手势常量
   /** 双指轻触右键的时间阈值（ms）—— 双指按下到抬起在此时间内视为轻触 */
-  private static readonly TWO_FINGER_TAP_THRESHOLD = 250;
+  private twoFingerTapThreshold: number = 250;
   /** 双指移动阈值（px）—— 超过此距离视为滚轮，不再是轻触 */
   private static readonly TWO_FINGER_MOVE_THRESHOLD = 30;
   /** 滚轮速度因子 */
@@ -176,7 +176,7 @@ export class TouchInputHandler {
   /** 死区距离阈值（px）—— 移动超过此距离立即确认点击 */
   private static readonly MOUSE_DEADZONE_DISTANCE = 20;
   /** 双击时间阈值（ms）—— 两次点击间隔小于此值视为双击 */
-  private static readonly MOUSE_DOUBLE_TAP_TIME = 250;
+  private mouseDoubleTapTime: number = 250;
   /** 双击距离阈值（px）—— 两次点击位置距离小于此值视为双击 */
   private static readonly MOUSE_DOUBLE_TAP_DISTANCE = 60;
   /** 鼠标模式滚轮速度因子 */
@@ -194,6 +194,14 @@ export class TouchInputHandler {
       clickThreshold: config?.clickThreshold ?? TouchInputHandler.DEFAULT_CLICK_THRESHOLD,
       clickTimeThreshold: config?.clickTimeThreshold ?? TouchInputHandler.DEFAULT_CLICK_TIME_THRESHOLD,
     };
+  }
+
+  /**
+   * 配置双击时间阈值（从设置读取后调用）
+   */
+  setDoubleTapTimeThreshold(threshold: number): void {
+    this.twoFingerTapThreshold = threshold;
+    this.mouseDoubleTapTime = threshold;
   }
   
   /**
@@ -523,7 +531,7 @@ export class TouchInputHandler {
     // 情况A：从2指变为1指（第一根手指抬起）
     if (this.activePointerCount === 2 && remainingPointers === 1 && !this.twoFingerMoved) {
       const elapsed = now - this.twoFingerDownTime;
-      if (elapsed < TouchInputHandler.TWO_FINGER_TAP_THRESHOLD) {
+      if (elapsed < this.twoFingerTapThreshold) {
         // 快速双指轻触：立即发送右键
         this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_RIGHT);
         setTimeout(() => {
@@ -545,7 +553,7 @@ export class TouchInputHandler {
     if (remainingPointers === 0) {
       if (this.twoFingerTapPending && !this.twoFingerMoved) {
         const elapsed = now - this.firstFingerUpTime;
-        if (elapsed < TouchInputHandler.TWO_FINGER_TAP_THRESHOLD) {
+        if (elapsed < this.twoFingerTapThreshold) {
           // 两根手指相继快速抬起：发送右键
           this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_RIGHT);
           setTimeout(() => {
@@ -621,7 +629,7 @@ export class TouchInputHandler {
     this.cancelMouseTapDownTimer();
 
     // 双击判定：如果本次按下距上次抬起很近且时间短，不重定位（方便双击）
-    if (this.mouseDownTime - this.mouseLastUpTime > TouchInputHandler.MOUSE_DOUBLE_TAP_TIME ||
+    if (this.mouseDownTime - this.mouseLastUpTime > this.mouseDoubleTapTime ||
         this.mouseDistanceExceeds(
           this.mouseDownX - this.mouseLastUpX,
           this.mouseDownY - this.mouseLastUpY,

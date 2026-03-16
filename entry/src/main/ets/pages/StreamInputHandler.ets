@@ -501,8 +501,10 @@ export class StreamInputHandler {
       case MouseButton.Left: return BUTTON_LEFT;       // 0x01
       case MouseButton.Middle: return BUTTON_MIDDLE;   // 0x02
       case MouseButton.Right: return BUTTON_RIGHT;     // 0x03
-      case MouseButton.Back: return BUTTON_X1;         // 0x04
-      case MouseButton.Forward: return BUTTON_X2;      // 0x05
+      case MouseButton.Back:
+        return this.viewModel?.inputSettings?.mouseNavButtons ? BUTTON_X1 : 0;
+      case MouseButton.Forward:
+        return this.viewModel?.inputSettings?.mouseNavButtons ? BUTTON_X2 : 0;
       default: return 0;
     }
   }

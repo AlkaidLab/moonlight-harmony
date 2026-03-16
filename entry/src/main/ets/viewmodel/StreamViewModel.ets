@@ -241,6 +241,9 @@ export class StreamViewModel {
     const lastTouchMode = await PreferencesUtil.get<string>(SettingsKeys.LAST_TOUCH_MODE, '');
     if (lastTouchMode && (lastTouchMode === 'trackpad' || lastTouchMode === 'direct' || lastTouchMode === 'mouse')) {
       this.touchMode = lastTouchMode as TouchMode;
+    } else if (this.inputSettings.touchscreenTrackpad) {
+      // 用户在设置中强制启用了触控板模式
+      this.touchMode = TouchMode.TRACKPAD;
     } else {
       // 没有用户偏好时：检测是否有键盘/鼠标连接
       // 有键鼠 → 触控板模式(trackpad)，无键鼠 → 多点触控模式(direct)

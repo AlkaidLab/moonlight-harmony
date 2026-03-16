@@ -100,7 +100,6 @@ export class SettingsKeys {
   static readonly TOUCHSCREEN_TRACKPAD: string = 'settings_touchscreen_trackpad';
   static readonly ENABLE_DOUBLE_CLICK_DRAG: string = 'settings_enable_double_click_drag';
   static readonly DOUBLE_TAP_TIME_THRESHOLD: string = 'settings_double_tap_time_threshold';
-  static readonly ANALOG_SCROLLING: string = 'settings_analog_scrolling';
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
   static readonly GAME_MOUSE_MODE: string = 'settings_game_mouse_mode';  // 游戏鼠标模式（相对模式）
   static readonly LAST_TOUCH_MODE: string = 'settings_last_touch_mode';  // 运行时触摸模式（菜单切换后持久化）
@@ -194,7 +193,6 @@ export interface InputSettings {
   touchscreenTrackpad: boolean;
   enableDoubleClickDrag: boolean;
   doubleTapTimeThreshold: number;
-  analogScrolling: string;
   mouseNavButtons: boolean;
   gameMouseMode: boolean;  // 游戏鼠标模式：相对增量+光标回弹，适合 FPS/TPS
 
@@ -729,7 +727,6 @@ export class SettingsService {
       touchscreenTrackpad: await this.getBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false),
       enableDoubleClickDrag: await this.getBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false),
       doubleTapTimeThreshold: await this.getNumber(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125),
-      analogScrolling: await this.getString(SettingsKeys.ANALOG_SCROLLING, '右摇杆'),
       mouseNavButtons: await this.getBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false),
       gameMouseMode: await this.getBoolean(SettingsKeys.GAME_MOUSE_MODE, false),
 

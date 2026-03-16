@@ -920,6 +920,10 @@ struct StreamPage {
       // 设置触摸输入模式
       const touchModeStr = this.viewModel.touchMode as string;
       this.touchInputHandler.setMode(touchModeStr as TouchInputMode);
+      // 配置双击时间阈值
+      if (streamConfig) {
+        this.touchInputHandler.setDoubleTapTimeThreshold(streamConfig.doubleTapTimeThreshold);
+      }
       
       // 设置连接终止回调
       this.viewModel.setConnectionTerminatedCallback((errorCode: number) => {

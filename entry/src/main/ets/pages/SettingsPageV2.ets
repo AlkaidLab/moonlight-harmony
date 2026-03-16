@@ -188,7 +188,6 @@ struct SettingsPageV2 {
   @State touchscreenTrackpad: boolean = false;
   @State enableDoubleClickDrag: boolean = false;
   @State doubleTapTimeThreshold: number = 125;
-  @State analogScrolling: string = '右摇杆';
   @State mouseNavButtons: boolean = false;
   @State gameMouseMode: boolean = false;   // 游戏鼠标模式（相对模式+光标回弹）
   
@@ -497,7 +496,6 @@ struct SettingsPageV2 {
       this.touchscreenTrackpad = await this.loadBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false);
       this.enableDoubleClickDrag = await this.loadBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false);
       this.doubleTapTimeThreshold = await PreferencesUtil.get<number>(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125);
-      this.analogScrolling = await PreferencesUtil.get<string>(SettingsKeys.ANALOG_SCROLLING, '右摇杆');
       this.mouseNavButtons = await this.loadBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false);
       this.gameMouseMode = await this.loadBoolean(SettingsKeys.GAME_MOUSE_MODE, false);
       
@@ -1541,16 +1539,6 @@ struct SettingsPageV2 {
                 onSliderChange: (value: number) => {
                   this.doubleTapTimeThreshold = value;
                   this.saveSetting(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, value);
-                }
-              },
-              {
-                title: '摇杆滚动',
-                type: 'segment',
-                value: this.analogScrolling,
-                segmentLabels: ['禁用', '左摇杆', '右摇杆'],
-                onSegmentChange: (value: string) => {
-                  this.analogScrolling = value;
-                  this.saveSetting(SettingsKeys.ANALOG_SCROLLING, value);
                 }
               },
               {
@@ -3067,25 +3055,6 @@ struct SettingsPageV2 {
   // 已转换为 Slider
   private showDeadzonePicker(): void { }
   private showOscOpacityPicker(): void { }
-  
-  private showAnalogScrollingPicker(): void {
-    const options: PickerOption[] = [
-      { title: '禁用', value: '禁用' } as PickerOption,
-      { title: '左摇杆', value: '左摇杆' } as PickerOption,
-      { title: '右摇杆', value: '右摇杆' } as PickerOption
-    ];
-    const config: PickerConfig = {
-      title: '选择摇杆滚动',
-      subtitle: '选择用于滚动的摇杆',
-      selectedValue: this.analogScrolling,
-      options: options,
-      onSelect: (option: PickerOption) => {
-        this.analogScrolling = option.value as string;
-        this.saveSetting(SettingsKeys.ANALOG_SCROLLING, option.value as string);
-      }
-    };
-    this.showPicker(config);
-  }
   
   // 已转换为 Slider
   private showHostScalePicker(): void { }
