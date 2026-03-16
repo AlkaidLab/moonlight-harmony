@@ -45,6 +45,11 @@ import {
   generateKeyId,
 } from './CustomKeyTypes';
 
+export interface QrCodeResult {
+  pixelMap: image.PixelMap | null;
+  error?: string;
+}
+
 // =============================================================================
 // 紧凑格式类型定义
 // =============================================================================
@@ -170,16 +175,28 @@ function encodeAction(a: KeyAction): string {
 /** 解码简单动作字符串（不含 |） */
 function decodeSimpleAction(s: string): KeyAction {
   if (s.startsWith('K')) {
-    return { type: 'keyboard', vk: parseInt(s.substring(1)) } as KeyboardAction;
+    const vk = parseInt(s.substring(1));
+    if (!isNaN(vk)) {
+      return { type: 'keyboard', vk: vk } as KeyboardAction;
+    }
   }
   if (s.startsWith('M')) {
-    return { type: 'mouse', button: parseInt(s.substring(1)) } as MouseButtonAction;
+    const btn = parseInt(s.substring(1));
+    if (!isNaN(btn)) {
+      return { type: 'mouse', button: btn } as MouseButtonAction;
+    }
   }
   if (s.startsWith('S')) {
-    return { type: 'mouseScroll', direction: parseInt(s.substring(1)) } as MouseScrollAction;
+    const dir = parseInt(s.substring(1));
+    if (!isNaN(dir)) {
+      return { type: 'mouseScroll', direction: dir } as MouseScrollAction;
+    }
   }
   if (s.startsWith('B')) {
-    return { type: 'gamepadButton', mask: parseInt(s.substring(1)) } as GamepadButtonAction;
+    const mask = parseInt(s.substring(1));
+    if (!isNaN(mask)) {
+      return { type: 'gamepadButton', mask: mask } as GamepadButtonAction;
+    }
   }
   if (s.startsWith('T,')) {
     return { type: 'gamepadTrigger', trigger: s.charAt(2) === 'l' ? 'left' : 'right' } as GamepadTriggerAction;
@@ -219,14 +236,19 @@ function decodeSimpleAction(s: string): KeyAction {
     if (slashIdx >= 0) {
       const keysStr = hBody.substring(0, slashIdx);
       const seqStr = hBody.substring(slashIdx + 1);
-      const keys = keysStr.split(',').map((n: string) => parseInt(n));
+      const keys = keysStr.split(',').map((n: string) => parseInt(n)).filter((n: number) => !isNaN(n));
       const keySequence = seqStr.split('/').map((seg: string) =>
-        seg.split(',').map((n: string) => parseInt(n))
+        seg.split(',').map((n: string) => parseInt(n)).filter((n: number) => !isNaN(n))
       );
-      return { type: 'shortcut', keys: keys, keySequence: keySequence } as ShortcutAction;
+      if (keys.length > 0) {
+        return { type: 'shortcut', keys: keys, keySequence: keySequence } as ShortcutAction;
+      }
+    } else {
+      const keys = hBody.split(',').map((n: string) => parseInt(n)).filter((n: number) => !isNaN(n));
+      if (keys.length > 0) {
+        return { type: 'shortcut', keys: keys } as ShortcutAction;
+      }
     }
-    const keys = hBody.split(',').map((n: string) => parseInt(n));
-    return { type: 'shortcut', keys: keys } as ShortcutAction;
   }
   // fallback: 返回无操作
   return { type: 'special', id: 'none' } as SpecialAction;
@@ -240,7 +262,7 @@ function decodeAction(s: string): KeyAction {
     const segParts = body.split('|');
     const segments: WheelPadSegment[] = [];
     for (const sp of segParts) {
-      const colonIdx = sp.indexOf(':');
+      const colonIdx = sp.lastIndexOf(':');
       if (colonIdx >= 0) {
         const label = sp.substring(0, colonIdx);
         const actStr = sp.substring(colonIdx + 1);
@@ -411,7 +433,7 @@ export class QrShareService {
    * @param content 要编码的字符串
    * @param size 图片尺寸 (px)
    */
-  static async generateQrCode(content: string, size: number = 600): Promise<image.PixelMap | null> {
+  static async generateQrCode(content: string, size: number = 600): Promise<QrCodeResult> {
     try {
       const options: generateBarcode.CreateOptions = {
         scanType: scanCore.ScanType.QR_CODE,
@@ -419,10 +441,13 @@ export class QrShareService {
         width: size,
       };
       const pixelMap = await generateBarcode.createBarcode(content, options);
-      return pixelMap;
+      return { pixelMap };
     } catch (e) {
-      console.error('[QrShareService] 生成二维码失败:', JSON.stringify(e));
-      return null;
+      const errMsg = (e as Record<string, Object>)?.message as string
+        ?? (e as Record<string, Object>)?.code as string
+        ?? JSON.stringify(e);
+      console.error('[QrShareService] 生成二维码失败:', errMsg);
+      return { pixelMap: null, error: errMsg };
     }
   }
 

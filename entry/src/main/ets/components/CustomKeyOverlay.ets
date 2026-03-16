@@ -349,6 +349,7 @@ export struct CustomKeyOverlay {
   @State private qrPixelMap: image.PixelMap | undefined = undefined;
   @State private qrLoading: boolean = false;
   @State private qrTooLarge: boolean = false;
+  @State private qrError: string = '';
   @State private shareJson: string = '';
   /** 扫码导入预览 */
   @State private importPreviewName: string = '';
@@ -1139,6 +1140,7 @@ export struct CustomKeyOverlay {
     this.showImportConfirm = false;
     this.qrLoading = true;
     this.qrTooLarge = false;
+    this.qrError = '';
     this.qrPixelMap = undefined;
 
     const profileName = await CustomKeyStore.getActiveProfileName();
@@ -1151,8 +1153,12 @@ export struct CustomKeyOverlay {
       return;
     }
 
-    const pixelMap = await QrShareService.generateQrCode(json, 600);
-    this.qrPixelMap = pixelMap ?? undefined;
+    const result = await QrShareService.generateQrCode(json, 600);
+    if (result.pixelMap) {
+      this.qrPixelMap = result.pixelMap;
+    } else {
+      this.qrError = result.error ?? '未知错误';
+    }
     this.qrLoading = false;
   }
 
@@ -1509,18 +1515,20 @@ export struct CustomKeyOverlay {
                 Column({ space: 4 }) {
                   Text('⚠')
                     .fontSize(28)
-                  Text('模拟器不支持')
+                  Text('二维码生成失败')
                     .fontSize(11).fontColor(OV_TEXT_DIM)
                   Text('请使用剪贴板分享')
                     .fontSize(11).fontColor(OV_TEXT_DIM)
-                  Text('真机可生成二维码')
-                    .fontSize(10).fontColor(OV_TEXT_SUBTLE)
+                  if (this.qrError) {
+                    Text(this.qrError)
+                      .fontSize(9).fontColor(OV_TEXT_SUBTLE)
+                      .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+                  }
                 }
                 .width(140).height(140)
                 .justifyContent(FlexAlign.Center)
                 .borderRadius(8).backgroundColor('#20FFFFFF')
                 .border({ width: 1, color: '#20FFFFFF' })
-                  .borderRadius(8).backgroundColor('#20FFFFFF')
               }
               // 操作按钮
               Row({ space: 8 }) {
