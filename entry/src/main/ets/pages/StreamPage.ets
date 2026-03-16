@@ -80,6 +80,7 @@ class CustomKeyManagerHostImpl implements CustomKeyManagerHost {
   toggleMouseModeFn: () => void = () => {};
   switchProfileFn: () => void = () => {};
   toggleEditModeFn: () => void = () => {};
+  hideCustomKeysFn: () => void = () => {};
   onCustomKeysImportedFn: () => void = () => {};
 
   getSession(): SessionLike | null {
@@ -108,6 +109,10 @@ class CustomKeyManagerHostImpl implements CustomKeyManagerHost {
 
   toggleEditMode(): void {
     this.toggleEditModeFn();
+  }
+
+  hideCustomKeys(): void {
+    this.hideCustomKeysFn();
   }
 
   onCustomKeysImported(): void {
@@ -262,6 +267,9 @@ struct StreamPage {
     };
     customKeyHost.toggleEditModeFn = (): void => {
       this.customKeyEditMode = !this.customKeyEditMode;
+    };
+    customKeyHost.hideCustomKeysFn = (): void => {
+      this.showCustomKeys = false;
     };
     customKeyHost.onCustomKeysImportedFn = (): void => { this.showCustomKeys = true; };
     this.customKeyManager = new CustomKeyManager(customKeyHost);

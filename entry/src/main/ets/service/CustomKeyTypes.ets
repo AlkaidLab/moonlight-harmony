@@ -169,6 +169,7 @@ export type SpecialActionId =
   | 'switchProfile'      // 切换配置档案
   | 'openGameMenu'       // 打开游戏菜单
   | 'editMode'           // 进入编辑模式
+  | 'hideCustomKeys'     // 隐藏自定义按键
   | 'none';              // 无操作
 
 /** 所有按键动作联合类型 */
@@ -778,6 +779,7 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
       { label: '切换配置', action: { type: 'special', id: 'switchProfile' } as SpecialAction },
       { label: '菜单', action: { type: 'special', id: 'openGameMenu' } as SpecialAction },
       { label: '编辑', action: { type: 'special', id: 'editMode' } as SpecialAction },
+      { label: '隐藏按键', action: { type: 'special', id: 'hideCustomKeys' } as SpecialAction },
     ],
   },
   {

@@ -62,6 +62,8 @@ export interface CustomKeyManagerHost {
   switchProfile(): void;
   /** 切换编辑模式 */
   toggleEditMode(): void;
+  /** 隐藏自定义按键覆盖层 */
+  hideCustomKeys(): void;
   /** 通知状态变化（如导入后需要刷新覆盖层） */
   onCustomKeysImported(): void;
 }
@@ -327,6 +329,9 @@ export class CustomKeyManager {
         break;
       case 'editMode':
         this.host.toggleEditMode();
+        break;
+      case 'hideCustomKeys':
+        this.host.hideCustomKeys();
         break;
       case 'none':
       default:
