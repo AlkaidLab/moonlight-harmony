@@ -416,16 +416,18 @@ export class SettingsService {
    */
   private parseScreenCombinationMode(modeStr: string): ScreenCombinationMode {
     switch (modeStr) {
-      case '自动':
-        return ScreenCombinationMode.AUTO;
-      case '仅主显示器':
-        return ScreenCombinationMode.PRIMARY_ONLY;
-      case '扩展模式':
-        return ScreenCombinationMode.EXTEND;
-      case '复制模式':
-        return ScreenCombinationMode.DUPLICATE;
+      case '主机默认':
+        return ScreenCombinationMode.HOST_DEFAULT;
+      case '不修改':
+        return ScreenCombinationMode.NO_OPERATION;
+      case '确保开启':
+        return ScreenCombinationMode.ENSURE_ACTIVE;
+      case '设为主屏':
+        return ScreenCombinationMode.ENSURE_PRIMARY;
+      case '仅此屏幕':
+        return ScreenCombinationMode.ENSURE_ONLY_DISPLAY;
       default:
-        return ScreenCombinationMode.AUTO;
+        return ScreenCombinationMode.HOST_DEFAULT;
     }
   }
 
@@ -547,7 +549,7 @@ export class SettingsService {
     const enableSops = await this.getBoolean(SettingsKeys.ENABLE_SOPS, true);
     const multiController = await this.getBoolean(SettingsKeys.MULTI_CONTROLLER, true);
     const lockScreenAfterDisconnect = await this.getBoolean(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, false);
-    const screenCombinationModeStr = await this.getString(SettingsKeys.SCREEN_COMBINATION_MODE, '自动');
+    const screenCombinationModeStr = await this.getString(SettingsKeys.SCREEN_COMBINATION_MODE, '主机默认');
 
     // 获取输入设置
     const enableVibration = await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true);
@@ -733,7 +735,7 @@ export class SettingsService {
   async getHostSettings(): Promise<HostSettings> {
     return {
       enableSops: await this.getBoolean(SettingsKeys.ENABLE_SOPS, true),
-      screenCombinationMode: await this.getString(SettingsKeys.SCREEN_COMBINATION_MODE, '自动'),
+      screenCombinationMode: await this.getString(SettingsKeys.SCREEN_COMBINATION_MODE, '主机默认'),
       lockScreenAfterDisconnect: await this.getBoolean(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, false),
       swapQuitAndDisconnect: await this.getBoolean(SettingsKeys.SWAP_QUIT_AND_DISCONNECT, false)
     };

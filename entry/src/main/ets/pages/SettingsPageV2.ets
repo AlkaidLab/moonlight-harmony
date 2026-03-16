@@ -201,7 +201,7 @@ struct SettingsPageV2 {
   
   // 主机设置
   @State enableSops: boolean = true;
-  @State screenCombinationMode: string = '自动';
+  @State screenCombinationMode: string = '主机默认';
   @State lockScreenAfterDisconnect: boolean = false;
   @State swapQuitAndDisconnect: boolean = false;
   
@@ -510,7 +510,7 @@ struct SettingsPageV2 {
       
       // 主机设置
       this.enableSops = await this.loadBoolean(SettingsKeys.ENABLE_SOPS, true);
-      this.screenCombinationMode = await PreferencesUtil.get<string>(SettingsKeys.SCREEN_COMBINATION_MODE, '自动');
+      this.screenCombinationMode = await PreferencesUtil.get<string>(SettingsKeys.SCREEN_COMBINATION_MODE, '主机默认');
       this.lockScreenAfterDisconnect = await this.loadBoolean(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, false);
       this.swapQuitAndDisconnect = await this.loadBoolean(SettingsKeys.SWAP_QUIT_AND_DISCONNECT, false);
       
@@ -1669,11 +1669,11 @@ struct SettingsPageV2 {
               },
               {
                 title: '屏幕组合模式',
-                tooltip: '· 自动：让主机自己决定怎么用显示器\n· 仅主显示器：只用一个屏幕\n· 扩展：多屏拼起来变成超大桌面\n· 复制：所有屏幕显示同样的画面',
+                tooltip: '· 主机默认：使用 Sunshine 服务端配置\n· 不修改：保持当前屏幕布局不变\n· 确保开启：确保串流屏幕已点亮\n· 设为主屏：将串流屏幕设为主显示器\n· 仅此屏幕：仅使用串流屏幕，关闭其他显示器',
                 type: 'segment',
                 value: this.screenCombinationMode,
-                segmentLabels: ['自动', '仅主显示器', '扩展', '复制'],
-                segmentValues: ['自动', '仅主显示器', '扩展模式', '复制模式'],
+                segmentLabels: ['默认', '不修改', '确保开启', '主屏', '仅此屏'],
+                segmentValues: ['主机默认', '不修改', '确保开启', '设为主屏', '仅此屏幕'],
                 onSegmentChange: (value: string) => {
                   this.screenCombinationMode = value;
                   this.saveSetting(SettingsKeys.SCREEN_COMBINATION_MODE, value);
@@ -3140,10 +3140,11 @@ struct SettingsPageV2 {
   
   private showScreenCombinationModePicker(): void {
     const options: PickerOption[] = [
-      { title: '自动', subtitle: '系统自动选择', value: '自动' } as PickerOption,
-      { title: '仅主显示器', value: '仅主显示器' } as PickerOption,
-      { title: '扩展模式', subtitle: '多屏扩展', value: '扩展模式' } as PickerOption,
-      { title: '复制模式', subtitle: '多屏镜像', value: '复制模式' } as PickerOption
+      { title: '主机默认', subtitle: '使用 Sunshine 服务端配置', value: '主机默认' } as PickerOption,
+      { title: '不修改', subtitle: '保持当前屏幕布局不变', value: '不修改' } as PickerOption,
+      { title: '确保开启', subtitle: '确保串流屏幕已点亮', value: '确保开启' } as PickerOption,
+      { title: '设为主屏', subtitle: '将串流屏幕设为主显示器', value: '设为主屏' } as PickerOption,
+      { title: '仅此屏幕', subtitle: '仅使用串流屏幕，关闭其他显示器', value: '仅此屏幕' } as PickerOption
     ];
     const config: PickerConfig = {
       title: '选择屏幕组合模式',

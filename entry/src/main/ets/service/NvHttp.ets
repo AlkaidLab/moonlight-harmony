@@ -783,6 +783,11 @@ export class NvHttp {
     params.push(`maxBrightness=${maxBrightness}`);
     params.push(`maxAverageBrightness=${maxAvgBrightness}`);
 
+    // 屏幕组合模式（Sunshine 多显示器管理）
+    if (config.screenCombinationMode !== undefined && config.screenCombinationMode !== -1) {
+      params.push(`customScreenMode=${config.screenCombinationMode}`);
+    }
+
     console.info(`NvHttp: buildLaunchQuery: ${params.join('&')}`);
     return params.join('&');
   }
@@ -908,4 +913,5 @@ export interface LaunchConfig {
   minBrightness?: number;       // 客户端屏幕最小亮度 (nits)
   maxBrightness?: number;       // 客户端屏幕最大亮度 (nits)
   maxAverageBrightness?: number; // 客户端屏幕最大平均亮度 (nits)
+  screenCombinationMode?: number; // 屏幕组合模式 (-1=主机默认, 0=不修改, 1=确保开启, 2=主屏, 3=仅此屏)
 }

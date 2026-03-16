@@ -1032,7 +1032,8 @@ export class StreamingSession {
       displayGuid: this.displayGuid,
       minBrightness: brightnessRange[0],
       maxBrightness: brightnessRange[1],
-      maxAverageBrightness: brightnessRange[2]
+      maxAverageBrightness: brightnessRange[2],
+      screenCombinationMode: this.config.screenCombinationMode,
     };
 
     try {

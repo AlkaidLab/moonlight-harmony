@@ -144,10 +144,16 @@ export enum RemoteConfig {
  * 屏幕组合模式
  */
 export enum ScreenCombinationMode {
-  AUTO = -1,
-  PRIMARY_ONLY = 0,
-  EXTEND = 1,
-  DUPLICATE = 2
+  /** 使用 Sunshine 主机端配置（默认） */
+  HOST_DEFAULT = -1,
+  /** 不修改屏幕组合配置 */
+  NO_OPERATION = 0,
+  /** 确保串流屏幕已开启 */
+  ENSURE_ACTIVE = 1,
+  /** 确保串流屏幕为主屏幕 */
+  ENSURE_PRIMARY = 2,
+  /** 仅启用串流屏幕（关闭其他） */
+  ENSURE_ONLY_DISPLAY = 3,
 }
 
 /**
@@ -203,7 +209,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     // 主机设置
     sops: true,
     playLocalAudio: false,
-    screenCombinationMode: ScreenCombinationMode.AUTO,
+    screenCombinationMode: ScreenCombinationMode.HOST_DEFAULT,
     lockScreenAfterDisconnect: false,
 
     // 输入设置
