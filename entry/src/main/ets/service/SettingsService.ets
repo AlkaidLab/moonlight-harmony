@@ -15,6 +15,7 @@
  * 将设置值转换为串流配置
  */
 import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { display } from '@kit.ArkUI';
 import {
   StreamConfig,
   AudioConfiguration,
@@ -285,6 +286,20 @@ export class SettingsService {
    * 支持预设格式(如 "1080p", "4K")和自定义格式(如 "2560x1080")
    */
   private parseResolution(resolutionStr: string): Resolution {
+    // 本机分辨率：动态获取当前屏幕分辨率
+    if (resolutionStr === 'native') {
+      try {
+        const displayInfo = display.getDefaultDisplaySync();
+        const w = displayInfo.width;
+        const h = displayInfo.height;
+        // 始终横屏格式
+        return w >= h
+          ? { width: w, height: h } as Resolution
+          : { width: h, height: w } as Resolution;
+      } catch (_e) {
+        return { width: 1920, height: 1080 } as Resolution;
+      }
+    }
     // 预设分辨率
     switch (resolutionStr) {
       case '720p':

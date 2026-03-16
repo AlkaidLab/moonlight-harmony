@@ -909,7 +909,9 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '分辨率',
-                subtitle: this.resolution,
+                subtitle: this.resolution === 'native'
+                  ? `本机 (${this.nativeWidth}×${this.nativeHeight})`
+                  : this.resolution,
                 type: 'select',
                 action: () => this.showResolutionPicker()
               },
@@ -2468,12 +2470,9 @@ struct SettingsPageV2 {
     // 添加本地分辨率选项（如果有效且不与预设重复）
     const nativeOptions: PickerOption[] = [];
     if (this.nativeWidth > 0 && this.nativeHeight > 0) {
-      const nativeValue = `${this.nativeWidth}x${this.nativeHeight}`;
       // 检查是否与预设分辨率重复
       const isPreset = presetOptions.some(opt => {
         const val = opt.value as string;
-        if (val === nativeValue) return true;
-        // 也检查标准分辨率
         switch (val) {
           case '720p': return this.nativeWidth === 1280 && this.nativeHeight === 720;
           case '1080p': return this.nativeWidth === 1920 && this.nativeHeight === 1080;
@@ -2487,7 +2486,7 @@ struct SettingsPageV2 {
         nativeOptions.push({
           title: '本机分辨率',
           subtitle: `${this.nativeWidth}×${this.nativeHeight}`,
-          value: nativeValue
+          value: 'native'
         } as PickerOption);
       }
     }
