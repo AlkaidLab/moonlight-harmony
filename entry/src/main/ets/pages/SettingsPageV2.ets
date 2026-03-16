@@ -203,7 +203,6 @@ struct SettingsPageV2 {
   @State enableSops: boolean = true;
   @State screenCombinationMode: string = '主机默认';
   @State lockScreenAfterDisconnect: boolean = false;
-  @State swapQuitAndDisconnect: boolean = false;
   
   // 高级设置
   @State decoderBufferCount: number = 0;
@@ -512,7 +511,6 @@ struct SettingsPageV2 {
       this.enableSops = await this.loadBoolean(SettingsKeys.ENABLE_SOPS, true);
       this.screenCombinationMode = await PreferencesUtil.get<string>(SettingsKeys.SCREEN_COMBINATION_MODE, '主机默认');
       this.lockScreenAfterDisconnect = await this.loadBoolean(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, false);
-      this.swapQuitAndDisconnect = await this.loadBoolean(SettingsKeys.SWAP_QUIT_AND_DISCONNECT, false);
       
       // 高级设置
       this.decoderBufferCount = await PreferencesUtil.get<number>(SettingsKeys.DECODER_BUFFER_COUNT, 0);
@@ -1687,16 +1685,6 @@ struct SettingsPageV2 {
                 action: () => {
                   this.lockScreenAfterDisconnect = !this.lockScreenAfterDisconnect;
                   this.saveSetting(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, this.lockScreenAfterDisconnect);
-                }
-              },
-              {
-                title: '交换退出和断开',
-                subtitle: '交换退出游戏和断开连接',
-                type: 'toggle',
-                value: this.swapQuitAndDisconnect,
-                action: () => {
-                  this.swapQuitAndDisconnect = !this.swapQuitAndDisconnect;
-                  this.saveSetting(SettingsKeys.SWAP_QUIT_AND_DISCONNECT, this.swapQuitAndDisconnect);
                 }
               }
             ]

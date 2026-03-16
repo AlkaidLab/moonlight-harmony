@@ -115,7 +115,6 @@ export class SettingsKeys {
   static readonly ENABLE_SOPS: string = 'settings_enable_sops';
   static readonly SCREEN_COMBINATION_MODE: string = 'settings_screen_combination_mode';
   static readonly LOCK_SCREEN_AFTER_DISCONNECT: string = 'settings_lock_screen_after_disconnect';
-  static readonly SWAP_QUIT_AND_DISCONNECT: string = 'settings_swap_quit_and_disconnect';
 
   // 高级设置
   static readonly DECODER_BUFFER_COUNT: string = 'settings_decoder_buffer_count';
@@ -213,7 +212,6 @@ export interface HostSettings {
   enableSops: boolean;
   screenCombinationMode: string;
   lockScreenAfterDisconnect: boolean;
-  swapQuitAndDisconnect: boolean;
 }
 
 /**
@@ -736,8 +734,7 @@ export class SettingsService {
     return {
       enableSops: await this.getBoolean(SettingsKeys.ENABLE_SOPS, true),
       screenCombinationMode: await this.getString(SettingsKeys.SCREEN_COMBINATION_MODE, '主机默认'),
-      lockScreenAfterDisconnect: await this.getBoolean(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, false),
-      swapQuitAndDisconnect: await this.getBoolean(SettingsKeys.SWAP_QUIT_AND_DISCONNECT, false)
+      lockScreenAfterDisconnect: await this.getBoolean(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, false)
     };
   }
 
@@ -821,10 +818,4 @@ export class SettingsService {
     return await this.getBoolean(SettingsKeys.RESUME_STREAM, false);
   }
 
-  /**
-   * 是否交换退出和断开按钮
-   */
-  async shouldSwapQuitAndDisconnect(): Promise<boolean> {
-    return await this.getBoolean(SettingsKeys.SWAP_QUIT_AND_DISCONNECT, false);
-  }
 }

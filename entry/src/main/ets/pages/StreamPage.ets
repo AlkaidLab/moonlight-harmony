@@ -1003,6 +1003,13 @@ struct StreamPage {
   async quitGameAndReturn(): Promise<void> {
     this.lifecycleManager.showLatencyToastIfEnabled();
     await this.lifecycleManager.stopBackgroundTask();
+
+    // 退出前发送 Win+L 锁定主机屏幕，延迟确保命令送达
+    if (this.viewModel.streamConfig?.lockScreenAfterDisconnect) {
+      this.viewModel.getSession()?.sendKeys([0x5B, 0x4C]); // VK_LWIN + VK_L
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+    }
+
     await this.exitStreamAndReturn();
     this.viewModel.quitGame().then(() => {}).catch((_err: Error) => {});
   }
