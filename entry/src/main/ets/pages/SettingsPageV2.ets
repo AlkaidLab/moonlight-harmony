@@ -247,11 +247,12 @@ struct SettingsPageV2 {
     { id: 'video', icon: $r('sys.symbol.video_fill'), title: '视频', useSymbol: true } as SidebarGroupMeta,
     { id: 'audio', icon: $r('sys.symbol.speaker_wave_2_fill'), title: '音频', useSymbol: true } as SidebarGroupMeta,
     { id: 'gamepad', icon: $r('sys.symbol.gamecontroller_fill'), title: '手柄', useSymbol: true } as SidebarGroupMeta,
+    { id: 'usb_driver', icon: $r('app.media.ic_controller'), title: 'USB 驱动', useSymbol: false } as SidebarGroupMeta,
     { id: 'osc', icon: $r('sys.symbol.gamecontroller'), title: '屏幕控制器', useSymbol: true } as SidebarGroupMeta,
     { id: 'mouse', icon: $r('app.media.ic_mouse'), title: '鼠标触控', useSymbol: false } as SidebarGroupMeta,
     { id: 'enhanced_touch', icon: $r('sys.symbol.bolt_fill'), title: '增强触控', useSymbol: true } as SidebarGroupMeta,
     { id: 'host', icon: $r('app.media.ic_host'), title: '主机', useSymbol: false } as SidebarGroupMeta,
-    { id: 'advanced', icon: $r('sys.symbol.gearshape_fill'), title: '高级', useSymbol: true } as SidebarGroupMeta,
+    { id: 'performance', icon: $r('app.media.ic_advanced'), title: '性能与调试', useSymbol: false } as SidebarGroupMeta,
     { id: 'ui', icon: $r('sys.symbol.display'), title: '界面', useSymbol: true } as SidebarGroupMeta,
     { id: 'about', icon: $r('sys.symbol.info_circle_fill'), title: '关于', useSymbol: true } as SidebarGroupMeta,
   ];
@@ -1112,16 +1113,6 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '仅控制模式',
-                subtitle: '禁用音视频，仅传输输入',
-                type: 'toggle',
-                value: this.controlOnly,
-                action: () => {
-                  this.controlOnly = !this.controlOnly;
-                  this.saveSetting(SettingsKeys.CONTROL_ONLY, this.controlOnly);
-                }
-              },
-              {
                 title: '启用麦克风',
                 subtitle: this.developerMode ? '将麦克风音频传输到主机' : '需要开发者模式',
                 type: 'toggle',
@@ -1339,7 +1330,17 @@ struct SettingsPageV2 {
                 action: () => {
                   this.showHomeButtonActionPicker();
                 }
-              },
+              }
+            ]
+          })
+          
+          // USB 手柄驱动
+          this.SettingsGroup({
+            id: 'usb_driver',
+            icon: $r('app.media.ic_controller'),
+            useSymbol: false,
+            title: 'USB 驱动',
+            items: [
               {
                 title: 'USB 手柄驱动',
                 subtitle: '启用 USB 手柄的震动和 LED 等高级功能。手柄输入仍由系统统一处理',
@@ -1573,11 +1574,11 @@ struct SettingsPageV2 {
             ]
           })
           
-          // 增强触控设置 (TODO: 功能未实现，设置值已保存但尚未接入 TouchInputHandler)
+          // 增强触控设置 (实验性，设置值已保存但尚未接入 TouchInputHandler)
           this.SettingsGroup({
             id: 'enhanced_touch',
             icon: $r('sys.symbol.bolt_fill'),
-            title: '增强触控 (TODO)',
+            title: '增强触控 (实验性)',
             items: [
               {
                 title: '启用增强触控',
@@ -1686,15 +1687,36 @@ struct SettingsPageV2 {
                   this.lockScreenAfterDisconnect = !this.lockScreenAfterDisconnect;
                   this.saveSetting(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, this.lockScreenAfterDisconnect);
                 }
+              },
+              {
+                title: '仅控制模式',
+                subtitle: '禁用音视频，仅传输输入',
+                type: 'toggle',
+                value: this.controlOnly,
+                action: () => {
+                  this.controlOnly = !this.controlOnly;
+                  this.saveSetting(SettingsKeys.CONTROL_ONLY, this.controlOnly);
+                }
+              },
+              {
+                title: '获取公网 IP',
+                subtitle: '使用 STUN 获取被控端公网地址',
+                type: 'toggle',
+                value: this.enableStun,
+                action: () => {
+                  this.enableStun = !this.enableStun;
+                  this.saveSetting(SettingsKeys.ENABLE_STUN, this.enableStun);
+                }
               }
             ]
           })
           
-          // 高级设置
+          // 性能与调试
           this.SettingsGroup({
-            id: 'advanced',
-            icon: $r('sys.symbol.gearshape_fill'),
-            title: '高级',
+            id: 'performance',
+            icon: $r('app.media.ic_advanced'),
+            useSymbol: false,
+            title: '性能与调试',
             items: [
               {
                 title: '解码器缓冲区',
@@ -1819,47 +1841,6 @@ struct SettingsPageV2 {
                   this.disableWarnings = !this.disableWarnings;
                   this.saveSetting(SettingsKeys.DISABLE_WARNINGS, this.disableWarnings);
                 }
-              },
-              {
-                title: '获取公网 IP',
-                subtitle: '使用 STUN 获取被控端公网地址',
-                type: 'toggle',
-                value: this.enableStun,
-                action: () => {
-                  this.enableStun = !this.enableStun;
-                  this.saveSetting(SettingsKeys.ENABLE_STUN, this.enableStun);
-                }
-              },
-              {
-                title: '启用 ESC 菜单',
-                subtitle: '按 ESC 键显示菜单',
-                type: 'toggle',
-                value: this.enableEscMenu,
-                action: () => {
-                  this.enableEscMenu = !this.enableEscMenu;
-                  this.saveSetting(SettingsKeys.ENABLE_ESC_MENU, this.enableEscMenu);
-                }
-              },
-              {
-                title: 'ESC 菜单按键',
-                type: 'segment',
-                value: this.escMenuKey,
-                visible: this.enableEscMenu,
-                segmentLabels: ['ESC', 'F1', 'F12', '~'],
-                onSegmentChange: (value: string) => {
-                  this.escMenuKey = value;
-                  this.saveSetting(SettingsKeys.ESC_MENU_KEY, value);
-                }
-              },
-              {
-                title: '后台保活',
-                subtitle: '串流时保持后台运行，防止切后台后画面冻结',
-                type: 'toggle',
-                value: this.enableBackgroundTask,
-                action: () => {
-                  this.enableBackgroundTask = !this.enableBackgroundTask;
-                  this.saveSetting(SettingsKeys.ENABLE_BACKGROUND_TASK, this.enableBackgroundTask);
-                }
               }
             ]
           })
@@ -1913,6 +1894,37 @@ struct SettingsPageV2 {
                   if (this.developerMode) {
                     promptAction.showToast({ message: '开发者模式已启用', duration: 2000 });
                   }
+                }
+              },
+              {
+                title: '启用 ESC 菜单',
+                subtitle: '按 ESC 键显示菜单',
+                type: 'toggle',
+                value: this.enableEscMenu,
+                action: () => {
+                  this.enableEscMenu = !this.enableEscMenu;
+                  this.saveSetting(SettingsKeys.ENABLE_ESC_MENU, this.enableEscMenu);
+                }
+              },
+              {
+                title: 'ESC 菜单按键',
+                type: 'segment',
+                value: this.escMenuKey,
+                visible: this.enableEscMenu,
+                segmentLabels: ['ESC', 'F1', 'F12', '~'],
+                onSegmentChange: (value: string) => {
+                  this.escMenuKey = value;
+                  this.saveSetting(SettingsKeys.ESC_MENU_KEY, value);
+                }
+              },
+              {
+                title: '后台保活',
+                subtitle: '串流时保持后台运行，防止切后台后画面冻结',
+                type: 'toggle',
+                value: this.enableBackgroundTask,
+                action: () => {
+                  this.enableBackgroundTask = !this.enableBackgroundTask;
+                  this.saveSetting(SettingsKeys.ENABLE_BACKGROUND_TASK, this.enableBackgroundTask);
                 }
               }
             ]
