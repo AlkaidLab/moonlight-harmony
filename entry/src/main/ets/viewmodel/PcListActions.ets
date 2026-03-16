@@ -73,16 +73,24 @@ export class PcListActions {
         promptAction.showToast({ message: '设备未配对' });
         return;
       }
-      if (computer.runningGameId > 0) {
-        router.pushUrl({
-          url: 'pages/StreamPage',
-          params: { computerId: computer.uuid, appId: computer.runningGameId, appName: '正在运行', resume: true }
-        });
-        return;
-      }
       const context = getContext() as common.UIAbilityContext;
       const nvHttp = new NvHttp(selectBestAddress(computerInfo), computerInfo.serverCert, context, computerInfo.httpPort);
       const apps = await nvHttp.getAppList();
+      if (computer.runningGameId > 0) {
+        const runningApp = apps.find(a => a.id === computer.runningGameId);
+        const cmdList = runningApp?.cmdList;
+        router.pushUrl({
+          url: 'pages/StreamPage',
+          params: {
+            computerId: computer.uuid,
+            appId: computer.runningGameId,
+            appName: runningApp?.name || '正在运行',
+            cmdList: cmdList && cmdList.length > 0 ? JSON.stringify(cmdList) : undefined,
+            resume: true
+          }
+        });
+        return;
+      }
       if (apps.length === 0) {
         promptAction.showToast({ message: '没有可用的应用' });
         return;
@@ -90,7 +98,13 @@ export class PcListActions {
       const firstApp = apps[0];
       router.pushUrl({
         url: 'pages/StreamPage',
-        params: { computerId: computer.uuid, appId: firstApp.id, appName: firstApp.name, resume: false }
+        params: {
+          computerId: computer.uuid,
+          appId: firstApp.id,
+          appName: firstApp.name,
+          cmdList: firstApp.cmdList && firstApp.cmdList.length > 0 ? JSON.stringify(firstApp.cmdList) : undefined,
+          resume: false
+        }
       });
     } catch (err) {
       promptAction.showToast({ message: `启动失败: ${(err as Error).message}` });
@@ -229,7 +243,31 @@ export class PcListActions {
   }
 
   /** 恢复游戏 */
-  resumeGame(computer: ObservableComputer): void {
+  async resumeGame(computer: ObservableComputer): Promise<void> {
+    // 获取应用列表以获取超级指令（cmdList）
+    try {
+      const computerInfo = this.computerManager.getComputer(computer.uuid);
+      if (computerInfo) {
+        const context = getContext() as common.UIAbilityContext;
+        const nvHttp = new NvHttp(selectBestAddress(computerInfo), computerInfo.serverCert, context, computerInfo.httpPort);
+        const apps = await nvHttp.getAppList();
+        const runningApp = apps.find(a => a.id === computer.runningGameId);
+        const cmdList = runningApp?.cmdList;
+        router.pushUrl({
+          url: 'pages/StreamPage',
+          params: {
+            computerId: computer.uuid,
+            appId: computer.runningGameId,
+            appName: runningApp?.name,
+            cmdList: cmdList && cmdList.length > 0 ? JSON.stringify(cmdList) : undefined,
+            resume: true
+          }
+        });
+        return;
+      }
+    } catch {
+      // 获取失败时仍然恢复游戏，只是没有超级指令
+    }
     router.pushUrl({
       url: 'pages/StreamPage',
       params: { computerId: computer.uuid, appId: computer.runningGameId, resume: true }

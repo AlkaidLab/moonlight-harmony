@@ -25,7 +25,7 @@ export interface ComputerMenuCallbacks {
   /** 配对 */
   onPair: (computer: ObservableComputer) => void;
   /** 恢复游戏 */
-  onResumeGame: (computer: ObservableComputer) => void;
+  onResumeGame: (computer: ObservableComputer) => void | Promise<void>;
   /** 退出游戏 */
   onQuitGame: (computer: ObservableComputer) => void;
   /** 应用列表 */
