@@ -47,6 +47,9 @@ export class SettingsKeys {
   static readonly FULL_RANGE: string = 'settings_full_range';
   static readonly REVERSE_RESOLUTION: string = 'settings_reverse_resolution';
   static readonly ROTABLE_SCREEN: string = 'settings_rotable_screen';
+  static readonly SCREEN_POSITION: string = 'settings_screen_position';
+  static readonly SCREEN_OFFSET_X: string = 'settings_screen_offset_x';
+  static readonly SCREEN_OFFSET_Y: string = 'settings_screen_offset_y';
 
   // 音频设置
   static readonly AUDIO_CONFIG: string = 'settings_audio_config';
@@ -221,6 +224,9 @@ export interface DisplaySettings {
   reverseResolution: boolean;
   rotableScreen: boolean;
   enableHdrHighBrightness: boolean;
+  screenPosition: string;            // 画面位置：9 宫格（居中/左上/上/右上/左/右/左下/下/右下）
+  screenOffsetX: number;             // 水平偏移百分比 (-100 ~ 100)
+  screenOffsetY: number;             // 垂直偏移百分比 (-100 ~ 100)
   enablePerfOverlay: boolean;
   perfOverlayOrientation: string;
   perfOverlayPosition: string;
@@ -762,6 +768,9 @@ export class SettingsService {
       reverseResolution: await this.getBoolean(SettingsKeys.REVERSE_RESOLUTION, false),
       rotableScreen: await this.getBoolean(SettingsKeys.ROTABLE_SCREEN, false),
       enableHdrHighBrightness: await this.getBoolean(SettingsKeys.ENABLE_HDR_HIGH_BRIGHTNESS, false),
+      screenPosition: await this.getString(SettingsKeys.SCREEN_POSITION, '居中'),
+      screenOffsetX: await this.getNumber(SettingsKeys.SCREEN_OFFSET_X, 0),
+      screenOffsetY: await this.getNumber(SettingsKeys.SCREEN_OFFSET_Y, 0),
       enablePerfOverlay: await this.getBoolean(SettingsKeys.ENABLE_PERF_OVERLAY, false),
       perfOverlayOrientation: await this.getString(SettingsKeys.PERF_OVERLAY_ORIENTATION, '垂直'),
       perfOverlayPosition: await this.getString(SettingsKeys.PERF_OVERLAY_POSITION, '右上角'),

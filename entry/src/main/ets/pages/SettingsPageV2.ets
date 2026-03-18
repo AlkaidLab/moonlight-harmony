@@ -76,7 +76,7 @@ interface SettingItem {
   title: string;
   subtitle?: string;
   tooltip?: string;
-  type: 'toggle' | 'select' | 'input' | 'action' | 'slider' | 'segment';
+  type: 'toggle' | 'select' | 'input' | 'action' | 'slider' | 'segment' | 'grid';
   key?: string;
   value?: string | boolean | number;
   options?: string[];
@@ -98,6 +98,11 @@ interface SettingItem {
   segmentLabels?: string[];   // 分段按钮显示文字
   segmentValues?: string[];   // 分段按钮对应的实际值（可选，默认与 labels 相同）
   onSegmentChange?: (value: string) => void;  // 选择变化回调
+  // Grid 九宫格专用属性
+  gridLabels?: string[];       // 九宫格按钮标签（按行排列，如 3x3 = 9 个）
+  gridValues?: string[];       // 九宫格按钮对应值
+  gridColumns?: number;        // 列数（默认 3）
+  onGridSelect?: (value: string) => void;  // 选中回调
 }
 
 /**
@@ -140,6 +145,9 @@ struct SettingsPageV2 {
   @State enableHdrHighBrightness: boolean = false;
   @State videoFormat: string = '自动';
   @State stretchVideo: boolean = false;
+  @State screenPosition: string = '居中';
+  @State screenOffsetX: number = 0;
+  @State screenOffsetY: number = 0;
   @State fullRange: boolean = false;
   @State reverseResolution: boolean = false;
   @State rotableScreen: boolean = false;
@@ -443,6 +451,9 @@ struct SettingsPageV2 {
       this.enableHdrHighBrightness = await this.loadBoolean(SettingsKeys.ENABLE_HDR_HIGH_BRIGHTNESS, false);
       this.videoFormat = await PreferencesUtil.get<string>(SettingsKeys.VIDEO_FORMAT, '自动');
       this.stretchVideo = await this.loadBoolean(SettingsKeys.STRETCH_VIDEO, false);
+      this.screenPosition = await PreferencesUtil.get<string>(SettingsKeys.SCREEN_POSITION, '居中');
+      this.screenOffsetX = await PreferencesUtil.get<number>(SettingsKeys.SCREEN_OFFSET_X, 0);
+      this.screenOffsetY = await PreferencesUtil.get<number>(SettingsKeys.SCREEN_OFFSET_Y, 0);
       this.fullRange = await this.loadBoolean(SettingsKeys.FULL_RANGE, false);
       this.reverseResolution = await this.loadBoolean(SettingsKeys.REVERSE_RESOLUTION, false);
       this.rotableScreen = await this.loadBoolean(SettingsKeys.ROTABLE_SCREEN, false);
@@ -1039,6 +1050,56 @@ struct SettingsPageV2 {
                 action: () => {
                   this.stretchVideo = !this.stretchVideo;
                   this.saveSetting(SettingsKeys.STRETCH_VIDEO, this.stretchVideo);
+                }
+              },
+              {
+                title: '画面位置',
+                subtitle: '非全屏分辨率时画面在屏幕上的位置',
+                type: 'grid',
+                visible: !this.stretchVideo,
+                value: this.screenPosition,
+                gridLabels: ['左上', '上', '右上', '左', '居中', '右', '左下', '下', '右下'],
+                gridValues: ['左上', '上', '右上', '左', '居中', '右', '左下', '下', '右下'],
+                gridColumns: 3,
+                onGridSelect: (value: string) => {
+                  this.screenPosition = value;
+                  this.saveSetting(SettingsKeys.SCREEN_POSITION, value);
+                }
+              },
+              {
+                title: '水平偏移',
+                subtitle: '画面水平方向偏移',
+                type: 'slider',
+                visible: !this.stretchVideo,
+                value: this.screenOffsetX,
+                min: -100,
+                max: 100,
+                step: 1,
+                unit: '%',
+                snapValues: [0],
+                snapThreshold: 3,
+                formatValue: (v: number) => `${v}%`,
+                onSliderChange: (value: number) => {
+                  this.screenOffsetX = value;
+                  this.saveSetting(SettingsKeys.SCREEN_OFFSET_X, value);
+                }
+              },
+              {
+                title: '垂直偏移',
+                subtitle: '画面垂直方向偏移',
+                type: 'slider',
+                visible: !this.stretchVideo,
+                value: this.screenOffsetY,
+                min: -100,
+                max: 100,
+                step: 1,
+                unit: '%',
+                snapValues: [0],
+                snapThreshold: 3,
+                formatValue: (v: number) => `${v}%`,
+                onSliderChange: (value: number) => {
+                  this.screenOffsetY = value;
+                  this.saveSetting(SettingsKeys.SCREEN_OFFSET_Y, value);
                 }
               },
               {
@@ -1789,10 +1850,16 @@ struct SettingsPageV2 {
               },
               {
                 title: '性能覆盖层位置',
-                subtitle: this.perfOverlayPosition,
-                type: 'select',
+                type: 'grid',
                 visible: this.enablePerfOverlay,
-                action: () => this.showPerfOverlayPositionPicker()
+                value: this.perfOverlayPosition,
+                gridLabels: ['左上角', '顶部', '右上角', '左侧', '居中', '右侧', '左下角', '底部', '右下角'],
+                gridValues: ['左上角', '顶部', '右上角', '左侧', '居中', '右侧', '左下角', '底部', '右下角'],
+                gridColumns: 3,
+                onGridSelect: (value: string) => {
+                  this.perfOverlayPosition = value;
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_POSITION, value);
+                }
               },
               {
                 title: '锁定覆盖层',
@@ -2309,6 +2376,74 @@ struct SettingsPageV2 {
             .fontSize(AppSizes.FontCaption)
             .fontColor(AppColors.TextTertiary)
             .margin({ top: AppSpacing.XSmall })
+            .width('100%')
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium, top: AppSpacing.Medium, bottom: AppSpacing.Medium })
+    } else if (item.type === 'grid') {
+      // 九宫格位置选择器 — 独占一行，模拟屏幕 + 位置圆点
+      Column({ space: AppSpacing.Small }) {
+        // 标题行
+        Row() {
+          Text(item.title)
+            .fontSize(AppSizes.FontBody)
+            .fontColor(item.disabled ? AppColors.TextSecondary : AppColors.TextPrimary)
+          Blank()
+          // 显示当前选中值
+          Text(item.value as string)
+            .fontSize(AppSizes.FontCaption)
+            .fontColor(AppColors.Primary)
+        }
+        .width('100%')
+
+        // 模拟屏幕 — 深色矩形内 3×3 圆点
+        Grid() {
+          ForEach(item.gridLabels ?? [], (label: string, idx: number) => {
+            GridItem() {
+              Column()
+                .width((item.value as string) === (item.gridValues ? item.gridValues[idx] : label) ? 14 : 8)
+                .height((item.value as string) === (item.gridValues ? item.gridValues[idx] : label) ? 14 : 8)
+                .borderRadius(7)
+                .backgroundColor(
+                  (item.value as string) === (item.gridValues ? item.gridValues[idx] : label)
+                    ? AppColors.Primary : 'transparent'
+                )
+                .borderWidth(1.5)
+                .borderColor(
+                  (item.value as string) === (item.gridValues ? item.gridValues[idx] : label)
+                    ? AppColors.Primary : AppColors.TextTertiary
+                )
+                .shadow(
+                  (item.value as string) === (item.gridValues ? item.gridValues[idx] : label)
+                    ? { radius: 6, color: AppColors.PrimaryGlow, offsetX: 0, offsetY: 0 }
+                    : { radius: 0, color: 'transparent', offsetX: 0, offsetY: 0 }
+                )
+            }
+            .onClick(() => {
+              if (!item.disabled && item.onGridSelect) {
+                item.onGridSelect(item.gridValues ? item.gridValues[idx] : label);
+              }
+            })
+          }, (label: string, idx: number) => `grid_${label}_${idx}_${item.value}`)
+        }
+        .columnsTemplate('1fr 1fr 1fr')
+        .rowsTemplate('1fr '.repeat(Math.ceil((item.gridLabels?.length ?? 9) / (item.gridColumns ?? 3))).trim())
+        .width('100%')
+        .constraintSize({ maxWidth: 280 })
+        .height(100)
+        .backgroundColor(AppColors.SurfaceDark)
+        .borderRadius(12)
+        .borderWidth(1)
+        .borderColor(AppColors.CardBorder)
+        .padding(12)
+
+        // 辅助说明
+        if (item.subtitle) {
+          Text(item.subtitle)
+            .fontSize(AppSizes.FontCaption)
+            .fontColor(AppColors.TextTertiary)
             .width('100%')
         }
       }
@@ -3140,28 +3275,6 @@ struct SettingsPageV2 {
       onSelect: (option: PickerOption) => {
         this.perfOverlayOrientation = option.value as string;
         this.saveSetting(SettingsKeys.PERF_OVERLAY_ORIENTATION, option.value as string);
-      }
-    };
-    this.showPicker(config);
-  }
-  
-  private showPerfOverlayPositionPicker(): void {
-    const options: PickerOption[] = [
-      { title: '顶部', value: '顶部' } as PickerOption,
-      { title: '底部', value: '底部' } as PickerOption,
-      { title: '左上角', value: '左上角' } as PickerOption,
-      { title: '右上角', value: '右上角' } as PickerOption,
-      { title: '左下角', value: '左下角' } as PickerOption,
-      { title: '右下角', value: '右下角' } as PickerOption
-    ];
-    const config: PickerConfig = {
-      title: '选择性能覆盖层位置',
-      subtitle: '选择显示位置',
-      selectedValue: this.perfOverlayPosition,
-      options: options,
-      onSelect: (option: PickerOption) => {
-        this.perfOverlayPosition = option.value as string;
-        this.saveSetting(SettingsKeys.PERF_OVERLAY_POSITION, option.value as string);
       }
     };
     this.showPicker(config);

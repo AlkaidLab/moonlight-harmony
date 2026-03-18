@@ -64,6 +64,7 @@ export enum SnapPosition {
   TOP_CENTER = 'top_center',
   TOP_RIGHT = 'top_right',
   CENTER_LEFT = 'center_left',
+  CENTER = 'center',
   CENTER_RIGHT = 'center_right',
   BOTTOM_LEFT = 'bottom_left',
   BOTTOM_CENTER = 'bottom_center',
@@ -301,6 +302,10 @@ export function calculateSnapPosition(
       x = 0;
       y = (screenHeight - overlayHeight) / 2;
       break;
+    case SnapPosition.CENTER:
+      x = (screenWidth - overlayWidth) / 2;
+      y = (screenHeight - overlayHeight) / 2;
+      break;
     case SnapPosition.CENTER_RIGHT:
       x = screenWidth - overlayWidth;
       y = (screenHeight - overlayHeight) / 2;
@@ -339,6 +344,8 @@ export function getSnapBorderRadius(position: SnapPosition, radius: number = 12)
       return { topLeft: 0, topRight: 0, bottomLeft: radius, bottomRight: 0 };
     case SnapPosition.CENTER_LEFT:
       return { topLeft: 0, topRight: radius, bottomLeft: 0, bottomRight: radius };
+    case SnapPosition.CENTER:
+      return { topLeft: radius, topRight: radius, bottomLeft: radius, bottomRight: radius };
     case SnapPosition.CENTER_RIGHT:
       return { topLeft: radius, topRight: 0, bottomLeft: radius, bottomRight: 0 };
     case SnapPosition.BOTTOM_LEFT:
@@ -358,6 +365,7 @@ const ALL_SNAP_POSITIONS: SnapPosition[] = [
   SnapPosition.TOP_CENTER,
   SnapPosition.TOP_RIGHT,
   SnapPosition.CENTER_LEFT,
+  SnapPosition.CENTER,
   SnapPosition.CENTER_RIGHT,
   SnapPosition.BOTTOM_LEFT,
   SnapPosition.BOTTOM_CENTER,

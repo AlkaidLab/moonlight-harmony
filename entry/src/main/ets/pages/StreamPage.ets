@@ -129,6 +129,9 @@ struct StreamPage {
   // UI 状态
   @State xComponentWidth: Length = '100%';
   @State xComponentHeight: Length = '100%';
+  @State xComponentAlignment: Alignment = Alignment.Center;  // 画面位置（9 宫格）
+  @State xComponentOffsetX: number = 0;  // 画面水平偏移 (vp)
+  @State xComponentOffsetY: number = 0;  // 画面垂直偏移 (vp)
   @State showKeyboardPanel: boolean = false;  // 系统键盘输入面板
   @State keyboardHeight: number = 0;  // IME 键盘高度 (vp)
   @State showVirtualKeyboard: boolean = false;  // PC 虚拟键盘
@@ -695,6 +698,38 @@ struct StreamPage {
   }
 
   /**
+   * 根据位置名称获取 ArkUI Alignment 枚举
+   */
+  private getAlignmentFromPosition(position: string): Alignment {
+    switch (position) {
+      case '左上': return Alignment.TopStart;
+      case '上': return Alignment.Top;
+      case '右上': return Alignment.TopEnd;
+      case '左': return Alignment.Start;
+      case '居中': return Alignment.Center;
+      case '右': return Alignment.End;
+      case '左下': return Alignment.BottomStart;
+      case '下': return Alignment.Bottom;
+      case '右下': return Alignment.BottomEnd;
+      default: return Alignment.Center;
+    }
+  }
+
+  /**
+   * 更新画面位置和偏移（从 displayInfo 中读取设置）
+   */
+  private updateDisplayPosition(): void {
+    this.xComponentAlignment = this.getAlignmentFromPosition(
+      this.viewModel.displayInfo.screenPosition
+    );
+    // 将百分比偏移转换为 vp（基于 XComponent 实际尺寸）
+    const baseWidth = this.getXComponentWidthVp();
+    const baseHeight = this.getXComponentHeightVp();
+    this.xComponentOffsetX = baseWidth * this.viewModel.displayInfo.screenOffsetX / 100;
+    this.xComponentOffsetY = baseHeight * this.viewModel.displayInfo.screenOffsetY / 100;
+  }
+
+  /**
    * 重新计算 XComponent 尺寸（窗口模式切换/窗口大小变化后调用）
    */
   private async recalculateXComponentSize(): Promise<void> {
@@ -712,6 +747,8 @@ struct StreamPage {
       this.xComponentWidth = '100%';
       this.xComponentHeight = '100%';
     }
+    // 更新画面位置和偏移
+    this.updateDisplayPosition();
   }
 
   /**
@@ -858,6 +895,9 @@ struct StreamPage {
       this.xComponentHeight = xComponentSize.height;
       console.info(`StreamPage: XComponent 尺寸 = ${JSON.stringify(xComponentSize)}`);
     }
+
+    // 应用画面位置和偏移
+    this.updateDisplayPosition();
   }
 
   /**
@@ -1138,53 +1178,60 @@ struct StreamPage {
 
   build() {
     Stack() {
-      // 视频渲染层
-      XComponent({
-        id: 'streamSurface',
-        type: XComponentType.SURFACE,
-        controller: this.xComponentController
-      })
-        .onLoad(() => {
-          console.info('XComponent 加载完成');
-          this.startStreaming();
+      // 视频渲染层 — 包裹在独立 Stack 中实现 9 宫格定位 + 偏移
+      Stack() {
+        XComponent({
+          id: 'streamSurface',
+          type: XComponentType.SURFACE,
+          controller: this.xComponentController
         })
-        .onDestroy(() => {
-          console.info('XComponent 销毁');
-        })
-        .width(this.xComponentWidth)
-        .height(this.xComponentHeight)
-        .hitTestBehavior((this.viewModel.showController && !this.touchPassthrough) ? HitTestMode.None : HitTestMode.Default)
-        .onTouch((event: TouchEvent) => {
-          // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
-          // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
-          if (event.source === SourceType.Mouse) return;
-          this.handleTouch(event);
-        })
-        .onMouse((event: MouseEvent) => {
-          // 物理鼠标事件处理 → 委托给输入处理器
-          this.inputHandler.handleMouseEvent(event);
-        })
-        .onAxisEvent((event: AxisEvent) => {
-          // 鼠标滚轮事件处理 → 委托给输入处理器
-          this.inputHandler.handleAxisEvent(event);
-        })
-        .onAreaChange((_oldArea: Area, newArea: Area) => {
-          // 更新 XComponent 实际渲染尺寸（窗口模式下 '100%' 的实际 vp 值）
-          const w = newArea.width as number;
-          const h = newArea.height as number;
-          if (w > 0 && h > 0) {
-            this.xComponentActualWidthVp = w;
-            this.xComponentActualHeightVp = h;
-            this.inputHandler.updateXComponentActualSize(w, h);
-          }
-          // 获取 XComponent 在屏幕上的精确位置，用于绝对模式鼠标坐标转换
-          const globalPos = newArea.globalPosition;
-          if (globalPos) {
-            const screenX = globalPos.x as number;
-            const screenY = globalPos.y as number;
-            this.inputHandler.updateXComponentScreenPosition(screenX, screenY);
-          }
-        })
+          .onLoad(() => {
+            console.info('XComponent 加载完成');
+            this.startStreaming();
+          })
+          .onDestroy(() => {
+            console.info('XComponent 销毁');
+          })
+          .width(this.xComponentWidth)
+          .height(this.xComponentHeight)
+          .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+          .hitTestBehavior((this.viewModel.showController && !this.touchPassthrough) ? HitTestMode.None : HitTestMode.Default)
+          .onTouch((event: TouchEvent) => {
+            // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
+            // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
+            if (event.source === SourceType.Mouse) return;
+            this.handleTouch(event);
+          })
+          .onMouse((event: MouseEvent) => {
+            // 物理鼠标事件处理 → 委托给输入处理器
+            this.inputHandler.handleMouseEvent(event);
+          })
+          .onAxisEvent((event: AxisEvent) => {
+            // 鼠标滚轮事件处理 → 委托给输入处理器
+            this.inputHandler.handleAxisEvent(event);
+          })
+          .onAreaChange((_oldArea: Area, newArea: Area) => {
+            // 更新 XComponent 实际渲染尺寸（窗口模式下 '100%' 的实际 vp 值）
+            const w = newArea.width as number;
+            const h = newArea.height as number;
+            if (w > 0 && h > 0) {
+              this.xComponentActualWidthVp = w;
+              this.xComponentActualHeightVp = h;
+              this.inputHandler.updateXComponentActualSize(w, h);
+            }
+            // 获取 XComponent 在屏幕上的精确位置，用于绝对模式鼠标坐标转换
+            const globalPos = newArea.globalPosition;
+            if (globalPos) {
+              const screenX = globalPos.x as number;
+              const screenY = globalPos.y as number;
+              this.inputHandler.updateXComponentScreenPosition(screenX, screenY);
+            }
+          })
+      }
+      .width('100%')
+      .height('100%')
+      .alignContent(this.xComponentAlignment)
+      .clip(true)
 
       // 连接状态层
       if (this.viewModel.isConnecting) {

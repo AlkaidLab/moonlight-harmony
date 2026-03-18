@@ -81,6 +81,9 @@ export class DisplayInfo {
   xComponentWidth: Length = '100%';
   xComponentHeight: Length = '100%';
   stretchVideo: boolean = false;
+  screenPosition: string = '居中';
+  screenOffsetX: number = 0;
+  screenOffsetY: number = 0;
 }
 
 /**
@@ -211,6 +214,9 @@ export class StreamViewModel {
     this.showOverlay = this.displaySettings.enablePerfOverlay;
     this.showController = this.inputSettings.enableOnscreenControls;
     this.displayInfo.stretchVideo = this.displaySettings.stretchVideo;
+    this.displayInfo.screenPosition = this.displaySettings.screenPosition;
+    this.displayInfo.screenOffsetX = this.displaySettings.screenOffsetX;
+    this.displayInfo.screenOffsetY = this.displaySettings.screenOffsetY;
     
     // 配置覆盖层
     this.overlayState.config.isVertical = this.displaySettings.perfOverlayOrientation === '垂直';
@@ -449,6 +455,12 @@ export class StreamViewModel {
         return SnapPosition.BOTTOM_LEFT;
       case '右下角':
         return SnapPosition.BOTTOM_RIGHT;
+      case '左侧':
+        return SnapPosition.CENTER_LEFT;
+      case '居中':
+        return SnapPosition.CENTER;
+      case '右侧':
+        return SnapPosition.CENTER_RIGHT;
       default:
         return SnapPosition.TOP_RIGHT;
     }
