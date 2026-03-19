@@ -18,8 +18,7 @@
  *   - 父层使用 hitTestReady 延迟刷新命中测试区域
  */
 
-import { vibrator } from '@kit.SensorServiceKit';
-import { componentSnapshot, display, LengthMetrics, promptAction } from '@kit.ArkUI';
+import { componentSnapshot, display, LengthMetrics, promptAction, window } from '@kit.ArkUI';
 import {
   CustomKeyDef,
   KeyAction,
@@ -31,6 +30,7 @@ import {
   DigitalStickAction,
   createDefaultKeyDef,
   cloneKeyDef,
+  generateKeyId,
   KEY_PRESET_CATEGORIES,
   KeyPreset,
   KeyPresetCategory,
@@ -51,240 +51,18 @@ import {
   OV_BG_CARD_DARK, OV_BLUE_40, OV_BLUE_50,
   OV_FONT_SM, OV_FONT_MD, OV_FONT_LG,
 } from '../common/OverlayConstants';
-
-/** 数字摇杆每个按键的四方向按下状态 */
-interface DigitalDirState {
-  up: boolean;
-  down: boolean;
-  left: boolean;
-  right: boolean;
-}
-
-/** 吸附计算结果 */
-interface SnapResult {
-  /** 吸附后的 vp 偏移 X */
-  dx: number;
-  /** 吸附后的 vp 偏移 Y */
-  dy: number;
-}
-
-// =============================================================================
-// 常量
-// =============================================================================
-
-const EDIT_BORDER_COLOR = '#80FF6B6B';
-const SELECT_BORDER_COLOR = '#FFFFD700';
-const EDIT_TOOLBAR_HEIGHT = 48;
-const DRAG_THRESHOLD = 5;
-
-/** 预设颜色：背景色 */
-const BG_COLOR_PRESETS: string[] = [
-  '#401A1A2E', '#40A8D8EA', '#40FF6B6B', '#4050C080',
-  '#40FFD700', '#40D06060', '#406098C0', '#40FF8C00',
-];
-
-/** 预设颜色：文字色 */
-const TEXT_COLOR_PRESETS: string[] = [
-  '#E0FFFFFF', '#FFFFD700', '#FFA8D8EA', '#FFFF6B6B',
-  '#FF50C080', '#FFFF8C00', '#FFD06060', '#FF6098C0',
-];
-
-/** 预设颜色：按压色 */
-const PRESSED_COLOR_PRESETS: string[] = [
-  '#80A8D8EA', '#80FF6B6B', '#8050C080', '#80FFD700',
-  '#80D06060', '#806098C0', '#80FF8C00', '#80E070E0',
-];
-
-/** 振动等级选项 */
-const HAPTIC_OPTIONS: Array<[string, string]> = [
-  ['none', '无'], ['light', '轻'], ['medium', '中'], ['heavy', '重'],
-];
-
-/** 根据 haptic 等级触发振动 */
-function doKeyHaptic(level: string): void {
-  let duration = 0;
-  switch (level) {
-    case 'light': duration = 15; break;
-    case 'medium': duration = 40; break;
-    case 'heavy': duration = 80; break;
-    default: return;
-  }
-  try {
-    vibrator.startVibration({ type: 'time', duration }, { id: 0, usage: 'touch' });
-  } catch (_e) { /* ignore */ }
-}
-
-// =============================================================================
-// 独立按键组件（参照 AnalogStick 设计 —— 独立 @Component 保证触摸处理器稳定）
-// =============================================================================
-
-@Component
-struct CustomKeyBtn {
-  // ── 配置属性 ──
-  keyDef: CustomKeyDef = createDefaultKeyDef();
-  @Prop editMode: boolean = false;
-  @Prop isSelected: boolean = false;
-
-  // ── 回调 ──
-  onAction: (action: KeyAction, isDown: boolean) => void = () => {};
-  /** 拖拽完成回调，参数为 vp 偏移量 (deltaX, deltaY) */
-  onDragFinish: (keyId: string, deltaX: number, deltaY: number) => void = () => {};
-  onSelect: (keyId: string) => void = () => {};
-  onLongPress: (keyId: string) => void = () => {};
-
-  /**
-   * 吸附计算回调：传入按键 ID 和原始 vp 偏移，返回吸附后的 vp 偏移
-   * 返回 null 表示不吸附
-   */
-  snapCalculator: (keyId: string, rawDx: number, rawDy: number) => SnapResult | null = () => null;
-
-  // ── 内部状态（独立 @State —— 触摸时变化只触发自身重渲染） ──
-  @State private isPressed: boolean = false;
-  @State private isToggled: boolean = false;
-  /** 拖拽偏移（视觉 translate） */
-  @State private dragOffsetX: number = 0;
-  @State private dragOffsetY: number = 0;
-
-  // 拖拽追踪（非 @State）
-  private dragging: boolean = false;
-  private dragStartX: number = 0;
-  private dragStartY: number = 0;
-  private longPressTimer: number = -1;
-
-  build() {
-    Text(this.keyDef.label)
-      .fontSize(this.keyDef.fontSize)
-      .fontColor(this.isPressed || this.isToggled ? OV_TEXT_WHITE : this.keyDef.textColor)
-      .fontWeight(FontWeight.Bold)
-      .textAlign(TextAlign.Center)
-      .width(this.keyDef.width)
-      .height(this.keyDef.height)
-      .borderRadius(this.keyDef.shape === 'circle'
-        ? this.keyDef.width / 2
-        : this.keyDef.borderRadius)
-      .backgroundColor(this.isPressed || this.isToggled
-        ? this.keyDef.pressedColor
-        : this.keyDef.bgColor)
-      .border({
-        width: this.editMode ? 2 : (this.keyDef.borderWidth ?? 1),
-        color: this.editMode
-          ? (this.isSelected ? SELECT_BORDER_COLOR : EDIT_BORDER_COLOR)
-          : (this.isPressed || this.isToggled
-              ? this.keyDef.pressedColor
-              : this.keyDef.normalColor),
-        style: this.editMode ? BorderStyle.Dashed : BorderStyle.Solid,
-      })
-      .shadow({
-        radius: this.isPressed || this.isToggled ? 8 : 3,
-        color: this.isPressed || this.isToggled ? '#40A8D8EA' : '#20000000',
-        offsetY: 1,
-      })
-      .opacity(this.keyDef.opacity / 100)
-      .translate({ x: this.dragOffsetX, y: this.dragOffsetY })
-      .hitTestBehavior(HitTestMode.Block)
-      .onTouch((event: TouchEvent) => {
-        event.stopPropagation();
-        if (this.editMode) {
-          this.handleEditTouch(event);
-        } else {
-          this.handlePlayTouch(event);
-        }
-      })
-  }
-
-  // ── 普通模式触摸处理 ──
-
-  private handlePlayTouch(event: TouchEvent): void {
-    if (this.keyDef.behavior === 'toggle') {
-      if (event.type === TouchType.Down) {
-        this.isToggled = !this.isToggled;
-        this.onAction(this.keyDef.action, this.isToggled);
-        this.doHaptic();
-      }
-      return;
-    }
-    // 点触模式
-    if (event.type === TouchType.Down) {
-      this.isPressed = true;
-      this.onAction(this.keyDef.action, true);
-      this.doHaptic();
-    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      this.isPressed = false;
-      this.onAction(this.keyDef.action, false);
-    }
-  }
-
-  // ── 编辑模式触摸处理（拖拽 + 长按 + 选中） ──
-
-  private handleEditTouch(event: TouchEvent): void {
-    const touch = event.touches[0];
-    if (!touch) return;
-
-    switch (event.type) {
-      case TouchType.Down:
-        this.dragStartX = touch.windowX;
-        this.dragStartY = touch.windowY;
-        this.dragOffsetX = 0;
-        this.dragOffsetY = 0;
-        this.dragging = false;
-
-        this.cancelLongPress();
-        this.longPressTimer = setTimeout(() => {
-          if (!this.dragging) {
-            this.onLongPress(this.keyDef.id);
-            this.doHaptic();
-          }
-          this.longPressTimer = -1;
-        }, 500) as number;
-        break;
-
-      case TouchType.Move: {
-        const dx = touch.windowX - this.dragStartX;
-        const dy = touch.windowY - this.dragStartY;
-        if (!this.dragging && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
-          this.dragging = true;
-          this.cancelLongPress();
-        }
-        if (this.dragging) {
-          const snapResult = this.snapCalculator(this.keyDef.id, dx, dy);
-          if (snapResult) {
-            this.dragOffsetX = snapResult.dx;
-            this.dragOffsetY = snapResult.dy;
-          } else {
-            this.dragOffsetX = dx;
-            this.dragOffsetY = dy;
-          }
-        }
-        break;
-      }
-
-      case TouchType.Up:
-      case TouchType.Cancel:
-        this.cancelLongPress();
-        if (this.dragging) {
-          // 传递 vp 偏移量（不是新坐标），由父层转换为百分比
-          this.onDragFinish(this.keyDef.id,
-            this.dragOffsetX,
-            this.dragOffsetY);
-        } else {
-          this.onSelect(this.keyDef.id);
-        }
-        this.dragging = false;
-        break;
-    }
-  }
-
-  private cancelLongPress(): void {
-    if (this.longPressTimer !== -1) {
-      clearTimeout(this.longPressTimer);
-      this.longPressTimer = -1;
-    }
-  }
-
-  private doHaptic(): void {
-    doKeyHaptic(this.keyDef.haptic ?? 'light');
-  }
-}
+import {
+  DigitalDirState, SnapResult,
+  EDIT_BORDER_COLOR, SELECT_BORDER_COLOR, EDIT_TOOLBAR_HEIGHT, DRAG_THRESHOLD,
+  BG_COLOR_PRESETS, TEXT_COLOR_PRESETS, PRESSED_COLOR_PRESETS, HAPTIC_OPTIONS,
+  doKeyHaptic,
+} from './CustomKeyConstants';
+import {
+  ColorTheme, COLOR_THEMES, RGBPixel,
+  parseHexRGB, toHexARGB, generateThemeFromAccent,
+  kMeansPlusPlus, pickAccentFromClusters,
+} from '../service/CustomKeyTheme';
+import { CustomKeyBtn } from './CustomKeyBtn';
 
 // =============================================================================
 // 主覆盖层组件
@@ -356,6 +134,21 @@ export struct CustomKeyOverlay {
   @State private importPreviewCount: number = 0;
   @State private importPreviewKeys: CustomKeyDef[] = [];
   @State private showImportConfirm: boolean = false;
+
+  /** 删除确认对话框 */
+  /** 配色主题面板 */
+  @State private showThemePanel: boolean = false;
+  @State private themeExtracting: boolean = false;
+  @State private extractedAccentColor: string = '';
+  /** 截屏取色时临时隐藏覆盖层，避免 UI 元素污染采样 */
+  @State private hidingForCapture: boolean = false;
+  /** 取色动画 */
+  @State private captureAnimColor: string = '';
+  @State private captureAnimActive: boolean = false;
+  @State private scanLineY: number = 0;        // 扫描线 Y 位置百分比 0~100
+  @State private scanTintOpacity: number = 0;  // 扫过区域染色透明度
+  @State private scanLabelOpacity: number = 0; // 颜色标签透明度
+  @State private scanFlashOpacity: number = 0; // 完成时闪光效果
 
   /** 获取按 layer 升序排列的按键（layer 大的在上层） */
   private getSortedKeys(): CustomKeyDef[] {
@@ -577,6 +370,16 @@ export struct CustomKeyOverlay {
           this.ResizeHandle()
         }
 
+        // 编辑模式空状态引导
+        if (this.editMode && this.keys.length === 0) {
+          this.EmptyStateGuide()
+        }
+
+        // 配色主题面板
+        if (this.showThemePanel) {
+          this.ThemePanel()
+        }
+
         // 添加按键面板
         if (this.showAddPanel) {
           this.AddKeyPanel()
@@ -591,16 +394,89 @@ export struct CustomKeyOverlay {
         if (this.showSharePanel) {
           this.SharePanel()
         }
+
+        // 科幻扫描线取色动画
+        if (this.captureAnimActive) {
+          Stack() {
+            // 扫描过的区域渐变染色
+            Column()
+              .width('100%')
+              .height(this.scanLineY + '%')
+              .linearGradient({
+                angle: 180,
+                colors: [[this.captureAnimColor, 0.0], ['#00000000', 1.0]]
+              })
+              .opacity(this.scanTintOpacity)
+
+            // 扫描线（发光横条）
+            Column()
+              .width('100%')
+              .height(3)
+              .backgroundColor('#FFFFFF')
+              .shadow({
+                radius: 20,
+                color: this.captureAnimColor,
+                offsetX: 0,
+                offsetY: 0
+              })
+              .opacity(this.scanLineY > 0 && this.scanLineY < 100 ? 0.9 : 0)
+              .position({ x: 0, y: this.scanLineY + '%' })
+
+            // 扫描线两侧的装饰短线
+            Row() {
+              Column().width(40).height(1).backgroundColor(this.captureAnimColor).opacity(0.6)
+              Blank()
+              Column().width(40).height(1).backgroundColor(this.captureAnimColor).opacity(0.6)
+            }
+            .width('100%')
+            .padding({ left: 12, right: 12 })
+            .opacity(this.scanLineY > 0 && this.scanLineY < 100 ? 1 : 0)
+            .position({ x: 0, y: this.scanLineY + '%' })
+
+            // 完成时全屏闪烁
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.captureAnimColor)
+              .opacity(this.scanFlashOpacity)
+
+            // 颜色标签
+            Column({ space: 4 }) {
+              Text('SCAN COMPLETE')
+                .fontSize(11)
+                .fontColor(this.captureAnimColor)
+                .fontWeight(FontWeight.Bold)
+                .letterSpacing(3)
+              Row({ space: 6 }) {
+                Column()
+                  .width(12)
+                  .height(12)
+                  .borderRadius(6)
+                  .backgroundColor(this.captureAnimColor)
+                Text(this.captureAnimColor)
+                  .fontSize(13)
+                  .fontColor('#DDFFFFFF')
+                  .fontFamily('monospace')
+              }
+            }
+            .opacity(this.scanLabelOpacity)
+            .position({ x: '50%', y: '50%' })
+            .translate({ x: '-50%', y: '-50%' })
+          }
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.None)
+        }
       }
       .width('100%')
       .layoutWeight(1)
       .alignContent(Alignment.BottomStart)
       .hitTestBehavior(HitTestMode.Transparent)
       // hitTestReady: 微小 opacity 变化触发父层重渲染，刷新命中测试树
-      .opacity(this.hitTestReady > 0 ? 1 : 0.99)
+      .opacity(this.hidingForCapture ? 0 : (this.hitTestReady > 0 ? 1 : 0.99))
 
       // 编辑模式工具栏（面板打开时隐藏，避免遮挡面板）
-      if (this.editMode && !this.showAddPanel && !this.showPropertyPanel && !this.showSharePanel) {
+      if (this.editMode && !this.showAddPanel && !this.showPropertyPanel && !this.showSharePanel && !this.showThemePanel) {
         Row({ space: 12 }) {
           Row({ space: 4 }) {
             SymbolGlyph($r('sys.symbol.plus_circle'))
@@ -624,7 +500,23 @@ export struct CustomKeyOverlay {
           .borderRadius(16).backgroundColor('#D06060')
           .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
           .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-          .onClick(() => { if (this.selectedKeyId) { this.deleteSelectedKey(); } })
+          .onClick(() => {
+            if (this.selectedKeyId) {
+              this.deleteSelectedKey();
+            }
+          })
+
+          Row({ space: 4 }) {
+            Text('⧉')
+              .fontSize(16).fontColor(Color.White)
+            Text('复制')
+              .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+          }
+          .height(32).padding({ left: 10, right: 12 })
+          .borderRadius(16).backgroundColor('#8070A0')
+          .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
+          .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+          .onClick(() => { if (this.selectedKeyId) { this.cloneSelectedKey(); } })
 
           Row({ space: 4 }) {
             SymbolGlyph($r('sys.symbol.gearshape'))
@@ -649,6 +541,18 @@ export struct CustomKeyOverlay {
           .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
           .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
           .onClick(() => { this.snapEnabled = !this.snapEnabled; })
+
+          Row({ space: 4 }) {
+            Text('🎨')
+              .fontSize(14)
+            Text('配色')
+              .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+          }
+          .height(32).padding({ left: 10, right: 12 })
+          .borderRadius(16).backgroundColor('#C07050')
+          .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
+          .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+          .onClick(() => { this.showThemePanel = true; })
 
           Row({ space: 4 }) {
             SymbolGlyph($r('sys.symbol.share'))
@@ -1060,6 +964,38 @@ export struct CustomKeyOverlay {
     this.showPropertyPanel = false;
   }
 
+  /** 克隆选中按键：复制全部属性，位置略微偏移避免完全重叠 */
+  private async cloneSelectedKey(): Promise<void> {
+    const src = this.getSelectedKey();
+    if (!src) return;
+    this.pushUndoState();
+    const cloned = cloneKeyDef(src);
+    cloned.id = generateKeyId();
+    // 偏移 3% 避免完全重叠
+    cloned.xPercent = Math.min(1.0, cloned.xPercent + 0.03);
+    cloned.yPercent = Math.min(1.0, cloned.yPercent + 0.03);
+    const newArr: CustomKeyDef[] = this.keys.slice();
+    newArr.push(cloned);
+    this.keys = newArr;
+    await CustomKeyStore.saveKeys(this.keys);
+    this.selectedKeyId = cloned.id;
+    promptAction.showToast({ message: '已复制按键', duration: 1200 });
+  }
+
+  /** 微调选中按键位置，单位 vp */
+  private nudgeSelectedKey(dx: number, dy: number): void {
+    const idx = this.keys.findIndex(k => k.id === this.selectedKeyId);
+    if (idx === -1 || this.screenWidthVp <= 0) return;
+    this.pushUndoState();
+    const updated = cloneKeyDef(this.keys[idx]);
+    updated.xPercent = Math.max(0, Math.min(1, updated.xPercent + dx / this.screenWidthVp));
+    updated.yPercent = Math.max(0, Math.min(1, updated.yPercent + dy / this.screenHeightVp));
+    const newKeys: CustomKeyDef[] = this.keys.slice();
+    newKeys[idx] = updated;
+    this.keys = newKeys;
+    CustomKeyStore.saveKeys(this.keys);
+  }
+
   private getSelectedKey(): CustomKeyDef | undefined {
     return this.keys.find(k => k.id === this.selectedKeyId);
   }
@@ -1098,6 +1034,7 @@ export struct CustomKeyOverlay {
     this.showAddPanel = false;
     this.showPropertyPanel = false;
     this.showSharePanel = false;
+    this.showThemePanel = false;
     this.undoStack = [];
     this.redoStack = [];
     this.canUndo = false;
@@ -1115,12 +1052,159 @@ export struct CustomKeyOverlay {
     this.showAddPanel = false;
     this.showPropertyPanel = false;
     this.showSharePanel = false;
+    this.showThemePanel = false;
     await CustomKeyStore.saveKeys(this.keys);
     this.onEditModeChanged(false);
   }
 
   async reloadKeys(): Promise<void> {
     this.keys = await CustomKeyStore.getKeys();
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 智能配色
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /** 将配色主题应用到所有按键 */
+  private async applyThemeToAllKeys(theme: ColorTheme): Promise<void> {
+    if (this.keys.length === 0) return;
+    this.pushUndoState();
+    const newKeys: CustomKeyDef[] = this.keys.map((k: CustomKeyDef): CustomKeyDef => {
+      const updated = cloneKeyDef(k);
+      updated.bgColor = theme.bgColor;
+      updated.textColor = theme.textColor;
+      updated.pressedColor = theme.pressedColor;
+      updated.normalColor = theme.normalColor;
+      return updated;
+    });
+    this.keys = newKeys;
+    await CustomKeyStore.saveKeys(this.keys);
+    this.showThemePanel = false;
+    promptAction.showToast({ message: `已应用「${theme.name}」配色`, duration: 1500 });
+  }
+
+  /**
+   * 从当前屏幕截图提取主色调，生成智能配色方案
+   * 使用 window.snapshot() 获取窗口截图，然后采样像素提取主色
+   */
+  private async extractColorsFromScreen(): Promise<void> {
+    this.themeExtracting = true;
+    this.extractedAccentColor = '';
+
+    // ── 步骤1：隐藏覆盖层 UI，等一帧让渲染生效 ──
+    this.showThemePanel = false;
+    this.hidingForCapture = true;
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const win = await window.getLastWindow(context);
+      const pixelMap = await win.snapshot();
+
+      // ── 步骤2：截图完成后立刻恢复 UI 显示 ──
+      this.hidingForCapture = false;
+      this.showThemePanel = true;
+
+      const info = await pixelMap.getImageInfo();
+      const width = info.size.width;
+      const height = info.size.height;
+
+      // 采样区域：聚焦中心 60% 区域
+      const startX = Math.floor(width * 0.2);
+      const endX = Math.floor(width * 0.8);
+      const startY = Math.floor(height * 0.15);
+      const endY = Math.floor(height * 0.75);
+      const sampleCount = 300;
+
+      // 读取整图像素
+      const bufferSize = width * height * 4; // RGBA
+      const buffer = new ArrayBuffer(bufferSize);
+      await pixelMap.readPixelsToBuffer(buffer);
+      const view = new Uint8Array(buffer);
+      pixelMap.release();
+
+      // 随机采样像素，过滤接近纯黑的点
+      const samples: RGBPixel[] = [];
+      for (let i = 0; i < sampleCount; i++) {
+        const sx = startX + Math.floor(Math.random() * (endX - startX));
+        const sy = startY + Math.floor(Math.random() * (endY - startY));
+        const offset = (sy * width + sx) * 4;
+        if (offset + 3 < view.length) {
+          const r = view[offset];
+          const g = view[offset + 1];
+          const b = view[offset + 2];
+          if (r + g + b > 30) {
+            const pixel: RGBPixel = { r: r, g: g, b: b };
+            samples.push(pixel);
+          }
+        }
+      }
+
+      if (samples.length < 10) {
+        promptAction.showToast({ message: '画面过暗，建议手动选择主题', duration: 2000 });
+        this.themeExtracting = false;
+        return;
+      }
+
+      // ── 步骤3：K-means++ 聚类提取主色调 ──
+      const clusters = kMeansPlusPlus(samples, 5);
+      const accent = pickAccentFromClusters(clusters, samples.length);
+      const accentHex = toHexARGB(255, accent.r, accent.g, accent.b);
+
+      // ── 步骤4：科幻扫描线动画 ──
+      this.captureAnimColor = accentHex;
+      this.scanLineY = 0;
+      this.scanTintOpacity = 0;
+      this.scanLabelOpacity = 0;
+      this.scanFlashOpacity = 0;
+      this.captureAnimActive = true;
+
+      // 阶段1：扫描线从上往下扫（0→600ms）
+      animateTo({ duration: 600, curve: Curve.Linear }, () => {
+        this.scanLineY = 100;
+      });
+      // 扫过区域同步染色
+      animateTo({ duration: 600, curve: Curve.EaseIn }, () => {
+        this.scanTintOpacity = 0.3;
+      });
+
+      // 动画播放期间同时应用主题
+      this.extractedAccentColor = accentHex;
+      const theme = generateThemeFromAccent(accent.r, accent.g, accent.b);
+      await this.applyThemeToAllKeys(theme);
+
+      // 阶段2：扫描完成 → 全屏闪烁 + 标签淡入（600ms后）
+      setTimeout(() => {
+        // 闪光
+        animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+          this.scanFlashOpacity = 0.25;
+        });
+        setTimeout(() => {
+          animateTo({ duration: 300, curve: Curve.EaseIn }, () => {
+            this.scanFlashOpacity = 0;
+          });
+        }, 150);
+        // 标签淡入
+        animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+          this.scanLabelOpacity = 1;
+        });
+      }, 600);
+
+      // 阶段3：整体淡出（1200ms后开始）
+      setTimeout(() => {
+        animateTo({ duration: 400, curve: Curve.EaseIn }, () => {
+          this.scanTintOpacity = 0;
+          this.scanLabelOpacity = 0;
+        });
+        setTimeout(() => { this.captureAnimActive = false; }, 450);
+      }, 1200);
+    } catch (e) {
+      this.hidingForCapture = false;
+      this.showThemePanel = true;
+      console.error('[CustomKeyOverlay] 屏幕取色失败:', JSON.stringify(e));
+      promptAction.showToast({ message: '屏幕取色失败，请手动选择主题', duration: 2000 });
+    }
+    this.themeExtracting = false;
   }
 
   private getSelectedCategoryPresets(): KeyPreset[] {
@@ -1404,6 +1488,29 @@ export struct CustomKeyOverlay {
   }
 
   @Builder
+  EmptyStateGuide() {
+    Column({ space: 12 }) {
+      Text('🎮')
+        .fontSize(36)
+      Text('还没有自定义按键')
+        .fontSize(15).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+      Text('点击下方「添加」创建你的第一个按键')
+        .fontSize(12).fontColor(OV_TEXT_DIM)
+      Text('添加按键')
+        .fontSize(14).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+        .padding({ left: 20, right: 20 }).height(36)
+        .borderRadius(18).backgroundColor('#50C080')
+        .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+        .onClick(() => { this.showAddPanel = true; })
+    }
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.Transparent)
+  }
+
+  @Builder
   AlignmentGuides() {
     // 对齐辅助线 — 拖拽吸附时在对齐位置绘制蓝色参考线
     Stack() {
@@ -1427,6 +1534,119 @@ export struct CustomKeyOverlay {
     .width('100%')
     .height('100%')
     .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  ThemePanel() {
+    Column() {
+      // 标题栏
+      Row() {
+        Text('🎨 智能配色').fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
+        Blank()
+        Text('✕').fontSize(14).fontColor('#99FFFFFF')
+          .width(28).height(28).textAlign(TextAlign.Center)
+          .borderRadius(14).backgroundColor(OV_BG_TRACK)
+          .onClick(() => { this.showThemePanel = false; })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+
+      Scroll() {
+        Column({ space: 12 }) {
+          // ── 从画面取色 ──
+          Column({ space: 8 }) {
+            Text('从当前画面取色')
+              .fontSize(13).fontColor(OV_TEXT_MEDIUM)
+            Text('截取屏幕画面，自动提取主色调应用到所有按键')
+              .fontSize(11).fontColor(OV_TEXT_DIM)
+            Row({ space: 12 }) {
+              if (this.themeExtracting) {
+                Row({ space: 8 }) {
+                  LoadingProgress()
+                    .width(16).height(16).color(OV_ACCENT_BLUE)
+                  Text('正在分析画面...')
+                    .fontSize(12).fontColor(OV_TEXT_MEDIUM)
+                }
+              } else {
+                Text('截屏取色')
+                  .fontSize(13).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+                  .padding({ left: 16, right: 16 }).height(34)
+                  .borderRadius(17).backgroundColor('#C07050')
+                  .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                  .onClick(() => { this.extractColorsFromScreen(); })
+              }
+              if (this.extractedAccentColor) {
+                Row({ space: 6 }) {
+                  Text('').width(20).height(20).borderRadius(10)
+                    .backgroundColor(this.extractedAccentColor)
+                    .border({ width: 1, color: '#40FFFFFF' })
+                  Text('上次取色')
+                    .fontSize(11).fontColor(OV_TEXT_DIM)
+                }
+              }
+            }
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16 })
+
+          Divider().color('#20FFFFFF').width('90%')
+
+          // ── 预设主题 ──
+          Column({ space: 8 }) {
+            Text('预设主题')
+              .fontSize(13).fontColor(OV_TEXT_MEDIUM)
+              .padding({ left: 16 })
+
+            Flex({ wrap: FlexWrap.Wrap,
+              space: { main: LengthMetrics.vp(8), cross: LengthMetrics.vp(8) } }) {
+              ForEach(COLOR_THEMES, (theme: ColorTheme) => {
+                Column({ space: 4 }) {
+                  // 预览色卡：模拟按键外观
+                  Stack() {
+                    Text('A')
+                      .fontSize(13).fontColor(theme.textColor).fontWeight(FontWeight.Bold)
+                      .textAlign(TextAlign.Center)
+                  }
+                  .width(40).height(40)
+                  .borderRadius(8)
+                  .backgroundColor(theme.bgColor)
+                  .border({ width: 1, color: theme.normalColor })
+                  .alignContent(Alignment.Center)
+
+                  Text(theme.name)
+                    .fontSize(10).fontColor(OV_TEXT_DIM)
+                }
+                .alignItems(HorizontalAlign.Center)
+                .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                .onClick(() => { this.applyThemeToAllKeys(theme); })
+              })
+            }
+            .padding({ left: 16, right: 16 })
+          }
+          .width('100%')
+
+          Divider().color('#20FFFFFF').width('90%')
+
+          // ── 提示 ──
+          Text('提示：配色会应用到所有按键，可用撤销恢复')
+            .fontSize(11).fontColor(OV_TEXT_DIM)
+            .padding({ left: 16, right: 16 })
+
+          // 间距
+          Row().height(8)
+        }
+      }
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+    }
+    .width('100%')
+    .constraintSize({ maxHeight: '45%' })
+    .backgroundColor('#E01A1A2E')
+    .backdropBlur(50)
+    .borderRadius({ topLeft: 16, topRight: 16 })
+    .border({ width: { top: 1, left: 1, right: 1 }, color: '#20FFFFFF' })
+    .onTouch((event: TouchEvent) => { event.stopPropagation(); })
+    .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation({ duration: 200 }))
   }
 
   @Builder
@@ -1822,6 +2042,43 @@ export struct CustomKeyOverlay {
 
           Row({ space: 12 }) {
             this.PropertySliderCompact('线宽', 0, 6, this.getSelectedKey()?.borderWidth ?? 1, 'borderWidth')
+            this.PropertySliderCompact('圆角', 0, 60, this.getSelectedKey()?.borderRadius ?? 12, 'borderRadius')
+          }
+          .width('100%').padding({ left: 4, right: 4 })
+
+          // 位置微调
+          Row({ space: 8 }) {
+            Text('微调').fontSize(11).fontColor(OV_TEXT_MEDIUM).width(28)
+            Text('←')
+              .fontSize(14).fontColor(OV_TEXT_WHITE)
+              .width(28).height(28).textAlign(TextAlign.Center)
+              .borderRadius(6).backgroundColor(OV_BG_TRACK)
+              .border({ width: 1, color: '#20FFFFFF' })
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+              .onClick(() => { this.nudgeSelectedKey(-2, 0); })
+            Text('→')
+              .fontSize(14).fontColor(OV_TEXT_WHITE)
+              .width(28).height(28).textAlign(TextAlign.Center)
+              .borderRadius(6).backgroundColor(OV_BG_TRACK)
+              .border({ width: 1, color: '#20FFFFFF' })
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+              .onClick(() => { this.nudgeSelectedKey(2, 0); })
+            Text('↑')
+              .fontSize(14).fontColor(OV_TEXT_WHITE)
+              .width(28).height(28).textAlign(TextAlign.Center)
+              .borderRadius(6).backgroundColor(OV_BG_TRACK)
+              .border({ width: 1, color: '#20FFFFFF' })
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+              .onClick(() => { this.nudgeSelectedKey(0, -2); })
+            Text('↓')
+              .fontSize(14).fontColor(OV_TEXT_WHITE)
+              .width(28).height(28).textAlign(TextAlign.Center)
+              .borderRadius(6).backgroundColor(OV_BG_TRACK)
+              .border({ width: 1, color: '#20FFFFFF' })
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+              .onClick(() => { this.nudgeSelectedKey(0, 2); })
+            Text(`${((this.getSelectedKey()?.xPercent ?? 0) * 100).toFixed(0)}%, ${((this.getSelectedKey()?.yPercent ?? 0) * 100).toFixed(0)}%`)
+              .fontSize(10).fontColor(OV_TEXT_DIM)
           }
           .width('100%').padding({ left: 4, right: 4 })
 

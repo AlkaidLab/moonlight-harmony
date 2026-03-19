@@ -354,6 +354,37 @@ export function getAddressTypeLabel(addressStr: string | undefined | null): stri
 // ─────────────────────── 内部工具 ───────────────────────
 
 /**
+ * 从一组地址中选出最佳 IPv6 全局地址
+ *
+ * 移植自 Android MdnsDiscoveryAgent.getBestIpv6Address()
+ *
+ * 过滤规则：
+ *   - 排除 link-local、site-local/ULA、loopback
+ *   - 排除 6to4 (2002::/16) 和 Teredo (2001:0000::/32) 隧道地址
+ *   - 优先选择 IPv6 全局单播地址
+ *
+ * @param addresses 地址字符串数组（纯 IP，无端口）
+ * @returns 最佳 IPv6 全局地址，无则返回 undefined
+ */
+export function getBestIpv6Address(addresses: string[]): string | undefined {
+  for (const addr of addresses) {
+    if (!isIPv6Address(addr)) continue;
+    const type = detectAddressType(addr);
+    if (type === AddressType.IPV6_GLOBAL) {
+      return addr;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 判断地址是否为 IPv6 全局单播地址（可用于 WAN 连接）
+ */
+export function isIPv6Global(address: string): boolean {
+  return detectAddressType(address) === AddressType.IPV6_GLOBAL;
+}
+
+/**
  * 从地址字符串中去除端口号
  * 支持: "192.168.1.1:47989" -> "192.168.1.1"
  *       "[fe80::1]:47989"   -> "fe80::1"

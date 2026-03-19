@@ -16,7 +16,7 @@ import { ComputerPersistence } from './ComputerPersistence';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { WakeOnLan } from './WakeOnLan';
-import { isLanAddress } from '../utils/NetHelper';
+import { isLanAddress, getBestIpv6Address, isIPv6Address } from '../utils/NetHelper';
 import { connection } from '@kit.NetworkKit';
 import { MAX_PORT } from '../common/NetworkConstants';
 import { common } from '@kit.AbilityKit';
@@ -769,6 +769,16 @@ export class ComputerManager {
     // 更新本地/远程地址
     if (info.localAddress) target.localAddress = info.localAddress;
     if (info.externalAddress) target.remoteAddress = info.externalAddress;
+
+    // 如果连接地址是 IPv6，更新 ipv6Address
+    if (isIPv6Address(result.address)) {
+      target.ipv6Address = result.address;
+    }
+
+    // 如果仍缺少 IPv6 全局地址，异步补充（不阻塞轮询流程）
+    if (!target.ipv6Address && info.hostname) {
+      this.lookupAndSetIpv6(target, info.hostname);
+    }
     
     // 更新配对状态：
     // HTTP 请求总是返回 paired=false，只有 HTTPS + 客户端证书 才返回正确状态
@@ -790,6 +800,48 @@ export class ComputerManager {
         (!target.boxArtUrl || target.boxArtUrl.startsWith('http'))) {
       this.loadFirstAppBoxArt(target, result.address);
     }
+  }
+
+  /**
+   * 异步查询主机的 IPv6 全局地址并更新到 ComputerInfo
+   *
+   * 通过 DNS 解析主机名获取 AAAA 记录，选出最佳 IPv6 全局地址。
+   * 作为 mDNS 发现的补充机制，确保外网可达的 IPv6 地址被持久化。
+   */
+  private lookupAndSetIpv6(computer: ComputerInfo, hostname: string): void {
+    const tryLookup = async (host: string): Promise<string | undefined> => {
+      try {
+        const addresses = await connection.getAddressesByName(host);
+        const ipv6List: string[] = [];
+        for (const addr of addresses) {
+          if (addr.family === 2 && addr.address) {
+            ipv6List.push(addr.address);
+          }
+        }
+        return getBestIpv6Address(ipv6List);
+      } catch (_err) {
+        return undefined;
+      }
+    };
+
+    // 先尝试主机名，再尝试 hostname.local
+    tryLookup(hostname).then((ipv6: string | undefined) => {
+      if (ipv6) {
+        computer.ipv6Address = ipv6;
+        console.info(`ComputerManager: 为 ${computer.name} 补充 IPv6 地址: ${ipv6}`);
+        this.saveComputers();
+        return;
+      }
+      return tryLookup(`${hostname}.local`);
+    }).then((ipv6: string | undefined) => {
+      if (ipv6) {
+        computer.ipv6Address = ipv6;
+        console.info(`ComputerManager: 为 ${computer.name} 补充 IPv6 地址 (.local): ${ipv6}`);
+        this.saveComputers();
+      }
+    }).catch(() => {
+      // 静默忽略
+    });
   }
 
   /**

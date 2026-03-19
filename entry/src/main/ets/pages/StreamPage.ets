@@ -42,6 +42,7 @@ import { StreamIMEManager } from './StreamIMEManager';
 import { VirtualKeyboard } from '../components/VirtualKeyboard';
 import { CustomKeyOverlay } from '../components/CustomKeyOverlay';
 import { CustomKeyManager, CustomKeyManagerHost, SessionLike } from '../service/CustomKeyManager';
+import { PanZoomHandler, PanZoomState, PointXY } from '../service/PanZoomHandler';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -153,6 +154,14 @@ struct StreamPage {
   @State controllerScaleValue: number = 1.0;
   /** 虚拟手柄透明度 */
   @State controllerOpacityValue: number = 0.75;
+  /** 双指缩放模式开关（启用后触摸用于缩放/平移，不发送给远端） */
+  @State isTouchOverrideEnabled: boolean = false;
+  /** 视频缩放倍数 */
+  @State videoScale: number = 1.0;
+  /** 视频水平平移 (vp) */
+  @State videoTranslateX: number = 0;
+  /** 视频垂直平移 (vp) */
+  @State videoTranslateY: number = 0;
   
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
@@ -188,6 +197,7 @@ struct StreamPage {
   private shortcutManager: ShortcutManager = ShortcutManager.getInstance();
   private gamepadManager: GamepadManager = GamepadManager.getInstance();
   private customKeyManager: CustomKeyManager | null = null;
+  private panZoomHandler: PanZoomHandler = new PanZoomHandler();
   private controllerTypes: Map<number, number> = new Map();  // slot → MoonlightControllerType
   
   // 页面参数
@@ -280,6 +290,21 @@ struct StreamPage {
     // 初始化输入处理器
     this.inputHandler.initialize(this.viewModel, this.gamepadManager);
     this.inputHandler.setOnShowStreamMenu(() => this.showStreamMenu());
+
+    // 初始化双指缩放处理器
+    this.panZoomHandler.setOnStateChanged((state: PanZoomState) => {
+      this.videoScale = state.scale;
+      this.videoTranslateX = state.translateX;
+      this.videoTranslateY = state.translateY;
+      // 缩放状态下设置坐标逆变换，确保触摸坐标映射到正确的游戏画面位置
+      if (this.panZoomHandler.isZoomed()) {
+        this.touchInputHandler.setCoordinateTransform((x: number, y: number): PointXY => {
+          return this.panZoomHandler.inverseTransform(x, y);
+        });
+      } else {
+        this.touchInputHandler.setCoordinateTransform(null);
+      }
+    });
     
     // 初始化生命周期管理器
     this.lifecycleManager.initialize(this.viewModel, this.windowManager, {
@@ -448,6 +473,9 @@ struct StreamPage {
       // 更新 ViewModel 显示信息
       this.viewModel.displayInfo.screenWidth = screenWidth;
       this.viewModel.displayInfo.screenHeight = screenHeight;
+
+      // 更新缩放处理器容器尺寸
+      this.panZoomHandler.setParentSize(screenWidth, screenHeight);
       
       // 配置窗口
       await this.windowManager?.configureWindow();
@@ -635,6 +663,17 @@ struct StreamPage {
       onToggleWindowMode: async () => {
         await this.windowManager?.toggleWindowMode();
         this.recalculateXComponentSize();
+      },
+      onTogglePanZoom: () => {
+        this.isTouchOverrideEnabled = !this.isTouchOverrideEnabled;
+        promptAction.showToast({
+          message: this.isTouchOverrideEnabled ? '画面缩放已开启，双指捏合缩放画面' : '画面缩放已关闭',
+          duration: 2000
+        });
+      },
+      onResetPanZoom: () => {
+        this.panZoomHandler.reset();
+        promptAction.showToast({ message: '缩放已重置', duration: 1500 });
       }
     };
   }
@@ -662,6 +701,7 @@ struct StreamPage {
         controllerScale: this.controllerScaleValue,
         touchPassthrough: this.touchPassthrough,
         showCustomKeys: this.showCustomKeys,
+        isPanZoomActive: this.isTouchOverrideEnabled,
         callbacks: this.buildGameMenuCallbacks()
       }),
       alignment: DialogAlignment.CenterEnd,
@@ -1200,6 +1240,11 @@ struct StreamPage {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
             // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
             if (event.source === SourceType.Mouse) return;
+            // 双指缩放模式：触摸事件完全由 PanZoomHandler 消费
+            if (this.isTouchOverrideEnabled) {
+              this.panZoomHandler.handleTouchEvent(event);
+              return;
+            }
             this.handleTouch(event);
           })
           .onMouse((event: MouseEvent) => {
@@ -1232,6 +1277,16 @@ struct StreamPage {
       .height('100%')
       .alignContent(this.xComponentAlignment)
       .clip(true)
+      .scale({
+        x: this.videoScale,
+        y: this.videoScale,
+        centerX: 0,
+        centerY: 0
+      })
+      .translate({
+        x: this.videoTranslateX,
+        y: this.videoTranslateY
+      })
 
       // 连接状态层
       if (this.viewModel.isConnecting) {

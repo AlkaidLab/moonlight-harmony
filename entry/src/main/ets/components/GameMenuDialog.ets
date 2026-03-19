@@ -57,6 +57,8 @@ export interface GameMenuCallbacks {
   onEditCustomKeys?: () => void;
   onExportCustomKeys?: () => void;
   onImportCustomKeys?: () => void;
+  onTogglePanZoom?: () => void;
+  onResetPanZoom?: () => void;
 }
 
 /** 菜单项配置 */
@@ -128,6 +130,7 @@ export struct GameMenuDialog {
   controllerScale: number = 1.0;
   touchPassthrough: boolean = false;
   showCustomKeys: boolean = false;
+  isPanZoomActive: boolean = false;
 
   // 动画状态
   @State private positions: number[] = Array(MENU_ITEM_COUNT).fill(200);
@@ -589,6 +592,7 @@ export struct GameMenuDialog {
           if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
           if (this.hasGyroscope) this.GyroAssistCard()
           if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
+          this.PanZoomCard()
         }
         .alignItems(HorizontalAlign.Start)
       }
@@ -614,6 +618,7 @@ export struct GameMenuDialog {
         if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
         if (this.hasGyroscope) this.GyroAssistCard()
         if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
+        this.PanZoomCard()
       }
       .alignItems(HorizontalAlign.Start)
     }
@@ -657,6 +662,39 @@ export struct GameMenuDialog {
       this.callbacks.onUnlockOverlay?.();
       this.callbacks.onClose?.();
     })
+  }
+
+  @Builder
+  PanZoomCard() {
+    Row({ space: 8 }) {
+      Column() {
+        this.ButtonCardContent(this.isPanZoomActive ? '🔍' : '🔎', this.isPanZoomActive ? '缩放中' : '画面缩放')
+      }
+      .width(BUTTON_CARD_SIZE)
+      .height(BUTTON_CARD_SIZE)
+      .padding(10)
+      .cardStyle()
+      .backgroundColor(this.isPanZoomActive ? ACTIVE_BG_COLOR : '#1A1A2E')
+      .borderColor(this.isPanZoomActive ? ACTIVE_BORDER_COLOR : '#333348')
+      .onClick(() => {
+        this.callbacks.onTogglePanZoom?.();
+        this.callbacks.onClose?.();
+      })
+
+      if (this.isPanZoomActive) {
+        Column() {
+          this.ButtonCardContent('↺', '重置缩放')
+        }
+        .width(BUTTON_CARD_SIZE)
+        .height(BUTTON_CARD_SIZE)
+        .padding(10)
+        .cardStyle()
+        .onClick(() => {
+          this.callbacks.onResetPanZoom?.();
+          this.callbacks.onClose?.();
+        })
+      }
+    }
   }
 
   @Builder

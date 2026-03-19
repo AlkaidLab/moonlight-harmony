@@ -1,0 +1,87 @@
+/*
+ * Moonlight for HarmonyOS
+ * Copyright (C) 2024-2025 Moonlight/AlkaidLab
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
+/**
+ * 自定义按键覆盖层常量与工具函数
+ *
+ * 编辑模式相关的颜色常量、预设色板、辅助接口和振动反馈函数。
+ */
+
+import { vibrator } from '@kit.SensorServiceKit';
+
+// =============================================================================
+// 接口
+// =============================================================================
+
+/** 数字摇杆每个按键的四方向按下状态 */
+export interface DigitalDirState {
+  up: boolean;
+  down: boolean;
+  left: boolean;
+  right: boolean;
+}
+
+/** 吸附计算结果 */
+export interface SnapResult {
+  /** 吸附后的 vp 偏移 X */
+  dx: number;
+  /** 吸附后的 vp 偏移 Y */
+  dy: number;
+}
+
+// =============================================================================
+// 常量
+// =============================================================================
+
+export const EDIT_BORDER_COLOR = '#80FF6B6B';
+export const SELECT_BORDER_COLOR = '#FFFFD700';
+export const EDIT_TOOLBAR_HEIGHT = 48;
+export const DRAG_THRESHOLD = 5;
+
+/** 预设颜色：背景色 */
+export const BG_COLOR_PRESETS: string[] = [
+  '#401A1A2E', '#40A8D8EA', '#40FF6B6B', '#4050C080',
+  '#40FFD700', '#40D06060', '#406098C0', '#40FF8C00',
+];
+
+/** 预设颜色：文字色 */
+export const TEXT_COLOR_PRESETS: string[] = [
+  '#E0FFFFFF', '#FFFFD700', '#FFA8D8EA', '#FFFF6B6B',
+  '#FF50C080', '#FFFF8C00', '#FFD06060', '#FF6098C0',
+];
+
+/** 预设颜色：按压色 */
+export const PRESSED_COLOR_PRESETS: string[] = [
+  '#80A8D8EA', '#80FF6B6B', '#8050C080', '#80FFD700',
+  '#80D06060', '#806098C0', '#80FF8C00', '#80E070E0',
+];
+
+/** 振动等级选项 */
+export const HAPTIC_OPTIONS: Array<[string, string]> = [
+  ['none', '无'], ['light', '轻'], ['medium', '中'], ['heavy', '重'],
+];
+
+// =============================================================================
+// 工具函数
+// =============================================================================
+
+/** 根据 haptic 等级触发振动 */
+export function doKeyHaptic(level: string): void {
+  let duration = 0;
+  switch (level) {
+    case 'light': duration = 15; break;
+    case 'medium': duration = 40; break;
+    case 'heavy': duration = 80; break;
+    default: return;
+  }
+  try {
+    vibrator.startVibration({ type: 'time', duration }, { id: 0, usage: 'touch' });
+  } catch (_e) { /* ignore */ }
+}

@@ -14,6 +14,7 @@
  * 处理触摸事件并转换为相应的输入指令
  */
 import nativeLib from 'libmoonlight_nativelib.so';
+import { PointXY } from './PanZoomHandler';
 import {
   BUTTON_ACTION_PRESS,
   BUTTON_ACTION_RELEASE,
@@ -166,6 +167,9 @@ export class TouchInputHandler {
   private mouseAreaWidth: number = 0;
   private mouseAreaHeight: number = 0;
 
+  /** 坐标变换函数：将 ArkUI 触摸坐标转换为视频画面内的实际坐标（用于缩放/平移状态） */
+  private coordinateTransform: ((x: number, y: number) => PointXY) | null = null;
+
   // 鼠标模式常量（与 Android AbsoluteTouchContext 一致）
   /** 长按时间阈值（ms） */
   private static readonly MOUSE_LONG_PRESS_TIME = 650;
@@ -202,6 +206,14 @@ export class TouchInputHandler {
   setDoubleTapTimeThreshold(threshold: number): void {
     this.twoFingerTapThreshold = threshold;
     this.mouseDoubleTapTime = threshold;
+  }
+
+  /**
+   * 设置坐标变换函数（用于画面缩放/平移状态下的坐标修正）
+   * 传入 null 清除变换
+   */
+  setCoordinateTransform(transform: ((x: number, y: number) => PointXY) | null): void {
+    this.coordinateTransform = transform;
   }
   
   /**
@@ -609,8 +621,16 @@ export class TouchInputHandler {
    * 更新绝对鼠标位置（限制在组件区域内）
    */
   private mouseUpdatePosition(eventX: number, eventY: number): void {
-    const x = Math.min(Math.max(eventX, 0), this.mouseAreaWidth);
-    const y = Math.min(Math.max(eventY, 0), this.mouseAreaHeight);
+    // 坐标变换（画面缩放/平移状态下修正触摸坐标）
+    let posX = eventX;
+    let posY = eventY;
+    if (this.coordinateTransform) {
+      const transformed = this.coordinateTransform(posX, posY);
+      posX = transformed.x;
+      posY = transformed.y;
+    }
+    const x = Math.min(Math.max(posX, 0), this.mouseAreaWidth);
+    const y = Math.min(Math.max(posY, 0), this.mouseAreaHeight);
     this.nativeInput.sendMousePosition(
       Math.floor(x), Math.floor(y),
       Math.floor(this.mouseAreaWidth), Math.floor(this.mouseAreaHeight)
@@ -810,9 +830,18 @@ export class TouchInputHandler {
     const areaWidth = event.target.area.width as number;
     const areaHeight = event.target.area.height as number;
     
+    // 坐标变换（画面缩放/平移状态下修正触摸坐标）
+    let touchX = touch.x;
+    let touchY = touch.y;
+    if (this.coordinateTransform) {
+      const transformed = this.coordinateTransform(touchX, touchY);
+      touchX = transformed.x;
+      touchY = transformed.y;
+    }
+    
     // 归一化到 0.0-1.0 范围
-    const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
-    const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+    const normalizedX = Math.max(0, Math.min(1, touchX / areaWidth));
+    const normalizedY = Math.max(0, Math.min(1, touchY / areaHeight));
     
     // 压感处理：
     // 1. UP 事件 → 0
@@ -854,8 +883,17 @@ export class TouchInputHandler {
     pressure: number,
     size: number
   ): void {
-    const normalizedX = Math.max(0, Math.min(1, x / areaWidth));
-    const normalizedY = Math.max(0, Math.min(1, y / areaHeight));
+    // 坐标变换（画面缩放/平移状态下修正触摸坐标）
+    let touchX = x;
+    let touchY = y;
+    if (this.coordinateTransform) {
+      const transformed = this.coordinateTransform(touchX, touchY);
+      touchX = transformed.x;
+      touchY = transformed.y;
+    }
+    
+    const normalizedX = Math.max(0, Math.min(1, touchX / areaWidth));
+    const normalizedY = Math.max(0, Math.min(1, touchY / areaHeight));
     
     this.nativeInput.sendTouchEvent(
       eventType,
