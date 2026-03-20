@@ -128,6 +128,12 @@ export class GamepadManager implements UsbDriverListener {
   /** 长按 Start 显示菜单的回调 */
   private showGameMenuCallback: (() => void) | null = null;
 
+  // ==================== 摇杆/扳机死区 ====================
+  /** 摇杆径向死区半径 (0.0~1.0)，对齐 Android handleDeadZone */
+  private stickDeadzone: number = 0.07;
+  /** 扳机死区 (0.0~1.0)，对齐 Android triggerDeadzone */
+  private static readonly TRIGGER_DEADZONE: number = 0.13;
+
   /**
    * Start 长按检测（handleGCButtonEvent 和 handleKeyEvent 共用）
    * @returns true 表示长按已触发，调用方应吐掉此次按键释放
@@ -156,6 +162,7 @@ export class GamepadManager implements UsbDriverListener {
     this.loadUsbDriverSetting();
     this.loadStartKeyMenuSetting();
     this.loadTouchpadMouseSetting();
+    this.loadDeadzoneSetting();
   }
 
   /**
@@ -492,7 +499,8 @@ export class GamepadManager implements UsbDriverListener {
     await Promise.all([
       this.loadStartKeyMenuSetting(),
       this.loadGCButtonMappingSettings(),
-      this.loadSensorSettings()
+      this.loadSensorSettings(),
+      this.loadDeadzoneSetting()
     ]);
     // 注意：USB_DRIVER_ENABLED 和 FORCE_USB_DRIVER_ONLY 不在这里重新加载，因为切换需要完全重初始化手柄驱动
   }
@@ -1331,15 +1339,18 @@ export class GamepadManager implements UsbDriverListener {
     const clampTrigger = (v: number) => Math.max(0, Math.min(TRIGGER_MAX, Math.floor(v)));
 
     switch (axisType) {
-      case AxisType.LEFT_THUMBSTICK:
-        state.leftStickX = clampStick(x * AXIS_MAX);
-        state.leftStickY = clampStick(-y * AXIS_MAX);  // Y轴取负与Android一致
+      case AxisType.LEFT_THUMBSTICK: {
+        const dz = this.applyStickDeadzone(x, y);
+        state.leftStickX = clampStick(dz[0] * AXIS_MAX);
+        state.leftStickY = clampStick(-dz[1] * AXIS_MAX);  // Y轴取负与Android一致
         break;
-        
-      case AxisType.RIGHT_THUMBSTICK:
-        state.rightStickX = clampStick(x * AXIS_MAX);
-        state.rightStickY = clampStick(-y * AXIS_MAX);
+      }
+      case AxisType.RIGHT_THUMBSTICK: {
+        const dz = this.applyStickDeadzone(x, y);
+        state.rightStickX = clampStick(dz[0] * AXIS_MAX);
+        state.rightStickY = clampStick(-dz[1] * AXIS_MAX);
         break;
+      }
         
       case AxisType.DPAD:
         // 标记此设备的D-pad由Axis通道提供，Button/KeyEvent通道将静默丢弃D-pad事件
@@ -1352,11 +1363,11 @@ export class GamepadManager implements UsbDriverListener {
         break;
         
       case AxisType.LEFT_TRIGGER:
-        state.leftTrigger = clampTrigger(x * TRIGGER_MAX);
+        state.leftTrigger = clampTrigger(this.applyTriggerDeadzone(x) * TRIGGER_MAX);
         break;
         
       case AxisType.RIGHT_TRIGGER:
-        state.rightTrigger = clampTrigger(x * TRIGGER_MAX);
+        state.rightTrigger = clampTrigger(this.applyTriggerDeadzone(x) * TRIGGER_MAX);
         break;
     }
     
@@ -1539,21 +1550,31 @@ export class GamepadManager implements UsbDriverListener {
     const state = this.deviceStates.get(deviceId);
     if (!state) return;
     
-    const intValue = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(value * AXIS_MAX)));
-    
     switch (axisCode) {
-      case 0: // ABS_X - 左摇杆 X
-        state.leftStickX = intValue;
+      case 0: { // ABS_X - 左摇杆 X
+        const dz = this.applyStickDeadzone(value, state.leftStickY / AXIS_MAX);
+        state.leftStickX = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(dz[0] * AXIS_MAX)));
+        state.leftStickY = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(dz[1] * AXIS_MAX)));
         break;
-      case 1: // ABS_Y - 左摇杆 Y
-        state.leftStickY = intValue;
+      }
+      case 1: { // ABS_Y - 左摇杆 Y
+        const dz = this.applyStickDeadzone(state.leftStickX / AXIS_MAX, value);
+        state.leftStickX = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(dz[0] * AXIS_MAX)));
+        state.leftStickY = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(dz[1] * AXIS_MAX)));
         break;
-      case 2: // ABS_Z - 右摇杆 X
-        state.rightStickX = intValue;
+      }
+      case 2: { // ABS_Z - 右摇杆 X
+        const dz = this.applyStickDeadzone(value, state.rightStickY / AXIS_MAX);
+        state.rightStickX = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(dz[0] * AXIS_MAX)));
+        state.rightStickY = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(dz[1] * AXIS_MAX)));
         break;
-      case 5: // ABS_RZ - 右摇杆 Y
-        state.rightStickY = intValue;
+      }
+      case 5: { // ABS_RZ - 右摇杆 Y
+        const dz = this.applyStickDeadzone(state.rightStickX / AXIS_MAX, value);
+        state.rightStickX = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(dz[0] * AXIS_MAX)));
+        state.rightStickY = Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(dz[1] * AXIS_MAX)));
         break;
+      }
       case 17: // ABS_HAT0X - D-Pad X
         this.dpadAxisActive.add(deviceId);
         this.updateDpadHorizontal(state, value);
@@ -1562,12 +1583,16 @@ export class GamepadManager implements UsbDriverListener {
         this.dpadAxisActive.add(deviceId);
         this.updateDpadVertical(state, value);
         break;
-      case 9: // ABS_GAS - 右扳机
-        state.rightTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor((value + 1) * (TRIGGER_MAX / 2))));
+      case 9: { // ABS_GAS - 右扳机
+        const normalized = this.applyTriggerDeadzone((value + 1) / 2);
+        state.rightTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor(normalized * TRIGGER_MAX)));
         break;
-      case 10: // ABS_BRAKE - 左扳机
-        state.leftTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor((value + 1) * (TRIGGER_MAX / 2))));
+      }
+      case 10: { // ABS_BRAKE - 左扳机
+        const normalized = this.applyTriggerDeadzone((value + 1) / 2);
+        state.leftTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor(normalized * TRIGGER_MAX)));
         break;
+      }
     }
     
     this.notifyStateChange(deviceId, state);
@@ -1811,13 +1836,16 @@ export class GamepadManager implements UsbDriverListener {
     
     const clampAxis = (v: number) => Math.max(-AXIS_MAX, Math.min(AXIS_MAX, Math.floor(v * AXIS_MAX)));
     
+    const lDz = this.applyStickDeadzone(leftStickX, leftStickY);
+    const rDz = this.applyStickDeadzone(rightStickX, rightStickY);
+    
     state.buttons = buttonFlags;
-    state.leftStickX = clampAxis(leftStickX);
-    state.leftStickY = clampAxis(-leftStickY);  // Y轴取负与Android一致
-    state.rightStickX = clampAxis(rightStickX);
-    state.rightStickY = clampAxis(-rightStickY);
-    state.leftTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor(leftTrigger * TRIGGER_MAX)));
-    state.rightTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor(rightTrigger * TRIGGER_MAX)));
+    state.leftStickX = clampAxis(lDz[0]);
+    state.leftStickY = clampAxis(-lDz[1]);  // Y轴取负与Android一致
+    state.rightStickX = clampAxis(rDz[0]);
+    state.rightStickY = clampAxis(-rDz[1]);
+    state.leftTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor(this.applyTriggerDeadzone(leftTrigger) * TRIGGER_MAX)));
+    state.rightTrigger = Math.max(0, Math.min(TRIGGER_MAX, Math.floor(this.applyTriggerDeadzone(rightTrigger) * TRIGGER_MAX)));
     
     this.notifyStateChange(controllerId, state);
   }
@@ -1884,6 +1912,41 @@ export class GamepadManager implements UsbDriverListener {
   async loadTouchpadMouseSetting(): Promise<void> {
     this.touchpadMouseEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
     console.info(`[GAMEPAD] 触摸板鼠标模拟: ${this.touchpadMouseEnabled}`);
+  }
+
+  // ==================== 摇杆/扳机死区处理 ====================
+
+  /**
+   * 加载死区设置
+   */
+  private async loadDeadzoneSetting(): Promise<void> {
+    const percentage = await PreferencesUtil.get<number>(SettingsKeys.DEADZONE, 7);
+    this.stickDeadzone = Math.max(1, percentage) / 100.0;
+    console.info(`[GAMEPAD] 摇杆死区: ${percentage}% (radius=${this.stickDeadzone})`);
+  }
+
+  /**
+   * 径向死区处理（对齐 Android handleDeadZone）
+   * 当摇杆矢量长度小于死区半径时归零
+   * @param x 水平轴值 (-1.0 ~ 1.0)
+   * @param y 垂直轴值 (-1.0 ~ 1.0)
+   * @returns [x, y] 处理后的值
+   */
+  private applyStickDeadzone(x: number, y: number): number[] {
+    const magnitude = Math.sqrt(x * x + y * y);
+    if (magnitude <= this.stickDeadzone) {
+      return [0, 0];
+    }
+    return [x, y];
+  }
+
+  /**
+   * 扳机死区处理
+   * @param value 扳机值 (0.0 ~ 1.0)
+   * @returns 处理后的值
+   */
+  private applyTriggerDeadzone(value: number): number {
+    return value <= GamepadManager.TRIGGER_DEADZONE ? 0 : value;
   }
 
   // ==================== 设备传感器回退 ====================

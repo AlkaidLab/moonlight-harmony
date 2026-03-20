@@ -766,6 +766,76 @@ static void OnRightTriggerAxis(const struct GamePad_AxisEvent* axisEvent) {
 
 // ==================== API 实现 ====================
 
+// ==================== 输入监听注册/注销 helpers ====================
+// 按键 + 轴监听的注册/注销在 StartMonitor、StopMonitor、Pause、Resume 中重复出现 4 次
+// 提取为内部 helper 消除重复
+
+/**
+ * 注册所有按键 + 轴输入监听（不含设备监听）
+ * 调用者需持有 g_mutex 或保证线程安全
+ */
+static void RegisterAllInputMonitors() {
+    // 按键监听
+    OH_GamePad_ButtonA_RegisterButtonInputMonitor(OnButtonA);
+    OH_GamePad_ButtonB_RegisterButtonInputMonitor(OnButtonB);
+    OH_GamePad_ButtonX_RegisterButtonInputMonitor(OnButtonX);
+    OH_GamePad_ButtonY_RegisterButtonInputMonitor(OnButtonY);
+    OH_GamePad_ButtonC_RegisterButtonInputMonitor(OnButtonC);
+    OH_GamePad_LeftShoulder_RegisterButtonInputMonitor(OnLeftShoulder);
+    OH_GamePad_RightShoulder_RegisterButtonInputMonitor(OnRightShoulder);
+    OH_GamePad_LeftTrigger_RegisterButtonInputMonitor(OnLeftTriggerButton);
+    OH_GamePad_RightTrigger_RegisterButtonInputMonitor(OnRightTriggerButton);
+    OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor(OnLeftThumbstick);
+    OH_GamePad_RightThumbstick_RegisterButtonInputMonitor(OnRightThumbstick);
+    OH_GamePad_ButtonHome_RegisterButtonInputMonitor(OnButtonHome);
+    OH_GamePad_ButtonMenu_RegisterButtonInputMonitor(OnButtonMenu);
+    OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor(OnDpadUp);
+    OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor(OnDpadDown);
+    OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor(OnDpadLeft);
+    OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor(OnDpadRight);
+
+    // 轴监听
+    OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor(OnLeftThumbstickAxis);
+    OH_GamePad_RightThumbstick_RegisterAxisInputMonitor(OnRightThumbstickAxis);
+    OH_GamePad_Dpad_RegisterAxisInputMonitor(OnDpadAxis);
+    OH_GamePad_LeftTrigger_RegisterAxisInputMonitor(OnLeftTriggerAxis);
+    OH_GamePad_RightTrigger_RegisterAxisInputMonitor(OnRightTriggerAxis);
+}
+
+/**
+ * 注销所有按键 + 轴输入监听（不含设备监听）
+ * 调用者需持有 g_mutex 或保证线程安全
+ */
+static void UnregisterAllInputMonitors() {
+    // 按键监听
+    OH_GamePad_ButtonA_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonB_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonX_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonY_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonC_UnregisterButtonInputMonitor();
+    OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor();
+    OH_GamePad_RightShoulder_UnregisterButtonInputMonitor();
+    OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor();
+    OH_GamePad_RightTrigger_UnregisterButtonInputMonitor();
+    OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor();
+    OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonHome_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor();
+    OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor();
+    OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor();
+    OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor();
+    OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor();
+
+    // 轴监听
+    OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor();
+    OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor();
+    OH_GamePad_Dpad_UnregisterAxisInputMonitor();
+    OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor();
+    OH_GamePad_RightTrigger_UnregisterAxisInputMonitor();
+}
+
+// ==================== 公共 API ====================
+
 bool GameController_IsAvailable(void) {
 #if GAME_CONTROLLER_KIT_AVAILABLE
     // 编译时头文件可用, 运行时通过 dlopen 检查库是否存在
@@ -859,30 +929,7 @@ int GameController_StartMonitor(void) {
         if (g_inputPaused) {
             LOGI("startMonitor: 已在监听中但输入已暂停，恢复输入监听");
             g_inputPaused = false;
-            
-            OH_GamePad_ButtonA_RegisterButtonInputMonitor(OnButtonA);
-            OH_GamePad_ButtonB_RegisterButtonInputMonitor(OnButtonB);
-            OH_GamePad_ButtonX_RegisterButtonInputMonitor(OnButtonX);
-            OH_GamePad_ButtonY_RegisterButtonInputMonitor(OnButtonY);
-            OH_GamePad_ButtonC_RegisterButtonInputMonitor(OnButtonC);
-            OH_GamePad_LeftShoulder_RegisterButtonInputMonitor(OnLeftShoulder);
-            OH_GamePad_RightShoulder_RegisterButtonInputMonitor(OnRightShoulder);
-            OH_GamePad_LeftTrigger_RegisterButtonInputMonitor(OnLeftTriggerButton);
-            OH_GamePad_RightTrigger_RegisterButtonInputMonitor(OnRightTriggerButton);
-            OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor(OnLeftThumbstick);
-            OH_GamePad_RightThumbstick_RegisterButtonInputMonitor(OnRightThumbstick);
-            OH_GamePad_ButtonHome_RegisterButtonInputMonitor(OnButtonHome);
-            OH_GamePad_ButtonMenu_RegisterButtonInputMonitor(OnButtonMenu);
-            OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor(OnDpadUp);
-            OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor(OnDpadDown);
-            OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor(OnDpadLeft);
-            OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor(OnDpadRight);
-            
-            OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor(OnLeftThumbstickAxis);
-            OH_GamePad_RightThumbstick_RegisterAxisInputMonitor(OnRightThumbstickAxis);
-            OH_GamePad_Dpad_RegisterAxisInputMonitor(OnDpadAxis);
-            OH_GamePad_LeftTrigger_RegisterAxisInputMonitor(OnLeftTriggerAxis);
-            OH_GamePad_RightTrigger_RegisterAxisInputMonitor(OnRightTriggerAxis);
+            RegisterAllInputMonitors();
         }
         return 0;
     }
@@ -896,31 +943,8 @@ int GameController_StartMonitor(void) {
         return errorCode;
     }
     
-    // 注册按键监听
-    OH_GamePad_ButtonA_RegisterButtonInputMonitor(OnButtonA);
-    OH_GamePad_ButtonB_RegisterButtonInputMonitor(OnButtonB);
-    OH_GamePad_ButtonX_RegisterButtonInputMonitor(OnButtonX);
-    OH_GamePad_ButtonY_RegisterButtonInputMonitor(OnButtonY);
-    OH_GamePad_ButtonC_RegisterButtonInputMonitor(OnButtonC);
-    OH_GamePad_LeftShoulder_RegisterButtonInputMonitor(OnLeftShoulder);
-    OH_GamePad_RightShoulder_RegisterButtonInputMonitor(OnRightShoulder);
-    OH_GamePad_LeftTrigger_RegisterButtonInputMonitor(OnLeftTriggerButton);
-    OH_GamePad_RightTrigger_RegisterButtonInputMonitor(OnRightTriggerButton);
-    OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor(OnLeftThumbstick);
-    OH_GamePad_RightThumbstick_RegisterButtonInputMonitor(OnRightThumbstick);
-    OH_GamePad_ButtonHome_RegisterButtonInputMonitor(OnButtonHome);
-    OH_GamePad_ButtonMenu_RegisterButtonInputMonitor(OnButtonMenu);
-    OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor(OnDpadUp);
-    OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor(OnDpadDown);
-    OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor(OnDpadLeft);
-    OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor(OnDpadRight);
-    
-    // 注册轴监听
-    OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor(OnLeftThumbstickAxis);
-    OH_GamePad_RightThumbstick_RegisterAxisInputMonitor(OnRightThumbstickAxis);
-    OH_GamePad_Dpad_RegisterAxisInputMonitor(OnDpadAxis);
-    OH_GamePad_LeftTrigger_RegisterAxisInputMonitor(OnLeftTriggerAxis);
-    OH_GamePad_RightTrigger_RegisterAxisInputMonitor(OnRightTriggerAxis);
+    // 注册按键 + 轴监听
+    RegisterAllInputMonitors();
     
     // 查询当前已连接的设备
     GameDevice_AllDeviceInfos* allDeviceInfos;
@@ -997,31 +1021,8 @@ void GameController_StopMonitor(void) {
     // 取消设备监听
     OH_GameDevice_UnregisterDeviceMonitor();
     
-    // 取消按键监听
-    OH_GamePad_ButtonA_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonB_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonX_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonY_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonC_UnregisterButtonInputMonitor();
-    OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor();
-    OH_GamePad_RightShoulder_UnregisterButtonInputMonitor();
-    OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor();
-    OH_GamePad_RightTrigger_UnregisterButtonInputMonitor();
-    OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor();
-    OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonHome_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor();
-    
-    // 取消轴监听
-    OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor();
-    OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor();
-    OH_GamePad_Dpad_UnregisterAxisInputMonitor();
-    OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor();
-    OH_GamePad_RightTrigger_UnregisterAxisInputMonitor();
+    // 取消按键 + 轴监听
+    UnregisterAllInputMonitors();
     
     g_monitoring = false;
     g_inputPaused = false;
@@ -1043,31 +1044,7 @@ void GameController_PauseInputMonitor(void) {
 
     LOGI("暂停输入监听（保留设备监听）...");
 
-    // 取消按键监听
-    OH_GamePad_ButtonA_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonB_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonX_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonY_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonC_UnregisterButtonInputMonitor();
-    OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor();
-    OH_GamePad_RightShoulder_UnregisterButtonInputMonitor();
-    OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor();
-    OH_GamePad_RightTrigger_UnregisterButtonInputMonitor();
-    OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor();
-    OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonHome_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor();
-
-    // 取消轴监听
-    OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor();
-    OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor();
-    OH_GamePad_Dpad_UnregisterAxisInputMonitor();
-    OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor();
-    OH_GamePad_RightTrigger_UnregisterAxisInputMonitor();
+    UnregisterAllInputMonitors();
 
     g_inputPaused = true;
     LOGI("输入监听已暂停，设备监听仍活跃");
@@ -1088,31 +1065,7 @@ void GameController_ResumeInputMonitor(void) {
 
     LOGI("恢复输入监听...");
 
-    // 注册按键监听
-    OH_GamePad_ButtonA_RegisterButtonInputMonitor(OnButtonA);
-    OH_GamePad_ButtonB_RegisterButtonInputMonitor(OnButtonB);
-    OH_GamePad_ButtonX_RegisterButtonInputMonitor(OnButtonX);
-    OH_GamePad_ButtonY_RegisterButtonInputMonitor(OnButtonY);
-    OH_GamePad_ButtonC_RegisterButtonInputMonitor(OnButtonC);
-    OH_GamePad_LeftShoulder_RegisterButtonInputMonitor(OnLeftShoulder);
-    OH_GamePad_RightShoulder_RegisterButtonInputMonitor(OnRightShoulder);
-    OH_GamePad_LeftTrigger_RegisterButtonInputMonitor(OnLeftTriggerButton);
-    OH_GamePad_RightTrigger_RegisterButtonInputMonitor(OnRightTriggerButton);
-    OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor(OnLeftThumbstick);
-    OH_GamePad_RightThumbstick_RegisterButtonInputMonitor(OnRightThumbstick);
-    OH_GamePad_ButtonHome_RegisterButtonInputMonitor(OnButtonHome);
-    OH_GamePad_ButtonMenu_RegisterButtonInputMonitor(OnButtonMenu);
-    OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor(OnDpadUp);
-    OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor(OnDpadDown);
-    OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor(OnDpadLeft);
-    OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor(OnDpadRight);
-
-    // 注册轴监听
-    OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor(OnLeftThumbstickAxis);
-    OH_GamePad_RightThumbstick_RegisterAxisInputMonitor(OnRightThumbstickAxis);
-    OH_GamePad_Dpad_RegisterAxisInputMonitor(OnDpadAxis);
-    OH_GamePad_LeftTrigger_RegisterAxisInputMonitor(OnLeftTriggerAxis);
-    OH_GamePad_RightTrigger_RegisterAxisInputMonitor(OnRightTriggerAxis);
+    RegisterAllInputMonitors();
 
     g_inputPaused = false;
     LOGI("输入监听已恢复");
