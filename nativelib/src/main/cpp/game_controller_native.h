@@ -186,6 +186,18 @@ int GameController_StartMonitor(void);
 void GameController_StopMonitor(void);
 
 /**
+ * 暂停输入监听（仅按键+轴），保留设备上下线监听
+ * 用于无手柄场景减少系统轮询干扰，同时保持设备热插拔检测
+ */
+void GameController_PauseInputMonitor(void);
+
+/**
+ * 恢复输入监听（重新注册按键+轴）
+ * 在手柄重新连接时调用
+ */
+void GameController_ResumeInputMonitor(void);
+
+/**
  * 获取所有已连接设备数量
  */
 int GameController_GetDeviceCount(void);

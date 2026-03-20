@@ -231,6 +231,7 @@ DECLARE_FUNC_PTR(OH_GameDevice_DestroyAllDeviceInfos)
 
 static bool g_initialized = false;
 static bool g_monitoring = false;
+static bool g_inputPaused = false;  // 输入监听暂停标志（设备监听保持活跃）
 static std::mutex g_mutex;
 
 // 运行时动态库加载状态
@@ -854,7 +855,35 @@ int GameController_StartMonitor(void) {
     }
     
     if (g_monitoring) {
-        LOGW("已在监听中");
+        // 如果输入监听被暂停，恢复它
+        if (g_inputPaused) {
+            LOGI("startMonitor: 已在监听中但输入已暂停，恢复输入监听");
+            g_inputPaused = false;
+            
+            OH_GamePad_ButtonA_RegisterButtonInputMonitor(OnButtonA);
+            OH_GamePad_ButtonB_RegisterButtonInputMonitor(OnButtonB);
+            OH_GamePad_ButtonX_RegisterButtonInputMonitor(OnButtonX);
+            OH_GamePad_ButtonY_RegisterButtonInputMonitor(OnButtonY);
+            OH_GamePad_ButtonC_RegisterButtonInputMonitor(OnButtonC);
+            OH_GamePad_LeftShoulder_RegisterButtonInputMonitor(OnLeftShoulder);
+            OH_GamePad_RightShoulder_RegisterButtonInputMonitor(OnRightShoulder);
+            OH_GamePad_LeftTrigger_RegisterButtonInputMonitor(OnLeftTriggerButton);
+            OH_GamePad_RightTrigger_RegisterButtonInputMonitor(OnRightTriggerButton);
+            OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor(OnLeftThumbstick);
+            OH_GamePad_RightThumbstick_RegisterButtonInputMonitor(OnRightThumbstick);
+            OH_GamePad_ButtonHome_RegisterButtonInputMonitor(OnButtonHome);
+            OH_GamePad_ButtonMenu_RegisterButtonInputMonitor(OnButtonMenu);
+            OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor(OnDpadUp);
+            OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor(OnDpadDown);
+            OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor(OnDpadLeft);
+            OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor(OnDpadRight);
+            
+            OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor(OnLeftThumbstickAxis);
+            OH_GamePad_RightThumbstick_RegisterAxisInputMonitor(OnRightThumbstickAxis);
+            OH_GamePad_Dpad_RegisterAxisInputMonitor(OnDpadAxis);
+            OH_GamePad_LeftTrigger_RegisterAxisInputMonitor(OnLeftTriggerAxis);
+            OH_GamePad_RightTrigger_RegisterAxisInputMonitor(OnRightTriggerAxis);
+        }
         return 0;
     }
     
@@ -995,7 +1024,98 @@ void GameController_StopMonitor(void) {
     OH_GamePad_RightTrigger_UnregisterAxisInputMonitor();
     
     g_monitoring = false;
+    g_inputPaused = false;
     LOGI("监听已停止");
+#endif
+}
+
+/**
+ * 暂停输入监听（仅按键+轴），保留设备上下线监听
+ * 用于无手柄场景减少系统轮询干扰，同时保持设备热插拔检测
+ */
+void GameController_PauseInputMonitor(void) {
+#if GAME_CONTROLLER_KIT_AVAILABLE
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    if (!g_monitoring || g_inputPaused) return;
+
+    if (!g_gcLibAvailable) return;
+
+    LOGI("暂停输入监听（保留设备监听）...");
+
+    // 取消按键监听
+    OH_GamePad_ButtonA_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonB_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonX_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonY_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonC_UnregisterButtonInputMonitor();
+    OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor();
+    OH_GamePad_RightShoulder_UnregisterButtonInputMonitor();
+    OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor();
+    OH_GamePad_RightTrigger_UnregisterButtonInputMonitor();
+    OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor();
+    OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonHome_UnregisterButtonInputMonitor();
+    OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor();
+    OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor();
+    OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor();
+    OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor();
+    OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor();
+
+    // 取消轴监听
+    OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor();
+    OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor();
+    OH_GamePad_Dpad_UnregisterAxisInputMonitor();
+    OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor();
+    OH_GamePad_RightTrigger_UnregisterAxisInputMonitor();
+
+    g_inputPaused = true;
+    LOGI("输入监听已暂停，设备监听仍活跃");
+#endif
+}
+
+/**
+ * 恢复输入监听（重新注册按键+轴）
+ * 在手柄重新连接时调用
+ */
+void GameController_ResumeInputMonitor(void) {
+#if GAME_CONTROLLER_KIT_AVAILABLE
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    if (!g_monitoring || !g_inputPaused) return;
+
+    if (!g_gcLibAvailable) return;
+
+    LOGI("恢复输入监听...");
+
+    // 注册按键监听
+    OH_GamePad_ButtonA_RegisterButtonInputMonitor(OnButtonA);
+    OH_GamePad_ButtonB_RegisterButtonInputMonitor(OnButtonB);
+    OH_GamePad_ButtonX_RegisterButtonInputMonitor(OnButtonX);
+    OH_GamePad_ButtonY_RegisterButtonInputMonitor(OnButtonY);
+    OH_GamePad_ButtonC_RegisterButtonInputMonitor(OnButtonC);
+    OH_GamePad_LeftShoulder_RegisterButtonInputMonitor(OnLeftShoulder);
+    OH_GamePad_RightShoulder_RegisterButtonInputMonitor(OnRightShoulder);
+    OH_GamePad_LeftTrigger_RegisterButtonInputMonitor(OnLeftTriggerButton);
+    OH_GamePad_RightTrigger_RegisterButtonInputMonitor(OnRightTriggerButton);
+    OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor(OnLeftThumbstick);
+    OH_GamePad_RightThumbstick_RegisterButtonInputMonitor(OnRightThumbstick);
+    OH_GamePad_ButtonHome_RegisterButtonInputMonitor(OnButtonHome);
+    OH_GamePad_ButtonMenu_RegisterButtonInputMonitor(OnButtonMenu);
+    OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor(OnDpadUp);
+    OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor(OnDpadDown);
+    OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor(OnDpadLeft);
+    OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor(OnDpadRight);
+
+    // 注册轴监听
+    OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor(OnLeftThumbstickAxis);
+    OH_GamePad_RightThumbstick_RegisterAxisInputMonitor(OnRightThumbstickAxis);
+    OH_GamePad_Dpad_RegisterAxisInputMonitor(OnDpadAxis);
+    OH_GamePad_LeftTrigger_RegisterAxisInputMonitor(OnLeftTriggerAxis);
+    OH_GamePad_RightTrigger_RegisterAxisInputMonitor(OnRightTriggerAxis);
+
+    g_inputPaused = false;
+    LOGI("输入监听已恢复");
 #endif
 }
 
@@ -1450,6 +1570,22 @@ static napi_value NapiStopMonitor(napi_env env, napi_callback_info info) {
 }
 
 /**
+ * pauseInputMonitor(): void
+ */
+static napi_value NapiPauseInputMonitor(napi_env env, napi_callback_info info) {
+    GameController_PauseInputMonitor();
+    return nullptr;
+}
+
+/**
+ * resumeInputMonitor(): void
+ */
+static napi_value NapiResumeInputMonitor(napi_env env, napi_callback_info info) {
+    GameController_ResumeInputMonitor();
+    return nullptr;
+}
+
+/**
  * setDeviceCallback(callback: (deviceId: string, isConnected: boolean, info: object) => void): void
  */
 static napi_value NapiSetDeviceCallback(napi_env env, napi_callback_info info) {
@@ -1659,6 +1795,8 @@ napi_value GameControllerNapi_Init(napi_env env, napi_value exports) {
         { "uninit", nullptr, NapiUninit, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "startMonitor", nullptr, NapiStartMonitor, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "stopMonitor", nullptr, NapiStopMonitor, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "pauseInputMonitor", nullptr, NapiPauseInputMonitor, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "resumeInputMonitor", nullptr, NapiResumeInputMonitor, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setDeviceCallback", nullptr, NapiSetDeviceCallback, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setButtonCallback", nullptr, NapiSetButtonCallback, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setAxisCallback", nullptr, NapiSetAxisCallback, nullptr, nullptr, nullptr, napi_default, nullptr },

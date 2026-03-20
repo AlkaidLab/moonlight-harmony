@@ -53,6 +53,8 @@ interface NativeGameController {
   uninit(): void;
   startMonitor(): number;
   stopMonitor(): void;
+  pauseInputMonitor(): void;   // 暂停输入监听（保留设备上下线监听）
+  resumeInputMonitor(): void;  // 恢复输入监听
   setDeviceCallback(callback: DeviceCallback | null): void;
   setButtonCallback(callback: ButtonCallback | null): void;
   setAxisCallback(callback: AxisCallback | null): void;
@@ -232,7 +234,8 @@ export class GameControllerService {
     }
     
     if (this.monitoring) {
-      console.warn('[GameController] 已在监听中');
+      // 即使已在监听，也调用 native 层以恢复可能被暂停的输入监听
+      native.startMonitor();
       return true;
     }
     
@@ -257,7 +260,27 @@ export class GameControllerService {
     this.monitoring = false;
     console.info('[GameController] 停止监听');
   }
-  
+
+  /**
+   * 暂停输入监听（仅按键+轴），保留设备上下线监听
+   * 用于无手柄场景减少系统轮询干扰，同时保持设备热插拔检测
+   */
+  pauseInputMonitor(): void {
+    if (!native || !this.monitoring) return;
+    native.pauseInputMonitor();
+    console.info('[GameController] 暂停输入监听（设备监听保持活跃）');
+  }
+
+  /**
+   * 恢复输入监听（重新注册按键+轴）
+   * 在手柄重新连接时调用
+   */
+  resumeInputMonitor(): void {
+    if (!native || !this.monitoring) return;
+    native.resumeInputMonitor();
+    console.info('[GameController] 恢复输入监听');
+  }
+
   /**
    * 获取已连接设备数量
    */

@@ -674,10 +674,11 @@ export class GamepadManager implements UsbDriverListener {
     
     // 扫描已连接的设备（可能在监听暂停期间已经连接）
     this.rescanGCKitDevices();
-    // 键鼠场景：若无手柄则暂停 Monitor，避免系统层以约 30Hz 占用/干扰鼠标轮询
+    // 键鼠场景：若无手柄则暂停输入监听，避免系统层以约 30Hz 占用/干扰鼠标轮询
+    // 保留设备上下线监听，确保蓝牙手柄重连时能被检测
     if (this.gcDeviceIdToSlot.size === 0) {
-      gameControllerService.stopMonitor();
-      console.info('[GAMEPAD] 初始扫描无手柄，暂停 GCK Monitor（键鼠场景保持高鼠标轮询率）');
+      gameControllerService.pauseInputMonitor();
+      console.info('[GAMEPAD] 初始扫描无手柄，暂停输入监听（设备监听保持活跃）');
     }
   }
   
@@ -709,10 +710,10 @@ export class GamepadManager implements UsbDriverListener {
         this.handleDeviceAdded(data.deviceId);
         // 同时刷新 USB 设备，因为新的 USB 手柄插入也会触发此事件
         this.usbDriverService.refreshDevices();
-        // 键鼠场景下曾暂停 GCK Monitor；新设备加入时尝试恢复并同步 GCK 设备列表
+        // 键鼠场景下曾暂停输入监听；新设备加入时恢复并同步 GCK 设备列表
         if (this.useGameControllerKit && this.gcDeviceIdToSlot.size === 0) {
           gameControllerService.refreshDeviceCache();
-          gameControllerService.startMonitor();
+          gameControllerService.resumeInputMonitor();
           this.rescanGCKitDevices();
         }
       } else if (data.type === 'remove') {
@@ -1135,8 +1136,8 @@ export class GamepadManager implements UsbDriverListener {
       }
 
       if (hadNoGcDevices) {
-        gameControllerService.startMonitor();
-        console.info('[GAMEPAD] 检测到手柄连接，恢复 GCK Monitor');
+        gameControllerService.resumeInputMonitor();
+        console.info('[GAMEPAD] 检测到手柄连接，恢复输入监听');
       }
     } else {
       // 获取槽位（在清理之前）
@@ -1185,10 +1186,11 @@ export class GamepadManager implements UsbDriverListener {
         this.listener.onGamepadDisconnected(slot);
       }
 
-      // 无手柄时暂停 GCK Monitor，减轻键鼠场景下对鼠标轮询的干扰（避免返回菜单后约 1～2 秒鼠标掉回 30Hz）
+      // 无手柄时暂停输入监听，减轻键鼠场景下对鼠标轮询的干扰
+      // 保留设备上下线监听，确保蓝牙手柄重连时能被检测到
       if (this.gcDeviceIdToSlot.size === 0) {
-        gameControllerService.stopMonitor();
-        console.info('[GAMEPAD] 无手柄连接，暂停 GCK Monitor（键鼠场景保持高鼠标轮询率）');
+        gameControllerService.pauseInputMonitor();
+        console.info('[GAMEPAD] 无手柄连接，暂停输入监听（设备监听保持活跃）');
       }
     }
   }
@@ -1268,8 +1270,8 @@ export class GamepadManager implements UsbDriverListener {
     }
 
     if (hadNoGcDevices) {
-      gameControllerService.startMonitor();
-      console.info('[GAMEPAD] 检测到手柄连接，恢复 GCK Monitor');
+      gameControllerService.resumeInputMonitor();
+      console.info('[GAMEPAD] 检测到手柄连接，恢复输入监听');
     }
   }
 
