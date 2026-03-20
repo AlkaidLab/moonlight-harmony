@@ -20,8 +20,9 @@
  * 向后兼容 v1 格式（动作直接存储为 JSON 对象）。
  */
 
-import { scanCore, scanBarcode, generateBarcode } from '@kit.ScanKit';
+import { scanCore, scanBarcode } from '@kit.ScanKit';
 import { image } from '@kit.ImageKit';
+import { generateQrPixelMap } from './QrCodeGenerator';
 import {
   CustomKeyDef,
   KeyAction,
@@ -429,18 +430,13 @@ export class QrShareService {
   }
 
   /**
-   * 生成 QR 码 PixelMap
+   * 生成 QR 码 PixelMap（纯 ArkTS 实现，无 512 字节限制）
    * @param content 要编码的字符串
    * @param size 图片尺寸 (px)
    */
   static async generateQrCode(content: string, size: number = 600): Promise<QrCodeResult> {
     try {
-      const options: generateBarcode.CreateOptions = {
-        scanType: scanCore.ScanType.QR_CODE,
-        height: size,
-        width: size,
-      };
-      const pixelMap = await generateBarcode.createBarcode(content, options);
+      const pixelMap = await generateQrPixelMap(content, size);
       return { pixelMap };
     } catch (e) {
       const errMsg = (e as Record<string, Object>)?.message as string
