@@ -602,6 +602,7 @@ export class SwitchProController extends AbstractController {
    */
   start(): boolean {
     console.info(`${TAG} 启动控制器`);
+    this.markInitializing();
     
     if (!this.findEndpoints()) {
       console.error(`${TAG} 查找端点失败`);
@@ -629,6 +630,7 @@ export class SwitchProController extends AbstractController {
     
     console.info(`${TAG} 停止控制器`);
     this.stopped = true;
+    this.markStopped();
     
     this.rumble(0, 0);
     

@@ -245,6 +245,7 @@ export class NativeHidController extends AbstractController {
       return false;
     }
 
+    this.markInitializing();
     this.running = true;
     this.lastActivityTime = Date.now();
     this.notifyDeviceAdded();
@@ -262,6 +263,7 @@ export class NativeHidController extends AbstractController {
     }
 
     this.running = false;
+    this.markStopped();
 
     this.notifyDeviceRemoved();
 

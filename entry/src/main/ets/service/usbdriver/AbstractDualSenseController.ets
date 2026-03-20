@@ -234,10 +234,7 @@ export abstract class AbstractDualSenseController extends AbstractController {
   private async inputLoop(): Promise<void> {
     console.info(`${TAG} 输入循环启动 - 等待数据...`);
     
-    // 延迟一下再通知设备添加
-    await new Promise<void>((resolve: Function) => setTimeout(resolve, 500));
-    
-    // 通知设备已添加
+    // 初始化完成，标记就绪并通知
     this.notifyDeviceAdded();
     console.info(`${TAG} 设备已添加通知发送完成`);
     
@@ -374,6 +371,7 @@ export abstract class AbstractDualSenseController extends AbstractController {
    */
   start(): boolean {
     console.info(`${TAG} 启动控制器: VID=0x${this.vendorId.toString(16)}, PID=0x${this.productId.toString(16)}, DDK=${this.ddkPollingEnabled}`);
+    this.markInitializing();
     
     // 查找端点
     if (!this.findEndpoints()) {
@@ -516,7 +514,8 @@ export abstract class AbstractDualSenseController extends AbstractController {
       console.warn(`${TAG} DDK 路径下 doInit 失败`);
     }
 
-    setTimeout(() => this.notifyDeviceAdded(), 500);
+    // DDK 已启动，标记就绪并通知
+    this.notifyDeviceAdded();
     console.info(`${TAG} 控制器已启动 (DDK 高速轮询)`);
     return true;
   }
@@ -531,6 +530,7 @@ export abstract class AbstractDualSenseController extends AbstractController {
     
     console.info(`${TAG} 停止控制器`);
     this.stopped = true;
+    this.markStopped();
 
     // 先发送振动停止命令（必须在 DDK 释放前，否则无法发送）
     this.rumble(0, 0);

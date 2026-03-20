@@ -18,6 +18,20 @@ import { UsbDriverListener } from './UsbDriverListener';
 import { ControllerType, ControllerCapabilities, ButtonFlags } from './ControllerConstants';
 
 /**
+ * 控制器生命周期状态
+ */
+export enum ControllerState {
+  /** 刚创建，尚未启动 */
+  Created,
+  /** start() 已调用，正在初始化（endpoint 探测、协议握手等） */
+  Initializing,
+  /** 初始化完成，可正常接收输入 */
+  Ready,
+  /** 已停止 */
+  Stopped
+}
+
+/**
  * 所有 USB 控制器的抽象基类
  */
 export abstract class AbstractController {
@@ -36,6 +50,9 @@ export abstract class AbstractController {
   protected ignoreDisconnect: boolean = false;  // 忽略断开信号
   protected ddkActive: boolean = false;  // DDK 高速轮询是否启用
   protected ddkPollingEnabled: boolean = false;  // 用户是否开启 DDK 高速轮询
+  
+  // 生命周期状态
+  private controllerState: ControllerState = ControllerState.Created;
   
   // 输入状态
   protected buttonFlags: number = 0;
@@ -213,22 +230,42 @@ export abstract class AbstractController {
   }
   
   /**
-   * 通知设备已添加（幂等：重复调用不会重复通知）
+   * 通知设备已添加并将状态标记为 Ready（幂等：重复调用不会重复通知）
    */
   protected notifyDeviceAdded(): void {
-    if (this.deviceAddedNotified) return;
-    this.deviceAddedNotified = true;
+    if (this.controllerState === ControllerState.Ready) return;
+    this.controllerState = ControllerState.Ready;
     if (this.listener) {
       this.listener.deviceAdded(this);
     }
   }
 
-  /** 设备添加通知是否已发送 */
-  private deviceAddedNotified: boolean = false;
+  /**
+   * 获取控制器当前生命周期状态
+   */
+  getState(): ControllerState {
+    return this.controllerState;
+  }
 
-  /** 查询设备添加通知是否已发送（供 UsbDriverService.setListener 判断） */
-  isDeviceAddedNotified(): boolean {
-    return this.deviceAddedNotified;
+  /**
+   * 控制器是否已就绪（初始化完成且尚未停止）
+   */
+  isReady(): boolean {
+    return this.controllerState === ControllerState.Ready;
+  }
+
+  /**
+   * 将状态标记为 Initializing（由 start() 调用）
+   */
+  protected markInitializing(): void {
+    this.controllerState = ControllerState.Initializing;
+  }
+
+  /**
+   * 将状态标记为 Stopped（由 stop() 调用）
+   */
+  protected markStopped(): void {
+    this.controllerState = ControllerState.Stopped;
   }
   
   /**

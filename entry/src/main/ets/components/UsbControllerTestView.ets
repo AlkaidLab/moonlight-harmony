@@ -208,8 +208,7 @@ export struct UsbControllerTestView {
   }
   
   onDeviceAdded(controller: AbstractController): void {
-    // 防止重复添加：setListener 主动通知 + 控制器延迟 notifyDeviceAdded 可能导致同一设备被通知两次
-    const cid = controller.getControllerId();
+    // UI 层防御：防止同一设备重复显示
     const exists = this.connectedDevices.some((d: DeviceInfo) => d.vid === controller.getVendorId() && d.pid === controller.getProductId());
     if (exists) {
       this.addLog(`设备已存在，跳过重复: ${controller.getName()}`);
