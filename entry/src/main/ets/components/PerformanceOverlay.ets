@@ -70,6 +70,12 @@ export struct PerformanceOverlay {
   @State currentSnapPosition: SnapPosition = SnapPosition.TOP_RIGHT;
   @State overlayDragging: boolean = false;  // 拖动中显示全圆角
   
+  // 首次引导
+  @State showGuide: boolean = false;
+  
+  // 锁定闪烁边框
+  @State lockFlashBorderOpacity: number = 0;
+  
   // 启用的性能项（@State 数组驱动 UI 响应式渲染，Set 变更不被追踪）
   @State enabledItemsList: string[] = [];
   
@@ -84,6 +90,7 @@ export struct PerformanceOverlay {
   
   // 定时器
   private updateTimer: number = -1;
+  private guideTimer: number = -1;
   
   // 弹窗控制器
   private settingsDialogController: CustomDialogController | null = null;
@@ -103,10 +110,43 @@ export struct PerformanceOverlay {
     
     // 启动数据更新定时器
     this.startUpdateTimer();
+    
+    // 首次显示引导
+    this.checkAndShowGuide();
   }
   
   aboutToDisappear(): void {
     this.stopUpdateTimer();
+    if (this.guideTimer !== -1) {
+      clearTimeout(this.guideTimer);
+    }
+  }
+  
+  private async checkAndShowGuide(): Promise<void> {
+    try {
+      const shown = await PreferencesUtil.get<boolean>(SettingsKeys.PERF_OVERLAY_GUIDE_SHOWN, false);
+      if (!shown) {
+        // 延迟 500ms 显示，让覆盖层先渲染完
+        setTimeout(() => {
+          this.showGuide = true;
+          // 5 秒后自动关闭
+          this.guideTimer = setTimeout(() => {
+            this.dismissGuide();
+          }, 5000);
+        }, 500);
+        PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_GUIDE_SHOWN, true);
+      }
+    } catch (_) {
+      // 忽略
+    }
+  }
+  
+  private dismissGuide(): void {
+    if (this.showGuide) {
+      animateTo({ duration: 200, curve: Curve.EaseIn }, () => {
+        this.showGuide = false;
+      });
+    }
   }
   
   private initPosition(): void {
@@ -170,24 +210,52 @@ export struct PerformanceOverlay {
     }
   }
   
-  build() {
-    Column() {
-      if (this.isVertical) {
-        this.VerticalContent()
-      } else {
-        this.HorizontalContent()
+  /** 锁定时播放金色边框闪烁动画（闪 3 次） */
+  private playLockFlash(): void {
+    let count = 0;
+    const flash = () => {
+      if (count >= 3) {
+        this.lockFlashBorderOpacity = 0;
+        return;
       }
-    }
-    .padding(this.isVertical ? 12 : { left: 12, right: 12, top: 8, bottom: 8 })
-    .backgroundColor(`#${Math.round(this.overlayBgOpacity * 255).toString(16).padStart(2, '0')}161616`)
-    .borderRadius(this.overlayDragging ? 12 : getSnapBorderRadius(this.currentSnapPosition, 12))
-    .opacity(this.overlayOpacity)
-    .scale({ x: this.overlayScale, y: this.overlayScale })
-    .position({ x: this.overlayX, y: this.overlayY })
-    // 锁定状态下透传触摸到下层串流视图，未锁定时拦截（用 overlayLocked 保证菜单解锁后立即刷新）
-    .hitTestBehavior(this.overlayLocked ? HitTestMode.Transparent : HitTestMode.Block)
-    .focusable(false)  // 禁止获取控制器焦点，确保游戏能接收输入
-    .onAreaChange((oldValue: Area, newValue: Area) => {
+      animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+        this.lockFlashBorderOpacity = 0.8;
+      });
+      setTimeout(() => {
+        animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
+          this.lockFlashBorderOpacity = 0;
+        });
+        count++;
+        setTimeout(flash, 180);
+      }, 180);
+    };
+    flash();
+  }
+  
+  build() {
+    Stack() {
+      // 主覆盖层
+      Column() {
+        if (this.isVertical) {
+          this.VerticalContent()
+        } else {
+          this.HorizontalContent()
+        }
+      }
+      .padding(this.isVertical ? 12 : { left: 12, right: 12, top: 8, bottom: 8 })
+      .backgroundColor(`#${Math.round(this.overlayBgOpacity * 255).toString(16).padStart(2, '0')}161616`)
+      .borderRadius(this.overlayDragging ? 12 : getSnapBorderRadius(this.currentSnapPosition, 12))
+      .border({
+        width: this.lockFlashBorderOpacity > 0 ? 2 : 0,
+        color: `#${Math.round(this.lockFlashBorderOpacity * 255).toString(16).padStart(2, '0')}FFD700`
+      })
+      .opacity(this.overlayOpacity)
+      .scale({ x: this.overlayScale, y: this.overlayScale })
+      .position({ x: this.overlayX, y: this.overlayY })
+      // 锁定状态下透传触摸到下层串流视图，未锁定时拦截（用 overlayLocked 保证菜单解锁后立即刷新）
+      .hitTestBehavior(this.overlayLocked ? HitTestMode.Transparent : HitTestMode.Block)
+      .focusable(false)  // 禁止获取控制器焦点，确保游戏能接收输入
+      .onAreaChange((oldValue: Area, newValue: Area) => {
       const oldWidth = this.overlayWidth;
       const oldHeight = this.overlayHeight;
       this.overlayWidth = newValue.width as number;
@@ -233,8 +301,9 @@ export struct PerformanceOverlay {
           this.viewModel.overlayState.config.isLocked = true;
           this.viewModel.overlayState.configVersion++;
           PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, true);
+          this.playLockFlash();
           try {
-            promptAction.showToast({ message: '已锁定，触摸将透传至游戏', duration: 1500 });
+            promptAction.showToast({ message: '🔒 已锁定，触摸将透传至游戏', duration: 1500 });
           } catch (_) {}
         })
     )
@@ -242,6 +311,42 @@ export struct PerformanceOverlay {
       if (this.overlayLocked) return;
       this.handleClick();
     })
+
+      // 首次操作引导提示
+      if (this.showGuide) {
+        Column({ space: 6 }) {
+          Text('操作提示')
+            .fontSize(12)
+            .fontColor('#FFD700')
+            .fontWeight(FontWeight.Bold)
+          Text('👆 单击 → 设置显示项')
+            .fontSize(11)
+            .fontColor('#DDFFFFFF')
+          Text('👆👆 双击 → 切换横竖布局')
+            .fontSize(11)
+            .fontColor('#DDFFFFFF')
+          Text('✋ 拖动 → 调整位置')
+            .fontSize(11)
+            .fontColor('#DDFFFFFF')
+          Text('👇 长按 → 锁定(触摸穿透)')
+            .fontSize(11)
+            .fontColor('#DDFFFFFF')
+        }
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .backgroundColor('#E0161616')
+        .borderRadius(10)
+        .border({ width: 1, color: '#30FFD700' })
+        .position({
+          x: this.overlayX + this.overlayWidth + 8,
+          y: this.overlayY
+        })
+        .hitTestBehavior(HitTestMode.None)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.Transparent)
   }
   
   // ==================== 垂直布局 ====================

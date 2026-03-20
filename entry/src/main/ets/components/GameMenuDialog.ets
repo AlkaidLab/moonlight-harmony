@@ -141,6 +141,9 @@ export struct GameMenuDialog {
   @State private dragFromIndex: number = -1;
   @State private dragOverIndex: number = -1;
   @State private isEditMode: boolean = false;
+
+  // 更多卡片折叠
+  @State private showMoreCards: boolean = false;
   private shortcutManager = ShortcutManager.getInstance();
 
   // 码率调整状态
@@ -583,16 +586,21 @@ export struct GameMenuDialog {
         Column({ space: 12 }) {
           if (this.shortcuts.length > 0) this.ShortcutCard()
           if (this.superCmds.length > 0) this.SuperCmdCard()
+          // "更多设置"折叠区（左列下方）
+          if (this.hasMoreCards()) {
+            this.MoreCardsToggle()
+            if (this.showMoreCards) {
+              if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
+              if (this.hasGyroscope) this.GyroAssistCard()
+            }
+          }
         }
         .alignItems(HorizontalAlign.Start)
 
         Column({ space: 12 }) {
           this.BitrateCard()
           this.CustomKeyCard()
-          if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
-          if (this.hasGyroscope) this.GyroAssistCard()
           if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
-          this.PanZoomCard()
         }
         .alignItems(HorizontalAlign.Start)
       }
@@ -615,10 +623,15 @@ export struct GameMenuDialog {
         if (this.superCmds.length > 0) this.SuperCmdCard()
         this.BitrateCard()
         this.CustomKeyCard()
-        if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
-        if (this.hasGyroscope) this.GyroAssistCard()
         if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
-        this.PanZoomCard()
+        // "更多设置"折叠区
+        if (this.hasMoreCards()) {
+          this.MoreCardsToggle()
+          if (this.showMoreCards) {
+            if (this.viewModel.inputSettings?.enableOnscreenControls) this.VirtualControllerCard()
+            if (this.hasGyroscope) this.GyroAssistCard()
+          }
+        }
       }
       .alignItems(HorizontalAlign.Start)
     }
@@ -664,37 +677,36 @@ export struct GameMenuDialog {
     })
   }
 
-  @Builder
-  PanZoomCard() {
-    Row({ space: 8 }) {
-      Column() {
-        this.ButtonCardContent(this.isPanZoomActive ? '🔍' : '🔎', this.isPanZoomActive ? '缩放中' : '画面缩放')
-      }
-      .width(BUTTON_CARD_SIZE)
-      .height(BUTTON_CARD_SIZE)
-      .padding(10)
-      .cardStyle()
-      .backgroundColor(this.isPanZoomActive ? ACTIVE_BG_COLOR : '#1A1A2E')
-      .borderColor(this.isPanZoomActive ? ACTIVE_BORDER_COLOR : '#333348')
-      .onClick(() => {
-        this.callbacks.onTogglePanZoom?.();
-        this.callbacks.onClose?.();
-      })
+  /** 是否有可折叠的低频卡片 */
+  private hasMoreCards(): boolean {
+    return !!(this.viewModel.inputSettings?.enableOnscreenControls) || this.hasGyroscope;
+  }
 
-      if (this.isPanZoomActive) {
-        Column() {
-          this.ButtonCardContent('↺', '重置缩放')
-        }
-        .width(BUTTON_CARD_SIZE)
-        .height(BUTTON_CARD_SIZE)
-        .padding(10)
-        .cardStyle()
-        .onClick(() => {
-          this.callbacks.onResetPanZoom?.();
-          this.callbacks.onClose?.();
-        })
-      }
+  @Builder
+  MoreCardsToggle() {
+    Row() {
+      Text(this.showMoreCards ? '▾' : '▸')
+        .fontSize(12)
+        .fontColor(OV_TEXT_DIM)
+        .margin({ right: 6 })
+      Text('更多设置')
+        .fontSize(OV_FONT_MD)
+        .fontColor(OV_TEXT_DIM)
+      Text(` · 虚拟手柄${this.hasGyroscope ? '、体感助手' : ''}`)
+        .fontSize(OV_FONT_SM)
+        .fontColor(OV_TEXT_FAINT)
     }
+    .width(OV_CARD_WIDTH)
+    .height(36)
+    .padding({ left: 14, right: 14 })
+    .borderRadius(OV_CARD_RADIUS)
+    .backgroundColor(this.isCurrentDark() ? '#08FFFFFF' : '#08000000')
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
+        this.showMoreCards = !this.showMoreCards;
+      });
+    })
   }
 
   @Builder
@@ -769,7 +781,53 @@ export struct GameMenuDialog {
       }
       .width('100%')
       .justifyContent(FlexAlign.Center)
-      .padding({ bottom: 14 })
+      .padding({ bottom: 10 })
+
+      // ── 画面缩放（合并在自定义按键卡片内） ──
+      Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
+
+      Row() {
+        Text('🔎').fontSize(OV_FONT_LG)
+        Text(' 画面缩放')
+          .fontSize(OV_FONT_MD)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(OV_TEXT_MEDIUM)
+        Blank()
+        if (this.isPanZoomActive) {
+          Text('重置')
+            .fontSize(11)
+            .fontColor(OV_ACCENT_BLUE)
+            .fontWeight(FontWeight.Medium)
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .borderRadius(10)
+            .backgroundColor('#20A8D8EA')
+            .border({ width: 1, color: OV_BLUE_40 })
+            .margin({ right: 8 })
+            .onClick(() => {
+              this.callbacks.onResetPanZoom?.();
+            })
+        }
+        Toggle({ type: ToggleType.Switch, isOn: this.isPanZoomActive })
+          .selectedColor(OV_ACCENT_BLUE)
+          .switchPointColor(OV_TEXT_WHITE)
+          .width(40)
+          .height(22)
+          .onChange((isOn: boolean) => {
+            if (isOn !== this.isPanZoomActive) {
+              this.isPanZoomActive = isOn;
+              this.callbacks.onTogglePanZoom?.();
+              this.animateOut();
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 12, top: 10, bottom: 4 })
+
+      Text('双指缩放操控画面，最大 10x')
+        .fontSize(OV_FONT_SM)
+        .fontColor(OV_TEXT_FAINT)
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 14 })
     }
     .width(OV_CARD_WIDTH)
     .cardStyle()

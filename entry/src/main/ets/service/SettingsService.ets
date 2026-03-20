@@ -130,6 +130,7 @@ export class SettingsKeys {
   static readonly PERF_OVERLAY_LOCKED: string = 'settings_perf_overlay_locked';
   static readonly PERF_OVERLAY_ITEMS: string = 'settings_perf_overlay_items';
   static readonly PERF_OVERLAY_BG_OPACITY: string = 'settings_perf_overlay_bg_opacity';
+  static readonly PERF_OVERLAY_GUIDE_SHOWN: string = 'settings_perf_overlay_guide_shown';
   static readonly LATENCY_TOAST: string = 'settings_latency_toast';
   static readonly DISABLE_WARNINGS: string = 'settings_disable_warnings';
   static readonly ENABLE_STUN: string = 'settings_enable_stun';
