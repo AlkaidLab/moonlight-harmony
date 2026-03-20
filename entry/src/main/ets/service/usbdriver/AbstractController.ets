@@ -213,12 +213,22 @@ export abstract class AbstractController {
   }
   
   /**
-   * 通知设备已添加
+   * 通知设备已添加（幂等：重复调用不会重复通知）
    */
   protected notifyDeviceAdded(): void {
+    if (this.deviceAddedNotified) return;
+    this.deviceAddedNotified = true;
     if (this.listener) {
       this.listener.deviceAdded(this);
     }
+  }
+
+  /** 设备添加通知是否已发送 */
+  private deviceAddedNotified: boolean = false;
+
+  /** 查询设备添加通知是否已发送（供 UsbDriverService.setListener 判断） */
+  isDeviceAddedNotified(): boolean {
+    return this.deviceAddedNotified;
   }
   
   /**

@@ -94,10 +94,13 @@ export class UsbDriverService implements UsbDriverListener {
   setListener(listener: UsbDriverListener | null): void {
     this.listener = listener;
     
-    // 通知已连接的控制器
+    // 通知已连接且已完成初始化的控制器
+    // 仅通知 deviceAddedNotified=true 的控制器，避免与控制器延迟的 notifyDeviceAdded 重复通知
     if (listener) {
       for (const controller of this.controllers) {
-        listener.deviceAdded(controller);
+        if (controller.isDeviceAddedNotified()) {
+          listener.deviceAdded(controller);
+        }
       }
     }
   }

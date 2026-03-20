@@ -843,6 +843,12 @@ export class GamepadManager implements UsbDriverListener {
     hasJoystickSource: boolean,
     nameIndicatesGamepad: boolean
   ): void {
+    // 防止重复注册：同一 deviceId 已注册时直接跳过
+    if (this.connectedDevices.has(deviceId)) {
+      GamepadManager.DEBUG && console.info(`[GAMEPAD] 设备 ${deviceId} 已注册，跳过重复注册`);
+      return;
+    }
+
     const bus = deviceInfo.bus;
     const isUsb = bus === DeviceBusType.BUS_USB;
     const isBluetooth = bus === DeviceBusType.BUS_BLUETOOTH;
