@@ -93,6 +93,14 @@ const ANIMATION_DURATION_OUT = 200;
 const BITRATE_DEBOUNCE_MS = 500;
 const MENU_ITEM_COUNT = 7;
 
+// 卡片 ID（用于使用频率排序）
+const CARD_SHORTCUT = 'shortcut';
+const CARD_SUPERCMD = 'supercmd';
+const CARD_BITRATE = 'bitrate';
+const CARD_CUSTOMKEY = 'customkey';
+const CARD_UNLOCK = 'unlock';
+const CARD_USAGE_KEY = 'game_menu_card_usage';
+
 // 马卡龙色系菜单配置
 const MENU_ITEMS: MenuItem[] = [
   { icon: '✦', label: 'HDR', bgColor: '#F7EBC7', borderColor: '#D0A850' },
@@ -168,6 +176,10 @@ export struct GameMenuDialog {
   // 深浅主题（自动跟随系统切换）
   @StorageProp('colorMode') currentColorMode: number = ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
 
+  // 卡片使用频率排序
+  @State private sortedMainCards: string[] = [];
+  private cardUsageCounts: Map<string, number> = new Map();
+
   // 虚拟手柄设置本地状态（拖动 Slider 时实时回调）
   @State private controllerOpacityLocal: number = 0.75;
   @State private controllerScaleLocal: number = 1.0;
@@ -195,6 +207,7 @@ export struct GameMenuDialog {
     this.controllerScaleLocal = this.controllerScale;
     this.touchPassthroughLocal = this.touchPassthrough;
     this.loadGyroSettings();
+    this.loadCardUsageCounts();
     this.detectLayoutMode();
     this.animateIn();
   }
@@ -329,6 +342,7 @@ export struct GameMenuDialog {
     if (this.bitrateDebounceTimer !== -1) {
       clearTimeout(this.bitrateDebounceTimer);
     }
+    this.recordCardUsage(CARD_BITRATE);
 
     this.bitrateDebounceTimer = setTimeout(async () => {
       const newBitrate = this.sliderValueToBitrate(this.bitrateSliderValue);
@@ -532,6 +546,52 @@ export struct GameMenuDialog {
     this.gyroActivationKey = gyroAssist.activationKey;
   }
 
+  /**
+   * 加载卡片使用频率并构建排序列表
+   */
+  private async loadCardUsageCounts(): Promise<void> {
+    try {
+      const json = await PreferencesUtil.get<string>(CARD_USAGE_KEY, '{}');
+      const parsed = JSON.parse(json) as Record<string, number>;
+      const entries = Object.entries(parsed);
+      for (let i = 0; i < entries.length; i++) {
+        this.cardUsageCounts.set(entries[i][0], entries[i][1] as number);
+      }
+    } catch (_) {}
+    this.rebuildSortedCards();
+  }
+
+  /**
+   * 根据当前可见性和使用频率重建排序卡片列表
+   */
+  private rebuildSortedCards(): void {
+    const visible: string[] = [];
+    if (this.shortcuts.length > 0) visible.push(CARD_SHORTCUT);
+    if (this.superCmds.length > 0) visible.push(CARD_SUPERCMD);
+    visible.push(CARD_BITRATE);
+    visible.push(CARD_CUSTOMKEY);
+    if (this.viewModel.overlayState.config.isLocked) visible.push(CARD_UNLOCK);
+    // 按使用次数降序排列，次数相同保持原始顺序
+    visible.sort((a: string, b: string): number => {
+      const ca = this.cardUsageCounts.get(a) || 0;
+      const cb = this.cardUsageCounts.get(b) || 0;
+      return cb - ca;
+    });
+    this.sortedMainCards = visible;
+  }
+
+  /**
+   * 记录卡片使用并持久化
+   */
+  private recordCardUsage(cardId: string): void {
+    const count = (this.cardUsageCounts.get(cardId) || 0) + 1;
+    this.cardUsageCounts.set(cardId, count);
+    // 异步持久化
+    const obj: Record<string, number> = {};
+    this.cardUsageCounts.forEach((v: number, k: string) => { obj[k] = v; });
+    PreferencesUtil.put(CARD_USAGE_KEY, JSON.stringify(obj)).catch(() => {});
+  }
+
   private async saveGyroSetting(key: string, value: string | boolean | number): Promise<void> {
     try {
       await PreferencesUtil.put(key, value);
@@ -584,8 +644,10 @@ export struct GameMenuDialog {
     Scroll() {
       Row({ space: 12 }) {
         Column({ space: 12 }) {
-          if (this.shortcuts.length > 0) this.ShortcutCard()
-          if (this.superCmds.length > 0) this.SuperCmdCard()
+          // 左列：排序后奇数位卡片（索引 0, 2, 4...）
+          ForEach(this.sortedMainCards.filter((_: string, i: number) => i % 2 === 0),
+            (cardId: string) => { this.RenderCardById(cardId) },
+            (cardId: string) => cardId)
           // "更多设置"折叠区（左列下方）
           if (this.hasMoreCards()) {
             this.MoreCardsToggle()
@@ -598,9 +660,10 @@ export struct GameMenuDialog {
         .alignItems(HorizontalAlign.Start)
 
         Column({ space: 12 }) {
-          this.BitrateCard()
-          this.CustomKeyCard()
-          if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
+          // 右列：排序后偶数位卡片（索引 1, 3, 5...）
+          ForEach(this.sortedMainCards.filter((_: string, i: number) => i % 2 === 1),
+            (cardId: string) => { this.RenderCardById(cardId) },
+            (cardId: string) => cardId)
         }
         .alignItems(HorizontalAlign.Start)
       }
@@ -619,11 +682,10 @@ export struct GameMenuDialog {
   SingleColumnLayout() {
     Scroll() {
       Column({ space: 12 }) {
-        if (this.shortcuts.length > 0) this.ShortcutCard()
-        if (this.superCmds.length > 0) this.SuperCmdCard()
-        this.BitrateCard()
-        this.CustomKeyCard()
-        if (this.viewModel.overlayState.config.isLocked) this.UnlockOverlayCard()
+        // 按使用频率排列的主卡片
+        ForEach(this.sortedMainCards,
+          (cardId: string) => { this.RenderCardById(cardId) },
+          (cardId: string) => cardId)
         // "更多设置"折叠区
         if (this.hasMoreCards()) {
           this.MoreCardsToggle()
@@ -642,6 +704,21 @@ export struct GameMenuDialog {
     .constraintSize({ maxHeight: '85%' })
     .position({ x: 16, y: '50%' })
     .translate({ y: '-50%' })
+  }
+
+  @Builder
+  RenderCardById(cardId: string) {
+    if (cardId === CARD_SHORTCUT) {
+      this.ShortcutCard()
+    } else if (cardId === CARD_SUPERCMD) {
+      this.SuperCmdCard()
+    } else if (cardId === CARD_BITRATE) {
+      this.BitrateCard()
+    } else if (cardId === CARD_CUSTOMKEY) {
+      this.CustomKeyCard()
+    } else if (cardId === CARD_UNLOCK) {
+      this.UnlockOverlayCard()
+    }
   }
 
   @Builder
@@ -672,6 +749,7 @@ export struct GameMenuDialog {
     .padding(10)
     .cardStyle()
     .onClick(() => {
+      this.recordCardUsage(CARD_UNLOCK);
       this.callbacks.onUnlockOverlay?.();
       this.callbacks.onClose?.();
     })
@@ -728,6 +806,7 @@ export struct GameMenuDialog {
           .onChange((isOn: boolean) => {
             if (isOn !== this.showCustomKeys) {
               this.showCustomKeys = isOn;
+              this.recordCardUsage(CARD_CUSTOMKEY);
               this.callbacks.onToggleCustomKeys?.();
             }
           })
@@ -1407,6 +1486,7 @@ export struct GameMenuDialog {
     })
     .onClick(() => {
       if (this.isEditMode || this.dragFromIndex >= 0) return;
+      this.recordCardUsage(CARD_SHORTCUT);
       this.sendShortcut(shortcut);
       this.animateOut();
     })
@@ -1484,6 +1564,7 @@ export struct GameMenuDialog {
       return false;
     })
     .onClick(() => {
+      this.recordCardUsage(CARD_SUPERCMD);
       this.callbacks.onSendSuperCmd?.(cmd.id);
       this.animateOut();
     })
