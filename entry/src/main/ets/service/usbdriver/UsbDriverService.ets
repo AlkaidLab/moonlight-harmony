@@ -541,6 +541,8 @@ export class UsbDriverService implements UsbDriverListener {
         
         if (!granted) {
           console.warn(`${TAG} 用户拒绝了 USB 权限: ${device.name}`);
+          // 标记为已处理，避免 rescan 反复弹出权限对话框
+          this.processedDevices.add(deviceKey);
           return;
         }
       } catch (err) {
@@ -550,6 +552,12 @@ export class UsbDriverService implements UsbDriverListener {
         }
         return;
       }
+    }
+    
+    // 异步操作后检查服务是否已停止（权限弹窗期间用户可能退出）
+    if (!this.started) {
+      console.info(`${TAG} 服务已停止，放弃处理设备: ${device.name}`);
+      return;
     }
     
     // 打开设备

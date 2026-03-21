@@ -478,8 +478,8 @@ export class SwitchProController extends AbstractController {
     
     // 初始化序列
     const handshakeSuccess = await this.handshake();
-    if (!handshakeSuccess) {
-      console.error(`${TAG} 握手失败`);
+    if (!handshakeSuccess || this.stopped) {
+      if (!handshakeSuccess) console.error(`${TAG} 握手失败`);
       this.stop();
       return;
     }
@@ -487,17 +487,24 @@ export class SwitchProController extends AbstractController {
     const deviceType = this.isJoyCon() ? "Joy-Con" : "Switch Pro";
     console.info(`${TAG} ${deviceType}: handshake ${handshakeSuccess}`);
     console.info(`${TAG} ${deviceType}: highSpeed ${await this.highSpeed()}`);
+    if (this.stopped) return;
     console.info(`${TAG} ${deviceType}: handshake ${await this.handshake()}`);
+    if (this.stopped) return;
     
     // 应用默认校准
     this.applyDefaultCalibration(0);
     this.applyDefaultCalibration(1);
     
     console.info(`${TAG} ${deviceType}: setInputReportMode ${await this.setInputReportMode(0x30)}`);
+    if (this.stopped) return;
     console.info(`${TAG} ${deviceType}: forceUSB ${await this.forceUSB()}`);
+    if (this.stopped) return;
     console.info(`${TAG} ${deviceType}: enableVibration ${await this.enableVibration(true)}`);
+    if (this.stopped) return;
     console.info(`${TAG} ${deviceType}: setPlayerLED ${await this.setPlayerLED(this.getControllerId() + 1)}`);
+    if (this.stopped) return;
     console.info(`${TAG} ${deviceType}: enableIMU ${await this.enableIMU(true)}`);
+    if (this.stopped) return;
     
     console.info(`${TAG} ${deviceType}: 初始化完成!`);
     

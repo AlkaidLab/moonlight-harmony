@@ -233,7 +233,7 @@ export abstract class AbstractController {
    * 通知设备已添加并将状态标记为 Ready（幂等：重复调用不会重复通知）
    */
   protected notifyDeviceAdded(): void {
-    if (this.controllerState === ControllerState.Ready) return;
+    if (this.controllerState === ControllerState.Ready || this.controllerState === ControllerState.Stopped) return;
     this.controllerState = ControllerState.Ready;
     if (this.listener) {
       this.listener.deviceAdded(this);
