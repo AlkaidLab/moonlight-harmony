@@ -25,6 +25,19 @@
   - 最新版本放在最前面
 -->
 
+## [1.0.0.743] - 2026-03-21
+QR码分享突破512字节限制 + USB手柄稳定性修复
+
+### 新增
+- 📱 纯 ArkTS QR 码生成器：自实现 ISO/IEC 18004 标准算法（Reed-Solomon 纠错、自动版本选择 v1-v40），绕过 ScanKit 512 字节限制，支持最多 30 个自定义按键的二维码分享
+
+### 优化
+- 🔄 USB 控制器引入 ControllerState 状态机（Created→Initializing→Ready→Stopped），替代布尔标志位，移除所有 500ms setTimeout 延迟
+
+### 修复
+- 🎮 修复测试页面退出后串流检测不到 USB 手柄（stop() 调度的 300ms 内核驱动重绑定定时器与 start() 竞争）
+- 🔌 修复 USB 驱动模式下手柄连接重复通知（registerGamepad 去重 + 控制器 Ready 状态过滤 + 测试页 VID/PID 去重）
+
 ## [1.0.0.742] - 2026-03-19
 游戏菜单优化 + 性能覆盖层引导 + 手柄输入优化
 
