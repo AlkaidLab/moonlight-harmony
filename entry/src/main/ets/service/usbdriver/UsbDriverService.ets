@@ -73,6 +73,8 @@ export class UsbDriverService implements UsbDriverListener {
   private static readonly RESCAN_INTERVAL_MS: number = 5000;
   // DDK 高速轮询是否启用（缓存，用于 stop() 决定是否重绑内核驱动）
   private ddkEnabled: boolean = false;
+  // 内核驱动重绑定定时器 ID（用于在重新启动时取消）
+  private resetTimerId: number | null = null;
   
   private constructor() {
     console.info(`${TAG} 创建 USB 驱动服务实例`);
@@ -149,6 +151,13 @@ export class UsbDriverService implements UsbDriverListener {
     
     console.info(`${TAG} 启动 USB 驱动服务`);
     this.started = true;
+    
+    // 取消上一次 stop() 调度的内核驱动重绑定（避免干扰新会话）
+    if (this.resetTimerId !== null) {
+      clearTimeout(this.resetTimerId);
+      this.resetTimerId = null;
+      console.info(`${TAG} 已取消待执行的内核驱动重绑定`);
+    }
     
     // 订阅 USB 设备插拔事件
     await this.subscribeUsbEvents();
@@ -358,7 +367,8 @@ export class UsbDriverService implements UsbDriverListener {
     // 策略：重新打开设备，通过 native ioctl (USBDEVFS_CONNECT) 显式通知内核重绑定。
     // 注意：DDK 模式下跳过重绑定，避免下次启动时 ClaimInterface 竞争
     if (stoppedCount > 0 && !this.ddkEnabled) {
-      setTimeout(() => {
+      this.resetTimerId = setTimeout(() => {
+        this.resetTimerId = null;
         this.resetReleasedUsbDevices(releasedDeviceKeys);
       }, 300);  // 等待 300ms 确保管道完全关闭
     } else if (this.ddkEnabled) {
@@ -378,6 +388,11 @@ export class UsbDriverService implements UsbDriverListener {
    * 3. 如果 CONNECT 失败，后备方案使用 USBDEVFS_RESET 重置设备
    */
   private resetReleasedUsbDevices(releasedKeys: Set<string>): void {
+    // 如果服务已重新启动，跳过重置（避免干扰新会话的 USB 接口声明）
+    if (this.started) {
+      console.info(`${TAG} 服务已重新启动，跳过 USB 设备内核驱动重绑定`);
+      return;
+    }
     if (!usbHelper) {
       console.warn(`${TAG} UsbHelper native 模块不可用，无法重绑定内核驱动`);
       return;
@@ -598,18 +613,19 @@ export class UsbDriverService implements UsbDriverListener {
       return;
     }
     
+    // 先加入列表和已处理集合（确保 start() 内的同步通知能在列表中找到控制器）
+    this.processedDevices.add(deviceKey);
+    this.controllers.push(controller);
+    
     // 启动控制器
     if (!controller.start()) {
       console.error(`${TAG} 启动控制器失败`);
+      this.controllers.pop();
+      this.processedDevices.delete(deviceKey);
       usbManager.closePipe(pipe);
       return;
     }
     
-    // 记录已处理的设备（deviceKey 已在函数开头定义）
-    this.processedDevices.add(deviceKey);
-    
-    // 添加到控制器列表
-    this.controllers.push(controller);
     console.info(`${TAG} 控制器已启动: ID=${controller.getControllerId()}, Key=${deviceKey}`);
   }
   
