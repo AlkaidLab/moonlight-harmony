@@ -20,10 +20,19 @@ import { buffer } from '@kit.ArkTS';
 import { ObservableComputer } from './ComputerViewModel';
 import { ComputerManager } from '../service/ComputerManager';
 import { PairingManager, PairState as PMPairState } from '../service/PairingManager';
-import { NvHttp } from '../service/NvHttp';
-import { PairState, ComputerState, selectBestAddress } from '../model/ComputerInfo';
+import { NvHttp, ServerInfo } from '../service/NvHttp';
+import { PairState, ComputerState, selectBestAddress, ComputerInfo } from '../model/ComputerInfo';
 import { ConfirmDialogConfig, InfoDialogConfig } from '../components/ConfirmDialog';
 import { AppColors } from '../common/Theme';
+
+/** 单地址网络测试结果 */
+interface AddressTestResult {
+  address: string;
+  reachable: boolean;
+  latencyMs: number;
+  serverInfo: ServerInfo | null;
+  error: string;
+}
 
 /**
  * UI 回调接口 — PcListActions 操作中需要触发 UI 变更时使用
@@ -318,27 +327,111 @@ export class PcListActions {
 
   /** 测试网络 */
   async testNetwork(computer: ObservableComputer): Promise<void> {
-    promptAction.showToast({ message: '正在测试网络...' });
-    try {
-      const computerInfo = computer.toComputerInfo();
-      const online = await this.computerManager.pollComputer(computerInfo);
-      if (online) {
-        this.ui.showInfoDialog({
-          title: '网络测试结果',
-          content: `电脑 ${computer.name} 响应正常`
-        });
-      } else {
-        this.ui.showInfoDialog({
-          title: '网络测试结果',
-          content: `电脑 ${computer.name} 无法连接`
-        });
+    promptAction.showToast({ message: '正在检测网络…' });
+    const computerInfo = computer.toComputerInfo();
+
+    // 收集所有可用地址
+    const addressSet = new Set<string>();
+    if (computerInfo.manualAddress) addressSet.add(computerInfo.manualAddress);
+    if (computerInfo.address) addressSet.add(computerInfo.address);
+    if (computerInfo.localAddress) addressSet.add(computerInfo.localAddress);
+    if (computerInfo.remoteAddress) addressSet.add(computerInfo.remoteAddress);
+    if (computerInfo.ipv6Address) addressSet.add(computerInfo.ipv6Address);
+    const addresses = Array.from(addressSet);
+
+    if (addresses.length === 0) {
+      this.ui.showInfoDialog({ title: '网络测试', content: '没有可用的连接地址' });
+      return;
+    }
+
+    // 对每个地址分别测试延迟（3 轮取平均）
+    const TEST_ROUNDS = 3;
+    const results: AddressTestResult[] = [];
+
+    for (const addr of addresses) {
+      const roundLatencies: number[] = [];
+      let lastServerInfo: ServerInfo | null = null;
+      let lastError = '';
+
+      for (let i = 0; i < TEST_ROUNDS; i++) {
+        const startMs = Date.now();
+        try {
+          const nvHttp = new NvHttp(addr, computerInfo.serverCert, undefined, computerInfo.httpPort);
+          const info = await nvHttp.getServerInfo();
+          const elapsed = Date.now() - startMs;
+          roundLatencies.push(elapsed);
+          lastServerInfo = info;
+        } catch (err) {
+          lastError = (err as Error).message || String(err);
+          break; // 失败则不继续后续轮次
+        }
       }
-    } catch (error) {
-      this.ui.showInfoDialog({
-        title: '网络测试结果',
-        content: `电脑 ${computer.name} 无法连接\n${(error as Error).message}`
+
+      const avgLatency = roundLatencies.length > 0
+        ? roundLatencies.reduce((a, b) => a + b, 0) / roundLatencies.length
+        : 0;
+
+      results.push({
+        address: addr,
+        reachable: roundLatencies.length > 0,
+        latencyMs: Math.round(avgLatency),
+        serverInfo: lastServerInfo,
+        error: lastError
       });
     }
+
+    // 汇总结果
+    const lines: string[] = [];
+    const reachableResults = results.filter(r => r.reachable);
+    const unreachableResults = results.filter(r => !r.reachable);
+
+    // 取第一个成功的 serverInfo 显示服务器信息
+    const serverInfo = reachableResults.find(r => r.serverInfo)?.serverInfo;
+
+    if (reachableResults.length > 0) {
+      lines.push('✅ 连接成功');
+      lines.push('');
+
+      // 地址延迟
+      for (const r of reachableResults) {
+        const label = this.getAddressLabel(r.address, computerInfo);
+        const quality = r.latencyMs < 10 ? '极佳' : r.latencyMs < 30 ? '良好' : r.latencyMs < 80 ? '一般' : '较高';
+        lines.push(`${label}: ${r.latencyMs}ms (${quality})`);
+      }
+
+      // 服务器信息
+      if (serverInfo) {
+        lines.push('');
+        lines.push(`主机名: ${serverInfo.hostname}`);
+        if (serverInfo.gpuType) lines.push(`GPU: ${serverInfo.gpuType}`);
+        if (serverInfo.gfeVersion) lines.push(`GFE: ${serverInfo.gfeVersion}`);
+        lines.push(`配对: ${serverInfo.paired ? '已配对' : '未配对'}`);
+        if (serverInfo.currentGame > 0) lines.push(`运行中游戏 ID: ${serverInfo.currentGame}`);
+      }
+    } else {
+      lines.push('❌ 所有地址均无法连接');
+    }
+
+    // 不可达地址
+    if (unreachableResults.length > 0) {
+      lines.push('');
+      for (const r of unreachableResults) {
+        const label = this.getAddressLabel(r.address, computerInfo);
+        const shortErr = r.error.length > 60 ? r.error.substring(0, 60) + '…' : r.error;
+        lines.push(`❌ ${label}: ${shortErr || '超时'}`);
+      }
+    }
+
+    this.ui.showInfoDialog({ title: '网络测试 — ' + computer.name, content: lines.join('\n') });
+  }
+
+  /** 根据地址匹配返回易读标签 */
+  private getAddressLabel(address: string, computerInfo: ComputerInfo): string {
+    if (address === computerInfo.manualAddress) return `手动 (${address})`;
+    if (address === computerInfo.localAddress) return `局域网 (${address})`;
+    if (address === computerInfo.remoteAddress) return `远程 (${address})`;
+    if (address === computerInfo.ipv6Address) return `IPv6 (${address})`;
+    return address;
   }
 
   /** 显示电脑详情 */
