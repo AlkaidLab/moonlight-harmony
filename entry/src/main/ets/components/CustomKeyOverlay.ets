@@ -151,6 +151,9 @@ export struct CustomKeyOverlay {
   @State private showProfilePanel: boolean = false;
   @State private profileNames: string[] = [];
   @State private activeProfileName: string = '';
+  /** 正在重命名的配置名（空字符串表示未在编辑） */
+  @State private editingProfileName: string = '';
+  @State private editingProfileNewName: string = '';
   /** 配置切换回调（通知 StreamPage 刷新） */
   onProfileSwitched: () => void = () => {};
   @State private themeExtracting: boolean = false;
@@ -595,13 +598,11 @@ export struct CustomKeyOverlay {
           .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
           .onClick(() => { this.openSharePanel(); })
 
-          Row({ space: 4 }) {
-            SymbolGlyph($r('sys.symbol.square_stack_3d_up'))
-              .fontSize(16).fontColor([Color.White])
+          Row() {
             Text('配置')
               .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
-          .height(32).padding({ left: 10, right: 12 })
+          .height(32).padding({ left: 12, right: 12 })
           .borderRadius(16).backgroundColor('#6080A0')
           .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
           .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
@@ -1357,6 +1358,23 @@ export struct CustomKeyOverlay {
     }
   }
 
+  private async commitProfileRename(): Promise<void> {
+    const oldName = this.editingProfileName;
+    const newName = this.editingProfileNewName.trim();
+    this.editingProfileName = '';
+    this.editingProfileNewName = '';
+    if (!newName || newName === oldName) return;
+    if (this.profileNames.includes(newName)) {
+      promptAction.showToast({ message: '配置名已存在', duration: 1500 });
+      return;
+    }
+    const ok = await CustomKeyStore.renameProfile(oldName, newName);
+    if (ok) {
+      this.profileNames = await CustomKeyStore.getProfileNames();
+      this.activeProfileName = await CustomKeyStore.getActiveProfileName();
+    }
+  }
+
   /** 循环切换到下一个配置（SpecialAction 使用） */
   async cycleNextProfile(): Promise<void> {
     const names = await CustomKeyStore.getProfileNames();
@@ -1378,7 +1396,7 @@ export struct CustomKeyOverlay {
         .width('100%')
         .layoutWeight(1)
         .backgroundColor('#40000000')
-        .onClick(() => { this.showProfilePanel = false; })
+        .onClick(() => { this.editingProfileName = ''; this.showProfilePanel = false; })
 
       // 底部面板
       Column({ space: 12 }) {
@@ -1392,7 +1410,7 @@ export struct CustomKeyOverlay {
           Text('✕')
             .fontSize(18)
             .fontColor(OV_TEXT_DIM)
-            .onClick(() => { this.showProfilePanel = false; })
+            .onClick(() => { this.editingProfileName = ''; this.showProfilePanel = false; })
         }
         .width('100%')
         .padding({ left: 20, right: 20, top: 16, bottom: 4 })
@@ -1402,29 +1420,55 @@ export struct CustomKeyOverlay {
           Row({ space: 8 }) {
             ForEach(this.profileNames, (name: string) => {
               Row() {
-                Text(name)
-                  .fontSize(OV_FONT_MD)
-                  .fontWeight(name === this.activeProfileName ? FontWeight.Bold : FontWeight.Medium)
-                  .fontColor(name === this.activeProfileName ? OV_TEXT_WHITE : OV_TEXT_MEDIUM)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                if (this.editingProfileName === name) {
+                  TextInput({ text: this.editingProfileNewName })
+                    .fontSize(OV_FONT_MD)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(OV_TEXT_WHITE)
+                    .caretColor(OV_TEXT_WHITE)
+                    .backgroundColor(Color.Transparent)
+                    .padding(0)
+                    .borderRadius(0)
+                    .height(28)
+                    .width(80)
+                    .onChange((val: string) => { this.editingProfileNewName = val; })
+                    .onSubmit(() => { this.commitProfileRename(); })
+                } else {
+                  Text(name)
+                    .fontSize(OV_FONT_MD)
+                    .fontWeight(name === this.activeProfileName ? FontWeight.Bold : FontWeight.Medium)
+                    .fontColor(name === this.activeProfileName ? OV_TEXT_WHITE : OV_TEXT_MEDIUM)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
               }
               .height(36)
               .padding({ left: 16, right: 16 })
               .borderRadius(18)
               .backgroundColor(name === this.activeProfileName ? OV_ACCENT_BLUE : '#20FFFFFF')
-              .border({ width: 1, color: name === this.activeProfileName ? OV_BLUE_50 : '#15FFFFFF' })
+              .border({ width: 1, color: this.editingProfileName === name ? '#80FFFF00' : (name === this.activeProfileName ? OV_BLUE_50 : '#15FFFFFF') })
               .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
-              .onClick(() => { this.switchToProfile(name); })
+              .onClick(() => {
+                if (this.editingProfileName) {
+                  this.commitProfileRename();
+                } else {
+                  this.switchToProfile(name);
+                }
+              })
               .gesture(
                 LongPressGesture({ repeat: false, duration: 600 })
                   .onAction(() => {
-                    if (this.profileNames.length > 1 && name !== this.activeProfileName) {
+                    if (this.editingProfileName) return;
+                    if (name === this.activeProfileName) {
+                      // 长按当前配置 → 重命名
+                      this.editingProfileName = name;
+                      this.editingProfileNewName = name;
+                    } else if (this.profileNames.length > 1) {
                       this.deleteProfileByName(name);
                     }
                   })
               )
-            }, (name: string) => name)
+            }, (name: string) => `${name}_${this.editingProfileName === name ? 'edit' : 'show'}`)
           }
           .padding({ left: 20, right: 20 })
         }
@@ -1460,9 +1504,9 @@ export struct CustomKeyOverlay {
         .padding({ left: 20, right: 20, bottom: 16 })
 
         // 提示
-        Text('长按非活跃配置可删除')
+        Text('长按当前配置可重命名，长按其他配置可删除')
           .fontSize(OV_FONT_SM)
-          .fontColor(OV_TEXT_FAINT)
+          .fontColor(OV_TEXT_DIM)
           .width('100%')
           .textAlign(TextAlign.Center)
           .padding({ bottom: 12 })
