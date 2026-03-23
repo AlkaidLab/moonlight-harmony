@@ -42,6 +42,7 @@ import { StreamIMEManager } from './StreamIMEManager';
 import { VirtualKeyboard } from '../components/VirtualKeyboard';
 import { CustomKeyOverlay } from '../components/CustomKeyOverlay';
 import { CustomKeyManager, CustomKeyManagerHost, SessionLike } from '../service/CustomKeyManager';
+import { CustomKeyStore } from '../service/CustomKeyStore';
 import { PanZoomHandler, PanZoomState, PointXY } from '../service/PanZoomHandler';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
@@ -138,6 +139,7 @@ struct StreamPage {
   @State showVirtualKeyboard: boolean = false;  // PC 虚拟键盘
   @State showCustomKeys: boolean = false;  // 自定义按键覆盖层
   @State customKeyEditMode: boolean = false;  // 自定义按键编辑模式
+  @State customKeyProfileVersion: number = 0;  // 配置切换信号（递增触发 Overlay 重载）
   /**
    * 自定义按键命中测试刷新触发器。
    * ArkUI 首次渲染时 .position() 子组件的命中测试区域可能未正确建立，
@@ -275,8 +277,7 @@ struct StreamPage {
       this.showTouchModeMenu();
     };
     customKeyHost.switchProfileFn = (): void => {
-      // TODO: 实现配置档案切换（当前仅支持单配置）
-      promptAction.showToast({ message: '配置切换（开发中）', duration: 1500 });
+      this.cycleCustomKeyProfile();
     };
     customKeyHost.toggleEditModeFn = (): void => {
       this.customKeyEditMode = !this.customKeyEditMode;
@@ -674,6 +675,13 @@ struct StreamPage {
       onResetPanZoom: () => {
         this.panZoomHandler.reset();
         promptAction.showToast({ message: '缩放已重置', duration: 1500 });
+      },
+      onSwitchCustomKeyProfile: async (name: string) => {
+        this.customKeyManager?.reset();
+        const profile = await CustomKeyStore.switchProfile(name);
+        if (profile) {
+          this.customKeyProfileVersion++;
+        }
       }
     };
   }
@@ -886,6 +894,20 @@ struct StreamPage {
     this.shortcutEditorController.open();
   }
   
+  /**
+   * 循环切换自定义按键配置（SpecialAction 触发）
+   */
+  async cycleCustomKeyProfile(): Promise<void> {
+    this.customKeyManager?.reset();
+    const profile = await CustomKeyStore.cycleNextProfile();
+    if (profile) {
+      this.customKeyProfileVersion++;
+      promptAction.showToast({ message: `已切换到: ${profile.name}`, duration: 1500 });
+    } else {
+      promptAction.showToast({ message: '仅有一个配置', duration: 1500 });
+    }
+  }
+
   /**
    * 显示触摸模式菜单 (保留用于其他地方调用)
    */
@@ -1345,6 +1367,7 @@ struct StreamPage {
         Column() {
           CustomKeyOverlay({
             editMode: $customKeyEditMode,
+            profileVersion: this.customKeyProfileVersion,
             onKeyAction: (action: KeyAction, isDown: boolean): void => {
               this.customKeyManager?.handleAction(action, isDown);
             },
@@ -1359,6 +1382,9 @@ struct StreamPage {
             },
             onEditModeChanged: (editing: boolean): void => {
               this.customKeyEditMode = editing;
+            },
+            onProfileSwitched: (): void => {
+              this.customKeyProfileVersion++;
             },
           })
         }

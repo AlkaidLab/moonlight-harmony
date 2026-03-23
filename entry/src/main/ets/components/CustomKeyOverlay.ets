@@ -84,6 +84,8 @@ export struct CustomKeyOverlay {
   // ── 状态 ──
   @State keys: CustomKeyDef[] = [];
   @Link editMode: boolean;
+  /** 配置版本号（外部递增触发重新加载按键） */
+  @Prop @Watch('onProfileVersionChanged') profileVersion: number = 0;
   @State selectedKeyId: string = '';
   @State showAddPanel: boolean = false;
   @State showPropertyPanel: boolean = false;
@@ -138,6 +140,12 @@ export struct CustomKeyOverlay {
   /** 删除确认对话框 */
   /** 配色主题面板 */
   @State private showThemePanel: boolean = false;
+  /** 配置档案面板 */
+  @State private showProfilePanel: boolean = false;
+  @State private profileNames: string[] = [];
+  @State private activeProfileName: string = '';
+  /** 配置切换回调（通知 StreamPage 刷新） */
+  onProfileSwitched: () => void = () => {};
   @State private themeExtracting: boolean = false;
   @State private extractedAccentColor: string = '';
   /** 截屏取色时临时隐藏覆盖层，避免 UI 元素污染采样 */
@@ -187,6 +195,7 @@ export struct CustomKeyOverlay {
 
     await CustomKeyStore.init();
     this.keys = await CustomKeyStore.getKeys();
+    this.activeProfileName = await CustomKeyStore.getActiveProfileName();
 
     // 延迟刷新命中测试区域（与 VirtualControllerOverlay 同理）
     setTimeout(() => {
@@ -202,6 +211,13 @@ export struct CustomKeyOverlay {
       } catch (_e) { /* ignore */ }
       this.displayChangeCallback = null;
     }
+  }
+
+  /** 外部配置版本变化时重新加载按键 */
+  async onProfileVersionChanged(): Promise<void> {
+    this.keys = await CustomKeyStore.getKeys();
+    this.activeProfileName = await CustomKeyStore.getActiveProfileName();
+    this.selectedKeyId = '';
   }
 
   build() {
@@ -390,6 +406,11 @@ export struct CustomKeyOverlay {
           this.PropertyPanel()
         }
 
+        // 配置档案面板
+        if (this.showProfilePanel) {
+          this.ProfilePanel()
+        }
+
         // 二维码分享面板
         if (this.showSharePanel) {
           this.SharePanel()
@@ -476,7 +497,7 @@ export struct CustomKeyOverlay {
       .opacity(this.hidingForCapture ? 0 : (this.hitTestReady > 0 ? 1 : 0.99))
 
       // 编辑模式工具栏（面板打开时隐藏，避免遮挡面板）
-      if (this.editMode && !this.showAddPanel && !this.showPropertyPanel && !this.showSharePanel && !this.showThemePanel) {
+      if (this.editMode && !this.showAddPanel && !this.showPropertyPanel && !this.showSharePanel && !this.showThemePanel && !this.showProfilePanel) {
         Row({ space: 12 }) {
           Row({ space: 4 }) {
             SymbolGlyph($r('sys.symbol.plus_circle'))
@@ -566,6 +587,18 @@ export struct CustomKeyOverlay {
           .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
           .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
           .onClick(() => { this.openSharePanel(); })
+
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.square_stack_3d_up'))
+              .fontSize(16).fontColor([Color.White])
+            Text('配置')
+              .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+          }
+          .height(32).padding({ left: 10, right: 12 })
+          .borderRadius(16).backgroundColor('#6080A0')
+          .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
+          .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+          .onClick(() => { this.openProfilePanel(); })
 
           Blank()
 
@@ -1035,6 +1068,7 @@ export struct CustomKeyOverlay {
     this.showPropertyPanel = false;
     this.showSharePanel = false;
     this.showThemePanel = false;
+    this.showProfilePanel = false;
     this.undoStack = [];
     this.redoStack = [];
     this.canUndo = false;
@@ -1053,6 +1087,7 @@ export struct CustomKeyOverlay {
     this.showPropertyPanel = false;
     this.showSharePanel = false;
     this.showThemePanel = false;
+    this.showProfilePanel = false;
     await CustomKeyStore.saveKeys(this.keys);
     this.onEditModeChanged(false);
   }
@@ -1212,6 +1247,227 @@ export struct CustomKeyOverlay {
       return KEY_PRESET_CATEGORIES[this.addPanelCategoryIdx].presets;
     }
     return [];
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 配置档案切换
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  /** 打开配置档案面板 */
+  private async openProfilePanel(): Promise<void> {
+    this.profileNames = await CustomKeyStore.getProfileNames();
+    this.activeProfileName = await CustomKeyStore.getActiveProfileName();
+    this.showProfilePanel = true;
+  }
+
+  /** 切换到指定配置 */
+  private async switchToProfile(name: string): Promise<void> {
+    if (name === this.activeProfileName) return;
+    // 先保存当前配置
+    await CustomKeyStore.saveKeys(this.keys);
+    // 切换
+    const profile = await CustomKeyStore.switchProfile(name);
+    if (profile) {
+      this.activeProfileName = name;
+      this.keys = profile.keys;
+      this.selectedKeyId = '';
+      this.undoStack = [];
+      this.redoStack = [];
+      this.canUndo = false;
+      this.canRedo = false;
+      this.onProfileSwitched();
+      promptAction.showToast({ message: `已切换到: ${name}`, duration: 1500 });
+    }
+  }
+
+  /** 新建空配置 */
+  private async createNewProfile(): Promise<void> {
+    // 生成不重复的名称
+    let idx = this.profileNames.length + 1;
+    let name = `配置 ${idx}`;
+    while (this.profileNames.indexOf(name) >= 0) {
+      idx++;
+      name = `配置 ${idx}`;
+    }
+    await CustomKeyStore.saveKeys(this.keys);
+    const profile = await CustomKeyStore.createProfile(name);
+    if (profile) {
+      this.profileNames = await CustomKeyStore.getProfileNames();
+      this.activeProfileName = name;
+      this.keys = profile.keys;
+      this.selectedKeyId = '';
+      this.undoStack = [];
+      this.redoStack = [];
+      this.canUndo = false;
+      this.canRedo = false;
+      this.onProfileSwitched();
+      promptAction.showToast({ message: `已创建: ${name}`, duration: 1500 });
+    }
+  }
+
+  /** 复制当前配置 */
+  private async duplicateCurrentProfile(): Promise<void> {
+    let idx = 1;
+    let name = `${this.activeProfileName} (复制)`;
+    while (this.profileNames.indexOf(name) >= 0) {
+      idx++;
+      name = `${this.activeProfileName} (复制 ${idx})`;
+    }
+    await CustomKeyStore.saveKeys(this.keys);
+    const profile = await CustomKeyStore.duplicateProfile(name);
+    if (profile) {
+      this.profileNames = await CustomKeyStore.getProfileNames();
+      this.activeProfileName = name;
+      this.keys = profile.keys;
+      this.selectedKeyId = '';
+      this.undoStack = [];
+      this.redoStack = [];
+      this.canUndo = false;
+      this.canRedo = false;
+      this.onProfileSwitched();
+      promptAction.showToast({ message: `已复制为: ${name}`, duration: 1500 });
+    }
+  }
+
+  /** 删除指定配置 */
+  private async deleteProfileByName(name: string): Promise<void> {
+    if (this.profileNames.length <= 1) {
+      promptAction.showToast({ message: '至少保留一个配置', duration: 1500 });
+      return;
+    }
+    const ok = await CustomKeyStore.deleteProfile(name);
+    if (ok) {
+      this.profileNames = await CustomKeyStore.getProfileNames();
+      this.activeProfileName = await CustomKeyStore.getActiveProfileName();
+      this.keys = await CustomKeyStore.getKeys();
+      this.selectedKeyId = '';
+      this.undoStack = [];
+      this.redoStack = [];
+      this.canUndo = false;
+      this.canRedo = false;
+      this.onProfileSwitched();
+      promptAction.showToast({ message: `已删除: ${name}`, duration: 1500 });
+    }
+  }
+
+  /** 循环切换到下一个配置（SpecialAction 使用） */
+  async cycleNextProfile(): Promise<void> {
+    const names = await CustomKeyStore.getProfileNames();
+    if (names.length <= 1) {
+      promptAction.showToast({ message: '仅有一个配置', duration: 1500 });
+      return;
+    }
+    const currentName = await CustomKeyStore.getActiveProfileName();
+    const currentIdx = names.indexOf(currentName);
+    const nextIdx = (currentIdx + 1) % names.length;
+    await this.switchToProfile(names[nextIdx]);
+  }
+
+  @Builder
+  ProfilePanel() {
+    Column() {
+      // 遮罩层
+      Column()
+        .width('100%')
+        .layoutWeight(1)
+        .backgroundColor('#40000000')
+        .onClick(() => { this.showProfilePanel = false; })
+
+      // 底部面板
+      Column({ space: 12 }) {
+        // 标题行
+        Row() {
+          Text('配置档案')
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(OV_TEXT_BRIGHT)
+          Blank()
+          Text('✕')
+            .fontSize(18)
+            .fontColor(OV_TEXT_DIM)
+            .onClick(() => { this.showProfilePanel = false; })
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20, top: 16, bottom: 4 })
+
+        // 配置列表 — 水平胶囊
+        Scroll() {
+          Row({ space: 8 }) {
+            ForEach(this.profileNames, (name: string) => {
+              Row() {
+                Text(name)
+                  .fontSize(OV_FONT_MD)
+                  .fontWeight(name === this.activeProfileName ? FontWeight.Bold : FontWeight.Medium)
+                  .fontColor(name === this.activeProfileName ? OV_TEXT_WHITE : OV_TEXT_MEDIUM)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .height(36)
+              .padding({ left: 16, right: 16 })
+              .borderRadius(18)
+              .backgroundColor(name === this.activeProfileName ? OV_ACCENT_BLUE : '#20FFFFFF')
+              .border({ width: 1, color: name === this.activeProfileName ? OV_BLUE_50 : '#15FFFFFF' })
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
+              .onClick(() => { this.switchToProfile(name); })
+              .gesture(
+                LongPressGesture({ repeat: false, duration: 600 })
+                  .onAction(() => {
+                    if (this.profileNames.length > 1 && name !== this.activeProfileName) {
+                      this.deleteProfileByName(name);
+                    }
+                  })
+              )
+            }, (name: string) => name)
+          }
+          .padding({ left: 20, right: 20 })
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .width('100%')
+
+        // 操作按钮行
+        Row({ space: 10 }) {
+          Row({ space: 4 }) {
+            Text('+')
+              .fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
+            Text('新建')
+              .fontSize(OV_FONT_MD).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+          }
+          .height(32).padding({ left: 12, right: 14 })
+          .borderRadius(16).backgroundColor('#50C080')
+          .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+          .onClick(() => { this.createNewProfile(); })
+
+          Row({ space: 4 }) {
+            Text('⧉')
+              .fontSize(14).fontColor(OV_TEXT_WHITE)
+            Text('复制当前')
+              .fontSize(OV_FONT_MD).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+          }
+          .height(32).padding({ left: 12, right: 14 })
+          .borderRadius(16).backgroundColor('#8070A0')
+          .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+          .onClick(() => { this.duplicateCurrentProfile(); })
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20, bottom: 16 })
+
+        // 提示
+        Text('长按非活跃配置可删除')
+          .fontSize(OV_FONT_SM)
+          .fontColor(OV_TEXT_FAINT)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .padding({ bottom: 12 })
+      }
+      .width('100%')
+      .backgroundColor('#E6191925')
+      .backdropBlur(40)
+      .borderRadius({ topLeft: 20, topRight: 20 })
+      .border({ width: { top: 1 }, color: '#20FFFFFF' })
+    }
+    .width('100%')
+    .height('100%')
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

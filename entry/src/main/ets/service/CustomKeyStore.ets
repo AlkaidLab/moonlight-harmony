@@ -25,6 +25,7 @@ import {
   CustomKeyProfile,
   CustomKeyDef,
   createDefaultProfile,
+  cloneKeyDef,
   generateKeyId,
   KeyAction,
 } from './CustomKeyTypes';
@@ -183,6 +184,18 @@ export class CustomKeyStore {
     return profile;
   }
 
+  /** 循环切换到下一个配置，并返回切换后的配置 */
+  static async cycleNextProfile(): Promise<CustomKeyProfile | null> {
+    await CustomKeyStore.ensureInit();
+    if (CustomKeyStore.profiles!.length <= 1) return null;
+    const currentIdx = CustomKeyStore.profiles!.findIndex(p => p.name === CustomKeyStore.activeProfileName);
+    const nextIdx = (currentIdx + 1) % CustomKeyStore.profiles!.length;
+    const next = CustomKeyStore.profiles![nextIdx];
+    CustomKeyStore.activeProfileName = next.name;
+    await PreferencesUtil.put(STORAGE_KEY_ACTIVE, next.name);
+    return next;
+  }
+
   /** 创建新配置 */
   static async createProfile(name: string): Promise<CustomKeyProfile | null> {
     await CustomKeyStore.ensureInit();
@@ -222,6 +235,27 @@ export class CustomKeyStore {
     }
     await CustomKeyStore.save();
     return true;
+  }
+
+  /** 复制当前活跃配置为新配置并切换过去 */
+  static async duplicateProfile(newName: string): Promise<CustomKeyProfile | null> {
+    await CustomKeyStore.ensureInit();
+    if (CustomKeyStore.profiles!.find(p => p.name === newName)) {
+      return null; // 名称重复
+    }
+    const source = await CustomKeyStore.getActiveProfile();
+    const cloned: CustomKeyProfile = {
+      name: newName,
+      keys: source.keys.map(k => {
+        const copy = cloneKeyDef(k);
+        copy.id = generateKeyId();
+        return copy;
+      }),
+    };
+    CustomKeyStore.profiles!.push(cloned);
+    CustomKeyStore.activeProfileName = newName;
+    await CustomKeyStore.save();
+    return cloned;
   }
 
   // ── 按键管理 ──

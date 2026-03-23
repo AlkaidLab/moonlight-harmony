@@ -17,6 +17,7 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { VirtualKey, sendShortcutKeys } from '../service/CustomKeyTypes';
+import { CustomKeyStore } from '../service/CustomKeyStore';
 import { ShortcutManager, Shortcut } from './ShortcutManager';
 import { ActionDialog, ActionDialogConfig, ConfirmDialog, ConfirmDialogConfig } from './ConfirmDialog';
 import { SuperCmd } from '../service/NvHttp';
@@ -59,6 +60,7 @@ export interface GameMenuCallbacks {
   onImportCustomKeys?: () => void;
   onTogglePanZoom?: () => void;
   onResetPanZoom?: () => void;
+  onSwitchCustomKeyProfile?: (name: string) => void;
 }
 
 /** 菜单项配置 */
@@ -179,6 +181,9 @@ export struct GameMenuDialog {
   // 卡片使用频率排序
   @State private sortedMainCards: string[] = [];
   private cardUsageCounts: Map<string, number> = new Map();
+  // 自定义按键配置档案
+  @State private customKeyProfileNames: string[] = [];
+  @State private customKeyActiveProfile: string = '';
 
   // 虚拟手柄设置本地状态（拖动 Slider 时实时回调）
   @State private controllerOpacityLocal: number = 0.75;
@@ -208,6 +213,7 @@ export struct GameMenuDialog {
     this.touchPassthroughLocal = this.touchPassthrough;
     this.loadGyroSettings();
     this.loadCardUsageCounts();
+    this.loadCustomKeyProfiles();
     this.detectLayoutMode();
     this.animateIn();
   }
@@ -592,6 +598,14 @@ export struct GameMenuDialog {
     PreferencesUtil.put(CARD_USAGE_KEY, JSON.stringify(obj)).catch(() => {});
   }
 
+  private async loadCustomKeyProfiles(): Promise<void> {
+    try {
+      await CustomKeyStore.init();
+      this.customKeyProfileNames = await CustomKeyStore.getProfileNames();
+      this.customKeyActiveProfile = await CustomKeyStore.getActiveProfileName();
+    } catch (_) {}
+  }
+
   private async saveGyroSetting(key: string, value: string | boolean | number): Promise<void> {
     try {
       await PreferencesUtil.put(key, value);
@@ -818,7 +832,39 @@ export struct GameMenuDialog {
         .fontSize(OV_FONT_SM)
         .fontColor(OV_TEXT_FAINT)
         .width('100%')
-        .padding({ left: 16, right: 16, bottom: 10 })
+        .padding({ left: 16, right: 16, bottom: 6 })
+
+      // 配置档案选择器
+      if (this.customKeyProfileNames.length > 1) {
+        Scroll() {
+          Row({ space: 6 }) {
+            ForEach(this.customKeyProfileNames, (name: string) => {
+              Text(name)
+                .fontSize(11)
+                .fontWeight(name === this.customKeyActiveProfile ? FontWeight.Bold : FontWeight.Medium)
+                .fontColor(name === this.customKeyActiveProfile ? OV_TEXT_WHITE : OV_TEXT_MEDIUM)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                .borderRadius(12)
+                .backgroundColor(name === this.customKeyActiveProfile ? OV_ACCENT_BLUE : '#15FFFFFF')
+                .border({ width: 1, color: name === this.customKeyActiveProfile ? OV_BLUE_40 : '#10FFFFFF' })
+                .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
+                .onClick(() => {
+                  if (name !== this.customKeyActiveProfile) {
+                    this.customKeyActiveProfile = name;
+                    this.callbacks.onSwitchCustomKeyProfile?.(name);
+                  }
+                })
+            }, (name: string) => name)
+          }
+          .padding({ left: 16, right: 16 })
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .width('100%')
+        .padding({ bottom: 8 })
+      }
 
       Row({ space: 8 }) {
         Text('编辑布局')
