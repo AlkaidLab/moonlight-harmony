@@ -27,10 +27,13 @@ import {
   AnalogStickAction,
   DPadAction,
   WheelPadAction,
+  WheelPadSegment,
   DigitalStickAction,
+  KeyboardAction,
   createDefaultKeyDef,
   cloneKeyDef,
   generateKeyId,
+  getActionDisplayName,
   KEY_PRESET_CATEGORIES,
   KeyPreset,
   KeyPresetCategory,
@@ -90,6 +93,10 @@ export struct CustomKeyOverlay {
   @State showAddPanel: boolean = false;
   @State showPropertyPanel: boolean = false;
   @State addPanelCategoryIdx: number = 0;
+  /** 轮盘分区编辑：正在选择按键的分区索引，-1 表示未在选择 */
+  @State private segmentPickerIndex: number = -1;
+  /** 分区按键选择器的分类索引 */
+  @State private segmentPickerCategoryIdx: number = 0;
 
   /**
    * 命中测试刷新触发器（参照 VirtualControllerOverlay）。
@@ -2441,6 +2448,71 @@ export struct CustomKeyOverlay {
               .onClick(() => { this.updateSelectedKeyProp('layer', (this.getSelectedKey()?.layer ?? 0) + 1); })
           }
           .width('100%').padding({ left: 4, right: 4 })
+
+          // 轮盘分区编辑器（仅 wheelPad 类型显示）
+          if (this.getSelectedKey()?.action?.type === 'wheelPad') {
+            Column({ space: 6 }) {
+              Row() {
+                Text('轮盘分区').fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Medium)
+                Blank()
+                Text('+')
+                  .fontSize(14).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
+                  .width(24).height(24).textAlign(TextAlign.Center)
+                  .borderRadius(12).backgroundColor('#50C080')
+                  .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                  .onClick(() => { this.addWheelPadSegment(); })
+              }
+              .width('100%')
+
+              ForEach(this.getWheelPadSegments(), (seg: WheelPadSegment, index?: number) => {
+                Column({ space: 4 }) {
+                  Row({ space: 6 }) {
+                    Text(`${(index ?? 0) + 1}`)
+                      .fontSize(10).fontColor(OV_TEXT_DIM)
+                      .width(16).textAlign(TextAlign.Center)
+                    TextInput({ text: seg.label })
+                      .width(50).height(28).fontSize(11)
+                      .fontColor(OV_TEXT_WHITE).backgroundColor(OV_BG_CARD_LIGHTER)
+                      .borderRadius(6).padding({ left: 6, right: 6 })
+                      .maxLength(6)
+                      .onChange((value: string) => { this.updateSegmentLabel(index ?? 0, value); })
+                    Text(getActionDisplayName(seg.action))
+                      .fontSize(11).fontColor(OV_ACCENT_BLUE)
+                      .layoutWeight(1).maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    Text('改')
+                      .fontSize(11).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+                      .padding({ left: 8, right: 8 }).height(24)
+                      .borderRadius(12).backgroundColor(OV_BG_TRACK)
+                      .border({ width: 1, color: '#20FFFFFF' })
+                      .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                      .onClick(() => {
+                        this.segmentPickerIndex = (this.segmentPickerIndex === (index ?? 0)) ? -1 : (index ?? 0);
+                        this.segmentPickerCategoryIdx = 0;
+                      })
+                    if (this.getWheelPadSegments().length > 2) {
+                      Text('✕')
+                        .fontSize(11).fontColor('#FF8080')
+                        .width(22).height(24).textAlign(TextAlign.Center)
+                        .borderRadius(12).backgroundColor('#30FF6060')
+                        .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                        .onClick(() => { this.removeWheelPadSegment(index ?? 0); })
+                    }
+                  }
+                  .width('100%')
+
+                  // 按键选择器（展开时显示）
+                  if (this.segmentPickerIndex === (index ?? 0)) {
+                    this.SegmentActionPicker(index ?? 0)
+                  }
+                }
+              }, (_seg: WheelPadSegment, index?: number) => `seg_${index}_${this.segmentPickerIndex}`)
+            }
+            .width('100%').padding({ left: 4, right: 4 })
+            .backgroundColor('#10FFFFFF')
+            .borderRadius(8)
+            .padding(8)
+          }
         }
         .padding({ left: 16, right: 16, bottom: 16 })
       }
@@ -2455,6 +2527,149 @@ export struct CustomKeyOverlay {
     .border({ width: { top: 1, left: 1, right: 1 }, color: '#20FFFFFF' })
     .onTouch((event: TouchEvent) => { event.stopPropagation(); })
     .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation({ duration: 200 }))
+  }
+
+  // ── 轮盘分区编辑 ──
+
+  /** 获取选中按键的轮盘分区（安全访问） */
+  private getWheelPadSegments(): WheelPadSegment[] {
+    const key = this.getSelectedKey();
+    if (key && key.action.type === 'wheelPad') {
+      return (key.action as WheelPadAction).segments;
+    }
+    return [];
+  }
+
+  /** 更新分区标签 */
+  private updateSegmentLabel(segIndex: number, label: string): void {
+    const key = this.getSelectedKey();
+    if (!key || key.action.type !== 'wheelPad') return;
+    this.pushUndoState();
+    const segments = (key.action as WheelPadAction).segments;
+    if (segIndex >= 0 && segIndex < segments.length) {
+      segments[segIndex].label = label;
+    }
+    this.forceRefreshSelectedKey();
+  }
+
+  /** 更新分区绑定的按键动作 */
+  private updateSegmentAction(segIndex: number, action: KeyAction): void {
+    const key = this.getSelectedKey();
+    if (!key || key.action.type !== 'wheelPad') return;
+    this.pushUndoState();
+    const segments = (key.action as WheelPadAction).segments;
+    if (segIndex >= 0 && segIndex < segments.length) {
+      segments[segIndex].action = action;
+    }
+    this.segmentPickerIndex = -1;
+    this.forceRefreshSelectedKey();
+  }
+
+  /** 添加新分区 */
+  private addWheelPadSegment(): void {
+    const key = this.getSelectedKey();
+    if (!key || key.action.type !== 'wheelPad') return;
+    this.pushUndoState();
+    const segments = (key.action as WheelPadAction).segments;
+    const idx = segments.length + 1;
+    const newSeg: WheelPadSegment = {
+      label: `${idx}`,
+      action: { type: 'keyboard', vk: 0x30 + (idx % 10) } as KeyboardAction,
+    };
+    segments.push(newSeg);
+    this.forceRefreshSelectedKey();
+  }
+
+  /** 删除指定分区（至少保留 2 个） */
+  private removeWheelPadSegment(segIndex: number): void {
+    const key = this.getSelectedKey();
+    if (!key || key.action.type !== 'wheelPad') return;
+    const segments = (key.action as WheelPadAction).segments;
+    if (segments.length <= 2) return;
+    this.pushUndoState();
+    segments.splice(segIndex, 1);
+    if (this.segmentPickerIndex >= segments.length) {
+      this.segmentPickerIndex = -1;
+    }
+    this.forceRefreshSelectedKey();
+  }
+
+  /** 强制刷新选中按键的 UI（触发 @State keys 变更） */
+  private forceRefreshSelectedKey(): void {
+    const idx = this.keys.findIndex(k => k.id === this.selectedKeyId);
+    if (idx >= 0) {
+      const newKeys = this.keys.slice();
+      newKeys[idx] = cloneKeyDef(this.keys[idx]);
+      // 保留 action 引用（cloneKeyDef 浅拷贝 action）
+      newKeys[idx].action = this.keys[idx].action;
+      this.keys = newKeys;
+      CustomKeyStore.saveKeys(this.keys);
+    }
+  }
+
+  /** 用于分区编辑的简化预设列表（排除复合类型） */
+  private static readonly SEGMENT_PICKER_CATEGORIES: string[] = [
+    '常用键', '功能键', '鼠标', '手柄', '方向键', '字母', '数字', '符号',
+  ];
+
+  @Builder
+  SegmentActionPicker(segIndex: number) {
+    Column({ space: 4 }) {
+      // 分类选择
+      Scroll() {
+        Row({ space: 4 }) {
+          ForEach(CustomKeyOverlay.SEGMENT_PICKER_CATEGORIES, (catName: string, catIdx?: number) => {
+            Text(catName)
+              .fontSize(10)
+              .fontColor(this.segmentPickerCategoryIdx === (catIdx ?? 0) ? OV_TEXT_WHITE : OV_TEXT_DIM)
+              .fontWeight(FontWeight.Medium)
+              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+              .borderRadius(10)
+              .backgroundColor(this.segmentPickerCategoryIdx === (catIdx ?? 0) ? OV_ACCENT_BLUE : '#15FFFFFF')
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
+              .onClick(() => { this.segmentPickerCategoryIdx = catIdx ?? 0; })
+          }, (catName: string) => catName)
+        }
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('100%')
+
+      // 按键列表
+      Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(4), cross: LengthMetrics.vp(4) } }) {
+        ForEach(this.getSegmentPickerPresets(), (preset: KeyPreset) => {
+          Text(preset.label)
+            .fontSize(10).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .borderRadius(8)
+            .backgroundColor(OV_BG_TRACK)
+            .border({ width: 1, color: '#20FFFFFF' })
+            .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+            .onClick(() => { this.updateSegmentAction(segIndex, preset.action); })
+        }, (preset: KeyPreset) => `${preset.label}_${preset.action.type}`)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(6)
+    .backgroundColor('#15FFFFFF')
+    .borderRadius(6)
+  }
+
+  /** 获取当前分类下的按键预设 */
+  private getSegmentPickerPresets(): KeyPreset[] {
+    const catName = CustomKeyOverlay.SEGMENT_PICKER_CATEGORIES[this.segmentPickerCategoryIdx];
+    if (!catName) return [];
+    for (let i = 0; i < KEY_PRESET_CATEGORIES.length; i++) {
+      if (KEY_PRESET_CATEGORIES[i].name === catName) {
+        // 过滤掉复合类型（摇杆、十字键、轮盘等不适合作为分区动作的类型）
+        return KEY_PRESET_CATEGORIES[i].presets.filter((p: KeyPreset): boolean => {
+          const t = p.action.type;
+          return t !== 'analogStick' && t !== 'dpad' && t !== 'wheelPad' && t !== 'digitalStick';
+        });
+      }
+    }
+    return [];
   }
 
   @Builder
