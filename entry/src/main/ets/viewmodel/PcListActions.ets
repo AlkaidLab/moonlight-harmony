@@ -404,8 +404,7 @@ export class PcListActions {
         lines.push('');
         lines.push(`主机名: ${serverInfo.hostname}`);
         if (serverInfo.gpuType) lines.push(`GPU: ${serverInfo.gpuType}`);
-        if (serverInfo.gfeVersion) lines.push(`GFE: ${serverInfo.gfeVersion}`);
-        lines.push(`配对: ${serverInfo.paired ? '已配对' : '未配对'}`);
+        lines.push(`配对: ${computer.isPaired ? '已配对' : '未配对'}`);
         if (serverInfo.currentGame > 0) lines.push(`运行中游戏 ID: ${serverInfo.currentGame}`);
       }
     } else {

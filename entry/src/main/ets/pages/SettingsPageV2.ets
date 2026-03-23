@@ -24,6 +24,7 @@ import { InputInterceptorService } from '../service/InputInterceptorService';
 import { SettingsKeys } from '../service/SettingsService';
 import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
+import { DevKeyVerifier } from '../utils/DevKeyVerifier';
 
 /**
  * 选择器选项接口
@@ -1942,14 +1943,17 @@ struct SettingsPageV2 {
               },
               {
                 title: '开发者模式',
-                subtitle: '启用实验性功能（如麦克风）',
+                subtitle: this.developerMode ? '已激活' : '启用实验性功能（如麦克风）',
                 type: 'toggle',
                 value: this.developerMode,
                 action: () => {
-                  this.developerMode = !this.developerMode;
-                  this.saveSetting(SettingsKeys.DEVELOPER_MODE, this.developerMode);
                   if (this.developerMode) {
-                    promptAction.showToast({ message: '开发者模式已启用', duration: 2000 });
+                    // 关闭不需要验证
+                    this.developerMode = false;
+                    this.saveSetting(SettingsKeys.DEVELOPER_MODE, false);
+                  } else {
+                    // 开启需要激活码
+                    this.showDevKeyActivation();
                   }
                 }
               },
@@ -3405,6 +3409,33 @@ struct SettingsPageV2 {
         this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_TYPE, 'default');
         this.showToast('已恢复使用默认 API');
       }
+    };
+    this.showTextInputDialog = true;
+  }
+
+  /**
+   * 显示开发者模式激活码输入
+   */
+  private showDevKeyActivation(): void {
+    const context = getContext(this) as common.Context;
+    const deviceId = DevKeyVerifier.getDeviceId(context);
+    if (!deviceId) {
+      promptAction.showToast({ message: '无法获取设备 ID，请先连接一次服务器', duration: 3000 });
+      return;
+    }
+    this.textInputTitle = `激活开发者模式\n设备 ID: ${deviceId.toUpperCase()}`;
+    this.textInputPlaceholder = '请输入 8 位激活码';
+    this.textInputValue = '';
+    this.textInputCallback = (value: string) => {
+      DevKeyVerifier.verify(deviceId, value).then((ok) => {
+        if (ok) {
+          this.developerMode = true;
+          this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
+          promptAction.showToast({ message: '开发者模式已激活', duration: 2000 });
+        } else {
+          promptAction.showToast({ message: '激活码无效', duration: 2000 });
+        }
+      });
     };
     this.showTextInputDialog = true;
   }
