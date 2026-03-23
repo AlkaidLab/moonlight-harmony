@@ -321,11 +321,18 @@ export class PcListActions {
     promptAction.showToast({ message: '正在测试网络...' });
     try {
       const computerInfo = computer.toComputerInfo();
-      await this.computerManager.pollComputer(computerInfo);
-      this.ui.showInfoDialog({
-        title: '网络测试结果',
-        content: `电脑 ${computer.name} 响应正常`
-      });
+      const online = await this.computerManager.pollComputer(computerInfo);
+      if (online) {
+        this.ui.showInfoDialog({
+          title: '网络测试结果',
+          content: `电脑 ${computer.name} 响应正常`
+        });
+      } else {
+        this.ui.showInfoDialog({
+          title: '网络测试结果',
+          content: `电脑 ${computer.name} 无法连接`
+        });
+      }
     } catch (error) {
       this.ui.showInfoDialog({
         title: '网络测试结果',
