@@ -441,6 +441,7 @@ struct PcListPageV2 {
       }
       .width('100%')
       .height('100%')
+      .defaultFocus(true)
       
       // PIN 对话框
       if (this.showPinDialog) {

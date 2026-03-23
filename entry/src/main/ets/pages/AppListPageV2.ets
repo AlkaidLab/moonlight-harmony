@@ -400,8 +400,6 @@ struct AppListPageV2 {
           if (this.isLoading) {
             this.LoadingState()
           } else if (this.viewModel.isEmpty) {
-            // 当列表为空时，显示空状态
-            // 即使在刷新中也显示，避免出现完全空白的页面
             this.EmptyState()
           } else {
             Column() {
@@ -425,6 +423,7 @@ struct AppListPageV2 {
       }
       .width('100%')
       .height('100%')
+      .defaultFocus(true)
     }
     .width('100%')
     .height('100%')
