@@ -228,6 +228,16 @@ struct StreamPage {
         }
       }
     }
+
+    // 自动加载游戏关联的自定义按键配置
+    if (this.appId > 0) {
+      CustomKeyStore.loadGameProfile(this.appId).then((profile) => {
+        if (profile) {
+          this.customKeyProfileVersion++;
+          console.info(`[StreamPage] 自动加载游戏配置: ${profile.name}`);
+        }
+      });
+    }
     
     // 初始化窗口管理器
     this.windowManager = new StreamWindowManager(this.context);
@@ -681,6 +691,10 @@ struct StreamPage {
         const profile = await CustomKeyStore.switchProfile(name);
         if (profile) {
           this.customKeyProfileVersion++;
+          // 保存游戏→配置关联
+          if (this.appId > 0) {
+            CustomKeyStore.setGameProfile(this.appId, profile.name);
+          }
         }
       }
     };
@@ -902,6 +916,10 @@ struct StreamPage {
     const profile = await CustomKeyStore.cycleNextProfile();
     if (profile) {
       this.customKeyProfileVersion++;
+      // 保存游戏→配置关联
+      if (this.appId > 0) {
+        CustomKeyStore.setGameProfile(this.appId, profile.name);
+      }
       promptAction.showToast({ message: `已切换到: ${profile.name}`, duration: 1500 });
     } else {
       promptAction.showToast({ message: '仅有一个配置', duration: 1500 });
@@ -1385,6 +1403,12 @@ struct StreamPage {
             },
             onProfileSwitched: (): void => {
               this.customKeyProfileVersion++;
+              // 保存游戏→配置关联
+              if (this.appId > 0) {
+                CustomKeyStore.getActiveProfileName().then((name) => {
+                  CustomKeyStore.setGameProfile(this.appId, name);
+                });
+              }
             },
           })
         }

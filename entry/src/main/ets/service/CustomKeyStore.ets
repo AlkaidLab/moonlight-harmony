@@ -39,6 +39,7 @@ interface ExportData {
 /** 存储键 */
 const STORAGE_KEY_PROFILES = 'custom_key_profiles';
 const STORAGE_KEY_ACTIVE = 'custom_key_active_profile';
+const STORAGE_KEY_GAME_PROFILES = 'custom_key_game_profiles';
 
 /**
  * 自定义按键配置存储管理
@@ -50,6 +51,8 @@ export class CustomKeyStore {
   // ── 缓存 ──
   private static profiles: CustomKeyProfile[] | null = null;
   private static activeProfileName: string = '';
+  /** 游戏→配置映射缓存: { "appId": "profileName" } */
+  private static gameProfiles: Record<string, string> | null = null;
 
   /**
    * 初始化：从持久化加载数据
@@ -82,6 +85,14 @@ export class CustomKeyStore {
       if (CustomKeyStore.migrateAbsoluteToPercent()) {
         await CustomKeyStore.save();
         console.info('[CustomKeyStore] 坐标迁移完成: absolute vp → percent');
+      }
+
+      // 加载游戏→配置映射
+      const gameJson = await PreferencesUtil.get<string>(STORAGE_KEY_GAME_PROFILES, '');
+      if (gameJson) {
+        CustomKeyStore.gameProfiles = JSON.parse(gameJson) as Record<string, string>;
+      } else {
+        CustomKeyStore.gameProfiles = {};
       }
     } catch (e) {
       console.error('[CustomKeyStore] init failed:', JSON.stringify(e));
@@ -368,5 +379,49 @@ export class CustomKeyStore {
       console.error('[CustomKeyStore] merge import failed:', JSON.stringify(e));
       return -1;
     }
+  }
+
+  // ── 游戏→配置自动关联 ──
+
+  /**
+   * 获取游戏关联的配置名称。
+   * @returns 配置名称，未关联则返回 null
+   */
+  static async getGameProfileName(appId: number): Promise<string | null> {
+    await CustomKeyStore.ensureInit();
+    const name = CustomKeyStore.gameProfiles?.[String(appId)];
+    if (!name) return null;
+    // 验证配置仍然存在
+    if (!CustomKeyStore.profiles!.find(p => p.name === name)) {
+      CustomKeyStore.gameProfiles![String(appId)] = '';
+      await PreferencesUtil.put(STORAGE_KEY_GAME_PROFILES, JSON.stringify(CustomKeyStore.gameProfiles));
+      return null;
+    }
+    return name;
+  }
+
+  /**
+   * 保存游戏→配置关联
+   */
+  static async setGameProfile(appId: number, profileName: string): Promise<void> {
+    await CustomKeyStore.ensureInit();
+    if (!CustomKeyStore.gameProfiles) {
+      CustomKeyStore.gameProfiles = {};
+    }
+    CustomKeyStore.gameProfiles[String(appId)] = profileName;
+    await PreferencesUtil.put(STORAGE_KEY_GAME_PROFILES, JSON.stringify(CustomKeyStore.gameProfiles));
+  }
+
+  /**
+   * 根据游戏自动加载关联配置。
+   * 如果该游戏有记忆的配置，自动切换到该配置。
+   * @returns 加载的配置，无关联则返回 null（不改变当前配置）
+   */
+  static async loadGameProfile(appId: number): Promise<CustomKeyProfile | null> {
+    const name = await CustomKeyStore.getGameProfileName(appId);
+    if (!name) return null;
+    // 已经是当前配置则不重复切换
+    if (name === CustomKeyStore.activeProfileName) return null;
+    return CustomKeyStore.switchProfile(name);
   }
 }
