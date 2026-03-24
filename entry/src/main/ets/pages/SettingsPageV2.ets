@@ -1619,7 +1619,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '游戏鼠标模式',
-                subtitle: '相对输入+光标回弹，适合 FPS/TPS 游戏',
+                subtitle: '相对输入+光标回弹，适合 FPS/TPS 游戏。搭配 Foundation Sunshine 的鼠标驱动效果更佳',
                 type: 'toggle',
                 value: this.gameMouseMode,
                 action: () => {
@@ -1903,6 +1903,26 @@ struct SettingsPageV2 {
                   this.disableWarnings = !this.disableWarnings;
                   this.saveSetting(SettingsKeys.DISABLE_WARNINGS, this.disableWarnings);
                 }
+              },
+              {
+                title: '开发者模式',
+                subtitle: this.developerMode ? '已激活' : (this.devKeyActivated ? '已授权，点击开启' : '需要激活码'),
+                type: 'toggle',
+                value: this.developerMode,
+                action: () => {
+                  if (this.developerMode) {
+                    this.developerMode = false;
+                    this.saveSetting(SettingsKeys.DEVELOPER_MODE, false);
+                  } else if (this.devKeyActivated) {
+                    // 已验证过激活码，直接开启
+                    this.developerMode = true;
+                    this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
+                  } else {
+                    // 首次需要输入激活码
+                    this.developerMode = true;
+                    this.showDevKeyActivation();
+                  }
+                }
               }
             ]
           })
@@ -1943,26 +1963,6 @@ struct SettingsPageV2 {
                 action: () => {
                   this.resumeStream = !this.resumeStream;
                   this.saveSetting(SettingsKeys.RESUME_STREAM, this.resumeStream);
-                }
-              },
-              {
-                title: '开发者模式',
-                subtitle: this.developerMode ? '已激活' : (this.devKeyActivated ? '已授权，点击开启' : '需要激活码'),
-                type: 'toggle',
-                value: this.developerMode,
-                action: () => {
-                  if (this.developerMode) {
-                    this.developerMode = false;
-                    this.saveSetting(SettingsKeys.DEVELOPER_MODE, false);
-                  } else if (this.devKeyActivated) {
-                    // 已验证过激活码，直接开启
-                    this.developerMode = true;
-                    this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
-                  } else {
-                    // 首次需要输入激活码
-                    this.developerMode = true;
-                    this.showDevKeyActivation();
-                  }
                 }
               },
               {
