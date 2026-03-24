@@ -29,7 +29,6 @@ import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { vibrator } from '@kit.SensorServiceKit';
 import { display } from '@kit.ArkUI';
 
-
 // =============================================================================
 // Windows 虚拟键码
 // =============================================================================
@@ -274,8 +273,7 @@ export struct VirtualKeyboard {
   /** 键盘位置（拖拽） */
   @State private posX: number = 0;
   @State private posY: number = 0;
-  /** 父容器高度 */
-  private parentHeight: number = 0;
+
   /** 背景图片 URI（空=无背景图） */
   @State private backgroundImageUri: string = '';
   /** 组合键模式：修饰键粘滞 toggle */
@@ -292,13 +290,11 @@ export struct VirtualKeyboard {
     // 预计算键盘初始位置（底部对齐）
     try {
       const d = display.getDefaultDisplaySync();
-      this.parentHeight = d.height / d.densityPixels;
+      this.posY = px2vp(d.height) - (TITLE_BAR_HEIGHT + (KEYBOARD_ROWS.length - 1) * KEY_HEIGHT
+        + FUNC_KEY_HEIGHT + (KEYBOARD_ROWS.length - 1) * ROW_GAP + KB_PADDING * 2);
     } catch (_e) {
-      this.parentHeight = 800;
+      this.posY = 500;
     }
-    const kbH = TITLE_BAR_HEIGHT + (KEYBOARD_ROWS.length - 1) * KEY_HEIGHT
-      + FUNC_KEY_HEIGHT + (KEYBOARD_ROWS.length - 1) * ROW_GAP + KB_PADDING * 2;
-    this.posY = this.parentHeight - kbH;
 
     // 加载保存的背景图
     const savedUri = await PreferencesUtil.get<string>(KB_BG_IMAGE_KEY, '');
@@ -358,6 +354,18 @@ export struct VirtualKeyboard {
     .shadow({ radius: 20, color: '#60000000', offsetY: 4 })
     .opacity(this.opacity_)
     .position({ x: this.posX, y: this.posY })
+    .onAreaChange((_old: Area, area: Area) => {
+      const actualH = area.height as number;
+      const globalY = (area.globalPosition?.y ?? -1) as number;
+      // 检测键盘是否超出屏幕底部，如果是则自动上移
+      if (globalY >= 0 && actualH > 0) {
+        const screenH = px2vp(display.getDefaultDisplaySync().height);
+        const overflow = (globalY + actualH) - screenH;
+        if (overflow > 10) {
+          this.posY = Math.max(0, this.posY - overflow);
+        }
+      }
+    })
     .clip(true)
   }
 
