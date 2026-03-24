@@ -196,18 +196,24 @@ export function getPerformanceItemInfo(item: PerformanceItem): PerformanceItemIn
 /**
  * 获取月相图标
  */
-export function getMoonPhaseIcon(): string {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  
+/** 当前是否处于时钟显示时段（每刻钟 :00/:15/:30/:45 的 1 分钟内） */
+export function isClockTime(): boolean {
+  return new Date().getMinutes() % 15 === 0;
+}
+
+export function getMoonPhaseIcon(locked: boolean = false): string {
+  // 锁定时显示图钉代替月相
+  if (locked) {
+    return '📌';
+  }
+
   // 简化的月相计算（基于朔望月周期 29.53 天）
+  const date = new Date();
   const lp = 2551443; // 月相周期（秒）
   const newMoon = new Date(1970, 0, 7, 20, 35, 0); // 已知新月时间
   const phase = ((date.getTime() - newMoon.getTime()) / 1000) % lp;
   const phaseIndex = Math.floor(phase / (lp / 8));
-  
+
   const icons = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];
   return icons[phaseIndex] || '🌙';
 }

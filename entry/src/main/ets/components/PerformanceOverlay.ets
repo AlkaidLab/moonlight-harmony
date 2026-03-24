@@ -19,7 +19,7 @@ import { batteryInfo } from '@kit.BasicServicesKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './OptionPickerDialog';
 import {
   PerformanceItem, PerformanceData, PerfIcons, PerfLabels,
-  getMoonPhaseIcon, formatDataRate, getDecoderString,
+  getMoonPhaseIcon, isClockTime, formatDataRate, getDecoderString,
   getPacketLossColor, getLatencyColor, getBatteryColor,
   calculateSnapPosition, findNearestSnapPosition,
   getPerformanceItemInfo, getSnapBorderRadius, SnapPosition
@@ -75,6 +75,12 @@ export struct PerformanceOverlay {
   
   // 锁定闪烁边框
   @State lockFlashBorderOpacity: number = 0;
+  
+  // 时钟图标弹跳动画
+  @State clockIconScale: number = 1.0;
+  @State clockHourAngle: number = 0;
+  @State clockMinuteAngle: number = 0;
+  private wasClockTime: boolean = false;
   
   // 启用的性能项（@State 数组驱动 UI 响应式渲染，Set 变更不被追踪）
   @State enabledItemsList: string[] = [];
@@ -182,6 +188,16 @@ export struct PerformanceOverlay {
       // 每15秒更新电池
       batteryUpdateCounter++;
       if (batteryUpdateCounter >= 15) {
+
+      // 检测时钟状态变化，触发弹跳动画并更新时钟角度
+      const clockNow = isClockTime();
+      if (clockNow) {
+        this.updateClockAngles();
+        if (!this.wasClockTime) {
+          this.triggerClockBounce();
+        }
+      }
+      this.wasClockTime = clockNow;
         batteryUpdateCounter = 0;
         try {
           this.perfBatteryLevel = batteryInfo.batterySOC;
@@ -210,6 +226,78 @@ export struct PerformanceOverlay {
     }
   }
   
+  /** 时钟图标出现时的弹跳动画 */
+  private triggerClockBounce(): void {
+    // 指针从上一刻钟的时间位置旋转到当前时间
+    const now = new Date();
+    const prevTime = new Date(now.getTime() - 15 * 60 * 1000);
+    const prevH = prevTime.getHours() % 12;
+    const prevM = prevTime.getMinutes();
+    this.clockHourAngle = prevH * 30 + prevM * 0.5;
+    this.clockMinuteAngle = prevM * 6;
+    setTimeout(() => {
+      this.updateClockAngles();
+    }, 50);
+    // 缩放脉冲
+    let step = 0;
+    const bounce = () => {
+      if (step >= 6) {
+        this.clockIconScale = 1.0;
+        return;
+      }
+      this.clockIconScale = (step % 2 === 0) ? 4.0 : 1.0;
+      step++;
+      setTimeout(bounce, 200);
+    };
+    bounce();
+  }
+
+  /** 更新时钟指针角度 */
+  private updateClockAngles(): void {
+    const now = new Date();
+    const h = now.getHours() % 12;
+    const m = now.getMinutes();
+    // 时针：每小时30°，每分钟0.5°
+    this.clockHourAngle = h * 30 + m * 0.5;
+    // 分针：每分钟6°
+    this.clockMinuteAngle = m * 6;
+  }
+
+  /** 自绘极简时钟（时针+分针） */
+  @Builder
+  MiniClock(size: number) {
+    Stack() {
+      // 时针（短粗）
+      Line()
+        .width(1.5)
+        .height(size * 0.28)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(1)
+        .rotate({ angle: this.clockHourAngle, centerX: '50%', centerY: '100%' })
+        .animation({ duration: 800, curve: Curve.EaseOut })
+        .position({ x: size / 2 - 0.75, y: size / 2 - size * 0.28 })
+      // 分针（长细）
+      Line()
+        .width(1)
+        .height(size * 0.4)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(0.5)
+        .rotate({ angle: this.clockMinuteAngle, centerX: '50%', centerY: '100%' })
+        .animation({ duration: 800, curve: Curve.EaseOut })
+        .position({ x: size / 2 - 0.5, y: size / 2 - size * 0.4 })
+      // 中心点
+      Circle()
+        .width(2)
+        .height(2)
+        .fill('#FFFFFF')
+        .position({ x: size / 2 - 1, y: size / 2 - 1 })
+    }
+    .width(size)
+    .height(size)
+    .scale({ x: this.clockIconScale, y: this.clockIconScale })
+    .animation({ duration: 200, curve: Curve.EaseOut })
+  }
+
   /** 锁定时播放金色边框闪烁动画（闪 3 次） */
   private playLockFlash(): void {
     let count = 0;
@@ -303,7 +391,7 @@ export struct PerformanceOverlay {
           PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, true);
           this.playLockFlash();
           try {
-            promptAction.showToast({ message: '🔒 已锁定，触摸将透传至游戏', duration: 1500 });
+            promptAction.showToast({ message: '� 已锁定，触摸将透传至游戏', duration: 1500 });
           } catch (_) {}
         })
     )
@@ -356,9 +444,13 @@ export struct PerformanceOverlay {
     // 分辨率行
     if (this.enabledItemsList.includes(PerformanceItem.RESOLUTION)) {
       Row() {
-        Text(this.overlayLocked ? '🔒' : getMoonPhaseIcon())
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
+        if (isClockTime()) {
+          this.MiniClock(14)
+        } else {
+          Text(getMoonPhaseIcon(this.overlayLocked))
+            .fontSize(13)
+            .fontWeight(FontWeight.Bold)
+        }
         Text(` ${this.viewModel.displayInfo.streamWidth}x${this.viewModel.displayInfo.streamHeight}@${this.viewModel.streamConfig?.fps || 60}`)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
@@ -492,9 +584,13 @@ export struct PerformanceOverlay {
     Row() {
       // 分辨率
       if (this.enabledItemsList.includes(PerformanceItem.RESOLUTION)) {
-        Text(this.overlayLocked ? '🔒' : getMoonPhaseIcon())
-          .fontSize(12)
-          .fontWeight(FontWeight.Bold)
+        if (isClockTime()) {
+          this.MiniClock(13)
+        } else {
+          Text(getMoonPhaseIcon(this.overlayLocked))
+            .fontSize(12)
+            .fontWeight(FontWeight.Bold)
+        }
         Text(` ${this.viewModel.displayInfo.streamWidth}x${this.viewModel.displayInfo.streamHeight}@${this.viewModel.streamConfig?.fps || 60}`)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
