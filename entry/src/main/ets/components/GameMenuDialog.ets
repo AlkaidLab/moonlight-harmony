@@ -101,6 +101,7 @@ const CARD_SUPERCMD = 'supercmd';
 const CARD_BITRATE = 'bitrate';
 const CARD_CUSTOMKEY = 'customkey';
 const CARD_UNLOCK = 'unlock';
+const CARD_MIC = 'mic';
 const CARD_USAGE_KEY = 'game_menu_card_usage';
 
 // 马卡龙色系菜单配置
@@ -181,6 +182,7 @@ export struct GameMenuDialog {
   // 卡片使用频率排序
   @State private sortedMainCards: string[] = [];
   private cardUsageCounts: Map<string, number> = new Map();
+  @State private micActive: boolean = false;
   // 自定义按键配置档案
   @State private customKeyProfileNames: string[] = [];
   @State private customKeyActiveProfile: string = '';
@@ -214,6 +216,7 @@ export struct GameMenuDialog {
     this.loadGyroSettings();
     this.loadCardUsageCounts();
     this.loadCustomKeyProfiles();
+    this.micActive = this.viewModel.getSession()?.isMicrophoneActive() ?? false;
     this.detectLayoutMode();
     this.animateIn();
   }
@@ -576,7 +579,6 @@ export struct GameMenuDialog {
     if (this.superCmds.length > 0) visible.push(CARD_SUPERCMD);
     visible.push(CARD_BITRATE);
     visible.push(CARD_CUSTOMKEY);
-    if (this.viewModel.overlayState.config.isLocked) visible.push(CARD_UNLOCK);
     // 按使用次数降序排列，次数相同保持原始顺序
     visible.sort((a: string, b: string): number => {
       const ca = this.cardUsageCounts.get(a) || 0;
@@ -584,6 +586,12 @@ export struct GameMenuDialog {
       return cb - ca;
     });
     this.sortedMainCards = visible;
+  }
+
+  /** 是否有快捷按钮卡片（解锁、麦克风等 1x1 小按钮） */
+  private hasButtonCards(): boolean {
+    return this.viewModel.overlayState.config.isLocked ||
+      (this.viewModel.getSession()?.isMicrophoneEnabled() ?? false);
   }
 
   /**
@@ -662,6 +670,10 @@ export struct GameMenuDialog {
           ForEach(this.sortedMainCards.filter((_: string, i: number) => i % 2 === 0),
             (cardId: string) => { this.RenderCardById(cardId) },
             (cardId: string) => cardId)
+          // 快捷按钮行（解锁、麦克风等小卡片）
+          if (this.hasButtonCards()) {
+            this.ButtonCardsRow()
+          }
           // "更多设置"折叠区（左列下方）
           if (this.hasMoreCards()) {
             this.MoreCardsToggle()
@@ -700,6 +712,10 @@ export struct GameMenuDialog {
         ForEach(this.sortedMainCards,
           (cardId: string) => { this.RenderCardById(cardId) },
           (cardId: string) => cardId)
+        // 快捷按钮行（解锁、麦克风等小卡片）
+        if (this.hasButtonCards()) {
+          this.ButtonCardsRow()
+        }
         // "更多设置"折叠区
         if (this.hasMoreCards()) {
           this.MoreCardsToggle()
@@ -730,42 +746,75 @@ export struct GameMenuDialog {
       this.BitrateCard()
     } else if (cardId === CARD_CUSTOMKEY) {
       this.CustomKeyCard()
-    } else if (cardId === CARD_UNLOCK) {
-      this.UnlockOverlayCard()
     }
   }
 
   @Builder
-  ButtonCardContent(icon: string, label: string) {
-    Column() {
-      Text(icon).fontSize(20)
-      Text(label)
-        .fontSize(OV_FONT_MD)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(OV_TEXT_BRIGHT)
-        .margin({ top: 4 })
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Center)
+  @Builder
+  ButtonCardsRow() {
+    Row({ space: 8 }) {
+      if (this.viewModel.overlayState.config.isLocked) {
+        this.UnlockOverlayCard()
+      }
+      if (this.viewModel.getSession()?.isMicrophoneEnabled()) {
+        this.MicCard()
+      }
     }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
   UnlockOverlayCard() {
     Column() {
-      this.ButtonCardContent('🔓', '解锁性能覆盖层')
+      SymbolGlyph($r('sys.symbol.lock_open'))
+        .fontSize(22)
+        .fontColor([OV_TEXT_BRIGHT])
+      Text('解锁')
+        .fontSize(OV_FONT_MD)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(OV_TEXT_BRIGHT)
+        .margin({ top: 4 })
     }
     .width(BUTTON_CARD_SIZE)
     .height(BUTTON_CARD_SIZE)
-    .padding(10)
+    .justifyContent(FlexAlign.Center)
     .cardStyle()
     .onClick(() => {
       this.recordCardUsage(CARD_UNLOCK);
       this.callbacks.onUnlockOverlay?.();
       this.callbacks.onClose?.();
+    })
+  }
+
+  @Builder
+  MicCard() {
+    Column() {
+      SymbolGlyph(this.micActive ? $r('sys.symbol.mic') : $r('sys.symbol.mic_slash'))
+        .fontSize(22)
+        .fontColor([this.micActive ? OV_TEXT_BRIGHT : OV_TEXT_DIM])
+      Text(this.micActive ? '麦克风' : '已静音')
+        .fontSize(OV_FONT_MD)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.micActive ? OV_TEXT_BRIGHT : OV_TEXT_DIM)
+        .margin({ top: 4 })
+    }
+    .width(BUTTON_CARD_SIZE)
+    .height(BUTTON_CARD_SIZE)
+    .justifyContent(FlexAlign.Center)
+    .cardStyle()
+    .onClick(() => {
+      this.recordCardUsage(CARD_MIC);
+      const session = this.viewModel.getSession();
+      if (!session?.hasMicrophoneStream()) {
+        promptAction.showToast({ message: '主机未请求麦克风', duration: 1500 });
+        return;
+      }
+      session.toggleMicrophone().then((active: boolean) => {
+        this.micActive = active;
+        promptAction.showToast({
+          message: active ? '麦克风已开启' : '麦克风已关闭',
+          duration: 1500
+        });
+      });
     })
   }
 

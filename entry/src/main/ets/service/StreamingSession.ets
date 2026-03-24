@@ -1292,6 +1292,23 @@ export class StreamingSession {
     this.microphoneStream = null;
   }
 
+  async toggleMicrophone(): Promise<boolean> {
+    if (!this.microphoneStream) return false;
+    return this.microphoneStream.toggle();
+  }
+
+  isMicrophoneActive(): boolean {
+    return this.microphoneStream?.isRunning() ?? false;
+  }
+
+  isMicrophoneEnabled(): boolean {
+    return this.config?.microphoneEnabled ?? false;
+  }
+
+  hasMicrophoneStream(): boolean {
+    return this.microphoneStream !== null;
+  }
+
   // ---------------------------------------------------------------------------
   // 内部 — 清理
   // ---------------------------------------------------------------------------
