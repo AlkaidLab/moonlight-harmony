@@ -1405,20 +1405,17 @@ struct StreamPage {
 
       // PC 虚拟键盘
       if (this.showVirtualKeyboard && this.viewModel.isConnected) {
-        Column() {
-          VirtualKeyboard({
-            onVirtualKeyEvent: (vk: number, isDown: boolean): void => {
-              const session = this.viewModel.getSession();
-              if (session) {
-                session.sendKeyboardInput(vk, isDown ? 0x03 : 0x04);
-              }
-            },
-            onClose: (): void => {
-              this.showVirtualKeyboard = false;
-            },
-          })
-        }
-          .position({ left: 0, bottom: 0 })
+        VirtualKeyboard({
+          onVirtualKeyEvent: (vk: number, isDown: boolean): void => {
+            const session = this.viewModel.getSession();
+            if (session) {
+              session.sendKeyboardInput(vk, isDown ? 0x03 : 0x04);
+            }
+          },
+          onClose: (): void => {
+            this.showVirtualKeyboard = false;
+          },
+        })
           .width('100%')
       }
 

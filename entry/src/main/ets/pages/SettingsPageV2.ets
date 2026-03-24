@@ -11,6 +11,7 @@
 import { router, promptAction, display } from '@kit.ArkUI';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { common, Want, bundleManager } from '@kit.AbilityKit';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { StreamingSession, DecoderCapabilities } from '../service/StreamingSession';
@@ -236,6 +237,7 @@ struct SettingsPageV2 {
   @State backgroundImageUrl: string = '';
   @State resumeStream: boolean = false;
   @State developerMode: boolean = false;  // 开发者模式
+  private devKeyActivated: boolean = false;  // 激活码已验证过
   
   // 应用版本
   @State appVersion: string = '';
@@ -274,6 +276,7 @@ struct SettingsPageV2 {
   @State textInputPlaceholder: string = '';
   @State textInputValue: string = '';
   private textInputCallback: ((value: string) => void) | null = null;
+  private textInputDismissCallback: (() => void) | null = null;
   
   // 自定义分辨率输入弹窗状态
   @State customResWidth: string = '';
@@ -548,6 +551,7 @@ struct SettingsPageV2 {
       this.backgroundImageUrl = await PreferencesUtil.get<string>(SettingsKeys.BACKGROUND_IMAGE_URL, '');
       this.resumeStream = await this.loadBoolean(SettingsKeys.RESUME_STREAM, false);
       this.developerMode = await this.loadBoolean(SettingsKeys.DEVELOPER_MODE, false);
+      this.devKeyActivated = await this.loadBoolean(SettingsKeys.DEV_KEY_ACTIVATED, false);
     } catch (error) {
       console.error('Failed to load settings:', error);
     } finally {
@@ -1943,16 +1947,20 @@ struct SettingsPageV2 {
               },
               {
                 title: '开发者模式',
-                subtitle: this.developerMode ? '已激活' : '启用实验性功能（如麦克风）',
+                subtitle: this.developerMode ? '已激活' : (this.devKeyActivated ? '已授权，点击开启' : '需要激活码'),
                 type: 'toggle',
                 value: this.developerMode,
                 action: () => {
                   if (this.developerMode) {
-                    // 关闭不需要验证
                     this.developerMode = false;
                     this.saveSetting(SettingsKeys.DEVELOPER_MODE, false);
+                  } else if (this.devKeyActivated) {
+                    // 已验证过激活码，直接开启
+                    this.developerMode = true;
+                    this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
                   } else {
-                    // 开启需要激活码
+                    // 首次需要输入激活码
+                    this.developerMode = true;
                     this.showDevKeyActivation();
                   }
                 }
@@ -2083,7 +2091,13 @@ struct SettingsPageV2 {
       backgroundColor: Color.Transparent,
       dragBar: false,
       showClose: false,
-      preferType: SheetType.BOTTOM
+      preferType: SheetType.BOTTOM,
+      onDisappear: () => {
+        if (this.textInputDismissCallback) {
+          this.textInputDismissCallback();
+          this.textInputDismissCallback = null;
+        }
+      }
     } as SheetOptions)
   }
 
@@ -3420,22 +3434,38 @@ struct SettingsPageV2 {
     const context = getContext(this) as common.Context;
     const deviceId = DevKeyVerifier.getDeviceId(context);
     if (!deviceId) {
+      this.developerMode = false;
       promptAction.showToast({ message: '无法获取设备 ID，请先连接一次服务器', duration: 3000 });
       return;
     }
-    this.textInputTitle = `激活开发者模式\n设备 ID: ${deviceId.toUpperCase()}`;
+    const displayId = deviceId.toUpperCase();
+    // 自动复制设备 ID 到剪贴板
+    const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, displayId);
+    pasteboard.getSystemPasteboard().setDataSync(pasteData);
+    this.textInputTitle = `激活开发者模式\n设备 ID: ${displayId}（已复制）`;
     this.textInputPlaceholder = '请输入 8 位激活码';
     this.textInputValue = '';
     this.textInputCallback = (value: string) => {
-      DevKeyVerifier.verify(deviceId, value).then((ok) => {
-        if (ok) {
-          this.developerMode = true;
-          this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
-          promptAction.showToast({ message: '开发者模式已激活', duration: 2000 });
-        } else {
-          promptAction.showToast({ message: '激活码无效', duration: 2000 });
-        }
-      });
+      // 确定按钮点击，清除 dismiss 回调以免重复触发
+      this.textInputDismissCallback = null;
+      if (!value) {
+        this.developerMode = false;
+        return;
+      }
+      if (DevKeyVerifier.verify(deviceId, value)) {
+        this.developerMode = true;
+        this.devKeyActivated = true;
+        this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
+        this.saveSetting(SettingsKeys.DEV_KEY_ACTIVATED, true);
+        promptAction.showToast({ message: '开发者模式已激活', duration: 2000 });
+      } else {
+        this.developerMode = false;
+        promptAction.showToast({ message: '激活码无效', duration: 2000 });
+      }
+    };
+    // 弹窗被取消/滑动关闭时回退 Toggle
+    this.textInputDismissCallback = () => {
+      this.developerMode = false;
     };
     this.showTextInputDialog = true;
   }

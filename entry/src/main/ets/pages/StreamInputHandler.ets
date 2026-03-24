@@ -269,12 +269,23 @@ export class StreamInputHandler {
     if (this.mouseInterceptorActive) return;
 
     if (event.action === MouseAction.Move) {
-      // 绝对模式：发送坐标位置
-      // event.x/y 为相对于 XComponent 的 vp 坐标，用 XComponent 尺寸作为参考域
-      MoonBridge.sendMousePosition(
-        Math.round(event.x), Math.round(event.y),
-        this.viewWidthVp, this.viewHeightVp
-      );
+      const relativeMode = this.viewModel?.inputSettings?.gameMouseMode ?? false;
+      if (relativeMode) {
+        // 相对模式（Monitor 不可用时回退）：使用 rawDelta 发送相对位移
+        // rawDelta 为 vp 单位，转 px 后 ×1.5 补偿 ArkUI 事件频率损失
+        const dx = vp2px(event.rawDeltaX ?? 0) * 1.5;
+        const dy = vp2px(event.rawDeltaY ?? 0) * 1.5;
+        if (dx !== 0 || dy !== 0) {
+          MoonBridge.sendMouseMove(Math.round(dx), Math.round(dy));
+        }
+      } else {
+        // 绝对模式：发送坐标位置
+        // event.x/y 为相对于 XComponent 的 vp 坐标，用 XComponent 尺寸作为参考域
+        MoonBridge.sendMousePosition(
+          Math.round(event.x), Math.round(event.y),
+          this.viewWidthVp, this.viewHeightVp
+        );
+      }
     } else if (event.action === MouseAction.Press || event.action === MouseAction.Release) {
       const button = this.mapMouseButton(event.button);
       if (button > 0) {
@@ -349,11 +360,12 @@ export class StreamInputHandler {
       return true;
     }
 
-    // D-pad 方向键 (2012-2015) - GCK 手柄活跃时直接消费，避免与 GCK Axis 双发
+    // D-pad 方向键 (2012-2015) - GCK 手柄活跃时，仅过滤来自手柄的事件避免与 GCK Axis 双发
     // 蓝牙手柄 D-pad 同时产生 GCK Axis 事件和 KeyEvent(2012-2015)，
     // GCK Axis 已处理 D-pad，若再转发为键盘方向键会导致双重输入。
-    // 代价：有 GCK 手柄时键盘箭头键不工作（串流场景极少用到）。
-    if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.hasActiveGcGamepad()) {
+    // 通过 keySource 区分：键盘方向键正常透传，手柄方向键丢弃。
+    if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.hasActiveGcGamepad()
+        && event.keySource !== KeySource.Keyboard) {
       return true;
     }
 
@@ -410,7 +422,9 @@ export class StreamInputHandler {
         return;
       }
 
-      // 2. D-pad 方向键 (2012-2015) - GCK 手柄活跃时直接丢弃，避免与 GCK Axis 双发
+      // 2. D-pad 方向键 (2012-2015) - GCK 手柄活跃时丢弃，避免与 GCK Axis 双发
+      //    拦截器路径没有 keySource 无法区分键盘/手柄来源，
+      //    但键盘方向键通常不被系统劫持（走 ArkUI onKeyEvent），到达拦截器的基本是手柄 D-pad。
       if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.hasActiveGcGamepad()) {
         return;
       }

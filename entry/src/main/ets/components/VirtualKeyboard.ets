@@ -27,6 +27,7 @@ import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { vibrator } from '@kit.SensorServiceKit';
+import { display } from '@kit.ArkUI';
 
 
 // =============================================================================
@@ -270,9 +271,11 @@ export struct VirtualKeyboard {
   // ── 状态 ──
   /** 键盘整体透明度 */
   @State private opacity_: number = 0.85;
-  /** 键盘偏移位置（拖拽） */
-  @State private offsetX: number = 0;
-  @State private offsetY: number = 0;
+  /** 键盘位置（拖拽） */
+  @State private posX: number = 0;
+  @State private posY: number = 0;
+  /** 父容器高度 */
+  private parentHeight: number = 0;
   /** 背景图片 URI（空=无背景图） */
   @State private backgroundImageUri: string = '';
   /** 组合键模式：修饰键粘滞 toggle */
@@ -286,6 +289,17 @@ export struct VirtualKeyboard {
   private dragStartOffsetY: number = 0;
 
   async aboutToAppear(): Promise<void> {
+    // 预计算键盘初始位置（底部对齐）
+    try {
+      const d = display.getDefaultDisplaySync();
+      this.parentHeight = d.height / d.densityPixels;
+    } catch (_e) {
+      this.parentHeight = 800;
+    }
+    const kbH = TITLE_BAR_HEIGHT + (KEYBOARD_ROWS.length - 1) * KEY_HEIGHT
+      + FUNC_KEY_HEIGHT + (KEYBOARD_ROWS.length - 1) * ROW_GAP + KB_PADDING * 2;
+    this.posY = this.parentHeight - kbH;
+
     // 加载保存的背景图
     const savedUri = await PreferencesUtil.get<string>(KB_BG_IMAGE_KEY, '');
     if (savedUri) {
@@ -338,13 +352,12 @@ export struct VirtualKeyboard {
     .height(TITLE_BAR_HEIGHT + (KEYBOARD_ROWS.length - 1) * KEY_HEIGHT
       + FUNC_KEY_HEIGHT + (KEYBOARD_ROWS.length - 1) * ROW_GAP + KB_PADDING * 2)
     .constraintSize({ maxHeight: '60%' })
-    .backgroundColor('#CC1A1A2E')
-    .backdropBlur(50)
+    .backgroundColor('#E01A1A2E')
     .borderRadius(16)
     .border({ width: 1, color: '#20FFFFFF' })
     .shadow({ radius: 20, color: '#60000000', offsetY: 4 })
     .opacity(this.opacity_)
-    .offset({ x: this.offsetX, y: this.offsetY })
+    .position({ x: this.posX, y: this.posY })
     .clip(true)
   }
 
@@ -475,12 +488,12 @@ export struct VirtualKeyboard {
         .onActionStart((event: GestureEvent) => {
           this.dragStartX = event.offsetX;
           this.dragStartY = event.offsetY;
-          this.dragStartOffsetX = this.offsetX;
-          this.dragStartOffsetY = this.offsetY;
+          this.dragStartOffsetX = this.posX;
+          this.dragStartOffsetY = this.posY;
         })
         .onActionUpdate((event: GestureEvent) => {
-          this.offsetX = this.dragStartOffsetX + event.offsetX - this.dragStartX;
-          this.offsetY = this.dragStartOffsetY + event.offsetY - this.dragStartY;
+          this.posX = this.dragStartOffsetX + event.offsetX - this.dragStartX;
+          this.posY = this.dragStartOffsetY + event.offsetY - this.dragStartY;
         })
     )
   }

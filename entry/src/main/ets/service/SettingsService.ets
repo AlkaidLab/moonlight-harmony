@@ -146,6 +146,8 @@ export class SettingsKeys {
   
   // 开发者模式
   static readonly DEVELOPER_MODE: string = 'settings_developer_mode';
+  // 开发者模式已激活（一次激活永久有效）
+  static readonly DEV_KEY_ACTIVATED: string = 'settings_dev_key_activated';
   
   // 性能模式
   static readonly PERFORMANCE_MODE: string = 'settings_performance_mode';
