@@ -69,6 +69,9 @@ export class StreamInputHandler {
   private preMuteVolume: number = 1.0;
   private static readonly VOLUME_STEP: number = 0.1;
 
+  // ── 已知手柄设备 ID 缓存（运行时通过收到手柄按键事件学习） ──
+  private knownGamepadDeviceIds: Set<number> = new Set<number>();
+
   // ── 外部依赖 ──
   private viewModel: StreamViewModel | null = null;
   private gamepadManager: GamepadManager | null = null;
@@ -119,6 +122,7 @@ export class StreamInputHandler {
     this.modifierFlags = 0;
     this.lastEscUpTime = 0;
     this.hasShownEscHint = false;
+    this.knownGamepadDeviceIds.clear();
     this.stopMouseInterceptor();
   }
 
@@ -352,6 +356,10 @@ export class StreamInputHandler {
     if (isGamepadKey) {
       // 手柄按键 → 转发给 GamepadManager
       const deviceId = event.deviceId ?? 0;
+      // 学习该 deviceId 为手柄设备（用于后续 DPad 方向键过滤）
+      if (deviceId > 0) {
+        this.knownGamepadDeviceIds.add(deviceId);
+      }
       this.gamepadManager?.handleKeyEvent(
         deviceId,
         keyCode,
@@ -360,13 +368,14 @@ export class StreamInputHandler {
       return true;
     }
 
-    // D-pad 方向键 (2012-2015) - GCK 手柄活跃时，仅过滤来自手柄的事件避免与 GCK Axis 双发
-    // 蓝牙手柄 D-pad 同时产生 GCK Axis 事件和 KeyEvent(2012-2015)，
-    // GCK Axis 已处理 D-pad，若再转发为键盘方向键会导致双重输入。
-    // 通过 keySource 区分：键盘方向键正常透传，手柄方向键丢弃。
-    if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.hasActiveGcGamepad()
-        && event.keySource !== KeySource.Keyboard) {
-      return true;
+    // D-pad 方向键 (2012-2015) - 通过 deviceId 区分键盘方向键和手柄 DPad
+    // GCK 手柄活跃时：手柄 DPad 已由 GCK Axis 处理，此处 KeyEvent 需丢弃避免双发
+    // 键盘方向键正常透传
+    if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.hasActiveGcGamepad()) {
+      const deviceId = event.deviceId ?? 0;
+      if (this.knownGamepadDeviceIds.has(deviceId)) {
+        return true; // 已知手柄设备，丢弃
+      }
     }
 
     // 菜单键双击检测（可配置按键，默认 ESC，2in1 物理键盘用于打开串流菜单）
@@ -418,15 +427,24 @@ export class StreamInputHandler {
 
       // 1. 手柄按键范围 (2300-2320 GC Kit / 110 标准 Mode) - 转发给 GamepadManager
       if ((keyCode >= 2300 && keyCode <= 2320) || keyCode === 110) {
+        // 学习该 deviceId 为手柄设备（用于后续 DPad 方向键过滤）
+        const deviceId = event.deviceId ?? -1;
+        if (deviceId > 0) {
+          this.knownGamepadDeviceIds.add(deviceId);
+        }
         this.gamepadManager?.handleKeyEvent(0, keyCode, isPressed);
         return;
       }
 
-      // 2. D-pad 方向键 (2012-2015) - GCK 手柄活跃时丢弃，避免与 GCK Axis 双发
-      //    拦截器路径没有 keySource 无法区分键盘/手柄来源，
-      //    但键盘方向键通常不被系统劫持（走 ArkUI onKeyEvent），到达拦截器的基本是手柄 D-pad。
+      // 2. D-pad 方向键 (2012-2015) - 通过 deviceId 区分键盘方向键和手柄 DPad
+      //    GCK 手柄活跃时：已知手柄 deviceId 的事件丢弃（GCK Axis 已处理），
+      //    键盘方向键（deviceId 不在已知手柄集合中）正常透传
       if (keyCode >= 2012 && keyCode <= 2015 && this.gamepadManager?.hasActiveGcGamepad()) {
-        return;
+        const deviceId = event.deviceId ?? -1;
+        if (deviceId >= 0 && this.knownGamepadDeviceIds.has(deviceId)) {
+          return; // 已知手柄设备，丢弃
+        }
+        // deviceId 未知或不属于手柄 → fall through 当键盘方向键处理
       }
 
       // 3. 音量键 (16=VOLUME_UP, 17=VOLUME_DOWN, 22=VOLUME_MUTE)
