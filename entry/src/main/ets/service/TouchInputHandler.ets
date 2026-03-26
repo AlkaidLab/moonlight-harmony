@@ -489,8 +489,8 @@ export class TouchInputHandler {
 
       const sensitivity = this.config.sensitivity!;
       this.nativeInput.sendMouseMove(
-        Math.floor(deltaX * sensitivity),
-        Math.floor(deltaY * sensitivity)
+        Math.round(deltaX * sensitivity),
+        Math.round(deltaY * sensitivity)
       );
     } else if (touches.length === 2) {
       // ---- 双指移动：检测是否超出移动阈值 ----
@@ -773,7 +773,7 @@ export class TouchInputHandler {
             // 第二根手指移动：滚轮
             const deltaY = touch.y - this.mouseSecondFingerLastY;
             this.nativeInput.sendMouseHighResScroll(
-              Math.floor(deltaY * TouchInputHandler.MOUSE_SCROLL_SPEED_FACTOR)
+              Math.round(deltaY * TouchInputHandler.MOUSE_SCROLL_SPEED_FACTOR)
             );
             this.mouseSecondFingerLastY = touch.y;
           }
