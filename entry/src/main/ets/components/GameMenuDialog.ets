@@ -588,9 +588,10 @@ export struct GameMenuDialog {
     this.sortedMainCards = visible;
   }
 
-  /** 是否有快捷按钮卡片（解锁、麦克风等 1x1 小按钮） */
+  /** 是否有快捷按钮卡片（解锁、显示覆盖层、麦克风等 1x1 小按钮） */
   private hasButtonCards(): boolean {
     return this.viewModel.overlayState.config.isLocked ||
+      !this.viewModel.showOverlay ||
       (this.viewModel.getSession()?.isMicrophoneEnabled() ?? false);
   }
 
@@ -755,6 +756,8 @@ export struct GameMenuDialog {
     Row({ space: 8 }) {
       if (this.viewModel.overlayState.config.isLocked) {
         this.UnlockOverlayCard()
+      } else if (!this.viewModel.showOverlay) {
+        this.ShowOverlayCard()
       }
       if (this.viewModel.getSession()?.isMicrophoneEnabled()) {
         this.MicCard()
@@ -781,6 +784,28 @@ export struct GameMenuDialog {
     .onClick(() => {
       this.recordCardUsage(CARD_UNLOCK);
       this.callbacks.onUnlockOverlay?.();
+      this.callbacks.onClose?.();
+    })
+  }
+
+  @Builder
+  ShowOverlayCard() {
+    Column() {
+      SymbolGlyph($r('sys.symbol.waveform'))
+        .fontSize(22)
+        .fontColor([OV_TEXT_BRIGHT])
+      Text('监控')
+        .fontSize(OV_FONT_MD)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(OV_TEXT_BRIGHT)
+        .margin({ top: 4 })
+    }
+    .width(BUTTON_CARD_SIZE)
+    .height(BUTTON_CARD_SIZE)
+    .justifyContent(FlexAlign.Center)
+    .cardStyle()
+    .onClick(() => {
+      this.viewModel.toggleOverlay();
       this.callbacks.onClose?.();
     })
   }

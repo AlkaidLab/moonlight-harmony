@@ -185,10 +185,6 @@ export struct PerformanceOverlay {
         this.perfPacketLoss = stats.packetLoss;
       }
       
-      // 每15秒更新电池
-      batteryUpdateCounter++;
-      if (batteryUpdateCounter >= 15) {
-
       // 检测时钟状态变化，触发弹跳动画并更新时钟角度
       const clockNow = isClockTime();
       if (clockNow) {
@@ -198,6 +194,10 @@ export struct PerformanceOverlay {
         }
       }
       this.wasClockTime = clockNow;
+
+      // 每15秒更新电池
+      batteryUpdateCounter++;
+      if (batteryUpdateCounter >= 15) {
         batteryUpdateCounter = 0;
         try {
           this.perfBatteryLevel = batteryInfo.batterySOC;
@@ -904,6 +904,13 @@ export struct PerformanceOverlay {
       options.push(opt);
     }
 
+    // 隐藏覆盖层选项
+    options.push({
+      title: '🙈 隐藏覆盖层',
+      subtitle: '可在游戏菜单中重新打开',
+      value: 'hide_overlay'
+    });
+
     return options;
   }
 
@@ -938,6 +945,11 @@ export struct PerformanceOverlay {
       },
       onSelect: (option: OptionItem) => {
         const val = option.value as string;
+        if (val === 'hide_overlay') {
+          this.viewModel.toggleOverlay();
+          this.settingsDialogController?.close();
+          return;
+        }
         if (val.startsWith('item_')) {
           const itemIndex = parseInt(val.replace('item_', ''));
           if (itemIndex >= 0 && itemIndex < allItems.length) {
