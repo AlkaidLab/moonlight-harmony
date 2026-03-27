@@ -514,9 +514,9 @@ skip_enqueue:
 
             if (ret == USB_DDK_IO_FAILED || ret == USB_DDK_INVALID_OP) {
                 // === 智能错误恢复 ===
-                // 1. 首次错误：发送零状态回调释放所有输入（防止角色一直跑）
-                if (consecutiveErrors == 1) {
-                    OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 设备暂时丢失，发送零状态释放所有输入", LOG_TAG, pollerId);
+                // 1. 连续3次错误：发送零状态回调释放所有输入（单次偶发错误静默重试）
+                if (consecutiveErrors == 3) {
+                    OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 连续 %d 次错误，发送零状态释放所有输入", LOG_TAG, pollerId, consecutiveErrors);
                     // 发送 errorCode = -1 表示"恢复模式启动，请零化输入"
                     DdkErrorData *ped = (DdkErrorData *)malloc(sizeof(DdkErrorData));
                     if (ped) {

@@ -412,10 +412,10 @@ export class NativeHidController extends AbstractController {
           // 非超时错误 / 快速失败 / 静默断开 — 智能恢复
           consecutiveErrors++;
           
-          // 第一个错误：归零所有输入防止卡键
-          if (!recovering) {
+          // 连续3次以上错误：归零所有输入防止卡键（单次偶发错误静默重试）
+          if (consecutiveErrors >= 3 && !recovering) {
             recovering = true;
-            console.warn(`${TAG} 检测到设备错误 (code=${errorCode}, elapsed=${elapsedTime}ms)，释放所有输入并尝试恢复: ${err}`);
+            console.warn(`${TAG} 连续 ${consecutiveErrors} 次设备错误 (code=${errorCode}, elapsed=${elapsedTime}ms)，释放所有输入并尝试恢复: ${err}`);
             this.buttonFlags = 0;
             this.leftStickX = 0;
             this.leftStickY = 0;
