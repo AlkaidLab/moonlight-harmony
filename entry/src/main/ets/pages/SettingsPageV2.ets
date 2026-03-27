@@ -18,6 +18,7 @@ import { StreamingSession, DecoderCapabilities } from '../service/StreamingSessi
 import { getRecommendedBitrate } from '../model/StreamConfig';
 import { PerfIcons, PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
+import { SettingsBackupService } from '../service/SettingsBackupService';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem as DialogOptionItem } from '../components/OptionPickerDialog';
 import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem as DialogMultiOptionItem } from '../components/MultiOptionPickerDialog';
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
@@ -263,6 +264,7 @@ struct SettingsPageV2 {
     { id: 'host', icon: $r('app.media.ic_host'), title: '主机', useSymbol: false } as SidebarGroupMeta,
     { id: 'performance', icon: $r('app.media.ic_advanced'), title: '性能与调试', useSymbol: false } as SidebarGroupMeta,
     { id: 'ui', icon: $r('sys.symbol.display'), title: '界面', useSymbol: true } as SidebarGroupMeta,
+    { id: 'backup', icon: $r('sys.symbol.arrow_up_arrow_down'), title: '备份', useSymbol: true } as SidebarGroupMeta,
     { id: 'about', icon: $r('sys.symbol.info_circle_fill'), title: '关于', useSymbol: true } as SidebarGroupMeta,
   ];
   
@@ -1982,6 +1984,31 @@ struct SettingsPageV2 {
                 action: () => {
                   this.enableBackgroundTask = !this.enableBackgroundTask;
                   this.saveSetting(SettingsKeys.ENABLE_BACKGROUND_TASK, this.enableBackgroundTask);
+                }
+              }
+            ]
+          })
+          
+          // 备份与恢复
+          this.SettingsGroup({
+            id: 'backup',
+            icon: $r('sys.symbol.arrow_up_arrow_down'),
+            title: '备份与恢复',
+            items: [
+              {
+                title: '导出设置',
+                subtitle: '将所有设置、自定义按键、电脑列表导出为文件',
+                type: 'action',
+                action: () => {
+                  SettingsBackupService.exportToFile();
+                }
+              },
+              {
+                title: '导入设置',
+                subtitle: '从备份文件恢复全部设置（需重启应用）',
+                type: 'action',
+                action: () => {
+                  SettingsBackupService.importFromFile();
                 }
               }
             ]
