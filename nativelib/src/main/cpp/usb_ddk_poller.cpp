@@ -514,26 +514,26 @@ skip_enqueue:
 
             if (ret == USB_DDK_IO_FAILED || ret == USB_DDK_INVALID_OP) {
                 // === 智能错误恢复 ===
-                // 1. 连续3次错误：发送零状态回调释放所有输入（单次偶发错误静默重试）
+                // 瞬态错误保留最后输入状态（不归零），避免中断长按
                 if (consecutiveErrors == 3) {
-                    OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 连续 %d 次错误，发送零状态释放所有输入", LOG_TAG, pollerId, consecutiveErrors);
-                    // 发送 errorCode = -1 表示"恢复模式启动，请零化输入"
-                    DdkErrorData *ped = (DdkErrorData *)malloc(sizeof(DdkErrorData));
-                    if (ped) {
-                        ped->errorCode = -1;  // DDK_RECOVERY_STARTED
-                        ped->pollerId = pollerId;
-                        napi_call_threadsafe_function(ctx->errorTsfn, ped, napi_tsfn_nonblocking);
-                    }
+                    OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 连续 %d 次错误，尝试恢复", LOG_TAG, pollerId, consecutiveErrors);
                 }
                 
-                // 2. 指数退避重试（50ms, 100ms, 200ms 上限）
+                // 指数退避重试（50ms, 100ms, 200ms 上限）
                 uint32_t sleepMs = 50 * consecutiveErrors;
                 if (sleepMs > 200) sleepMs = 200;
                 usleep(sleepMs * 1000);
                 
-                // 3. 超时检查：连续错误 > 50 次 (约 10 秒) → 停止轮询
+                // 超时检查：连续错误 > 50 次 (约 10 秒) → 归零输入并停止轮询
                 if (consecutiveErrors > 50) {
                     OH_LOG_ERROR(LOG_APP, "[%{public}s] id=%{public}d 恢复超时 (~10s)，停止轮询", LOG_TAG, pollerId);
+                    // 发送 DDK_RECOVERY_STARTED 让 JS 层归零输入
+                    DdkErrorData *pedZero = (DdkErrorData *)malloc(sizeof(DdkErrorData));
+                    if (pedZero) {
+                        pedZero->errorCode = -1;  // DDK_RECOVERY_STARTED → 归零
+                        pedZero->pollerId = pollerId;
+                        napi_call_threadsafe_function(ctx->errorTsfn, pedZero, napi_tsfn_nonblocking);
+                    }
                     DdkErrorData *ped = (DdkErrorData *)malloc(sizeof(DdkErrorData));
                     if (ped) {
                         ped->errorCode = ret;  // 原始错误码（正值 = 致命）

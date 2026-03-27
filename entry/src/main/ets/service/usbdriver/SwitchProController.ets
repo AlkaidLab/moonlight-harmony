@@ -562,10 +562,14 @@ export class SwitchProController extends AbstractController {
           // 非超时错误 — 智能恢复
           consecutiveErrors++;
           
-          // 连续3次以上错误：归零所有输入防止卡键（单次偶发错误静默重试）
           if (consecutiveErrors >= 3 && !recovering) {
             recovering = true;
-            console.warn(`${TAG} 连续 ${consecutiveErrors} 次设备错误 (code=${errorCode})，释放所有输入并尝试恢复: ${err}`);
+            console.warn(`${TAG} 连续 ${consecutiveErrors} 次设备错误 (code=${errorCode})，尝试恢复: ${err}`);
+          }
+          
+          // 超过恢复上限 → 归零输入并放弃
+          if (consecutiveErrors >= MAX_RECOVERY_ERRORS) {
+            console.error(`${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
             this.buttonFlags = 0;
             this.leftStickX = 0;
             this.leftStickY = 0;
@@ -574,11 +578,6 @@ export class SwitchProController extends AbstractController {
             this.leftTrigger = 0;
             this.rightTrigger = 0;
             this.reportInput();
-          }
-          
-          // 超过恢复上限 → 放弃
-          if (consecutiveErrors >= MAX_RECOVERY_ERRORS) {
-            console.error(`${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
             break;
           }
           
