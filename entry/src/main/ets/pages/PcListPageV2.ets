@@ -31,6 +31,8 @@ import { QrShareService } from '../service/QrShareService';
 import { CustomKeyStore } from '../service/CustomKeyStore';
 import { PcListTitleBar, TitleBarConfig } from '../components/PcListTitleBar';
 import { PinDialogView, AboutDialogView } from '../components/PcListDialogs';
+import { SettingsBackupService } from '../service/SettingsBackupService';
+import { PreferencesUtil } from '../utils/PreferencesUtil';
 
 /**
  * 电脑列表页面 (现代化版本)
@@ -258,6 +260,9 @@ struct PcListPageV2 {
       
       this.isInitializing = false;
       
+      // 首次安装检测：提示从备份恢复
+      this.checkFirstLaunchRestore();
+      
       // 异步刷新状态
       this.computerManager.refreshAllComputers().then(() => {
         this.syncViewModelFromManager();
@@ -271,6 +276,38 @@ struct PcListPageV2 {
     } catch (err) {
       console.error('PcListPage: 初始化失败', err);
       this.isInitializing = false;
+    }
+  }
+  
+  /**
+   * 首次安装检测：如果电脑列表为空且未提示过，弹窗询问是否从备份恢复
+   */
+  private async checkFirstLaunchRestore(): Promise<void> {
+    try {
+      const prompted = await PreferencesUtil.get<boolean>('backup_restore_prompted', false);
+      if (prompted) return;
+      
+      // 标记已提示（无论用户是否恢复）
+      await PreferencesUtil.put('backup_restore_prompted', true);
+      
+      if (this.viewModel.computers.length > 0) return;
+      
+      this.showConfirmDialog({
+        title: '恢复设置',
+        message: '检测到首次使用，是否从备份文件恢复设置？',
+        confirmButton: {
+          text: '选择备份文件',
+          onClick: async () => {
+            await SettingsBackupService.importFromFile();
+          }
+        },
+        cancelButton: {
+          text: '跳过',
+          onClick: () => {}
+        }
+      });
+    } catch (e) {
+      // 静默忽略
     }
   }
   

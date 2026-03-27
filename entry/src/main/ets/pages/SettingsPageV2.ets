@@ -231,6 +231,9 @@ struct SettingsPageV2 {
   @State escMenuKey: string = 'ESC';
   @State enableBackgroundTask: boolean = true;  // 后台保活，默认开启
   
+  // 备份
+  @State autoBackupEnabled: boolean = false;
+  
   // UI 设置
   @State smallIconMode: boolean = false;
   @State backgroundImageType: string = 'default';
@@ -264,7 +267,7 @@ struct SettingsPageV2 {
     { id: 'host', icon: $r('app.media.ic_host'), title: '主机', useSymbol: false } as SidebarGroupMeta,
     { id: 'performance', icon: $r('app.media.ic_advanced'), title: '性能与调试', useSymbol: false } as SidebarGroupMeta,
     { id: 'ui', icon: $r('sys.symbol.display'), title: '界面', useSymbol: true } as SidebarGroupMeta,
-    { id: 'backup', icon: $r('sys.symbol.arrow_up_arrow_down'), title: '备份', useSymbol: true } as SidebarGroupMeta,
+    { id: 'backup', icon: $r('sys.symbol.share'), title: '备份', useSymbol: true } as SidebarGroupMeta,
     { id: 'about', icon: $r('sys.symbol.info_circle_fill'), title: '关于', useSymbol: true } as SidebarGroupMeta,
   ];
   
@@ -552,6 +555,9 @@ struct SettingsPageV2 {
       this.resumeStream = await this.loadBoolean(SettingsKeys.RESUME_STREAM, false);
       this.developerMode = await this.loadBoolean(SettingsKeys.DEVELOPER_MODE, false);
       this.devKeyActivated = await this.loadBoolean(SettingsKeys.DEV_KEY_ACTIVATED, false);
+      
+      // 备份
+      this.autoBackupEnabled = await SettingsBackupService.isAutoBackupEnabled();
     } catch (error) {
       console.error('Failed to load settings:', error);
     } finally {
@@ -583,6 +589,7 @@ struct SettingsPageV2 {
   private async saveSetting(key: string, value: string | boolean | number): Promise<void> {
     try {
       await PreferencesUtil.put(key, value);
+      SettingsBackupService.scheduleAutoSave();
     } catch (error) {
       console.error('Failed to save setting:', error);
       this.showToast('保存设置失败');
@@ -1992,9 +1999,24 @@ struct SettingsPageV2 {
           // 备份与恢复
           this.SettingsGroup({
             id: 'backup',
-            icon: $r('sys.symbol.arrow_up_arrow_down'),
+            icon: $r('sys.symbol.share'),
             title: '备份与恢复',
             items: [
+              {
+                title: '自动备份',
+                subtitle: this.autoBackupEnabled ? '已开启，设置变更时自动保存' : '开启后每次修改设置自动备份到文件',
+                type: 'toggle',
+                value: this.autoBackupEnabled,
+                action: async () => {
+                  if (!this.autoBackupEnabled) {
+                    const ok = await SettingsBackupService.enableAutoBackup();
+                    this.autoBackupEnabled = ok;
+                  } else {
+                    await SettingsBackupService.disableAutoBackup();
+                    this.autoBackupEnabled = false;
+                  }
+                }
+              } as SettingItem,
               {
                 title: '导出设置',
                 subtitle: '将所有设置、自定义按键、电脑列表导出为文件',
@@ -2002,7 +2024,7 @@ struct SettingsPageV2 {
                 action: () => {
                   SettingsBackupService.exportToFile();
                 }
-              },
+              } as SettingItem,
               {
                 title: '导入设置',
                 subtitle: '从备份文件恢复全部设置（需重启应用）',
@@ -2010,7 +2032,7 @@ struct SettingsPageV2 {
                 action: () => {
                   SettingsBackupService.importFromFile();
                 }
-              }
+              } as SettingItem
             ]
           })
           

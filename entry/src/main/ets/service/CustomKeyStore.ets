@@ -21,6 +21,7 @@
 
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { display } from '@kit.ArkUI';
+import { SettingsBackupService } from './SettingsBackupService';
 import {
   CustomKeyProfile,
   CustomKeyDef,
@@ -113,6 +114,7 @@ export class CustomKeyStore {
     const json = JSON.stringify(CustomKeyStore.profiles);
     await PreferencesUtil.put(STORAGE_KEY_PROFILES, json);
     await PreferencesUtil.put(STORAGE_KEY_ACTIVE, CustomKeyStore.activeProfileName);
+    SettingsBackupService.scheduleAutoSave();
   }
 
   /**

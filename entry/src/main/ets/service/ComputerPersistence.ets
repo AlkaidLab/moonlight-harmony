@@ -18,6 +18,7 @@ import { ComputerInfo, ComputerState, PairState, ComputerInfoBuilder } from '../
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { NvHttp } from './NvHttp';
 import { MAX_PORT } from '../common/NetworkConstants';
+import { SettingsBackupService } from './SettingsBackupService';
 
 // =============================================================================
 // 类型定义
@@ -139,6 +140,7 @@ export class ComputerPersistence {
       });
 
       await PreferencesUtil.put(STORAGE_KEY, JSON.stringify(computerList));
+      SettingsBackupService.scheduleAutoSave();
       console.info(`ComputerPersistence: 保存 ${computerList.length} 台电脑`);
     } catch (err) {
       console.error('ComputerPersistence: 保存电脑列表失败', err);

@@ -115,6 +115,14 @@
           "abilities": ["EntryAbility"],
           "when": "inuse"
         }
+      },
+      {
+        "name": "ohos.permission.FILE_ACCESS_PERSIST",
+        "reason": "$string:permission_file_persist_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "always"
+        }
       }
     ]
   }
