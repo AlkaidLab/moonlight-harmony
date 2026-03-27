@@ -114,6 +114,12 @@ export class GamepadManager implements UsbDriverListener {
   /** 传统模式中已通过 ABS_HAT0X/Y 轴提供D-pad数据的设备集合 */
   private dpadAxisActive = new Set<number>();
 
+  // ==================== USB 设备移除防抖 ====================
+  /** USB 设备移除的待执行定时器，用于防抖闪断式 disconnect/reconnect */
+  private pendingRemovalTimers = new Map<number, number>();
+  /** 防抖延迟（ms）：USB 设备移除后等待此时间再真正清理 */
+  private static readonly DEVICE_REMOVAL_DEBOUNCE_MS = 5000;
+
   /** GCK 轴事件合并：Android 一次 MotionEvent 含所有轴只发 1 包，我们按轴类型多次回调会发 N 包，此处合并为每 tick 每 slot 只通知一次 */
   private gcAxisFlushPending = new Set<number>();
   private gcAxisFlushTimerId: number = -1;
@@ -886,6 +892,14 @@ export class GamepadManager implements UsbDriverListener {
    * 处理设备添加
    */
   private handleDeviceAdded(deviceId: number): void {
+    // 如果该设备有待执行的移除定时器，取消之（USB 设备闪断后重新出现）
+    const pendingTimer = this.pendingRemovalTimers.get(deviceId);
+    if (pendingTimer !== undefined) {
+      clearTimeout(pendingTimer);
+      this.pendingRemovalTimers.delete(deviceId);
+      console.info(`[GAMEPAD] USB 设备已恢复，取消移除: (ID: ${deviceId})`);
+      return; // 设备从未真正移除，无需重新注册
+    }
     this.checkAndRegisterDevice(deviceId);
   }
   
@@ -893,38 +907,64 @@ export class GamepadManager implements UsbDriverListener {
    * 处理设备移除
    */
   private async handleDeviceRemoved(deviceId: number): Promise<void> {
-    // 检查是否应该忽略断开信号
-    const inputSettings = await SettingsService.getInstance().getInputSettings();
-    if (inputSettings.ignoreDeviceDisconnect) {
-      console.info(`[GAMEPAD] 忽略设备断开信号: deviceId=${deviceId} (用户已启用忽略断开设置)`);
+    if (!this.connectedDevices.has(deviceId)) {
       return;
     }
-    
-    if (this.connectedDevices.has(deviceId)) {
+
+    // USB 驱动模式下，USB 设备移除使用防抖机制：
+    // 某些手柄（如 Razer）会频繁闪断导致反复 disconnect/reconnect 通知。
+    // 延迟处理移除事件，如果设备在延迟内重新出现则取消移除。
+    const info = this.deviceInfoMap.get(deviceId);
+    if (this.useUsbDriverMode && info?.isUsb) {
+      // 如果已有待执行的移除定时器，先取消（重置防抖）
+      const existingTimer = this.pendingRemovalTimers.get(deviceId);
+      if (existingTimer !== undefined) {
+        clearTimeout(existingTimer);
+      }
       const name = this.connectedDevices.get(deviceId) || 'Unknown';
-      const info = this.deviceInfoMap.get(deviceId);
-      const connectionType = info?.isBluetooth ? '蓝牙' : (info?.isUsb ? 'USB' : '未知');
-      
-      // 获取槽位（在清理之前）
-      const slot = this.getControllerSlot(deviceId);
-      
-      this.connectedDevices.delete(deviceId);
-      this.deviceStates.delete(deviceId);
-      this.deviceInfoMap.delete(deviceId);
-      this.dpadAxisActive.delete(deviceId);
-      
-      // 释放 InputKit 设备的槽位
-      const deviceKey = this.controllerIdToDeviceKey.get(deviceId);
-      if (deviceKey) {
-        this.releaseSlotForDevice(deviceKey);
-        this.controllerIdToDeviceKey.delete(deviceId);
-      }
-      
-      console.info(`GamepadManager: 移除手柄 ${name} (ID: ${deviceId}, Slot: ${slot}, 连接类型: ${connectionType})`);
-      
-      if (this.listener) {
-        this.listener.onGamepadDisconnected(slot);
-      }
+      console.info(`[GAMEPAD] USB 设备短暂断开，${GamepadManager.DEVICE_REMOVAL_DEBOUNCE_MS}ms 防抖: "${name}" (ID: ${deviceId})`);
+      const timerId = setTimeout(() => {
+        this.pendingRemovalTimers.delete(deviceId);
+        this.executeDeviceRemoval(deviceId);
+      }, GamepadManager.DEVICE_REMOVAL_DEBOUNCE_MS);
+      this.pendingRemovalTimers.set(deviceId, timerId);
+      return;
+    }
+
+    this.executeDeviceRemoval(deviceId);
+  }
+
+  /**
+   * 执行设备移除清理（防抖后的实际操作）
+   */
+  private executeDeviceRemoval(deviceId: number): void {
+    if (!this.connectedDevices.has(deviceId)) {
+      return; // 防抖期间可能已通过其他路径清理
+    }
+    
+    const name = this.connectedDevices.get(deviceId) || 'Unknown';
+    const info = this.deviceInfoMap.get(deviceId);
+    const connectionType = info?.isBluetooth ? '蓝牙' : (info?.isUsb ? 'USB' : '未知');
+    
+    // 获取槽位（在清理之前）
+    const slot = this.getControllerSlot(deviceId);
+    
+    this.connectedDevices.delete(deviceId);
+    this.deviceStates.delete(deviceId);
+    this.deviceInfoMap.delete(deviceId);
+    this.dpadAxisActive.delete(deviceId);
+    
+    // 释放 InputKit 设备的槽位
+    const deviceKey = this.controllerIdToDeviceKey.get(deviceId);
+    if (deviceKey) {
+      this.releaseSlotForDevice(deviceKey);
+      this.controllerIdToDeviceKey.delete(deviceId);
+    }
+    
+    console.info(`GamepadManager: 移除手柄 ${name} (ID: ${deviceId}, Slot: ${slot}, 连接类型: ${connectionType})`);
+    
+    if (this.listener) {
+      this.listener.onGamepadDisconnected(slot);
     }
   }
   

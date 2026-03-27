@@ -171,7 +171,6 @@ export interface InputSettings {
   gamepadMotionFallback: boolean;
   gamepadTouchpadMouse: boolean;
   enableStartKeyMenu: boolean;
-  ignoreDeviceDisconnect: boolean;  // 忽略手柄断开信号
   enableKeyInterceptor: boolean;  // 按键反劫持
   usbDriverEnabled: boolean;  // 默认启用 USB 手柄驱动
   forceUsbDriverOnly: boolean;  // 强制纯 USB 驱动模式
@@ -708,7 +707,6 @@ export class SettingsService {
       gamepadMotionFallback: await this.getBoolean(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false),
       gamepadTouchpadMouse: await this.getBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false),
       enableStartKeyMenu: await this.getBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true),
-      ignoreDeviceDisconnect: await this.getBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false),
       enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false),
       usbDriverEnabled: await this.getBoolean(SettingsKeys.USB_DRIVER_ENABLED, false),
       forceUsbDriverOnly: await this.getBoolean(SettingsKeys.FORCE_USB_DRIVER_ONLY, false),

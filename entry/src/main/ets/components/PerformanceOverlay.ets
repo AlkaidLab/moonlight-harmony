@@ -19,7 +19,7 @@ import { batteryInfo } from '@kit.BasicServicesKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './OptionPickerDialog';
 import {
   PerformanceItem, PerformanceData, PerfIcons, PerfLabels,
-  getMoonPhaseIcon, isClockTime, formatDataRate, getDecoderString,
+  getMoonPhaseIcon, formatDataRate, getDecoderString,
   getPacketLossColor, getLatencyColor, getBatteryColor,
   calculateSnapPosition, findNearestSnapPosition,
   getPerformanceItemInfo, getSnapBorderRadius, SnapPosition
@@ -80,7 +80,7 @@ export struct PerformanceOverlay {
   @State clockIconScale: number = 1.0;
   @State clockHourAngle: number = 0;
   @State clockMinuteAngle: number = 0;
-  private wasClockTime: boolean = false;
+  @State showMiniClock: boolean = false;  // 是否显示迷你时钟而不是月相
   
   // 启用的性能项（@State 数组驱动 UI 响应式渲染，Set 变更不被追踪）
   @State enabledItemsList: string[] = [];
@@ -113,6 +113,12 @@ export struct PerformanceOverlay {
     
     // 同步启用项目列表（@State 数组驱动 UI）
     this.enabledItemsList = Array.from(this.viewModel.overlayState.config.enabledItems);
+    
+    // 如果当前正好是整刻钟，立即显示时钟（避免等待第一个定时器 tick）
+    if (new Date().getMinutes() % 15 === 0) {
+      this.showMiniClock = true;
+      this.updateClockAngles();
+    }
     
     // 启动数据更新定时器
     this.startUpdateTimer();
@@ -171,6 +177,8 @@ export struct PerformanceOverlay {
   
   private startUpdateTimer(): void {
     let batteryUpdateCounter = 0;
+    let lastClockMinute = -1;
+    
     this.updateTimer = setInterval(() => {
       // 从 ViewModel 获取 session 更新性能数据
       const session = this.viewModel.getSession();
@@ -185,15 +193,27 @@ export struct PerformanceOverlay {
         this.perfPacketLoss = stats.packetLoss;
       }
       
-      // 检测时钟状态变化，触发弹跳动画并更新时钟角度
-      const clockNow = isClockTime();
-      if (clockNow) {
-        this.updateClockAngles();
-        if (!this.wasClockTime) {
-          this.triggerClockBounce();
-        }
+      // 检测时钟时段变化
+      const now = new Date();
+      const currentMinute = now.getMinutes();
+      const isClockMinute = currentMinute % 15 === 0;  // 当前分钟是否是整刻钟
+      const wasClockMinute = lastClockMinute % 15 === 0;  // 上次分钟是否是整刻钟
+      
+      // 刚进入整刻钟（从非整刻钟 → 整刻钟），触发弹跳动画
+      if (isClockMinute && !wasClockMinute) {
+        this.showMiniClock = true;  // 切换显示状态
+        this.triggerClockBounce();
+      } else if (!isClockMinute && wasClockMinute) {
+        // 离开整刻钟，隐藏时钟恢复月相
+        this.showMiniClock = false;
       }
-      this.wasClockTime = clockNow;
+      
+      // 在整刻钟时段内，每秒更新指针位置
+      if (isClockMinute) {
+        this.updateClockAngles();
+      }
+      
+      lastClockMinute = currentMinute;
 
       // 每15秒更新电池
       batteryUpdateCounter++;
@@ -263,10 +283,20 @@ export struct PerformanceOverlay {
     this.clockMinuteAngle = m * 6;
   }
 
-  /** 自绘极简时钟（时针+分针） */
+  /** 自绘极简时钟（时针+分针+刻度） */
   @Builder
   MiniClock(size: number) {
     Stack() {
+      // 四个刻度（12/3/6/9 点钟位置）
+      ForEach([0, 90, 180, 270], (angle: number) => {
+        Line()
+          .width(0.8)
+          .height(size * 0.13)
+          .backgroundColor('#80FFFFFF')
+          .borderRadius(0.4)
+          .position({ x: size / 2 - 0.4, y: 0.5 })
+          .rotate({ angle: angle, centerX: '50%', centerY: size / 2 - 0.5 })
+      })
       // 时针（短粗）
       Line()
         .width(1.5)
@@ -444,7 +474,7 @@ export struct PerformanceOverlay {
     // 分辨率行
     if (this.enabledItemsList.includes(PerformanceItem.RESOLUTION)) {
       Row() {
-        if (isClockTime()) {
+        if (this.showMiniClock) {
           this.MiniClock(14)
         } else {
           Text(getMoonPhaseIcon(this.overlayLocked))
@@ -584,7 +614,7 @@ export struct PerformanceOverlay {
     Row() {
       // 分辨率
       if (this.enabledItemsList.includes(PerformanceItem.RESOLUTION)) {
-        if (isClockTime()) {
+        if (this.showMiniClock) {
           this.MiniClock(13)
         } else {
           Text(getMoonPhaseIcon(this.overlayLocked))

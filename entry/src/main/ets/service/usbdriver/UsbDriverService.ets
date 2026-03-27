@@ -598,15 +598,9 @@ export class UsbDriverService implements UsbDriverListener {
     if (controller) {
       // 设置设备物理位置信息（用于唯一标识）
       controller.setDeviceLocation(device.busNum, device.devAddress, device.serial || '');
-      
-      // 应用忽略断开信号设置
-      const inputSettings = await SettingsService.getInstance().getInputSettings();
-      if (inputSettings.ignoreDeviceDisconnect) {
-        controller.setIgnoreDisconnect(true);
-        console.info(`${TAG} 设备 ${device.name} 已启用忽略断开信号`);
-      }
 
       // 应用 DDK 高速轮询设置
+      const inputSettings = await SettingsService.getInstance().getInputSettings();
       console.info(`${TAG} DDK 高速轮询设置: ${inputSettings.ddkHighSpeedPolling}`);
       if (inputSettings.ddkHighSpeedPolling) {
         this.ddkEnabled = true;

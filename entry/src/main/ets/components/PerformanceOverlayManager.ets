@@ -196,11 +196,6 @@ export function getPerformanceItemInfo(item: PerformanceItem): PerformanceItemIn
 /**
  * 获取月相图标
  */
-/** 当前是否处于时钟显示时段（每刻钟 :00/:15/:30/:45 的 1 分钟内） */
-export function isClockTime(): boolean {
-  return new Date().getMinutes() % 15 === 0;
-}
-
 export function getMoonPhaseIcon(locked: boolean = false): string {
   // 锁定时显示图钉代替月相
   if (locked) {

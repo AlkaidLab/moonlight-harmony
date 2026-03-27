@@ -139,9 +139,6 @@ struct DdkPollerContext {
     napi_threadsafe_function tsfn;      // 数据回调
     napi_threadsafe_function errorTsfn; // 错误回调
 
-    // 忽略断开信号 (对应用户设置 "忽略手柄断开")
-    std::atomic<bool> ignoreDisconnect;
-
     // 异步输出 (sendOutput 非阻塞, 由轮询线程发送)
     std::mutex outMutex;
     uint8_t pendingOutData[64];
@@ -153,6 +150,9 @@ struct DdkPollerContext {
     uint8_t lastInputData[256];
     uint32_t lastInputLen;
     bool lastInputValid;
+    
+    // 回调频率限制 (减少 JS 堆 GC 压力)
+    uint64_t lastCallbackTimeMs;
 
     // 统计
     std::atomic<uint64_t> totalReads;
@@ -207,9 +207,9 @@ static void initPollerPool() {
         g_ddkPollers[i].outMemMap = nullptr;
         g_ddkPollers[i].tsfn = nullptr;
         g_ddkPollers[i].errorTsfn = nullptr;
-        g_ddkPollers[i].ignoreDisconnect.store(false);
         g_ddkPollers[i].lastInputLen = 0;
         g_ddkPollers[i].lastInputValid = false;
+        g_ddkPollers[i].lastCallbackTimeMs = 0;
         g_ddkPollers[i].totalSkippedDups.store(0);
     }
     g_ddkPoolInited = true;
@@ -365,7 +365,6 @@ static void *ddkPollThread(void *arg) {
 
     // IO 错误重试计数
     int consecutiveErrors = 0;
-    const int MAX_CONSECUTIVE_ERRORS = 10;  // 允许连续 10 次瞬态错误
     uint64_t queueFullCount = 0;
 
     while (ctx->running.load()) {
@@ -374,7 +373,7 @@ static void *ddkPollThread(void *arg) {
             UsbRequestPipe outPipe;
             memset(&outPipe, 0, sizeof(outPipe));
             outPipe.interfaceHandle = ctx->interfaceHandle;
-            outPipe.timeout = 100;  // 100ms 足够发送小数据包
+            outPipe.timeout = 8;  // 8ms — 仅等待 1 个 USB 微帧，避免阻塞输入轮询
 
             uint32_t outLen;
             {
@@ -391,10 +390,8 @@ static void *ddkPollThread(void *arg) {
             if (outRet != USB_DDK_SUCCESS) {
                 OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 轮询线程 sendOutput 失败: ep=0x%{public}x len=%{public}u ret=%{public}d (%{public}s)",
                             LOG_TAG, pollerId, outPipe.endpoint, outLen, outRet, ddkErrStr(outRet));
-                // 发送失败时自动重试: 若 JS 未设置新数据则重新标记为 pending
-                // CAS: 仅当 hasPendingOutput 仍为 false 时才标记 (JS 新数据优先)
-                bool expected = false;
-                ctx->hasPendingOutput.compare_exchange_strong(expected, true, std::memory_order_release);
+                // 输出失败直接丢弃 — latest-wins 设计下，下一个震动事件会覆盖
+                // 不重试避免每次循环都被输出超时阻塞输入读取
             }
         }
 
@@ -422,6 +419,19 @@ static void *ddkPollThread(void *arg) {
                 ctx->totalSkippedDups.fetch_add(1);
                 // 数据未变化，跳过入队
                 goto skip_enqueue;
+            }
+            
+            // 频率限制：至少间隔 2ms（500Hz 上限）才触发 JS 回调
+            // 减少模拟摇杆 ADC 噪声引起的高频回调导致的 JS 堆 GC 压力
+            // 注意：不更新 lastInputData，累积变化将在下次间隔到期时发送
+            {
+                struct timespec cbTs;
+                clock_gettime(CLOCK_MONOTONIC, &cbTs);
+                uint64_t cbNowMs = cbTs.tv_sec * 1000ULL + cbTs.tv_nsec / 1000000ULL;
+                if (ctx->lastCallbackTimeMs > 0 && cbNowMs - ctx->lastCallbackTimeMs < 2) {
+                    goto skip_enqueue;
+                }
+                ctx->lastCallbackTimeMs = cbNowMs;
             }
 
             // 更新最后输入缓存
@@ -463,7 +473,17 @@ static void *ddkPollThread(void *arg) {
             }
 
 skip_enqueue:
-            // 成功读取 - 重置错误计数
+            // 成功读取 — 检查是否从错误中恢复
+            if (consecutiveErrors > 0) {
+                OH_LOG_INFO(LOG_APP, "[%{public}s] id=%{public}d 设备已恢复 (经 %{public}d 次错误后)", LOG_TAG, pollerId, consecutiveErrors);
+                // 发送 errorCode = -2 通知 JS 设备已恢复
+                DdkErrorData *ped = (DdkErrorData *)malloc(sizeof(DdkErrorData));
+                if (ped) {
+                    ped->errorCode = -2;  // DDK_RECOVERY_SUCCESS
+                    ped->pollerId = pollerId;
+                    napi_call_threadsafe_function(ctx->errorTsfn, ped, napi_tsfn_nonblocking);
+                }
+            }
             consecutiveErrors = 0;
 
             // 统计日志 (每5秒)
@@ -487,43 +507,46 @@ skip_enqueue:
             consecutiveErrors = 0;
             continue;
         } else {
-            // 错误
+            // IO 错误
             consecutiveErrors++;
-            OH_LOG_ERROR(LOG_APP, "[%{public}s] id=%{public}d SendPipeRequest 失败: %{public}d (%{public}s), 连续错误=%{public}d/%{public}d",
-                         LOG_TAG, pollerId, ret, ddkErrStr(ret), consecutiveErrors, MAX_CONSECUTIVE_ERRORS);
+            OH_LOG_ERROR(LOG_APP, "[%{public}s] id=%{public}d SendPipeRequest 失败: %{public}d (%{public}s), 连续错误=%{public}d",
+                         LOG_TAG, pollerId, ret, ddkErrStr(ret), consecutiveErrors);
 
-            // IO 错误处理 - 允许一定次数的瞬态错误重试
             if (ret == USB_DDK_IO_FAILED || ret == USB_DDK_INVALID_OP) {
-                if (ctx->ignoreDisconnect.load()) {
-                    OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 错误(%{public}s)但忽略断开信号已启用，50ms 后继续轮询",
-                                LOG_TAG, pollerId, ddkErrStr(ret));
-                    usleep(50 * 1000);  // 50ms
-                    continue;
+                // === 智能错误恢复 ===
+                // 1. 首次错误：发送零状态回调释放所有输入（防止角色一直跑）
+                if (consecutiveErrors == 1) {
+                    OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 设备暂时丢失，发送零状态释放所有输入", LOG_TAG, pollerId);
+                    // 发送 errorCode = -1 表示"恢复模式启动，请零化输入"
+                    DdkErrorData *ped = (DdkErrorData *)malloc(sizeof(DdkErrorData));
+                    if (ped) {
+                        ped->errorCode = -1;  // DDK_RECOVERY_STARTED
+                        ped->pollerId = pollerId;
+                        napi_call_threadsafe_function(ctx->errorTsfn, ped, napi_tsfn_nonblocking);
+                    }
                 }
-
-                // 非忽略模式：允许少量瞬态错误，连续达到阈值才退出
-                if (consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
-                    OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 瞬态IO错误，%{public}dms 后重试 (%{public}d/%{public}d)",
-                                LOG_TAG, pollerId, 20 * consecutiveErrors, consecutiveErrors, MAX_CONSECUTIVE_ERRORS);
-                    usleep(20 * 1000 * consecutiveErrors);  // 递增退避: 20ms, 40ms, ...
-                    continue;
+                
+                // 2. 指数退避重试（50ms, 100ms, 200ms 上限）
+                uint32_t sleepMs = 50 * consecutiveErrors;
+                if (sleepMs > 200) sleepMs = 200;
+                usleep(sleepMs * 1000);
+                
+                // 3. 超时检查：连续错误 > 50 次 (约 10 秒) → 停止轮询
+                if (consecutiveErrors > 50) {
+                    OH_LOG_ERROR(LOG_APP, "[%{public}s] id=%{public}d 恢复超时 (~10s)，停止轮询", LOG_TAG, pollerId);
+                    DdkErrorData *ped = (DdkErrorData *)malloc(sizeof(DdkErrorData));
+                    if (ped) {
+                        ped->errorCode = ret;  // 原始错误码（正值 = 致命）
+                        ped->pollerId = pollerId;
+                        napi_status st = napi_call_threadsafe_function(ctx->errorTsfn, ped, napi_tsfn_nonblocking);
+                        if (st != napi_ok) free(ped);
+                    }
+                    break;
                 }
-
-                // 连续错误达到阈值 - 通知 JS 并退出
-                OH_LOG_ERROR(LOG_APP, "[%{public}s] id=%{public}d 连续 %{public}d 次IO错误，停止轮询",
-                             LOG_TAG, pollerId, consecutiveErrors);
-
-                DdkErrorData *ped = (DdkErrorData *)malloc(sizeof(DdkErrorData));
-                if (ped) {
-                    ped->errorCode = ret;
-                    ped->pollerId = pollerId;
-                    napi_status st = napi_call_threadsafe_function(ctx->errorTsfn, ped, napi_tsfn_nonblocking);
-                    if (st != napi_ok) free(ped);
-                }
-                break;
+                continue;  // 继续恢复重试
             }
 
-            // 其他非 IO 错误 - 通知 JS
+            // 其他非 IO 错误 - 致命，通知 JS 并退出
             DdkErrorData *ped = (DdkErrorData *)malloc(sizeof(DdkErrorData));
             if (ped) {
                 ped->errorCode = ret;
@@ -531,6 +554,7 @@ skip_enqueue:
                 napi_status st = napi_call_threadsafe_function(ctx->errorTsfn, ped, napi_tsfn_nonblocking);
                 if (st != napi_ok) free(ped);
             }
+            break;
         }
     }
 
@@ -760,6 +784,7 @@ static napi_value DdkPoller_StartPoller(napi_env env, napi_callback_info info) {
     ctx->running.store(false);
     ctx->totalSkippedDups.store(0);
     ctx->lastInputValid = false;
+    ctx->lastCallbackTimeMs = 0;
 
     // Step 1: 声明接口 (带重试，等待 usbManager 释放设备)
     int32_t ret = -1;
@@ -837,8 +862,6 @@ static napi_value DdkPoller_StartPoller(napi_env env, napi_callback_info info) {
     ctx->timeoutMs = (uint32_t)timeoutMs;
     ctx->totalReads.store(0);
     ctx->totalBytes.store(0);
-    ctx->ignoreDisconnect.store(false);
-
     // Step 4: 创建 threadsafe functions
     napi_value dataResName;
     napi_create_string_utf8(env, "DdkPollerData", NAPI_AUTO_LENGTH, &dataResName);
@@ -1140,31 +1163,6 @@ static napi_value DdkPoller_GetStats(napi_env env, napi_callback_info info) {
 }
 
 // ============================================================
-// NAPI: setIgnoreDisconnect(pollerId, ignore) → 设置忽略断开信号
-// ============================================================
-
-static napi_value DdkPoller_SetIgnoreDisconnect(napi_env env, napi_callback_info info) {
-    size_t argc = 2;
-    napi_value args[2];
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-
-    int32_t pollerId = -1;
-    bool ignore = false;
-    if (argc >= 1) napi_get_value_int32(env, args[0], &pollerId);
-    if (argc >= 2) napi_get_value_bool(env, args[1], &ignore);
-
-    if (pollerId >= 0 && pollerId < DDK_MAX_POLLERS) {
-        g_ddkPollers[pollerId].ignoreDisconnect.store(ignore);
-        OH_LOG_INFO(LOG_APP, "[%{public}s] id=%{public}d ignoreDisconnect=%{public}d",
-                    LOG_TAG, pollerId, (int)ignore);
-    }
-
-    napi_value undefined;
-    napi_get_undefined(env, &undefined);
-    return undefined;
-}
-
-// ============================================================
 // NAPI: isPollerRunning(pollerId) → 查询原生轮询线程是否仍在运行
 // ============================================================
 
@@ -1317,7 +1315,6 @@ void UsbDdkPoller_Init(napi_env env, napi_value exports) {
         { "sendOutput",   nullptr, DdkPoller_SendOutput,   nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getStats",     nullptr, DdkPoller_GetStats,     nullptr, nullptr, nullptr, napi_default, nullptr },
         { "isPollerRunning", nullptr, DdkPoller_IsPollerRunning, nullptr, nullptr, nullptr, napi_default, nullptr },
-        { "setIgnoreDisconnect", nullptr, DdkPoller_SetIgnoreDisconnect, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "release",      nullptr, DdkPoller_Release,      nullptr, nullptr, nullptr, napi_default, nullptr },
     };
 

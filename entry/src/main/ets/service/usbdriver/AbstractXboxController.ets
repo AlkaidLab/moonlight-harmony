@@ -19,7 +19,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ControllerType, ControllerCapabilities, ButtonFlags, UsbDirection } from './ControllerConstants';
-import { isHardwareError, createUsbError, UsbError } from './UsbErrorCodes';
+import { createUsbError, UsbError } from './UsbErrorCodes';
 import { DdkUsbPoller } from './DdkUsbPoller';
 
 const TAG = '[USB-XBOX]';
@@ -195,7 +195,10 @@ export abstract class AbstractXboxController extends AbstractController {
     // 初始化完成，标记就绪并通知
     this.notifyDeviceAdded();
     
-    let detectedHardwareError = false;
+    // 智能恢复状态
+    let consecutiveErrors = 0;
+    const MAX_RECOVERY_ERRORS = 50;  // ~10s (50 × 200ms max backoff)
+    let recovering = false;
     
     while (!this.stopped) {
       try {
@@ -208,49 +211,52 @@ export abstract class AbstractXboxController extends AbstractController {
         }
         
         if (buffer && buffer.length > 0) {
+          // 读取成功 — 如果正在恢复，重置状态
+          if (recovering) {
+            console.info(`${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
+            consecutiveErrors = 0;
+            recovering = false;
+          }
           if (this.handleRead(buffer)) {
             this.reportInput();
           }
         }
       } catch (err) {
         if (!this.stopped) {
-          // 检查错误类型
           const usbErr = err instanceof UsbError ? err : null;
           const errorCode = usbErr ? usbErr.code : 0;
-          const retryable = usbErr ? usbErr.retryable : true;  // 默认可重试
           
-          // 超时错误 - 继续轮询
+          // 超时错误 - 继续轮询（不计入恢复计数）
           if (errorCode === -8) {  // USB_ERROR_TIMEOUT
             continue;
-          } else if (errorCode === -4) {  // USB_ERROR_NO_DEVICE
-            // 如果设置了忽略断开信号，继续轮询
-            if (this.ignoreDisconnect) {
-              console.warn(`${TAG} 设备不可达但忽略断开信号已启用，继续轮询: ${err}`);
-              continue;
-            }
-            console.warn(`${TAG} 设备不可达: ${err}`);
-            break;
-          } else if (isHardwareError(errorCode)) {
-            // 如果设置了忽略断开信号，继续轮询
-            if (this.ignoreDisconnect) {
-              console.warn(`${TAG} 检测到硬件错误但忽略断开信号已启用，继续轮询: ${err}`);
-              continue;
-            }
-            console.error(`${TAG} 检测到硬件错误: ${err}`);
-            detectedHardwareError = true;
-            break;
-          } else {
-            console.error(`${TAG} 输入读取错误: ${err}`);
-            // 其他错误 - 如果标记为可重试则继续，否则停止
-            if (!retryable) {
-              // 如果设置了忽略断开信号，也继续轮询
-              if (this.ignoreDisconnect) {
-                console.warn(`${TAG} 不可重试错误但忽略断开信号已启用，继续轮询: ${err}`);
-                continue;
-              }
-              break;
-            }
           }
+          
+          // 非超时错误 — 智能恢复
+          consecutiveErrors++;
+          
+          // 第一个错误：归零所有输入防止卡键
+          if (!recovering) {
+            recovering = true;
+            console.warn(`${TAG} 检测到设备错误 (code=${errorCode})，释放所有输入并尝试恢复: ${err}`);
+            this.buttonFlags = 0;
+            this.leftStickX = 0;
+            this.leftStickY = 0;
+            this.rightStickX = 0;
+            this.rightStickY = 0;
+            this.leftTrigger = 0;
+            this.rightTrigger = 0;
+            this.reportInput();
+          }
+          
+          // 超过恢复上限 → 放弃
+          if (consecutiveErrors >= MAX_RECOVERY_ERRORS) {
+            console.error(`${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
+            break;
+          }
+          
+          // 指数退避：50ms → 100ms → 200ms (cap)
+          const backoffMs = Math.min(50 * Math.pow(2, Math.min(consecutiveErrors - 1, 2)), 200);
+          await this.sleep(backoffMs);
         }
       }
     }
@@ -259,14 +265,8 @@ export abstract class AbstractXboxController extends AbstractController {
     
     // 根据错误类型决定是否通知设备移除
     if (!this.stopped) {
-      if (detectedHardwareError) {
-        console.error(`${TAG} 由于硬件错误，自动停止控制器`);
-        this.stop();
-      } else {
-        // 设备断开或其他错误
-        console.warn(`${TAG} 由于设备断开/IO错误，自动停止控制器`);
-        this.stop();
-      }
+      console.warn(`${TAG} 由于设备断开/IO错误，自动停止控制器`);
+      this.stop();
     }
   }
   
@@ -379,27 +379,38 @@ export abstract class AbstractXboxController extends AbstractController {
       inEp,
       outEp,
       maxPkt,
-      (data: Uint8Array, length: number) => {
+      (data: Uint8Array, _length: number) => {
         if (this.stopped) return;
-        if (this.handleRead(data.slice(0, length))) {
+        // data.length === length (NAPI 已按实际长度创建)，无需 slice 避免额外堆分配
+        if (this.handleRead(data)) {
           this.reportInput();
         }
       },
       (errorCode: number) => {
         if (this.stopped) return;
-        console.warn(`${TAG} DDK 轮询错误: ${errorCode}`);
-
-        // 检查原生轮询线程是否仍在运行
-        const nativeStillRunning = this.ddkPoller?.isNativeRunning() ?? false;
-
-        if (this.ignoreDisconnect) {
-          if (!nativeStillRunning) {
-            // 原生线程已退出但 ignoreDisconnect 开启 — 手柄会彻底无响应
-            // 记录警告，不主动 stop (避免串流中移除手柄)
-            console.error(`${TAG} DDK 原生线程已退出! 错误码=${errorCode}, 手柄输入将中断直到重新连接`);
-          }
+        
+        // 智能恢复协议：
+        // -1 = 设备暂时丢失，原生层正在尝试恢复，释放所有输入防止角色一直跑
+        // -2 = 设备已恢复，输入将自动恢复
+        // 正值 = 致命错误（恢复超时或非 IO 错误），停止控制器
+        if (errorCode === -1) {
+          console.warn(`${TAG} DDK 设备暂时丢失，释放所有输入`);
+          this.buttonFlags = 0;
+          this.leftStickX = 0;
+          this.leftStickY = 0;
+          this.rightStickX = 0;
+          this.rightStickY = 0;
+          this.leftTrigger = 0;
+          this.rightTrigger = 0;
+          this.reportInput();
           return;
         }
+        
+        if (errorCode === -2) {
+          console.info(`${TAG} DDK 设备已恢复，输入将自动恢复`);
+          return;
+        }
+        
         console.error(`${TAG} DDK 轮询致命错误: ${errorCode}, 停止控制器`);
         this.stop();
       },
@@ -418,11 +429,6 @@ export abstract class AbstractXboxController extends AbstractController {
     this.stopped = false;
     this.useDdkPolling = true;
     this.ddkActive = true;
-
-    // 同步忽略断开信号设置到原生层
-    if (this.ignoreDisconnect) {
-      this.ddkPoller.setIgnoreDisconnect(true);
-    }
 
     if (!this.doInit()) {
       console.warn(`${TAG} DDK 路径下 doInit 失败`);

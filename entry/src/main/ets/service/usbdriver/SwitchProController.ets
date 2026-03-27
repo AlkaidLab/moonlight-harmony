@@ -19,7 +19,7 @@ import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, SwitchPro, UsbClass, ControllerType, ControllerCapabilities, MotionType } from './ControllerConstants';
 import { readShortLE } from '../GamepadTypes';
-import { isHardwareError, UsbError } from './UsbErrorCodes';
+import { UsbError } from './UsbErrorCodes';
 
 const TAG = '[USB-SWITCH]';
 const PACKET_SIZE = 64;
@@ -512,9 +512,13 @@ export class SwitchProController extends AbstractController {
     this.notifyDeviceAdded();
     
     let isSleepMode = false;
-    let detectedHardwareError = false;
     let consecutiveTimeouts = 0;  // 连续超时计数
     const MAX_CONSECUTIVE_TIMEOUTS = 10;  // 1秒超时，10次 = 10秒
+    
+    // 智能恢复状态
+    let consecutiveErrors = 0;
+    const MAX_RECOVERY_ERRORS = 50;  // ~10s
+    let recovering = false;
     
     // 输入循环
     while (!this.stopped) {
@@ -530,17 +534,21 @@ export class SwitchProController extends AbstractController {
         
         if (buffer && this.handleRead(buffer)) {
           consecutiveTimeouts = 0;  // 收到数据，重置超时计数
+          // 恢复成功
+          if (recovering) {
+            console.info(`${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
+            consecutiveErrors = 0;
+            recovering = false;
+          }
           this.reportInput();
           this.reportMotion();
         }
       } catch (err) {
         if (!this.stopped) {
-          // 检查错误类型
           const usbErr = err instanceof UsbError ? err : null;
           const errorCode = usbErr ? usbErr.code : 0;
-          const retryable = usbErr ? usbErr.retryable : true;  // 默认可重试
           
-          // 超时错误特殊处理：需要连续多次才认为是省电模式
+          // 超时错误特殊处理：连续多次超时 = 省电模式
           if (errorCode === -8) {  // USB_ERROR_TIMEOUT
             consecutiveTimeouts++;
             if (consecutiveTimeouts >= MAX_CONSECUTIVE_TIMEOUTS) {
@@ -548,39 +556,35 @@ export class SwitchProController extends AbstractController {
               isSleepMode = true;
               break;
             }
-            // 单次超时不做处理，继续轮询
             continue;
-          } else if (errorCode === -4) {  // USB_ERROR_NO_DEVICE
-            console.warn(`${TAG} 设备不可达: ${err}`);
-            // 检查是否应该忽略断开信号
-            if (this.ignoreDisconnect) {
-              console.info(`${TAG} 忽略设备不可达错误（用户已启用忽略断开设置）`);
-              continue;
-            }
-            isSleepMode = true;
-            break;
-          } else if (isHardwareError(errorCode)) {
-            console.error(`${TAG} 检测到硬件错误: ${err}`);
-            // 检查是否应该忽略断开信号
-            if (this.ignoreDisconnect) {
-              console.info(`${TAG} 忽略硬件错误（用户已启用忽略断开设置）`);
-              continue;
-            }
-            detectedHardwareError = true;
-            // 硬件错误 - 立即停止
-            break;
-          } else {
-            console.error(`${TAG} 输入读取错误: ${err}`);
-            // 其他错误 - 如果标记为可重试则继续，否则停止
-            if (!retryable) {
-              // 检查是否应该忽略断开信号
-              if (this.ignoreDisconnect) {
-                console.info(`${TAG} 忽略不可重试错误（用户已启用忽略断开设置）`);
-                continue;
-              }
-              break;
-            }
           }
+          
+          // 非超时错误 — 智能恢复
+          consecutiveErrors++;
+          
+          // 第一个错误：归零所有输入防止卡键
+          if (!recovering) {
+            recovering = true;
+            console.warn(`${TAG} 检测到设备错误 (code=${errorCode})，释放所有输入并尝试恢复: ${err}`);
+            this.buttonFlags = 0;
+            this.leftStickX = 0;
+            this.leftStickY = 0;
+            this.rightStickX = 0;
+            this.rightStickY = 0;
+            this.leftTrigger = 0;
+            this.rightTrigger = 0;
+            this.reportInput();
+          }
+          
+          // 超过恢复上限 → 放弃
+          if (consecutiveErrors >= MAX_RECOVERY_ERRORS) {
+            console.error(`${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
+            break;
+          }
+          
+          // 指数退避：50ms → 100ms → 200ms (cap)
+          const backoffMs = Math.min(50 * Math.pow(2, Math.min(consecutiveErrors - 1, 2)), 200);
+          await this.sleep(backoffMs);
         }
       }
     }
@@ -589,16 +593,12 @@ export class SwitchProController extends AbstractController {
     
     // 根据错误类型决定是否通知设备移除
     if (!this.stopped) {
-      if (detectedHardwareError) {
-        console.error(`${TAG} 由于硬件错误，自动停止控制器`);
-        this.stop();
-      } else if (isSleepMode) {
+      if (isSleepMode) {
         console.info(`${TAG} 设备进入省电模式，等待自动重连...`);
         // 省电模式：只停止 I/O 循环但不立即移除，让 UsbDriverService 定时器处理重连
         this.notifyDeviceRemoved();
       } else {
-        // 其他错误
-        console.warn(`${TAG} 由于 IO 错误，自动停止控制器`);
+        console.warn(`${TAG} 由于设备断开/IO错误，自动停止控制器`);
         this.stop();
       }
     }

@@ -151,9 +151,6 @@ export class StreamViewModel {
   showOverlay: boolean = false;
   showController: boolean = false;
   
-  // 网络质量警告（CONN_STATUS_POOR 时显示）
-  connectionPoor: boolean = false;
-  
   // 私有服务
   private settingsService: SettingsService = SettingsService.getInstance();
   private streamingSession: StreamingSession | null = null;
@@ -334,8 +331,13 @@ export class StreamViewModel {
       });
       
       // 设置连接状态回调（网络质量警告）
+      // 使用 AppStorage 而非 @Observed 属性：NAPI threadsafe 回调中设置 @Observed
+      // 属性可能无法可靠触发 ArkUI 重新渲染，而 AppStorage + @StorageLink 保证生效
       this.streamingSession.setConnectionStatusCallback((connectionStatus: number) => {
-        this.connectionPoor = (connectionStatus === CONN_STATUS_POOR);
+        const newPoor = (connectionStatus === CONN_STATUS_POOR);
+        const oldPoor = AppStorage.get<boolean>('connectionPoor') ?? false;
+        console.info(`StreamViewModel: connectionStatusUpdate ${connectionStatus}, connectionPoor: ${oldPoor} -> ${newPoor}`);
+        AppStorage.setOrCreate('connectionPoor', newPoor);
         if (this.connectionStatusCallback) {
           this.connectionStatusCallback(connectionStatus);
         }
@@ -387,6 +389,9 @@ export class StreamViewModel {
   async stopStreaming(): Promise<void> {
     // 重置旋转状态
     this.resetRotationState();
+    
+    // 清除网络质量警告
+    AppStorage.setOrCreate('connectionPoor', false);
     
     // 停止串流会话
     if (this.streamingSession) {

@@ -47,7 +47,6 @@ export abstract class AbstractController {
   protected serial: string = '';
   
   // 配置选项
-  protected ignoreDisconnect: boolean = false;  // 忽略断开信号
   protected ddkActive: boolean = false;  // DDK 高速轮询是否启用
   protected ddkPollingEnabled: boolean = false;  // 用户是否开启 DDK 高速轮询
   
@@ -90,25 +89,14 @@ export abstract class AbstractController {
   }
   
   /**
-   * 设置是否忽略断开信号
-   * @param ignore true 表示忽略断开信号
-   */
-  setIgnoreDisconnect(ignore: boolean): void {
-    this.ignoreDisconnect = ignore;
-  }
-
-  /**
    * 设置是否使用 DDK 高速轮询
    */
   setDdkPollingEnabled(enabled: boolean): void {
     this.ddkPollingEnabled = enabled;
   }
-  
-  /**
-   * 获取是否忽略断开信号
-   */
-  getIgnoreDisconnect(): boolean {
-    return this.ignoreDisconnect;
+
+  protected sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**

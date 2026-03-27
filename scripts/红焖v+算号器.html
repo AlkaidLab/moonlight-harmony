@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Moonlight 开发者激活码生成器</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+.card {
+  background: #16213e;
+  border-radius: 12px;
+  padding: 40px;
+  width: 420px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.4);
+}
+h1 {
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 8px;
+  color: #e2e8f0;
+}
+.subtitle {
+  text-align: center;
+  font-size: 13px;
+  color: #94a3b8;
+  margin-bottom: 28px;
+}
+label {
+  display: block;
+  font-size: 13px;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+input[type="text"] {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #f1f5f9;
+  font-size: 15px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  outline: none;
+  transition: border-color .2s;
+}
+input[type="text"]:focus {
+  border-color: #6366f1;
+}
+button {
+  width: 100%;
+  padding: 10px;
+  margin-top: 16px;
+  border: none;
+  border-radius: 8px;
+  background: #6366f1;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .2s;
+}
+button:hover { background: #4f46e5; }
+button:active { background: #4338ca; }
+.result {
+  margin-top: 24px;
+  text-align: center;
+  display: none;
+}
+.result-label {
+  font-size: 13px;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+.result-key {
+  font-size: 32px;
+  font-weight: 700;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: #22d3ee;
+  letter-spacing: 4px;
+  user-select: all;
+  cursor: pointer;
+}
+.result-key:hover { color: #67e8f9; }
+.copy-hint {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 6px;
+}
+.history {
+  margin-top: 24px;
+  border-top: 1px solid #1e293b;
+  padding-top: 16px;
+  display: none;
+}
+.history h3 {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+.history-list {
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 13px;
+  font-family: 'Consolas', monospace;
+}
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  color: #cbd5e1;
+  border-bottom: 1px solid #1e293b;
+}
+.history-item span:last-child {
+  color: #22d3ee;
+  font-weight: 600;
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🌙 Moonlight 开发者激活码</h1>
+  <p class="subtitle">输入设备ID，生成对应的激活码</p>
+
+  <label for="deviceId">设备 ID</label>
+  <input type="text" id="deviceId" placeholder="粘贴设备ID..." autofocus>
+  <button id="genBtn">生成激活码</button>
+
+  <div class="result" id="resultArea">
+    <div class="result-label">激活码</div>
+    <div class="result-key" id="resultKey" title="点击复制"></div>
+    <div class="copy-hint" id="copyHint">点击激活码复制到剪贴板</div>
+  </div>
+
+  <div class="history" id="historyArea">
+    <h3>历史记录</h3>
+    <div class="history-list" id="historyList"></div>
+  </div>
+</div>
+
+<script>
+const SALT = 'M00nL1ghtH@rm0nyD3vK3y';
+
+async function sha256(message) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return new Uint8Array(hashBuffer);
+}
+
+async function computeKey(deviceId) {
+  const hash = await sha256(SALT + deviceId.toLowerCase());
+  let hex = '';
+  for (let i = 0; i < 4; i++) {
+    hex += hash[i].toString(16).toUpperCase().padStart(2, '0');
+  }
+  return hex;
+}
+
+const history = [];
+
+async function generate() {
+  const input = document.getElementById('deviceId');
+  const deviceId = input.value.trim();
+  if (!deviceId) { input.focus(); return; }
+
+  const key = await computeKey(deviceId);
+
+  document.getElementById('resultKey').textContent = key;
+  document.getElementById('resultArea').style.display = 'block';
+  document.getElementById('copyHint').textContent = '点击激活码复制到剪贴板';
+
+  // 历史记录（去重）
+  const existing = history.findIndex(h => h.id === deviceId);
+  if (existing !== -1) history.splice(existing, 1);
+  history.unshift({ id: deviceId, key });
+  if (history.length > 20) history.pop();
+  renderHistory();
+}
+
+function renderHistory() {
+  if (history.length === 0) return;
+  document.getElementById('historyArea').style.display = 'block';
+  const list = document.getElementById('historyList');
+  list.innerHTML = history.map(h =>
+    `<div class="history-item"><span>${escapeHtml(h.id)}</span><span>${h.key}</span></div>`
+  ).join('');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// 点击复制
+document.getElementById('resultKey').addEventListener('click', async () => {
+  const key = document.getElementById('resultKey').textContent;
+  try {
+    await navigator.clipboard.writeText(key);
+    document.getElementById('copyHint').textContent = '已复制!';
+  } catch {
+    document.getElementById('copyHint').textContent = '复制失败，请手动选中复制';
+  }
+});
+
+document.getElementById('genBtn').addEventListener('click', generate);
+document.getElementById('deviceId').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') generate();
+});
+</script>
+</body>
+</html>

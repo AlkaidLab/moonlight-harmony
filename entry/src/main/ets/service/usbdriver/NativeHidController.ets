@@ -21,7 +21,7 @@ import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, UsbClass, ControllerType, ControllerCapabilities } from './ControllerConstants';
 import { AXIS_MAX, TRIGGER_MAX, RUMBLE_MAX } from '../GamepadTypes';
 import { NativeHidParserService, NativeGamepadState, NativeGamepadType, NativeButtonFlags } from './NativeHidParserService';
-import { isHardwareError, createUsbError, UsbError } from './UsbErrorCodes';
+import { createUsbError, UsbError } from './UsbErrorCodes';
 
 const TAG = '[USB-NativeHID]';
 
@@ -330,40 +330,10 @@ export class NativeHidController extends AbstractController {
   }
 
   /**
-   * 处理 Native Poller 错误回调
-   */
-  private handlePollerError(errorCode: number): void {
-    if (errorCode === -4) {
-      // USB_ERROR_NO_DEVICE - 设备断开
-      if (this.ignoreDisconnect) {
-        console.warn(`${TAG} Native 轮询: 设备不可达但忽略断开信号已启用`);
-        return;
-      }
-      console.warn(`${TAG} Native 轮询: 设备断开 (code=${errorCode})`);
-      this.stop();
-    } else if (errorCode === -1 || errorCode === -9) {
-      // USB_ERROR_IO / USB_ERROR_PIPE
-      if (this.ignoreDisconnect) {
-        console.warn(`${TAG} Native 轮询: 硬件错误但忽略断开信号已启用`);
-        return;
-      }
-      console.error(`${TAG} Native 轮询: 硬件错误 (code=${errorCode})`);
-      this.stop();
-    } else {
-      console.warn(`${TAG} Native 轮询: 未知错误 (code=${errorCode})`);
-      if (!this.ignoreDisconnect) {
-        this.stop();
-      }
-    }
-  }
-
-  /**
    * ArkTS 后备轮询循环（当 Native Poller 不可用时使用）
    */
   private async inputLoop(): Promise<void> {
     const buffer = new Uint8Array(this.inputMaxPacketSize);
-    let isSleepMode = false;
-    let hardwareError = false;
     
     // USB 读取超时时间（与 Android 一致为 3000ms）
     // 用于判断错误是超时还是真正的 I/O 错误
@@ -379,6 +349,11 @@ export class NativeHidController extends AbstractController {
     // 初始化最后活动时间
     this.lastActivityTime = Date.now();
     this.consecutiveTimeouts = 0;
+    
+    // 智能恢复状态
+    let consecutiveErrors = 0;
+    const MAX_RECOVERY_ERRORS = 50;  // ~10s
+    let recovering = false;
 
     while (this.running) {
       // 记录读取开始时间（用于检测真正的 I/O 错误 vs 超时）
@@ -391,6 +366,13 @@ export class NativeHidController extends AbstractController {
           // 重置超时计数器
           this.consecutiveTimeouts = 0;
           this.lastActivityTime = Date.now();
+          
+          // 恢复成功
+          if (recovering) {
+            console.info(`${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
+            consecutiveErrors = 0;
+            recovering = false;
+          }
           
           this.processInputReport(buffer.slice(0, result));
           
@@ -406,112 +388,61 @@ export class NativeHidController extends AbstractController {
       } catch (err) {
         if (this.running) {
           const elapsedTime = Date.now() - startTime;
-          
-          // 检查错误类型
           const usbErr = err instanceof UsbError ? err : null;
           const errorCode = usbErr ? usbErr.code : 0;
-          const retryable = usbErr ? usbErr.retryable : true;  // 默认可重试
           
-          // 采用 Android 的策略：通过读取耗时来判断是超时还是真正的 I/O 错误
-          // 参考: Android AbstractXboxController.java
-          // - 如果 bulkTransfer 返回错误，且耗时 < 1秒，说明是真正的设备 I/O 错误
-          // - 如果耗时接近超时时间（3秒），说明只是正常超时，设备仍然连接
-          
+          // 超时错误
           if (errorCode === -8) {  // USB_ERROR_TIMEOUT
-            // 检查是否是快速失败（真正的 I/O 错误伪装成超时）
+            // 快速失败（真正的 I/O 错误伪装成超时）→ 按非超时错误处理
             if (elapsedTime < QUICK_FAIL_THRESHOLD) {
-              console.warn(`${TAG} 检测到设备 I/O 错误（快速失败：${elapsedTime}ms < ${QUICK_FAIL_THRESHOLD}ms）`);
-              // 检查是否应该忽略断开信号
-              if (this.ignoreDisconnect) {
-                console.info(`${TAG} 忽略快速失败错误（用户已启用忽略断开设置）`);
-                await this.sleep(50);
+              // fall through to smart recovery below
+            } else {
+              // 正常超时 - 累计连续超时次数（用于检测雷蛇等静默断开的设备）
+              this.consecutiveTimeouts++;
+              if (this.consecutiveTimeouts >= NativeHidController.SILENT_DISCONNECT_TIMEOUT_COUNT) {
+                console.warn(`${TAG} 检测到可能的静默断开: 连续 ${this.consecutiveTimeouts} 次超时无数据`);
+                // 静默断开也走智能恢复而非直接 break
+                // 如果设备只是暂时无数据，最终会恢复
+              } else {
                 continue;
               }
-              hardwareError = true;
-              break;
             }
-            
-            // 正常超时 - 累计连续超时次数（用于检测雷蛇等静默断开的设备）
-            this.consecutiveTimeouts++;
-            if (this.consecutiveTimeouts >= NativeHidController.SILENT_DISCONNECT_TIMEOUT_COUNT) {
-              console.warn(`${TAG} 检测到可能的静默断开: 连续 ${this.consecutiveTimeouts} 次超时无数据`);
-              // 检查是否应该忽略断开信号
-              if (this.ignoreDisconnect) {
-                console.info(`${TAG} 忽略静默断开检测（用户已启用忽略断开设置）`);
-                this.consecutiveTimeouts = 0;  // 重置计数器
-                continue;
-              }
-              isSleepMode = true;
-              break;
-            }
-            
-            // 继续轮询（手柄可能暂时没有输入变化）
-            continue;
-          } else if (errorCode === -4) {  // USB_ERROR_NO_DEVICE
-            console.warn(`${TAG} 设备不可达: ${err}`);
-            // 检查是否应该忽略断开信号
-            if (this.ignoreDisconnect) {
-              console.info(`${TAG} 忽略设备不可达错误（用户已启用忽略断开设置）`);
-              await this.sleep(50);
-              continue;
-            }
-            isSleepMode = true;
-            break;
-          } else if (isHardwareError(errorCode)) {
-            console.error(`${TAG} 检测到硬件错误: ${err}`);
-            // 检查是否应该忽略断开信号
-            if (this.ignoreDisconnect) {
-              console.info(`${TAG} 忽略硬件错误（用户已启用忽略断开设置）`);
-              await this.sleep(50);
-              continue;
-            }
-            hardwareError = true;
-            // 硬件错误 - 立即停止
-            break;
-          } else {
-            // 其他错误 - 也检查是否快速失败
-            if (elapsedTime < QUICK_FAIL_THRESHOLD) {
-              console.warn(`${TAG} 检测到设备 I/O 错误（错误码: ${errorCode}, 耗时: ${elapsedTime}ms）`);
-              // 检查是否应该忽略断开信号
-              if (this.ignoreDisconnect) {
-                console.info(`${TAG} 忽略快速失败错误（用户已启用忽略断开设置）`);
-                await this.sleep(50);
-                continue;
-              }
-              hardwareError = true;
-              break;
-            }
-            console.error(`${TAG} 输入读取错误: ${err}`);
-            // 其他错误 - 如果标记为可重试则继续，否则停止
-            if (!retryable) {
-              // 检查是否应该忽略断开信号
-              if (this.ignoreDisconnect) {
-                console.info(`${TAG} 忽略不可重试错误（用户已启用忽略断开设置）`);
-                await this.sleep(50);
-                continue;
-              }
-              break;
-            }
-            await this.sleep(50);  // 增加延迟到 50ms
           }
+          
+          // 非超时错误 / 快速失败 / 静默断开 — 智能恢复
+          consecutiveErrors++;
+          
+          // 第一个错误：归零所有输入防止卡键
+          if (!recovering) {
+            recovering = true;
+            console.warn(`${TAG} 检测到设备错误 (code=${errorCode}, elapsed=${elapsedTime}ms)，释放所有输入并尝试恢复: ${err}`);
+            this.buttonFlags = 0;
+            this.leftStickX = 0;
+            this.leftStickY = 0;
+            this.rightStickX = 0;
+            this.rightStickY = 0;
+            this.leftTrigger = 0;
+            this.rightTrigger = 0;
+            this.reportInput();
+          }
+          
+          // 超过恢复上限 → 放弃
+          if (consecutiveErrors >= MAX_RECOVERY_ERRORS) {
+            console.error(`${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
+            break;
+          }
+          
+          // 指数退避：50ms → 100ms → 200ms (cap)
+          const backoffMs = Math.min(50 * Math.pow(2, Math.min(consecutiveErrors - 1, 2)), 200);
+          await this.sleep(backoffMs);
         }
       }
     }
     
     // 根据错误类型决定是否通知设备移除
     if (this.running) {
-      if (hardwareError) {
-        console.error(`${TAG} 由于硬件错误，自动停止控制器`);
-        this.stop();
-      } else if (isSleepMode) {
-        console.info(`${TAG} 设备进入省电模式，等待自动重连...`);
-        // 省电模式：只停止 I/O 循环但不立即移除，让 UsbDriverService 定时器处理重连
-        this.notifyDeviceRemoved();
-      } else {
-        // 其他错误
-        console.warn(`${TAG} 由于 IO 错误，自动停止控制器`);
-        this.stop();
-      }
+      console.warn(`${TAG} 由于设备断开/IO错误，自动停止控制器`);
+      this.stop();
     }
   }
 
@@ -727,12 +658,6 @@ export class NativeHidController extends AbstractController {
     if (nativeButtons & NativeButtonFlags.HOME) flags |= ButtonFlags.SPECIAL_BUTTON_FLAG;
 
     return flags;
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise<void>((resolve: () => void) => {
-      setTimeout(() => resolve(), ms);
-    });
   }
 
   rumble(lowFreqMotor: number, highFreqMotor: number): void {

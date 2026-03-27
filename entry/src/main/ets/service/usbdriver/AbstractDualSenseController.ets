@@ -19,7 +19,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ControllerType, ControllerCapabilities, ButtonFlags, MotionType } from './ControllerConstants';
-import { isHardwareError, analyzeErrorPattern, createUsbError, UsbError } from './UsbErrorCodes';
+import { createUsbError, UsbError } from './UsbErrorCodes';
 import { DdkUsbPoller } from './DdkUsbPoller';
 
 const TAG = '[USB-DS]';
@@ -242,9 +242,10 @@ export abstract class AbstractDualSenseController extends AbstractController {
     let successCount = 0;
     let detectedHardwareError = false;
     
-    // 错误历史记录（用于模式分析）
-    const errorHistory: number[] = [];
-    const MAX_ERROR_HISTORY = 5;
+    // 智能恢复状态
+    let consecutiveErrors = 0;
+    const MAX_RECOVERY_ERRORS = 50;  // ~10s
+    let recovering = false;
     
     while (!this.stopped) {
       try {
@@ -258,9 +259,13 @@ export abstract class AbstractDualSenseController extends AbstractController {
         
         readCount++;
         
-        // 成功读取时清空错误历史
+        // 成功读取时重置恢复状态
         if (buffer && buffer.length > 0) {
-          errorHistory.length = 0;  // 清空错误历史
+          if (recovering) {
+            console.info(`${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
+            consecutiveErrors = 0;
+            recovering = false;
+          }
           
           if (this.handleRead(buffer)) {
             successCount++;
@@ -289,64 +294,40 @@ export abstract class AbstractDualSenseController extends AbstractController {
         }
       } catch (err) {
         if (!this.stopped) {
-          // 检查错误类型
           const usbErr = err instanceof UsbError ? err : null;
           const errorCode = usbErr ? usbErr.code : 0;
-          const retryable = usbErr ? usbErr.retryable : true;  // 默认可重试
           
-          // 超时错误 - 继续轮询
+          // 超时错误 - 继续轮询（不计入恢复计数）
           if (errorCode === -8) {  // USB_ERROR_TIMEOUT
             continue;
-          } else if (errorCode === -4) {  // USB_ERROR_NO_DEVICE
-            // 如果设置了忽略断开信号，继续轮询
-            if (this.ignoreDisconnect) {
-              console.warn(`${TAG} 设备不可达但忽略断开信号已启用，继续轮询: ${err}`);
-              continue;
-            }
-            console.warn(`${TAG} 设备不可达: ${err}`);
+          }
+          
+          // 非超时错误 — 智能恢复
+          consecutiveErrors++;
+          
+          // 第一个错误：归零所有输入防止卡键
+          if (!recovering) {
+            recovering = true;
+            console.warn(`${TAG} 检测到设备错误 (code=${errorCode})，释放所有输入并尝试恢复: ${err}`);
+            this.buttonFlags = 0;
+            this.leftStickX = 0;
+            this.leftStickY = 0;
+            this.rightStickX = 0;
+            this.rightStickY = 0;
+            this.leftTrigger = 0;
+            this.rightTrigger = 0;
+            this.reportInput();
+          }
+          
+          // 超过恢复上限 → 放弃
+          if (consecutiveErrors >= MAX_RECOVERY_ERRORS) {
+            console.error(`${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
             break;
           }
           
-          // 记录错误历史
-          errorHistory.unshift(errorCode);
-          if (errorHistory.length > MAX_ERROR_HISTORY) {
-            errorHistory.pop();
-          }
-          
-          // 使用错误模式分析（非超时错误）
-          const analysis = analyzeErrorPattern(errorHistory);
-          console.info(`${TAG} 错误分析: 省电=${analysis.likelySleepMode}, 断开=${analysis.likelyDisconnected}, 置信度=${(analysis.confidence * 100).toFixed(0)}%`);
-          
-          if (analysis.likelyDisconnected && analysis.confidence >= 0.80) {
-            // 如果设置了忽略断开信号，继续轮询
-            if (this.ignoreDisconnect) {
-              console.warn(`${TAG} 检测到设备断开但忽略断开信号已启用，继续轮询: ${err}`);
-              continue;
-            }
-            console.error(`${TAG} 检测到设备断开 (置信度: ${(analysis.confidence * 100).toFixed(0)}%): ${err}`);
-            detectedHardwareError = true;
-            break;
-          } else if (isHardwareError(errorCode)) {
-            // 如果设置了忽略断开信号，继续轮询
-            if (this.ignoreDisconnect) {
-              console.warn(`${TAG} 检测到硬件错误但忽略断开信号已启用，继续轮询: ${err}`);
-              continue;
-            }
-            console.error(`${TAG} 检测到硬件错误: ${err}`);
-            detectedHardwareError = true;
-            break;
-          } else {
-            console.error(`${TAG} 输入读取错误: ${err}`);
-            // 其他错误 - 如果标记为可重试则继续，否则停止
-            if (!retryable) {
-              // 如果设置了忽略断开信号，也继续轮询
-              if (this.ignoreDisconnect) {
-                console.warn(`${TAG} 不可重试错误但忽略断开信号已启用，继续轮询: ${err}`);
-                continue;
-              }
-              break;
-            }
-          }
+          // 指数退避：50ms → 100ms → 200ms (cap)
+          const backoffMs = Math.min(50 * Math.pow(2, Math.min(consecutiveErrors - 1, 2)), 200);
+          await this.sleep(backoffMs);
         }
       }
     }
@@ -355,14 +336,8 @@ export abstract class AbstractDualSenseController extends AbstractController {
     
     // 根据错误类型决定是否通知设备移除
     if (!this.stopped) {
-      if (detectedHardwareError) {
-        console.error(`${TAG} 由于硬件错误，自动停止控制器`);
-        this.stop();
-      } else {
-        // 设备断开或其他错误
-        console.warn(`${TAG} 由于设备断开/IO错误，自动停止控制器`);
-        this.stop();
-      }
+      console.warn(`${TAG} 由于设备断开/IO错误，自动停止控制器`);
+      this.stop();
     }
   }
   
@@ -465,9 +440,9 @@ export abstract class AbstractDualSenseController extends AbstractController {
     this.ddkPoller = new DdkUsbPoller();
     const started = this.ddkPoller.start(
       ddkDeviceId, ifaceIndex, inEp, outEp, maxPkt,
-      (data: Uint8Array, length: number) => {
+      (data: Uint8Array, _length: number) => {
         if (this.stopped) return;
-        if (this.handleRead(data.slice(0, length))) {
+        if (this.handleRead(data)) {
           this.reportInput();
           // DDK 路径也报告触摸板数据
           if (this.capabilities & ControllerCapabilities.TOUCHPAD) {
@@ -477,16 +452,25 @@ export abstract class AbstractDualSenseController extends AbstractController {
       },
       (errorCode: number) => {
         if (this.stopped) return;
-        console.warn(`${TAG} DDK 轮询错误: ${errorCode}`);
-
-        const nativeStillRunning = this.ddkPoller?.isNativeRunning() ?? false;
-
-        if (this.ignoreDisconnect) {
-          if (!nativeStillRunning) {
-            console.error(`${TAG} DDK 原生线程已退出! 错误码=${errorCode}, 手柄输入将中断直到重新连接`);
-          }
+        
+        if (errorCode === -1) {
+          console.warn(`${TAG} DDK 设备暂时丢失，释放所有输入`);
+          this.buttonFlags = 0;
+          this.leftStickX = 0;
+          this.leftStickY = 0;
+          this.rightStickX = 0;
+          this.rightStickY = 0;
+          this.leftTrigger = 0;
+          this.rightTrigger = 0;
+          this.reportInput();
           return;
         }
+        
+        if (errorCode === -2) {
+          console.info(`${TAG} DDK 设备已恢复，输入将自动恢复`);
+          return;
+        }
+        
         console.error(`${TAG} DDK 轮询致命错误: ${errorCode}, 停止控制器`);
         this.stop();
       },
@@ -504,11 +488,6 @@ export abstract class AbstractDualSenseController extends AbstractController {
     this.stopped = false;
     this.useDdkPolling = true;
     this.ddkActive = true;
-
-    // 同步忽略断开信号设置到原生层
-    if (this.ignoreDisconnect) {
-      this.ddkPoller.setIgnoreDisconnect(true);
-    }
 
     if (!this.doInit()) {
       console.warn(`${TAG} DDK 路径下 doInit 失败`);

@@ -176,7 +176,6 @@ struct SettingsPageV2 {
   @State gamepadMotionFallback: boolean = false;
   @State gamepadTouchpadMouse: boolean = false;
   @State enableStartKeyMenu: boolean = true;
-  @State ignoreDeviceDisconnect: boolean = false;
   @State enableKeyInterceptor: boolean = false;
   @State keyInterceptorAvailable: boolean = false;  // 按键注入 API 是否可用（API 13+ 才支持反劫持）
   @State gcButtonHomeMapping: string = 'guide';  // 2313键（Home键）动作映射
@@ -484,7 +483,6 @@ struct SettingsPageV2 {
       this.gamepadMotionFallback = await this.loadBoolean(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false);
       this.gamepadTouchpadMouse = await this.loadBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
       this.enableStartKeyMenu = await this.loadBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true);
-      this.ignoreDeviceDisconnect = await this.loadBoolean(SettingsKeys.IGNORE_DEVICE_DISCONNECT, false);
       this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false);
       // 检查按键注入 API 是否可用（API 13+），不可用则强制禁用反劫持
       this.keyInterceptorAvailable = InputInterceptorService.getInstance().isInjectApiAvailable();
@@ -1365,16 +1363,6 @@ struct SettingsPageV2 {
                 action: () => {
                   this.enableStartKeyMenu = !this.enableStartKeyMenu;
                   this.saveSetting(SettingsKeys.ENABLE_START_KEY_MENU, this.enableStartKeyMenu);
-                }
-              },
-              {
-                title: '忽略手柄断开',
-                subtitle: '忽略手柄断开信号，适用于有电源管理问题的手柄（如 Razer）',
-                type: 'toggle',
-                value: this.ignoreDeviceDisconnect,
-                action: () => {
-                  this.ignoreDeviceDisconnect = !this.ignoreDeviceDisconnect;
-                  this.saveSetting(SettingsKeys.IGNORE_DEVICE_DISCONNECT, this.ignoreDeviceDisconnect);
                 }
               },
               {

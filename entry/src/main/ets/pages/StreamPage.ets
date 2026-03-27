@@ -128,6 +128,9 @@ struct StreamPage {
   // ViewModel
   @State viewModel: StreamViewModel = new StreamViewModel();
   
+  // 网络质量警告（通过 AppStorage 跨 NAPI 边界可靠同步）
+  @StorageLink('connectionPoor') connectionPoor: boolean = false;
+  
   // UI 状态
   @State xComponentWidth: Length = '100%';
   @State xComponentHeight: Length = '100%';
@@ -1345,7 +1348,7 @@ struct StreamPage {
       }
 
       // 网络质量警告层（对齐 Android connectionStatusUpdate 行为）
-      if (this.viewModel.isConnected && this.viewModel.connectionPoor) {
+      if (this.viewModel.isConnected && this.connectionPoor) {
         Column() {
           this.ConnectionWarningOverlay()
         }
