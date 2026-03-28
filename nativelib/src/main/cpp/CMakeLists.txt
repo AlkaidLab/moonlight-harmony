@@ -68,6 +68,7 @@ set(SOURCE_FILES
     usb_helper.cpp
     usb_ddk_poller.cpp
     native_render.cpp
+    gl_post_processor.cpp
     sdl_gamecontrollerdb.cpp
 )
 

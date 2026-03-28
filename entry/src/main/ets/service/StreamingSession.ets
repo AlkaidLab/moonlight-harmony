@@ -124,6 +124,7 @@ interface NativeModule {
   setVsyncEnabled(enabled: boolean): void;
   isVsyncEnabled(): boolean;
   setVrrEnabled(enabled: boolean): void;
+  setPostProcessEnabled(enabled: boolean): void;
   setSpatialAudioEnabled(enabled: boolean): void;
   isSpatialAudioEnabled(): boolean;
   setAudioVolume(volume: number): boolean;
@@ -1109,6 +1110,7 @@ export class StreamingSession {
     this.nativeModule.setDecoderSyncMode(this.config.enableSyncDecode);
     this.nativeModule.setVsyncEnabled(this.config.enableVsync);
     this.nativeModule.setVrrEnabled(this.config.enableVrr);
+    this.nativeModule.setPostProcessEnabled(this.config.enablePostProcess ?? false);
 
     console.info(`解码器: buffers=${this.config.decoderBufferCount}, sync=${this.config.enableSyncDecode}, ` +
       `vsync=${this.config.enableVsync}, vrr=${this.config.enableVrr}`);

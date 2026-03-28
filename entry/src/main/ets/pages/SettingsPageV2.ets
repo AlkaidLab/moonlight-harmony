@@ -218,6 +218,7 @@ struct SettingsPageV2 {
   @State enableSyncDecode: boolean = false;  // 同步解码模式，默认禁用
   @State enableVrr: boolean = false;  // VRR 可变刷新率，默认禁用
   @State enableVsync: boolean = false;
+  @State enablePostProcess: boolean = false;  // 后处理滤镜（暗区抖动补偿）
   @State performanceMode: boolean = false;  // 性能模式，默认禁用
   @State enablePerfOverlay: boolean = false;
   @State perfOverlayOrientation: string = '垂直';
@@ -534,6 +535,7 @@ struct SettingsPageV2 {
       this.enableSyncDecode = await this.loadBoolean(SettingsKeys.ENABLE_SYNC_DECODE, false);  // 默认禁用
       this.enableVrr = await this.loadBoolean(SettingsKeys.ENABLE_VRR, false);  // VRR 默认禁用
       this.enableVsync = await this.loadBoolean(SettingsKeys.ENABLE_VSYNC, false);
+      this.enablePostProcess = await this.loadBoolean(SettingsKeys.ENABLE_POST_PROCESS, false);
       this.performanceMode = await this.loadBoolean(SettingsKeys.PERFORMANCE_MODE, false);  // 性能模式默认禁用
       this.enablePerfOverlay = await this.loadBoolean(SettingsKeys.ENABLE_PERF_OVERLAY, false);
       this.perfOverlayOrientation = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_ORIENTATION, '垂直');
@@ -1817,6 +1819,16 @@ struct SettingsPageV2 {
                 action: () => {
                   this.enableVsync = !this.enableVsync;
                   this.saveSetting(SettingsKeys.ENABLE_VSYNC, this.enableVsync);
+                }
+              },
+              {
+                title: '暗区增强',
+                subtitle: 'HDR 暗部抖动补偿，改善 OLED 暗区灰阶',
+                type: 'toggle',
+                value: this.enablePostProcess,
+                action: () => {
+                  this.enablePostProcess = !this.enablePostProcess;
+                  this.saveSetting(SettingsKeys.ENABLE_POST_PROCESS, this.enablePostProcess);
                 }
               },
               {

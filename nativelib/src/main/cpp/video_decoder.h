@@ -470,6 +470,12 @@ namespace VideoDecoderInstance {
     void SetPreciseFps(double fps);
     
     /**
+     * 启用/禁用后处理滤镜（暗区抖动补偿）
+     * 需要在串流开始前调用
+     */
+    void SetPostProcessEnabled(bool enabled);
+    
+    /**
      * 获取当前解码器模式
      */
     bool IsSyncMode();

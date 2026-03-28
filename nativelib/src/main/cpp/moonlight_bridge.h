@@ -211,6 +211,14 @@ napi_value MoonBridge_IsDecoderSyncMode(napi_env env, napi_callback_info info);
 napi_value MoonBridge_SetVrrEnabled(napi_env env, napi_callback_info info);
 
 /**
+ * 设置是否启用后处理滤镜（暗区抖动补偿）
+ * 通过 GL 着色器对 HDR 视频暗区做蓝噪声抖动，补偿 OLED 面板暗部灰阶缺陷
+ * 需要在串流开始前调用
+ * @param enabled boolean
+ */
+napi_value MoonBridge_SetPostProcessEnabled(napi_env env, napi_callback_info info);
+
+/**
  * 设置是否启用 VSync 渲染模式
  * 启用后使用 RenderOutputBufferAtTime 精确控制帧呈现时间，可减少画面撕裂
  * 关闭时使用 RenderOutputBuffer 立即渲染，最低延迟

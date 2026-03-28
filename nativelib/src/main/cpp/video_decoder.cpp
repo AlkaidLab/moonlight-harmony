@@ -15,6 +15,7 @@
 
 #include "video_decoder.h"
 #include "native_render.h"
+#include "gl_post_processor.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -1400,6 +1401,11 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
         if (render != nullptr && render->IsSurfaceReady()) {
             // 异步渲染：将帧提交到渲染队列
             render->SubmitFrame(codec, index, pts, enqueueTimeMs);
+            // 后处理：如果启用，从代理 surface 读取并处理到显示 surface
+            GLPostProcessor* postProc = GLPostProcessor::GetInstance();
+            if (postProc->IsEnabled()) {
+                postProc->ProcessFrame();
+            }
             return;
         }
     }
@@ -1414,6 +1420,14 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     } else {
         // 低延迟模式：直接渲染
         OH_VideoDecoder_RenderOutputBuffer(codec, index);
+    }
+    
+    // 后处理：非异步路径也需要处理
+    {
+        GLPostProcessor* postProc = GLPostProcessor::GetInstance();
+        if (postProc->IsEnabled()) {
+            postProc->ProcessFrame();
+        }
     }
 }
 
@@ -2252,8 +2266,34 @@ int Start() {
     OH_LOG_INFO(LOG_APP, "Starting decoder: %{public}dx%{public}d, HDR=%{public}d, hdrType=%{public}d",
                 config.width, config.height, g_enableHdr ? 1 : 0, static_cast<int>(g_hdrType));
     
+    // 后处理管线：如果启用，初始化 GL 管线并使用代理 window
+    OHNativeWindow* decoderWindow = g_savedWindow;
+    GLPostProcessor* postProc = GLPostProcessor::GetInstance();
+    if (postProc->IsEnabled()) {
+        // 设置 HDR 模式
+        switch (g_hdrType) {
+            case HdrType::HDR10:
+                postProc->SetHdrMode(PostProcessHdrMode::PQ);
+                break;
+            case HdrType::HLG:
+                postProc->SetHdrMode(PostProcessHdrMode::HLG);
+                break;
+            default:
+                postProc->SetHdrMode(PostProcessHdrMode::SDR);
+                break;
+        }
+        
+        if (postProc->Init(g_savedWindow, config.width, config.height) == 0) {
+            decoderWindow = postProc->GetDecoderWindow();
+            OH_LOG_INFO(LOG_APP, "Post-processing enabled: decoder → proxy window → GL shader → display");
+        } else {
+            OH_LOG_WARN(LOG_APP, "Post-processing init failed, using direct rendering");
+            postProc->SetEnabled(false);
+        }
+    }
+    
     // 初始化解码器
-    int ret = g_videoDecoder->Init(config, g_savedWindow);
+    int ret = g_videoDecoder->Init(config, decoderWindow);
     if (ret != 0) {
         OH_LOG_ERROR(LOG_APP, "Decoder Init failed: %{public}d", ret);
         delete g_videoDecoder;
@@ -2287,6 +2327,9 @@ void Cleanup() {
         delete g_videoDecoder;
         g_videoDecoder = nullptr;
     }
+    
+    // 清理后处理管线
+    GLPostProcessor::ReleaseInstance();
     
     // 保留 HDR 配置，整个串流会话期间不变
 }
@@ -2346,6 +2389,12 @@ void SetPreciseFps(double fps) {
     
     g_savedFps = fps;
     OH_LOG_INFO(LOG_APP, "SetPreciseFps: %.2f FPS", fps);
+}
+
+void SetPostProcessEnabled(bool enabled) {
+    GLPostProcessor* postProc = GLPostProcessor::GetInstance();
+    postProc->SetEnabled(enabled);
+    OH_LOG_INFO(LOG_APP, "SetPostProcessEnabled: %{public}s", enabled ? "ON" : "OFF");
 }
 
 bool IsSyncMode() {

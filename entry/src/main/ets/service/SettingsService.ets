@@ -124,6 +124,7 @@ export class SettingsKeys {
   static readonly ENABLE_SYNC_DECODE: string = 'settings_enable_sync_decode';  // 同步解码模式
   static readonly ENABLE_VRR: string = 'settings_enable_vrr';  // VRR 可变刷新率模式
   static readonly ENABLE_VSYNC: string = 'settings_enable_vsync';
+  static readonly ENABLE_POST_PROCESS: string = 'settings_enable_post_process';  // 后处理滤镜
   static readonly ENABLE_PERF_OVERLAY: string = 'settings_enable_perf_overlay';
   static readonly PERF_OVERLAY_ORIENTATION: string = 'settings_perf_overlay_orientation';
   static readonly PERF_OVERLAY_POSITION: string = 'settings_perf_overlay_position';
@@ -598,6 +599,7 @@ export class SettingsService {
     const enableSyncDecode = await this.getBoolean(SettingsKeys.ENABLE_SYNC_DECODE, false);  // 默认禁用
     const enableVrr = await this.getBoolean(SettingsKeys.ENABLE_VRR, false);  // VRR 默认禁用
     const enableVsync = await this.getBoolean(SettingsKeys.ENABLE_VSYNC, false);
+    const enablePostProcess = await this.getBoolean(SettingsKeys.ENABLE_POST_PROCESS, false);
     const enableStun = await this.getBoolean(SettingsKeys.ENABLE_STUN, false);
     const stretchVideo = await this.getBoolean(SettingsKeys.STRETCH_VIDEO, false);
     const hdrHighBrightness = await this.getBoolean(SettingsKeys.ENABLE_HDR_HIGH_BRIGHTNESS, false);
@@ -670,6 +672,7 @@ export class SettingsService {
       enableSyncDecode: enableSyncDecode,
       enableVrr: enableVrr,
       enableVsync: enableVsync,
+      enablePostProcess: enablePostProcess,
       enableStun: enableStun,
       performanceMode: await this.getBoolean(SettingsKeys.PERFORMANCE_MODE, false),
 
