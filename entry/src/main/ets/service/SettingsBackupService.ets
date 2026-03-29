@@ -25,6 +25,7 @@ import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
 import fileShare from '@ohos.fileshare';
 import { util } from '@kit.ArkTS';
+import { preferences } from '@kit.ArkData';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { promptAction } from '@kit.ArkUI';
 
@@ -47,6 +48,8 @@ interface BackupData {
   clientKey?: string;
   /** 客户端唯一标识（v2 新增） */
   uniqueId?: string;
+  /** 快捷键配置（独立 Preferences 存储，v2 新增） */
+  shortcutConfig?: Record<string, string | number | boolean>;
 }
 
 /** 自动备份防抖定时器 */
@@ -86,7 +89,19 @@ export class SettingsBackupService {
     if (filesDir) {
       backup.clientCert = SettingsBackupService.readFileText(`${filesDir}/client_cert.pem`);
       backup.clientKey = SettingsBackupService.readFileText(`${filesDir}/client_key.pem`);
-      backup.uniqueId = SettingsBackupService.readFileText(`${filesDir}/unique_id.txt`);
+     
+
+    // 读取快捷键配置（独立 Preferences 存储）
+    const ctx = PreferencesUtil.getContext();
+    if (ctx) {
+      try {
+        const shortcutPrefs = await preferences.getPreferences(ctx, 'shortcut_config');
+        const shortcutAll = await shortcutPrefs.getAll();
+        backup.shortcutConfig = JSON.parse(JSON.stringify(shortcutAll)) as Record<string, string | number | boolean>;
+      } catch {
+        // 快捷键配置可能不存在，忽略
+      }
+    } backup.uniqueId = SettingsBackupService.readFileText(`${filesDir}/unique_id.txt`);
     }
 
     return JSON.stringify(backup, null, 2);
@@ -174,7 +189,30 @@ export class SettingsBackupService {
 
       // 恢复客户端 SSL 证书/私钥/唯一标识（保持配对关系）
       const filesDir = PreferencesUtil.getFilesDir();
-      if (filesDir) {
+      i
+
+      // 恢复快捷键配置（独立 Preferences 存储）
+      if (backup.shortcutConfig) {
+        const ctx = PreferencesUtil.getContext();
+        if (ctx) {
+          try {
+            const shortcutPrefs = await preferences.getPreferences(ctx, 'shortcut_config');
+            await shortcutPrefs.clear();
+            const scKeys = Object.keys(backup.shortcutConfig);
+            for (let i = 0; i < scKeys.length; i++) {
+              const scKey = scKeys[i];
+              const scVal = backup.shortcutConfig[scKey];
+              if (typeof scVal === 'string' || typeof scVal === 'number' || typeof scVal === 'boolean') {
+                await shortcutPrefs.put(scKey, scVal);
+              }
+            }
+            await shortcutPrefs.flush();
+            console.info(`${TAG} 已恢复快捷键配置 (${scKeys.length} 项)`);
+          } catch (e) {
+            console.warn(`${TAG} 恢复快捷键配置失败: ${JSON.stringify(e)}`);
+          }
+        }
+      }f (filesDir) {
         if (backup.clientCert) {
           SettingsBackupService.writeFileText(`${filesDir}/client_cert.pem`, backup.clientCert);
           console.info(`${TAG} 已恢复客户端证书`);

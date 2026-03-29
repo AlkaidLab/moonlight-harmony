@@ -33,6 +33,13 @@ export class PreferencesUtil {
     return PreferencesUtil.contextRef?.filesDir ?? '';
   }
 
+  /**
+   * 获取已保存的 Context 引用
+   */
+  static getContext(): Context | null {
+    return PreferencesUtil.contextRef;
+  }
+
   static async getPreferences(context?: Context): Promise<preferences.Preferences> {
     const ctx = context || PreferencesUtil.contextRef;
     if (!ctx) {
