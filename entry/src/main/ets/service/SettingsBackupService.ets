@@ -41,6 +41,12 @@ interface BackupData {
   version: number;
   timestamp: string;
   settings: Record<string, string | number | boolean>;
+  /** 客户端 SSL 证书 PEM（v2 新增） */
+  clientCert?: string;
+  /** 客户端 SSL 私钥 PEM（v2 新增） */
+  clientKey?: string;
+  /** 客户端唯一标识（v2 新增） */
+  uniqueId?: string;
 }
 
 /** 自动备份防抖定时器 */
@@ -70,12 +76,51 @@ export class SettingsBackupService {
     }
 
     const backup: BackupData = {
-      version: 1,
+      version: 2,
       timestamp: new Date().toISOString(),
       settings: settings,
     };
 
+    // 读取客户端 SSL 证书/私钥/唯一标识（用于恢复配对关系）
+    const filesDir = PreferencesUtil.getFilesDir();
+    if (filesDir) {
+      backup.clientCert = SettingsBackupService.readFileText(`${filesDir}/client_cert.pem`);
+      backup.clientKey = SettingsBackupService.readFileText(`${filesDir}/client_key.pem`);
+      backup.uniqueId = SettingsBackupService.readFileText(`${filesDir}/unique_id.txt`);
+    }
+
     return JSON.stringify(backup, null, 2);
+  }
+
+  /**
+   * 读取文本文件内容，失败返回 undefined
+   */
+  private static readFileText(path: string): string | undefined {
+    try {
+      if (!fileIo.accessSync(path)) return undefined;
+      const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+      const stat = fileIo.statSync(path);
+      const buf = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, buf);
+      fileIo.closeSync(file);
+      return new util.TextDecoder('utf-8').decodeToString(new Uint8Array(buf));
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 写入文本文件内容
+   */
+  private static writeFileText(path: string, content: string): void {
+    try {
+      const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      const encoded = new util.TextEncoder().encodeInto(content);
+      fileIo.writeSync(file.fd, encoded.buffer);
+      fileIo.closeSync(file);
+    } catch (e) {
+      console.error(`${TAG} 写入文件失败 ${path}: ${JSON.stringify(e)}`);
+    }
   }
 
   /**
@@ -126,6 +171,24 @@ export class SettingsBackupService {
       }
 
       await prefs.flush();
+
+      // 恢复客户端 SSL 证书/私钥/唯一标识（保持配对关系）
+      const filesDir = PreferencesUtil.getFilesDir();
+      if (filesDir) {
+        if (backup.clientCert) {
+          SettingsBackupService.writeFileText(`${filesDir}/client_cert.pem`, backup.clientCert);
+          console.info(`${TAG} 已恢复客户端证书`);
+        }
+        if (backup.clientKey) {
+          SettingsBackupService.writeFileText(`${filesDir}/client_key.pem`, backup.clientKey);
+          console.info(`${TAG} 已恢复客户端私钥`);
+        }
+        if (backup.uniqueId) {
+          SettingsBackupService.writeFileText(`${filesDir}/unique_id.txt`, backup.uniqueId);
+          console.info(`${TAG} 已恢复客户端唯一标识`);
+        }
+      }
+
       console.info(`${TAG} 已导入 ${count} 项设置`);
       return count;
     } catch (e) {

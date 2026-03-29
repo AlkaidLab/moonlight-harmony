@@ -26,6 +26,13 @@ export class PreferencesUtil {
     PreferencesUtil.contextRef = context;
   }
 
+  /**
+   * 获取应用沙箱文件目录路径
+   */
+  static getFilesDir(): string {
+    return PreferencesUtil.contextRef?.filesDir ?? '';
+  }
+
   static async getPreferences(context?: Context): Promise<preferences.Preferences> {
     const ctx = context || PreferencesUtil.contextRef;
     if (!ctx) {
