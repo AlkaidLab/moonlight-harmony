@@ -177,8 +177,6 @@ export struct PerformanceOverlay {
   
   private startUpdateTimer(): void {
     let batteryUpdateCounter = 0;
-    let lastClockMinute = -1;
-    
     this.updateTimer = setInterval(() => {
       // 从 ViewModel 获取 session 更新性能数据
       const session = this.viewModel.getSession();
@@ -193,27 +191,18 @@ export struct PerformanceOverlay {
         this.perfPacketLoss = stats.packetLoss;
       }
       
-      // 检测时钟时段变化
+      // 整刻钟时钟显示（直接同步状态，不依赖过渡检测）
       const now = new Date();
-      const currentMinute = now.getMinutes();
-      const isClockMinute = currentMinute % 15 === 0;  // 当前分钟是否是整刻钟
-      const wasClockMinute = lastClockMinute % 15 === 0;  // 上次分钟是否是整刻钟
-      
-      // 刚进入整刻钟（从非整刻钟 → 整刻钟），触发弹跳动画
-      if (isClockMinute && !wasClockMinute) {
-        this.showMiniClock = true;  // 切换显示状态
-        this.triggerClockBounce();
-      } else if (!isClockMinute && wasClockMinute) {
-        // 离开整刻钟，隐藏时钟恢复月相
+      const isClockMinute = now.getMinutes() % 15 === 0;
+      if (isClockMinute) {
+        if (!this.showMiniClock) {
+          this.showMiniClock = true;
+          this.triggerClockBounce();
+        }
+        this.updateClockAngles();
+      } else if (this.showMiniClock) {
         this.showMiniClock = false;
       }
-      
-      // 在整刻钟时段内，每秒更新指针位置
-      if (isClockMinute) {
-        this.updateClockAngles();
-      }
-      
-      lastClockMinute = currentMinute;
 
       // 每15秒更新电池
       batteryUpdateCounter++;
