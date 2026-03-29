@@ -1995,7 +1995,15 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
         OH_VideoDecoder_FreeOutputBuffer(decoder_, latestFrame.index);
         return 0;
     }
-    
+
+    // Post-processing: apply GL shader pipeline if enabled
+    {
+        GLPostProcessor* postProc = GLPostProcessor::GetInstance();
+        if (postProc->IsEnabled()) {
+            postProc->ProcessFrame();
+        }
+    }
+
     return 1;  // 成功渲染一帧
 }
 
@@ -2023,6 +2031,10 @@ namespace {
     // 启用后解码器输出将适配可变刷新率显示
     // 注意：VRR 可能会丢帧以匹配屏幕刷新率，主要用于节能
     bool g_enableVrr = false;  // 默认禁用
+    // SDR→HDR 配置
+    bool g_sdrToHdr = false;
+    float g_sdrToHdrPeakNits = 500.0f;
+    float g_sdrToHdrSaturation = 1.3f;
 }
 
 namespace VideoDecoderInstance {
@@ -2269,6 +2281,10 @@ int Start() {
     // 后处理管线：如果启用，初始化 GL 管线并使用代理 window
     OHNativeWindow* decoderWindow = g_savedWindow;
     GLPostProcessor* postProc = GLPostProcessor::GetInstance();
+    // 从全局状态恢复 SDR→HDR 设置（实例在 Cleanup 中被销毁重建）
+    postProc->SetSdrToHdr(g_sdrToHdr, g_sdrToHdrPeakNits, g_sdrToHdrSaturation);
+    OH_LOG_INFO(LOG_APP, "PostProc check: IsEnabled=%{public}d sdrToHdr=%{public}d",
+                 postProc->IsEnabled() ? 1 : 0, postProc->IsSdrToHdr() ? 1 : 0);
     if (postProc->IsEnabled()) {
         // 设置 HDR 模式
         switch (g_hdrType) {
@@ -2283,9 +2299,13 @@ int Start() {
                 break;
         }
         
-        if (postProc->Init(g_savedWindow, config.width, config.height) == 0) {
+        // 获取屏幕输出分辨率（超分辨率时使用）
+        NativeRender* renderForUpscale = NativeRender::GetInstance();
+        uint32_t outW = renderForUpscale ? static_cast<uint32_t>(renderForUpscale->GetSurfaceWidth()) : 0;
+        uint32_t outH = renderForUpscale ? static_cast<uint32_t>(renderForUpscale->GetSurfaceHeight()) : 0;
+
+        if (postProc->Init(g_savedWindow, config.width, config.height, outW, outH) == 0) {
             decoderWindow = postProc->GetDecoderWindow();
-            OH_LOG_INFO(LOG_APP, "Post-processing enabled: decoder → proxy window → GL shader → display");
         } else {
             OH_LOG_WARN(LOG_APP, "Post-processing init failed, using direct rendering");
             postProc->SetEnabled(false);
@@ -2395,6 +2415,13 @@ void SetPostProcessEnabled(bool enabled) {
     GLPostProcessor* postProc = GLPostProcessor::GetInstance();
     postProc->SetEnabled(enabled);
     OH_LOG_INFO(LOG_APP, "SetPostProcessEnabled: %{public}s", enabled ? "ON" : "OFF");
+}
+
+void SetSdrToHdr(bool enabled, float peakNits, float saturation) {
+    g_sdrToHdr = enabled;
+    g_sdrToHdrPeakNits = peakNits;
+    g_sdrToHdrSaturation = saturation;
+    OH_LOG_INFO(LOG_APP, "SetSdrToHdr: %{public}s peakNits=%.0f saturation=%.2f", enabled ? "ON" : "OFF", peakNits, saturation);
 }
 
 bool IsSyncMode() {

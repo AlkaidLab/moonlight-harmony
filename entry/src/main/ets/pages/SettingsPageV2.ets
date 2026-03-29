@@ -219,6 +219,11 @@ struct SettingsPageV2 {
   @State enableVrr: boolean = false;  // VRR 可变刷新率，默认禁用
   @State enableVsync: boolean = false;
   @State enablePostProcess: boolean = false;  // 后处理滤镜（暗区抖动补偿）
+  @State upscaleMode: number = 0;             // 超分辨率模式
+  @State upscaleSharpness: number = 50;       // 超分锐度 (0-100)
+  @State sdrToHdr: boolean = false;            // SDR→HDR
+  @State sdrToHdrPeakNits: number = 500;       // SDR→HDR 峰值亮度
+  @State sdrToHdrSaturation: number = 130;     // SDR→HDR 色彩饱和度 (50-200)
   @State performanceMode: boolean = false;  // 性能模式，默认禁用
   @State enablePerfOverlay: boolean = false;
   @State perfOverlayOrientation: string = '垂直';
@@ -266,6 +271,7 @@ struct SettingsPageV2 {
     { id: 'mouse', icon: $r('app.media.ic_mouse'), title: '鼠标触控', useSymbol: false } as SidebarGroupMeta,
     { id: 'enhanced_touch', icon: $r('sys.symbol.bolt_fill'), title: '增强触控', useSymbol: true } as SidebarGroupMeta,
     { id: 'host', icon: $r('app.media.ic_host'), title: '主机', useSymbol: false } as SidebarGroupMeta,
+    { id: 'post_process', icon: $r('app.media.ic_enhance'), title: '后处理', useSymbol: false } as SidebarGroupMeta,
     { id: 'performance', icon: $r('app.media.ic_advanced'), title: '性能与调试', useSymbol: false } as SidebarGroupMeta,
     { id: 'ui', icon: $r('sys.symbol.display'), title: '界面', useSymbol: true } as SidebarGroupMeta,
     { id: 'backup', icon: $r('sys.symbol.share'), title: '备份', useSymbol: true } as SidebarGroupMeta,
@@ -536,6 +542,11 @@ struct SettingsPageV2 {
       this.enableVrr = await this.loadBoolean(SettingsKeys.ENABLE_VRR, false);  // VRR 默认禁用
       this.enableVsync = await this.loadBoolean(SettingsKeys.ENABLE_VSYNC, false);
       this.enablePostProcess = await this.loadBoolean(SettingsKeys.ENABLE_POST_PROCESS, false);
+      this.upscaleMode = await PreferencesUtil.get<number>(SettingsKeys.UPSCALE_MODE, 0);
+      this.upscaleSharpness = await PreferencesUtil.get<number>(SettingsKeys.UPSCALE_SHARPNESS, 50);
+      this.sdrToHdr = await this.loadBoolean(SettingsKeys.SDR_TO_HDR, false);
+      this.sdrToHdrPeakNits = await PreferencesUtil.get<number>(SettingsKeys.SDR_TO_HDR_PEAK_NITS, 500);
+      this.sdrToHdrSaturation = await PreferencesUtil.get<number>(SettingsKeys.SDR_TO_HDR_SATURATION, 130);
       this.performanceMode = await this.loadBoolean(SettingsKeys.PERFORMANCE_MODE, false);  // 性能模式默认禁用
       this.enablePerfOverlay = await this.loadBoolean(SettingsKeys.ENABLE_PERF_OVERLAY, false);
       this.perfOverlayOrientation = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_ORIENTATION, '垂直');
@@ -1765,6 +1776,90 @@ struct SettingsPageV2 {
               }
             ]
           })
+
+          // 后处理
+          this.SettingsGroup({
+            id: 'post_process',
+            icon: $r('app.media.ic_enhance'),
+            useSymbol: false,
+            title: '后处理',
+            items: [
+              {
+                title: '暗区增强',
+                subtitle: 'HDR 暗部抖动补偿，改善 OLED 暗区灰阶',
+                type: 'toggle',
+                value: this.enablePostProcess,
+                action: () => {
+                  this.enablePostProcess = !this.enablePostProcess;
+                  this.saveSetting(SettingsKeys.ENABLE_POST_PROCESS, this.enablePostProcess);
+                }
+              },
+              {
+                title: '超分辨率',
+                subtitle: ['关闭', 'XEngine 硬件超分', 'FSR 1 软件超分', '自动（推荐）'][this.upscaleMode] ?? '关闭',
+                type: 'select',
+                action: () => this.showUpscaleModePicker()
+              },
+              {
+                title: '超分锐度',
+                subtitle: '超分辨率画面锐化程度',
+                type: 'slider',
+                visible: this.upscaleMode !== 0,
+                value: this.upscaleSharpness,
+                min: 0,
+                max: 100,
+                step: 5,
+                unit: '%',
+                formatValue: (v: number) => `${v}%`,
+                onSliderChange: (value: number) => {
+                  this.upscaleSharpness = value;
+                  this.saveSetting(SettingsKeys.UPSCALE_SHARPNESS, value);
+                }
+              },
+              {
+                title: 'HDR 映像增强',
+                subtitle: '智能逆向色调映射，让 SDR 画面焕发 HDR 光彩',
+                type: 'toggle',
+                value: this.sdrToHdr,
+                action: () => {
+                  this.sdrToHdr = !this.sdrToHdr;
+                  this.saveSetting(SettingsKeys.SDR_TO_HDR, this.sdrToHdr);
+                }
+              },
+              {
+                title: '显示峰值亮度',
+                subtitle: 'HDR 增强的目标峰值亮度上限',
+                type: 'slider',
+                visible: this.sdrToHdr,
+                value: this.sdrToHdrPeakNits,
+                min: 200,
+                max: 2000,
+                step: 50,
+                unit: ' nits',
+                formatValue: (v: number) => `${v} nits`,
+                onSliderChange: (value: number) => {
+                  this.sdrToHdrPeakNits = value;
+                  this.saveSetting(SettingsKeys.SDR_TO_HDR_PEAK_NITS, value);
+                }
+              },
+              {
+                title: '色彩鲜明度',
+                subtitle: 'HDR 增强画面的色彩饱和度',
+                type: 'slider',
+                visible: this.sdrToHdr,
+                value: this.sdrToHdrSaturation,
+                min: 50,
+                max: 200,
+                step: 5,
+                unit: '%',
+                formatValue: (v: number) => `${v}%`,
+                onSliderChange: (value: number) => {
+                  this.sdrToHdrSaturation = value;
+                  this.saveSetting(SettingsKeys.SDR_TO_HDR_SATURATION, value);
+                }
+              }
+            ]
+          })
           
           // 性能与调试
           this.SettingsGroup({
@@ -1819,16 +1914,6 @@ struct SettingsPageV2 {
                 action: () => {
                   this.enableVsync = !this.enableVsync;
                   this.saveSetting(SettingsKeys.ENABLE_VSYNC, this.enableVsync);
-                }
-              },
-              {
-                title: '暗区增强',
-                subtitle: 'HDR 暗部抖动补偿，改善 OLED 暗区灰阶',
-                type: 'toggle',
-                value: this.enablePostProcess,
-                action: () => {
-                  this.enablePostProcess = !this.enablePostProcess;
-                  this.saveSetting(SettingsKeys.ENABLE_POST_PROCESS, this.enablePostProcess);
                 }
               },
               {
@@ -2646,6 +2731,28 @@ struct SettingsPageV2 {
         }
       })
     }
+  }
+
+  private showUpscaleModePicker(): void {
+    const options: PickerOption[] = [
+      { title: '关闭', subtitle: '不使用超分辨率', value: 0 } as PickerOption,
+      { title: 'XEngine 硬件超分', subtitle: '华为 GPU 加速空间超分（推荐）', value: 1 } as PickerOption,
+      { title: 'FSR 1 软件超分', subtitle: 'AMD FidelityFX 边缘自适应上采样', value: 2 } as PickerOption,
+      { title: '自动', subtitle: '优先 XEngine，不支持时回退 FSR 1', value: 3 } as PickerOption,
+    ];
+
+    const config: PickerConfig = {
+      title: '超分辨率模式',
+      subtitle: '低分辨率串流 + GPU 超分 = 低带宽高画质',
+      selectedValue: this.upscaleMode,
+      options: options,
+      onSelect: (option: PickerOption) => {
+        const value = option.value as number;
+        this.upscaleMode = value;
+        this.saveSetting(SettingsKeys.UPSCALE_MODE, value);
+      }
+    };
+    this.showPicker(config);
   }
 
   private showResolutionPicker(): void {

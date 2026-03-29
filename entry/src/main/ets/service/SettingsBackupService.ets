@@ -189,7 +189,20 @@ export class SettingsBackupService {
 
       // 恢复客户端 SSL 证书/私钥/唯一标识（保持配对关系）
       const filesDir = PreferencesUtil.getFilesDir();
-      i
+      if (filesDir) {
+        if (backup.clientCert) {
+          SettingsBackupService.writeFileText(`${filesDir}/client_cert.pem`, backup.clientCert);
+          console.info(`${TAG} 已恢复客户端证书`);
+        }
+        if (backup.clientKey) {
+          SettingsBackupService.writeFileText(`${filesDir}/client_key.pem`, backup.clientKey);
+          console.info(`${TAG} 已恢复客户端私钥`);
+        }
+        if (backup.uniqueId) {
+          SettingsBackupService.writeFileText(`${filesDir}/unique_id.txt`, backup.uniqueId);
+          console.info(`${TAG} 已恢复客户端唯一标识`);
+        }
+      }
 
       // 恢复快捷键配置（独立 Preferences 存储）
       if (backup.shortcutConfig) {
@@ -211,19 +224,6 @@ export class SettingsBackupService {
           } catch (e) {
             console.warn(`${TAG} 恢复快捷键配置失败: ${JSON.stringify(e)}`);
           }
-        }
-      }f (filesDir) {
-        if (backup.clientCert) {
-          SettingsBackupService.writeFileText(`${filesDir}/client_cert.pem`, backup.clientCert);
-          console.info(`${TAG} 已恢复客户端证书`);
-        }
-        if (backup.clientKey) {
-          SettingsBackupService.writeFileText(`${filesDir}/client_key.pem`, backup.clientKey);
-          console.info(`${TAG} 已恢复客户端私钥`);
-        }
-        if (backup.uniqueId) {
-          SettingsBackupService.writeFileText(`${filesDir}/unique_id.txt`, backup.uniqueId);
-          console.info(`${TAG} 已恢复客户端唯一标识`);
         }
       }
 

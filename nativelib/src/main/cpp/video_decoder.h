@@ -474,7 +474,12 @@ namespace VideoDecoderInstance {
      * 需要在串流开始前调用
      */
     void SetPostProcessEnabled(bool enabled);
-    
+
+    /**
+     * SDR→HDR 配置
+     */
+    void SetSdrToHdr(bool enabled, float peakNits, float saturation);
+
     /**
      * 获取当前解码器模式
      */

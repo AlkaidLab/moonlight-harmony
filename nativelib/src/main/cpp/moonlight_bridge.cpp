@@ -31,6 +31,7 @@ bool isMicrophoneEncryptionEnabled(void);
 #include "audio_renderer.h"
 #include "bass_energy_analyzer.h"
 #include "native_render.h"
+#include "gl_post_processor.h"
 #include "opus_encoder.h"
 #include "mic_capturer.h"
 #include <hilog/log.h>
@@ -1520,6 +1521,48 @@ napi_value MoonBridge_SetPostProcessEnabled(napi_env env, napi_callback_info inf
     OH_LOG_INFO(LOG_APP, "MoonBridge_SetPostProcessEnabled: %{public}s", enabled ? "ON" : "OFF");
     VideoDecoderInstance::SetPostProcessEnabled(enabled);
     
+    napi_value result;
+    napi_get_undefined(env, &result);
+    return result;
+}
+
+napi_value MoonBridge_SetUpscaleMode(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    int32_t mode = 0;
+    double sharpness = 0.5;
+    if (argc >= 1) napi_get_value_int32(env, args[0], &mode);
+    if (argc >= 2) napi_get_value_double(env, args[1], &sharpness);
+
+    GLPostProcessor* postProc = GLPostProcessor::GetInstance();
+    postProc->SetUpscaleMode(static_cast<UpscaleMode>(mode));
+    postProc->SetUpscaleSharpness(static_cast<float>(sharpness));
+
+    OH_LOG_INFO(LOG_APP, "MoonBridge_SetUpscaleMode: mode=%{public}d sharpness=%.2f", mode, sharpness);
+
+    napi_value result;
+    napi_get_undefined(env, &result);
+    return result;
+}
+
+napi_value MoonBridge_SetSdrToHdr(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    bool enabled = false;
+    double peakNits = 500.0;
+    double saturation = 1.3;
+    if (argc >= 1) napi_get_value_bool(env, args[0], &enabled);
+    if (argc >= 2) napi_get_value_double(env, args[1], &peakNits);
+    if (argc >= 3) napi_get_value_double(env, args[2], &saturation);
+
+    VideoDecoderInstance::SetSdrToHdr(enabled, static_cast<float>(peakNits), static_cast<float>(saturation));
+
+    OH_LOG_INFO(LOG_APP, "MoonBridge_SetSdrToHdr: enabled=%{public}d peakNits=%.0f saturation=%.2f", enabled ? 1 : 0, peakNits, saturation);
+
     napi_value result;
     napi_get_undefined(env, &result);
     return result;

@@ -125,6 +125,8 @@ interface NativeModule {
   isVsyncEnabled(): boolean;
   setVrrEnabled(enabled: boolean): void;
   setPostProcessEnabled(enabled: boolean): void;
+  setUpscaleMode(mode: number, sharpness: number): void;
+  setSdrToHdr(enabled: boolean, peakNits: number, saturation: number): void;
   setSpatialAudioEnabled(enabled: boolean): void;
   isSpatialAudioEnabled(): boolean;
   setAudioVolume(volume: number): boolean;
@@ -1111,6 +1113,12 @@ export class StreamingSession {
     this.nativeModule.setVsyncEnabled(this.config.enableVsync);
     this.nativeModule.setVrrEnabled(this.config.enableVrr);
     this.nativeModule.setPostProcessEnabled(this.config.enablePostProcess ?? false);
+    this.nativeModule.setUpscaleMode(this.config.upscaleMode ?? 0, this.config.upscaleSharpness ?? 0.5);
+    try {
+      this.nativeModule.setSdrToHdr(this.config.sdrToHdr ?? false, this.config.sdrToHdrPeakNits ?? 500, this.config.sdrToHdrSaturation ?? 1.3);
+    } catch (e) {
+      console.error(`SDR→HDR: call FAILED: ${e}`);
+    }
 
     console.info(`解码器: buffers=${this.config.decoderBufferCount}, sync=${this.config.enableSyncDecode}, ` +
       `vsync=${this.config.enableVsync}, vrr=${this.config.enableVrr}`);

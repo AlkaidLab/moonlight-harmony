@@ -219,6 +219,20 @@ napi_value MoonBridge_SetVrrEnabled(napi_env env, napi_callback_info info);
 napi_value MoonBridge_SetPostProcessEnabled(napi_env env, napi_callback_info info);
 
 /**
+ * 设置超分辨率模式
+ * @param mode int (0=OFF, 1=XENGINE, 2=FSR1, 3=AUTO)
+ * @param sharpness double (0.0 - 1.0)
+ */
+napi_value MoonBridge_SetUpscaleMode(napi_env env, napi_callback_info info);
+
+/**
+ * SDR→HDR 反向色调映射
+ * @param enabled bool
+ * @param peakNits double (200-1000)
+ */
+napi_value MoonBridge_SetSdrToHdr(napi_env env, napi_callback_info info);
+
+/**
  * 设置是否启用 VSync 渲染模式
  * 启用后使用 RenderOutputBufferAtTime 精确控制帧呈现时间，可减少画面撕裂
  * 关闭时使用 RenderOutputBuffer 立即渲染，最低延迟

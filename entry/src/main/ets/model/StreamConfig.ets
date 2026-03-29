@@ -73,6 +73,11 @@ export interface StreamConfig {
   enableVrr: boolean;         // VRR 可变刷新率模式（动态调整屏幕刷新率，可能丢帧）
   enableVsync: boolean;       // VSync 渲染模式（使用 RenderOutputBufferAtTime 精确呈现）
   enablePostProcess: boolean; // 后处理滤镜（HDR 暗区抖动补偿，适用于 OLED 面板）
+  upscaleMode: number;        // 超分辨率模式 (0=OFF, 1=XENGINE, 2=FSR1, 3=AUTO)
+  upscaleSharpness: number;   // 超分锐度 (0.0 - 1.0)
+  sdrToHdr: boolean;          // SDR→HDR 反向色调映射
+  sdrToHdrPeakNits: number;   // SDR→HDR 峰值亮度 (200-1000)
+  sdrToHdrSaturation: number; // SDR→HDR 色彩饱和度 (0.5-2.0)
   enableStun: boolean;
   performanceMode: boolean;   // 性能模式（优化线程优先级和系统资源）
 
@@ -247,6 +252,11 @@ export function getDefaultStreamConfig(): StreamConfig {
     enableVrr: false,       // 默认禁用 VRR（可能丢帧）
     enableVsync: false,     // 默认关闭（低延迟优先）
     enablePostProcess: false, // 默认禁用后处理滤镜
+    upscaleMode: 0,           // 默认不超分
+    upscaleSharpness: 0.5,    // 默认锐度 50%
+    sdrToHdr: false,           // 默认禁用 SDR→HDR
+    sdrToHdrPeakNits: 500,     // 默认峰值亮度 500 nits
+    sdrToHdrSaturation: 1.3,   // 默认饱和度 1.3x
     enableStun: false,
     performanceMode: false, // 默认禁用性能模式
 

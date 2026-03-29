@@ -56,6 +56,16 @@ enum class PostProcessHdrMode {
 };
 
 /**
+ * 超分辨率模式
+ */
+enum class UpscaleMode {
+    OFF      = 0,   // 不超分
+    XENGINE  = 1,   // 华为 XEngine GPU 空间超分（硬件加速）
+    FSR1     = 2,   // AMD FSR 1 EASU+RCAS（软件 shader 回退）
+    AUTO     = 3    // 自动选择：优先 XEngine，不支持则 FSR1
+};
+
+/**
  * GL 后处理管线
  *
  * 使用方式：
@@ -72,11 +82,14 @@ public:
     /**
      * 初始化后处理管线
      * @param displayWindow XComponent 的 NativeWindow（最终显示目标）
-     * @param width  视频宽度
-     * @param height 视频高度
+     * @param inputWidth   视频输入宽度（串流分辨率）
+     * @param inputHeight  视频输入高度
+     * @param outputWidth  显示输出宽度（屏幕分辨率），0 = 与输入相同
+     * @param outputHeight 显示输出高度，0 = 与输入相同
      * @return 0 成功, -1 失败
      */
-    int Init(OHNativeWindow* displayWindow, uint32_t width, uint32_t height);
+    int Init(OHNativeWindow* displayWindow, uint32_t inputWidth, uint32_t inputHeight,
+             uint32_t outputWidth = 0, uint32_t outputHeight = 0);
 
     /**
      * 获取解码器应使用的 NativeWindow
@@ -90,11 +103,34 @@ public:
     void SetHdrMode(PostProcessHdrMode mode);
 
     /**
+     * 设置超分辨率模式
+     */
+    void SetUpscaleMode(UpscaleMode mode) { upscaleMode_ = mode; }
+    UpscaleMode GetUpscaleMode() const { return upscaleMode_; }
+
+    /**
+     * 设置超分锐度 (0.0 - 1.0)
+     */
+    void SetUpscaleSharpness(float sharpness) { upscaleSharpness_ = sharpness; }
+
+    /**
+     * 设置 SDR→HDR 逆色调映射
+     * @param enabled 是否启用
+     * @param peakNits 目标峰值亮度 (200-1000 nits)
+     */
+    void SetSdrToHdr(bool enabled, float peakNits = 500.0f, float saturation = 1.3f) {
+        sdrToHdr_ = enabled;
+        sdrToHdrPeakNits_ = peakNits;
+        sdrToHdrSaturation_ = saturation;
+    }
+    bool IsSdrToHdr() const { return sdrToHdr_; }
+
+    /**
      * 启用/禁用后处理（运行时切换）
      * 注意：切换需要重建解码器管线，因此只在串流开始前设置
      */
     void SetEnabled(bool enabled) { enabled_ = enabled; }
-    bool IsEnabled() const { return enabled_; }
+    bool IsEnabled() const { return enabled_ || sdrToHdr_; }
 
     /**
      * 手动触发处理当前帧（供解码器回调调用）
@@ -112,6 +148,9 @@ private:
     GLPostProcessor(const GLPostProcessor&) = delete;
     GLPostProcessor& operator=(const GLPostProcessor&) = delete;
 
+    // 内部无锁释放（供 Init 错误路径和析构函数调用）
+    void ReleaseInternal();
+
     // EGL 初始化
     bool InitEGL(OHNativeWindow* displayWindow);
     void ReleaseEGL();
@@ -127,8 +166,18 @@ private:
     // 蓝噪声纹理
     bool InitBlueNoiseTexture();
 
-    // 绘制全屏四边形
+    // FBO (用于 OES → TEXTURE_2D 转换)
+    bool InitFBO();
+    void ReleaseFBO();
+
+    // 超分辨率初始化
+    bool InitUpscale();
+    void ReleaseUpscale();
+
+    // 渲染操作
     void DrawFullscreenQuad();
+    void BlitOESToFBO();
+    void ApplyUpscale();
 
 private:
     static GLPostProcessor* instance_;
@@ -139,8 +188,10 @@ private:
 
     // 显示目标
     OHNativeWindow* displayWindow_ = nullptr;
-    uint32_t width_ = 0;
-    uint32_t height_ = 0;
+    uint32_t inputWidth_ = 0;
+    uint32_t inputHeight_ = 0;
+    uint32_t outputWidth_ = 0;
+    uint32_t outputHeight_ = 0;
 
     // EGL
     EGLDisplay eglDisplay_ = nullptr;
@@ -166,11 +217,36 @@ private:
     int locEnableFilter_ = -1;
     int locHdrMode_ = -1;
 
+    // SDR → HDR 逆色调映射
+    int locSdrToHdr_ = -1;
+    int locSdrPeakNits_ = -1;
+    int locSdrSaturation_ = -1;
+
     // 蓝噪声纹理
     GLuint blueNoiseTexture_ = 0;
 
+    // FBO (OES → TEXTURE_2D 转换)
+    GLuint fbo_ = 0;
+    GLuint fboTexture_ = 0;         // 输入分辨率的 TEXTURE_2D
+    GLuint blitProgram_ = 0;        // OES → TEXTURE_2D 的简单 blit 着色器
+
+    // 超分辨率
+    UpscaleMode upscaleMode_ = UpscaleMode::OFF;
+    UpscaleMode activeUpscale_ = UpscaleMode::OFF;  // 实际使用的超分模式
+    float upscaleSharpness_ = 0.5f;
+    bool xengineAvailable_ = false;
+
+    // FSR 1 着色器（回退方案）
+    GLuint fsrEasuProgram_ = 0;
+    GLuint fsrRcasProgram_ = 0;
+    GLuint fsrFbo_ = 0;            // FSR EASU 输出 FBO
+    GLuint fsrTexture_ = 0;        // FSR EASU 输出纹理（输出分辨率）
+
     // 状态
     PostProcessHdrMode hdrMode_ = PostProcessHdrMode::SDR;
+    bool sdrToHdr_ = false;
+    float sdrToHdrPeakNits_ = 500.0f;
+    float sdrToHdrSaturation_ = 1.3f;
     uint32_t frameCount_ = 0;
 
     bool initialized_ = false;

@@ -128,6 +128,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "isVsyncEnabled", nullptr, MoonBridge_IsVsyncEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setVrrEnabled", nullptr, MoonBridge_SetVrrEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setPostProcessEnabled", nullptr, MoonBridge_SetPostProcessEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "setUpscaleMode", nullptr, MoonBridge_SetUpscaleMode, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "setSdrToHdr", nullptr, MoonBridge_SetSdrToHdr, nullptr, nullptr, nullptr, napi_default, nullptr },
         
         // 音频设置
         { "setSpatialAudioEnabled", nullptr, MoonBridge_SetSpatialAudioEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
