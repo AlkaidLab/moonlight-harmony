@@ -17,6 +17,7 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { VirtualKey, VK_DISPLAY_NAMES, getVkDisplayName } from '../service/CustomKeyTypes';
+import { SettingsBackupService } from '../service/SettingsBackupService';
 
 /**
  * 快捷键定义
@@ -272,6 +273,7 @@ export class ShortcutManager {
       await this.prefs.put(ShortcutManager.KEY_SHORTCUTS, JSON.stringify(this.shortcuts));
       await this.prefs.put(ShortcutManager.KEY_DELETED_BUILTINS, JSON.stringify(this.deletedBuiltinIds));
       await this.prefs.flush();
+      SettingsBackupService.scheduleAutoSave();
     } catch (error) {
       console.error('ShortcutManager', `保存快捷键失败: ${error}`);
     }
