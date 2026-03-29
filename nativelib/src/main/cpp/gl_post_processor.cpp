@@ -377,7 +377,7 @@ void main() {
 static const char* FRAGMENT_SHADER_SRC = R"(#version 300 es
 #extension GL_OES_EGL_image_external_essl3 : require
 
-precision highp float;
+precision mediump float;
 
 in vec2 vTexCoord;
 uniform samplerExternalOES uTexture;
@@ -389,6 +389,7 @@ uniform int uHdrMode;
 uniform int uSdrToHdr;
 uniform float uSdrPeakNits;
 uniform float uSdrSaturation;
+uniform float uSdrContrast;
 
 out vec4 outColor;
 
@@ -440,6 +441,9 @@ vec3 lin_to_hlg(vec3 l) {
 // BT.2020 亮度系数
 float luma_2020(vec3 c) { return dot(c, vec3(0.2627, 0.6780, 0.0593)); }
 
+void main() {
+    vec4 tex = texture(uTexture, vTexCoord);
+
     // SDR 内容 + HDR 显示面 → 扩展动态范围
     if (uSdrToHdr == 1 && uHdrMode == 0) {
         // sRGB gamma 解码 → 线性光
@@ -475,23 +479,26 @@ float luma_2020(vec3 c) { return dot(c, vec3(0.2627, 0.6780, 0.0593)); }
     }
 
     // ===== HLG SDR-in-HDR: S-curve 逆色调映射 =====
-    // 直接在 HLG 域操作，f(x) = x + maxBoost * x³/(1+x³)
-    // 暗部几乎不变，高光显著扩展，色彩自然
+    // S-curve：f(x) = x + maxBoost * x³/(1+x³)，暗部不动、高光扩展
     if (uSdrToHdr == 1 && uEnableFilter == 0 && uHdrMode == 2) {
         vec3 hlg = tex.rgb;
-        float Yhlg = dot(hlg, vec3(0.2627, 0.6780, 0.0593));
+        vec3 lw = vec3(0.2627, 0.6780, 0.0593);
+        float Yhlg = dot(hlg, lw);
         if (Yhlg > 0.001 && Yhlg < 0.99) {
             float maxBoost = (uSdrPeakNits - 203.0) / 1000.0;
             maxBoost = max(maxBoost, 0.0);
 
-            // 按每通道独立应用 S-curve 增益
+            // S-curve 全局增益
             vec3 x = hlg;
             vec3 x3 = x * x * x;
             vec3 boost = maxBoost * x3 / (1.0 + x3);
             hlg = hlg + boost;
 
+            // 对比度调整：以中灰(0.5)为锚点缩放
+            hlg = clamp(vec3(0.5) + (hlg - 0.5) * uSdrContrast, 0.0, 1.0);
+
             // 饱和度调整
-            float Yout = dot(hlg, vec3(0.2627, 0.6780, 0.0593));
+            float Yout = dot(hlg, lw);
             hlg = Yout + (hlg - Yout) * uSdrSaturation;
             hlg = clamp(hlg, 0.0, 1.0);
         }
@@ -1020,8 +1027,9 @@ bool GLPostProcessor::InitEGL(OHNativeWindow* displayWindow) {
         g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_SURFACE_TYPE, &st);
         g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_NATIVE_VISUAL_ID, &nv);
         g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_CONFIG_ID, &cfgId);
-        OH_LOG_INFO(LOG_APP, "EGL cfg[%{public}d] id=%{public}d: R%{public}dG%{public}dB%{public}dA%{public}d rt=0x%{public}x st=0x%{public}x nv=%{public}d",
-                    i, cfgId, r, g, b, a, rt, st, nv);
+        // 减少日志量避免 hilog 丢失关键日志
+        // OH_LOG_INFO(LOG_APP, "EGL cfg[%{public}d] id=%{public}d: R%{public}dG%{public}dB%{public}dA%{public}d rt=0x%{public}x st=0x%{public}x nv=%{public}d",
+        //             i, cfgId, r, g, b, a, rt, st, nv);
 
         // Score this config: prefer matching window format, then ES3, then higher color depth
         bool hasWindow = (st & MY_EGL_WINDOW_BIT) != 0;
@@ -1185,6 +1193,7 @@ bool GLPostProcessor::InitShaders() {
     locSdrToHdr_ = g_api.glGetUniformLocation(shaderProgram_, "uSdrToHdr");
     locSdrPeakNits_ = g_api.glGetUniformLocation(shaderProgram_, "uSdrPeakNits");
     locSdrSaturation_ = g_api.glGetUniformLocation(shaderProgram_, "uSdrSaturation");
+    locSdrContrast_ = g_api.glGetUniformLocation(shaderProgram_, "uSdrContrast");
 
     // 创建 VAO/VBO
     g_api.glGenVertexArrays(1, &vao_);
@@ -1409,13 +1418,44 @@ void GLPostProcessor::ReleaseUpscale() {
 
 void GLPostProcessor::BlitOESToFBO() {
     // 将 OES 纹理渲染到 FBO 的 TEXTURE_2D（输入分辨率）
+    // 如果启用了 SDR→HDR 或暗区增强，使用后处理 shader 而非直通 shader
     g_api.glBindFramebuffer(MY_GL_FRAMEBUFFER, fbo_);
     g_api.glViewport(0, 0, inputWidth_, inputHeight_);
-    g_api.glUseProgram(blitProgram_);
 
-    g_api.glActiveTexture(MY_GL_TEXTURE0);
-    g_api.glBindTexture(MY_GL_TEXTURE_EXTERNAL_OES, oesTexture_);
-    g_api.glUniform1i(g_api.glGetUniformLocation(blitProgram_, "uTexture"), 0);
+    bool usePostProc = (sdrToHdr_ || enabled_) && shaderProgram_;
+    if (usePostProc) {
+        // 使用后处理 shader（包含 SDR→HDR 增强、暗区增强等）
+        g_api.glUseProgram(shaderProgram_);
+
+        g_api.glActiveTexture(MY_GL_TEXTURE0);
+        g_api.glBindTexture(MY_GL_TEXTURE_EXTERNAL_OES, oesTexture_);
+        g_api.glUniform1i(locTexture_, 0);
+
+        g_api.glActiveTexture(MY_GL_TEXTURE1);
+        g_api.glBindTexture(MY_GL_TEXTURE_2D, blueNoiseTexture_);
+        g_api.glUniform1i(locBlueNoise_, 1);
+
+        g_api.glUniform2f(locTexelSize_, 1.0f / inputWidth_, 1.0f / inputHeight_);
+
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        float timePhase = static_cast<float>(fmod(ts.tv_sec + ts.tv_nsec * 1e-9, 100.0));
+        g_api.glUniform1f(locTimePhase_, timePhase);
+
+        g_api.glUniform1i(locSdrToHdr_, sdrToHdr_ ? 1 : 0);
+        g_api.glUniform1f(locSdrSaturation_, sdrToHdrSaturation_);
+        g_api.glUniform1f(locSdrContrast_, sdrToHdrContrast_);
+        g_api.glUniform1f(locSdrPeakNits_, sdrToHdrPeakNits_);
+        g_api.glUniform1i(locEnableFilter_, enabled_ ? 1 : 0);
+        g_api.glUniform1i(locHdrMode_, static_cast<int>(hdrMode_));
+    } else {
+        // 直通 blit
+        g_api.glUseProgram(blitProgram_);
+
+        g_api.glActiveTexture(MY_GL_TEXTURE0);
+        g_api.glBindTexture(MY_GL_TEXTURE_EXTERNAL_OES, oesTexture_);
+        g_api.glUniform1i(g_api.glGetUniformLocation(blitProgram_, "uTexture"), 0);
+    }
 
     g_api.glBindVertexArray(vao_);
     g_api.glDrawArrays(MY_GL_TRIANGLE_STRIP, 0, 4);
@@ -1552,6 +1592,7 @@ void GLPostProcessor::DrawFullscreenQuad() {
 
     g_api.glUniform1i(locSdrToHdr_, sdrToHdr_ ? 1 : 0);
     g_api.glUniform1f(locSdrSaturation_, sdrToHdrSaturation_);
+    g_api.glUniform1f(locSdrContrast_, sdrToHdrContrast_);
     g_api.glUniform1f(locSdrPeakNits_, sdrToHdrPeakNits_);
     g_api.glUniform1i(locEnableFilter_, enabled_ ? 1 : 0);
     g_api.glUniform1i(locHdrMode_, static_cast<int>(hdrMode_));

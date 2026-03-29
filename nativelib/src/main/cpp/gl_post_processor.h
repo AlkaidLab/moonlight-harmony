@@ -118,10 +118,11 @@ public:
      * @param enabled 是否启用
      * @param peakNits 目标峰值亮度 (200-1000 nits)
      */
-    void SetSdrToHdr(bool enabled, float peakNits = 500.0f, float saturation = 1.3f) {
+    void SetSdrToHdr(bool enabled, float peakNits = 500.0f, float saturation = 1.3f, float contrast = 1.0f) {
         sdrToHdr_ = enabled;
         sdrToHdrPeakNits_ = peakNits;
         sdrToHdrSaturation_ = saturation;
+        sdrToHdrContrast_ = contrast;
     }
     bool IsSdrToHdr() const { return sdrToHdr_; }
 
@@ -221,6 +222,7 @@ private:
     int locSdrToHdr_ = -1;
     int locSdrPeakNits_ = -1;
     int locSdrSaturation_ = -1;
+    int locSdrContrast_ = -1;
 
     // 蓝噪声纹理
     GLuint blueNoiseTexture_ = 0;
@@ -247,6 +249,7 @@ private:
     bool sdrToHdr_ = false;
     float sdrToHdrPeakNits_ = 500.0f;
     float sdrToHdrSaturation_ = 1.3f;
+    float sdrToHdrContrast_ = 1.0f;
     uint32_t frameCount_ = 0;
 
     bool initialized_ = false;

@@ -2035,6 +2035,7 @@ namespace {
     bool g_sdrToHdr = false;
     float g_sdrToHdrPeakNits = 500.0f;
     float g_sdrToHdrSaturation = 1.3f;
+    float g_sdrToHdrContrast = 1.0f;
 }
 
 namespace VideoDecoderInstance {
@@ -2282,7 +2283,7 @@ int Start() {
     OHNativeWindow* decoderWindow = g_savedWindow;
     GLPostProcessor* postProc = GLPostProcessor::GetInstance();
     // 从全局状态恢复 SDR→HDR 设置（实例在 Cleanup 中被销毁重建）
-    postProc->SetSdrToHdr(g_sdrToHdr, g_sdrToHdrPeakNits, g_sdrToHdrSaturation);
+    postProc->SetSdrToHdr(g_sdrToHdr, g_sdrToHdrPeakNits, g_sdrToHdrSaturation, g_sdrToHdrContrast);
     OH_LOG_INFO(LOG_APP, "PostProc check: IsEnabled=%{public}d sdrToHdr=%{public}d",
                  postProc->IsEnabled() ? 1 : 0, postProc->IsSdrToHdr() ? 1 : 0);
     if (postProc->IsEnabled()) {
@@ -2417,11 +2418,12 @@ void SetPostProcessEnabled(bool enabled) {
     OH_LOG_INFO(LOG_APP, "SetPostProcessEnabled: %{public}s", enabled ? "ON" : "OFF");
 }
 
-void SetSdrToHdr(bool enabled, float peakNits, float saturation) {
+void SetSdrToHdr(bool enabled, float peakNits, float saturation, float contrast) {
     g_sdrToHdr = enabled;
     g_sdrToHdrPeakNits = peakNits;
     g_sdrToHdrSaturation = saturation;
-    OH_LOG_INFO(LOG_APP, "SetSdrToHdr: %{public}s peakNits=%.0f saturation=%.2f", enabled ? "ON" : "OFF", peakNits, saturation);
+    g_sdrToHdrContrast = contrast;
+    OH_LOG_INFO(LOG_APP, "SetSdrToHdr: %{public}s peakNits=%.0f saturation=%.2f contrast=%.2f", enabled ? "ON" : "OFF", peakNits, saturation, contrast);
 }
 
 bool IsSyncMode() {

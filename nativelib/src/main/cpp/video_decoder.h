@@ -478,7 +478,7 @@ namespace VideoDecoderInstance {
     /**
      * SDR→HDR 配置
      */
-    void SetSdrToHdr(bool enabled, float peakNits, float saturation);
+    void SetSdrToHdr(bool enabled, float peakNits, float saturation, float contrast);
 
     /**
      * 获取当前解码器模式

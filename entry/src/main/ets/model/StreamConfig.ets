@@ -78,6 +78,7 @@ export interface StreamConfig {
   sdrToHdr: boolean;          // SDR→HDR 反向色调映射
   sdrToHdrPeakNits: number;   // SDR→HDR 峰值亮度 (200-1000)
   sdrToHdrSaturation: number; // SDR→HDR 色彩饱和度 (0.5-2.0)
+  sdrToHdrContrast: number;   // SDR→HDR 对比度 (0.5-2.0)
   enableStun: boolean;
   performanceMode: boolean;   // 性能模式（优化线程优先级和系统资源）
 
@@ -257,6 +258,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     sdrToHdr: false,           // 默认禁用 SDR→HDR
     sdrToHdrPeakNits: 500,     // 默认峰值亮度 500 nits
     sdrToHdrSaturation: 1.3,   // 默认饱和度 1.3x
+    sdrToHdrContrast: 1.0,     // 默认对比度 1.0x
     enableStun: false,
     performanceMode: false, // 默认禁用性能模式
 

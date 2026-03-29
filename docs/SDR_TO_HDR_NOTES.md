@@ -30,7 +30,7 @@ GLSL Fragment Shader (uniforms: uSdrToHdr, uSdrPeakNits, uSdrSaturation)
 - 直接在 HLG 域操作 S-curve
 - 参考白 203 nits（HLG 信号 0.75）
 
-## HLG S-curve 算法（已验证可用）
+## HLG S-curve 算法（已验证可用 · 2025-03-29）
 
 ```glsl
 // f(x) = x + maxBoost · x³/(1+x³)
@@ -40,6 +40,11 @@ vec3 x = hlg;
 vec3 x3 = x * x * x;
 vec3 boost = maxBoost * x3 / (1.0 + x3);
 hlg = hlg + boost;
+
+// 饱和度调整
+float Yout = dot(hlg, vec3(0.2627, 0.6780, 0.0593));
+hlg = Yout + (hlg - Yout) * uSdrSaturation;
+hlg = clamp(hlg, 0.0, 1.0);
 ```
 
 ### 为什么用 S-curve `x³/(1+x³)`
@@ -88,3 +93,17 @@ const float HLG_C = 0.5 - HLG_A * log(4.0 * HLG_A);  // ≈ 0.55991...
 9. **AMD LPM** → 参考但未采用
 
 最终结论：**简单的 HLG 域 S-curve 在该设备上效果最好、兼容性最强**。
+
+## 局部高光增强（已移除）
+
+曾实现十字邻域采样检测局部高光区域（技能光效/金属反光），但因 **OES 纹理多次采样性能不可接受** 而移除：
+
+```glsl
+// ❌ 已移除 — 4 次额外 OES 采样导致持续丢帧
+float Y_up    = dot(texture(uTexture, vTexCoord + vec2(0.0, uTexelSize.y)).rgb, lw);
+float Y_down  = dot(texture(uTexture, vTexCoord - vec2(0.0, uTexelSize.y)).rgb, lw);
+float Y_left  = dot(texture(uTexture, vTexCoord - vec2(uTexelSize.x, 0.0)).rgb, lw);
+float Y_right = dot(texture(uTexture, vTexCoord + vec2(uTexelSize.x, 0.0)).rgb, lw);
+```
+
+如果未来需要邻域操作，必须先将 OES 纹理 blit 到 FBO（`sampler2D`），再在 `sampler2D` 上做多次采样。

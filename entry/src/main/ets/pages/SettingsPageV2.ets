@@ -224,6 +224,7 @@ struct SettingsPageV2 {
   @State sdrToHdr: boolean = false;            // SDR→HDR
   @State sdrToHdrPeakNits: number = 500;       // SDR→HDR 峰值亮度
   @State sdrToHdrSaturation: number = 130;     // SDR→HDR 色彩饱和度 (50-200)
+  @State sdrToHdrContrast: number = 100;       // SDR→HDR 对比度 (50-200)
   @State performanceMode: boolean = false;  // 性能模式，默认禁用
   @State enablePerfOverlay: boolean = false;
   @State perfOverlayOrientation: string = '垂直';
@@ -547,6 +548,7 @@ struct SettingsPageV2 {
       this.sdrToHdr = await this.loadBoolean(SettingsKeys.SDR_TO_HDR, false);
       this.sdrToHdrPeakNits = await PreferencesUtil.get<number>(SettingsKeys.SDR_TO_HDR_PEAK_NITS, 500);
       this.sdrToHdrSaturation = await PreferencesUtil.get<number>(SettingsKeys.SDR_TO_HDR_SATURATION, 130);
+      this.sdrToHdrContrast = await PreferencesUtil.get<number>(SettingsKeys.SDR_TO_HDR_CONTRAST, 100);
       this.performanceMode = await this.loadBoolean(SettingsKeys.PERFORMANCE_MODE, false);  // 性能模式默认禁用
       this.enablePerfOverlay = await this.loadBoolean(SettingsKeys.ENABLE_PERF_OVERLAY, false);
       this.perfOverlayOrientation = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_ORIENTATION, '垂直');
@@ -1856,6 +1858,22 @@ struct SettingsPageV2 {
                 onSliderChange: (value: number) => {
                   this.sdrToHdrSaturation = value;
                   this.saveSetting(SettingsKeys.SDR_TO_HDR_SATURATION, value);
+                }
+              },
+              {
+                title: '画面对比度',
+                subtitle: '降低可缓解高光过曝，提高可增强明暗层次',
+                type: 'slider',
+                visible: this.sdrToHdr,
+                value: this.sdrToHdrContrast,
+                min: 50,
+                max: 200,
+                step: 5,
+                unit: '%',
+                formatValue: (v: number) => `${v}%`,
+                onSliderChange: (value: number) => {
+                  this.sdrToHdrContrast = value;
+                  this.saveSetting(SettingsKeys.SDR_TO_HDR_CONTRAST, value);
                 }
               }
             ]

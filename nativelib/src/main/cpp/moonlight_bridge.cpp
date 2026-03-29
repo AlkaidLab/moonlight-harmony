@@ -1548,20 +1548,22 @@ napi_value MoonBridge_SetUpscaleMode(napi_env env, napi_callback_info info) {
 }
 
 napi_value MoonBridge_SetSdrToHdr(napi_env env, napi_callback_info info) {
-    size_t argc = 3;
-    napi_value args[3];
+    size_t argc = 4;
+    napi_value args[4];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     bool enabled = false;
     double peakNits = 500.0;
     double saturation = 1.3;
+    double contrast = 1.0;
     if (argc >= 1) napi_get_value_bool(env, args[0], &enabled);
     if (argc >= 2) napi_get_value_double(env, args[1], &peakNits);
     if (argc >= 3) napi_get_value_double(env, args[2], &saturation);
+    if (argc >= 4) napi_get_value_double(env, args[3], &contrast);
 
-    VideoDecoderInstance::SetSdrToHdr(enabled, static_cast<float>(peakNits), static_cast<float>(saturation));
+    VideoDecoderInstance::SetSdrToHdr(enabled, static_cast<float>(peakNits), static_cast<float>(saturation), static_cast<float>(contrast));
 
-    OH_LOG_INFO(LOG_APP, "MoonBridge_SetSdrToHdr: enabled=%{public}d peakNits=%.0f saturation=%.2f", enabled ? 1 : 0, peakNits, saturation);
+    OH_LOG_INFO(LOG_APP, "MoonBridge_SetSdrToHdr: enabled=%{public}d peakNits=%.0f saturation=%.2f contrast=%.2f", enabled ? 1 : 0, peakNits, saturation, contrast);
 
     napi_value result;
     napi_get_undefined(env, &result);

@@ -126,7 +126,7 @@ interface NativeModule {
   setVrrEnabled(enabled: boolean): void;
   setPostProcessEnabled(enabled: boolean): void;
   setUpscaleMode(mode: number, sharpness: number): void;
-  setSdrToHdr(enabled: boolean, peakNits: number, saturation: number): void;
+  setSdrToHdr(enabled: boolean, peakNits: number, saturation: number, contrast: number): void;
   setSpatialAudioEnabled(enabled: boolean): void;
   isSpatialAudioEnabled(): boolean;
   setAudioVolume(volume: number): boolean;
@@ -1115,7 +1115,7 @@ export class StreamingSession {
     this.nativeModule.setPostProcessEnabled(this.config.enablePostProcess ?? false);
     this.nativeModule.setUpscaleMode(this.config.upscaleMode ?? 0, this.config.upscaleSharpness ?? 0.5);
     try {
-      this.nativeModule.setSdrToHdr(this.config.sdrToHdr ?? false, this.config.sdrToHdrPeakNits ?? 500, this.config.sdrToHdrSaturation ?? 1.3);
+      this.nativeModule.setSdrToHdr(this.config.sdrToHdr ?? false, this.config.sdrToHdrPeakNits ?? 500, this.config.sdrToHdrSaturation ?? 1.3, this.config.sdrToHdrContrast ?? 1.0);
     } catch (e) {
       console.error(`SDR→HDR: call FAILED: ${e}`);
     }
