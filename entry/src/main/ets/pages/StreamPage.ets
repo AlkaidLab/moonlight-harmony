@@ -984,6 +984,49 @@ struct StreamPage {
   }
 
   /**
+   * 超分辨率状态 Toast：启动后提示用户超分是否生效
+   */
+  private showUpscaleToast(): void {
+    const config = this.viewModel.streamConfig;
+    if (!config || config.upscaleMode === 0) return;
+
+    try {
+      const d = display.getDefaultDisplaySync();
+      const screenW = d.width;
+      const screenH = d.height;
+      const streamW = config.width;
+      const streamH = config.height;
+
+      // 计算 XComponent 实际像素尺寸（保持视频宽高比的 letterbox 区域）
+      const videoAspectRatio = streamW / streamH;
+      const screenAspectRatio = screenW / screenH;
+      let outW: number, outH: number;
+      if (screenAspectRatio > videoAspectRatio) {
+        outH = screenH;
+        outW = Math.floor(outH * videoAspectRatio);
+      } else {
+        outW = screenW;
+        outH = Math.floor(outW / videoAspectRatio);
+      }
+
+      const activeNames: Record<number, string> = { 1: 'XEngine', 2: 'FSR 1' };
+      const modeName = activeNames[this.viewModel.activeUpscaleMode] ?? '超分辨率';
+
+      if (streamW < outW || streamH < outH) {
+        promptAction.showToast({
+          message: `${modeName} 超分已启用: ${streamW}×${streamH} → ${outW}×${outH}`,
+          duration: 2500
+        });
+      } else {
+        promptAction.showToast({
+          message: `超分辨率未生效: 串流 ${streamW}×${streamH} ≥ 屏幕 ${outW}×${outH}`,
+          duration: 2500
+        });
+      }
+    } catch (_) {}
+  }
+
+  /**
    * 设置 XComponent 帧率 + 获取 surfaceId + 启动串流
    */
   private async launchStream(): Promise<void> {
@@ -1043,9 +1086,10 @@ struct StreamPage {
       // 设置触摸输入模式
       const touchModeStr = this.viewModel.touchMode as string;
       this.touchInputHandler.setMode(touchModeStr as TouchInputMode);
-      // 配置双击时间阈值
+      // 配置双击时间阈值和双击拖动
       if (streamConfig) {
         this.touchInputHandler.setDoubleTapTimeThreshold(streamConfig.doubleTapTimeThreshold);
+        this.touchInputHandler.setEnableDoubleClickDrag(streamConfig.enableDoubleClickDrag);
       }
       
       // 设置连接终止回调
@@ -1060,6 +1104,9 @@ struct StreamPage {
 
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
+
+      // 超分辨率状态 Toast
+      this.showUpscaleToast();
 
       // 启动后台保活（AVSession + 长时任务），防止退到后台时进程被冻结
       if (this.enableBackgroundTask) {

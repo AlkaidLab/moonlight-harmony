@@ -1265,9 +1265,21 @@ napi_value MoonBridge_GuessControllerHasShareButton(napi_env env, napi_callback_
 // =============================================================================
 
 napi_value MoonBridge_SetVideoSurface(napi_env env, napi_callback_info info) {
-    size_t argc = 1;
-    napi_value args[1];
+    size_t argc = 3;
+    napi_value args[3];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    
+    // 解析可选的屏幕像素尺寸参数（arg[1]=width, arg[2]=height）
+    uint64_t surfaceWidth = 0, surfaceHeight = 0;
+    if (argc >= 3) {
+        int32_t w = 0, h = 0;
+        napi_get_value_int32(env, args[1], &w);
+        napi_get_value_int32(env, args[2], &h);
+        if (w > 0 && h > 0) {
+            surfaceWidth = static_cast<uint64_t>(w);
+            surfaceHeight = static_cast<uint64_t>(h);
+        }
+    }
     
     OHNativeWindow* window = nullptr;
     
@@ -1309,11 +1321,11 @@ napi_value MoonBridge_SetVideoSurface(napi_env env, napi_callback_info info) {
         
         OH_LOG_INFO(LOG_APP, "[MoonBridge] SetVideoSurface: created window from surfaceId %{public}s (legacy mode)", surfaceId);
         
-        // 将 window 设置到 NativeRender，初始化 NativeVSync 用于高帧率优化
+        // 将 window 设置到 NativeRender，传入屏幕像素尺寸（超分辨率需要）
         if (render != nullptr) {
-            // 获取 window 的尺寸（暂时使用默认值，后续可从 XComponent 获取）
-            render->SetNativeWindow(window, 0, 0);
-            OH_LOG_INFO(LOG_APP, "[MoonBridge] SetVideoSurface: NativeRender initialized with surfaceId window");
+            render->SetNativeWindow(window, surfaceWidth, surfaceHeight);
+            OH_LOG_INFO(LOG_APP, "[MoonBridge] SetVideoSurface: NativeRender initialized, surface=%{public}lux%{public}lu",
+                        (unsigned long)surfaceWidth, (unsigned long)surfaceHeight);
         }
     }
     
@@ -1536,6 +1548,10 @@ napi_value MoonBridge_SetUpscaleMode(napi_env env, napi_callback_info info) {
     if (argc >= 1) napi_get_value_int32(env, args[0], &mode);
     if (argc >= 2) napi_get_value_double(env, args[1], &sharpness);
 
+    // 保存到全局变量（跨 PostProcessor 实例保留）
+    VideoDecoderInstance::g_upscaleMode = mode;
+    VideoDecoderInstance::g_upscaleSharpness = static_cast<float>(sharpness);
+
     GLPostProcessor* postProc = GLPostProcessor::GetInstance();
     postProc->SetUpscaleMode(static_cast<UpscaleMode>(mode));
     postProc->SetUpscaleSharpness(static_cast<float>(sharpness));
@@ -1544,6 +1560,14 @@ napi_value MoonBridge_SetUpscaleMode(napi_env env, napi_callback_info info) {
 
     napi_value result;
     napi_get_undefined(env, &result);
+    return result;
+}
+
+napi_value MoonBridge_GetActiveUpscaleMode(napi_env env, napi_callback_info info) {
+    GLPostProcessor* postProc = GLPostProcessor::GetInstance();
+    int32_t mode = static_cast<int32_t>(postProc->GetActiveUpscaleMode());
+    napi_value result;
+    napi_create_int32(env, mode, &result);
     return result;
 }
 

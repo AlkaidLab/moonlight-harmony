@@ -146,6 +146,9 @@ export class StreamViewModel {
 
   // 实际编解码器类型（从 drSetup 回调获取，可能与用户请求的不同）
   actualCodec: string = '';
+
+  // 实际超分引擎 (0=OFF, 1=XENGINE, 2=FSR1)
+  activeUpscaleMode: number = 0;
   
   // UI 显示控制
   showOverlay: boolean = false;
@@ -374,6 +377,9 @@ export class StreamViewModel {
       this.connectionProgress = 1.0;
       this.connectionStageText = '已连接';
       this.connectionState = StreamConnectionState.CONNECTED;
+      
+      // 查询实际生效的超分引擎
+      this.activeUpscaleMode = this.streamingSession?.getActiveUpscaleMode() ?? 0;
       
     } catch (err) {
       this.connectionState = StreamConnectionState.ERROR;

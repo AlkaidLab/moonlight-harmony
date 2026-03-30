@@ -226,6 +226,11 @@ napi_value MoonBridge_SetPostProcessEnabled(napi_env env, napi_callback_info inf
 napi_value MoonBridge_SetUpscaleMode(napi_env env, napi_callback_info info);
 
 /**
+ * 获取实际生效的超分引擎 (0=OFF, 1=XENGINE, 2=FSR1)
+ */
+napi_value MoonBridge_GetActiveUpscaleMode(napi_env env, napi_callback_info info);
+
+/**
  * SDR→HDR 反向色调映射
  * @param enabled bool
  * @param peakNits double (200-1000)

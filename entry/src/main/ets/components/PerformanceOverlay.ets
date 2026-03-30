@@ -59,6 +59,7 @@ export struct PerformanceOverlay {
   @State perfPacketLoss: number = 0;
   @State perfBatteryLevel: number = 100;
   @State perfIsCharging: boolean = false;
+  @State perfUpscaleMode: number = 0;
   
   // 覆盖层状态
   @State overlayX: number = 8;
@@ -189,6 +190,14 @@ export struct PerformanceOverlay {
         this.perfNetworkLatency = stats.networkLatency;
         this.perfHostLatency = stats.hostLatency;
         this.perfPacketLoss = stats.packetLoss;
+
+        // 延迟查询超分引擎（解码器初始化后才有值）
+        if (this.perfUpscaleMode === 0) {
+          const mode = session.getActiveUpscaleMode();
+          if (mode > 0) {
+            this.perfUpscaleMode = mode;
+          }
+        }
       }
       
       // 整刻钟时钟显示（直接同步状态，不依赖过渡检测）
@@ -485,6 +494,12 @@ export struct PerformanceOverlay {
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
+        if (this.perfUpscaleMode > 0) {
+          Text(` ${this.perfUpscaleMode === 1 ? 'XEngine' : 'FSR1'}`)
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#7CFC00')
+        }
       }
       .margin({ bottom: 4 })
     }
@@ -623,6 +638,12 @@ export struct PerformanceOverlay {
           .fontSize(11)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
+        if (this.perfUpscaleMode > 0) {
+          Text(` ${this.perfUpscaleMode === 1 ? 'XEngine' : 'FSR1'}`)
+            .fontSize(10)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#7CFC00')
+        }
         if (this.hasNextItem(PerformanceItem.DECODER)) this.Separator()
       }
       

@@ -126,6 +126,7 @@ interface NativeModule {
   setVrrEnabled(enabled: boolean): void;
   setPostProcessEnabled(enabled: boolean): void;
   setUpscaleMode(mode: number, sharpness: number): void;
+  getActiveUpscaleMode(): number;
   setSdrToHdr(enabled: boolean, peakNits: number, saturation: number, contrast: number): void;
   setSpatialAudioEnabled(enabled: boolean): void;
   isSpatialAudioEnabled(): boolean;
@@ -593,6 +594,10 @@ export class StreamingSession {
    */
   setAudioVolume(volume: number): boolean {
     return this.nativeModule.setAudioVolume(volume);
+  }
+
+  getActiveUpscaleMode(): number {
+    return this.nativeModule.getActiveUpscaleMode();
   }
 
   // ---------------------------------------------------------------------------
