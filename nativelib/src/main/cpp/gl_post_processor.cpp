@@ -24,9 +24,7 @@
 #include <native_buffer/native_buffer.h>
 #include <cstring>
 #include <cmath>
-#include <cstdlib>
 #include <dlfcn.h>
-#include <unistd.h>
 #include <time.h>
 
 #undef LOG_TAG
@@ -59,7 +57,8 @@ typedef unsigned int EGLBoolean;
 #define MY_EGL_WINDOW_BIT          0x0004
 #define MY_EGL_OPENGL_ES2_BIT      0x0004
 #define MY_EGL_NATIVE_VISUAL_ID    0x302E
-#define MY_EGL_CONFIG_ID           0x3028
+#define MY_EGL_WIDTH               0x3057
+#define MY_EGL_HEIGHT              0x3056
 
 // GL constants
 #define MY_GL_TEXTURE_2D            0x0DE1
@@ -94,6 +93,8 @@ typedef unsigned int EGLBoolean;
 #define MY_GL_FRAMEBUFFER_COMPLETE  0x8CD5
 #define MY_GL_RGBA8                 0x8058
 #define MY_GL_RGBA                  0x1908
+#define MY_GL_RGBA16F               0x881A
+#define MY_GL_HALF_FLOAT            0x140B
 
 // =============================================================================
 // 动态加载的函数指针
@@ -109,6 +110,8 @@ typedef EGLContext (*PFN_eglCreateContext)(EGLDisplay, EGLConfig, EGLContext, co
 typedef EGLSurface (*PFN_eglCreateWindowSurface)(EGLDisplay, EGLConfig, EGLNativeWindowType, const EGLint*);
 typedef EGLBoolean (*PFN_eglMakeCurrent)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
 typedef EGLBoolean (*PFN_eglSwapBuffers)(EGLDisplay, EGLSurface);
+typedef EGLBoolean (*PFN_eglSwapInterval)(EGLDisplay, EGLint);
+typedef EGLBoolean (*PFN_eglQuerySurface)(EGLDisplay, EGLSurface, EGLint, EGLint*);
 typedef EGLBoolean (*PFN_eglDestroySurface)(EGLDisplay, EGLSurface);
 typedef EGLBoolean (*PFN_eglDestroyContext)(EGLDisplay, EGLContext);
 typedef EGLBoolean (*PFN_eglTerminate)(EGLDisplay);
@@ -186,6 +189,8 @@ static struct {
     PFN_eglCreateWindowSurface eglCreateWindowSurface;
     PFN_eglMakeCurrent eglMakeCurrent;
     PFN_eglSwapBuffers eglSwapBuffers;
+    PFN_eglSwapInterval eglSwapInterval;
+    PFN_eglQuerySurface eglQuerySurface;
     PFN_eglDestroySurface eglDestroySurface;
     PFN_eglDestroyContext eglDestroyContext;
     PFN_eglTerminate eglTerminate;
@@ -272,6 +277,8 @@ static bool LoadAPIs() {
     g_api.eglCreateWindowSurface = (PFN_eglCreateWindowSurface)dlsym(eglLib, "eglCreateWindowSurface");
     g_api.eglMakeCurrent = (PFN_eglMakeCurrent)dlsym(eglLib, "eglMakeCurrent");
     g_api.eglSwapBuffers = (PFN_eglSwapBuffers)dlsym(eglLib, "eglSwapBuffers");
+    g_api.eglSwapInterval = (PFN_eglSwapInterval)dlsym(eglLib, "eglSwapInterval");
+    g_api.eglQuerySurface = (PFN_eglQuerySurface)dlsym(eglLib, "eglQuerySurface");
     g_api.eglDestroySurface = (PFN_eglDestroySurface)dlsym(eglLib, "eglDestroySurface");
     g_api.eglDestroyContext = (PFN_eglDestroyContext)dlsym(eglLib, "eglDestroyContext");
     g_api.eglTerminate = (PFN_eglTerminate)dlsym(eglLib, "eglTerminate");
@@ -649,23 +656,25 @@ void main() {
 // FSR 1 EASU (Edge-Adaptive Spatial Upsampling) 着色器
 // 简化的 GLES 3.0 移植版，基于 AMD FidelityFX FSR 1.0 (MIT License)
 static const char* FSR_EASU_FRAGMENT_SRC = R"(#version 300 es
-precision highp float;
+precision mediump float;
 in vec2 vTexCoord;
 uniform sampler2D uInputTexture;
 uniform vec2 uInputSize;      // 输入纹理尺寸
 uniform vec2 uOutputSize;     // 输出目标尺寸
+uniform int uIsHdr;           // HDR 模式标志（BT.2020 亮度系数）
 out vec4 outColor;
 
 // 简化的 EASU：方向自适应 lanczos 核上采样
 // 检测局部梯度方向，沿边缘方向拉伸采样核避免跨边缘模糊
 void main() {
+    // BT.709 vs BT.2020 亮度系数
+    vec3 lumaCoeff = (uIsHdr == 1) ? vec3(0.2627, 0.6780, 0.0593) : vec3(0.299, 0.587, 0.114);
     // 从输出空间映射到输入空间
     vec2 inputTexelSize = 1.0 / uInputSize;
-    vec2 scale = uInputSize / uOutputSize;
-    vec2 srcPos = vTexCoord * scale; // 在输入纹理中的位置
 
-    // 输入空间中的整数像素位置
-    vec2 srcPixel = srcPos * uInputSize - 0.5;
+    // vTexCoord 覆盖 [0,1]（输出空间），直接映射到输入纹理的 [0,1]
+    // 转换到输入像素空间以计算采样核位置
+    vec2 srcPixel = vTexCoord * uInputSize - 0.5;
     vec2 frac_ = fract(srcPixel);
     vec2 base = (floor(srcPixel) + 0.5) * inputTexelSize;
 
@@ -686,16 +695,16 @@ void main() {
     vec3 n = texture(uInputTexture, base + vec2( 0,  2) * inputTexelSize).rgb;
 
     // 计算亮度
-    float bL = dot(b, vec3(0.299, 0.587, 0.114));
-    float eL = dot(e, vec3(0.299, 0.587, 0.114));
-    float fL = dot(f, vec3(0.299, 0.587, 0.114));
-    float gL = dot(g, vec3(0.299, 0.587, 0.114));
-    float hL = dot(h, vec3(0.299, 0.587, 0.114));
-    float iL = dot(i, vec3(0.299, 0.587, 0.114));
-    float jL = dot(j, vec3(0.299, 0.587, 0.114));
-    float kL = dot(k, vec3(0.299, 0.587, 0.114));
-    float lL = dot(l, vec3(0.299, 0.587, 0.114));
-    float nL = dot(n, vec3(0.299, 0.587, 0.114));
+    float bL = dot(b, lumaCoeff);
+    float eL = dot(e, lumaCoeff);
+    float fL = dot(f, lumaCoeff);
+    float gL = dot(g, lumaCoeff);
+    float hL = dot(h, lumaCoeff);
+    float iL = dot(i, lumaCoeff);
+    float jL = dot(j, lumaCoeff);
+    float kL = dot(k, lumaCoeff);
+    float lL = dot(l, lumaCoeff);
+    float nL = dot(n, lumaCoeff);
 
     // 检测边缘方向（梯度反转法）
     float dc = gL - fL; float cb = fL - eL;
@@ -745,13 +754,15 @@ void main() {
 // FSR 1 RCAS (Robust Contrast Adaptive Sharpening) 着色器
 // 在 EASU 上采样后应用自适应锐化
 static const char* FSR_RCAS_FRAGMENT_SRC = R"(#version 300 es
-precision highp float;
+precision mediump float;
 in vec2 vTexCoord;
 uniform sampler2D uInputTexture;
 uniform float uSharpness;  // 0.0 = 最大锐化, 值越大锐化越弱
+uniform int uIsHdr;        // HDR 模式标志（BT.2020 亮度系数）
 out vec4 outColor;
 
 void main() {
+    vec3 lumaCoeff = (uIsHdr == 1) ? vec3(0.2627, 0.6780, 0.0593) : vec3(0.299, 0.587, 0.114);
     vec2 texSize = vec2(textureSize(uInputTexture, 0));
     vec2 texelSize = 1.0 / texSize;
 
@@ -763,11 +774,11 @@ void main() {
     vec3 h = texture(uInputTexture, vTexCoord + vec2( 0,  1) * texelSize).rgb;
 
     // 亮度
-    float bL = dot(b, vec3(0.299, 0.587, 0.114));
-    float dL = dot(d, vec3(0.299, 0.587, 0.114));
-    float eL = dot(e, vec3(0.299, 0.587, 0.114));
-    float fL = dot(f, vec3(0.299, 0.587, 0.114));
-    float hL = dot(h, vec3(0.299, 0.587, 0.114));
+    float bL = dot(b, lumaCoeff);
+    float dL = dot(d, lumaCoeff);
+    float eL = dot(e, lumaCoeff);
+    float fL = dot(f, lumaCoeff);
+    float hL = dot(h, lumaCoeff);
 
     // 噪声检测
     float nz = 0.25 * (bL + dL + fL + hL) - eL;
@@ -806,18 +817,6 @@ out vec2 vTexCoord;
 void main() {
     gl_Position = vec4(aPosition, 0.0, 1.0);
     vTexCoord = aTexCoord;
-}
-)";
-
-// 直通模式的简单着色器（零额外处理）
-static const char* PASSTHROUGH_FRAGMENT_SRC = R"(#version 300 es
-#extension GL_OES_EGL_image_external_essl3 : require
-precision mediump float;
-in vec2 vTexCoord;
-uniform samplerExternalOES uTexture;
-out vec4 outColor;
-void main() {
-    outColor = texture(uTexture, vTexCoord);
 }
 )";
 
@@ -922,17 +921,39 @@ int GLPostProcessor::Init(OHNativeWindow* displayWindow,
                                                NATIVEBUFFER_COLOR_GAMUT_BT2100_PQ);
         OH_LOG_INFO(LOG_APP, "GLPostProcessor: SDR->HDR enabled, display set to BT.2020 PQ (peak=%.0f nits)",
                      sdrToHdrPeakNits_);
+    } else if (hdrMode_ == PostProcessHdrMode::HLG) {
+        // HLG HDR: 设置显示窗口为 BT.2020 HLG 色彩空间
+        // 解码器直出时系统自动设置；但经过 GLPostProcessor 的 FBO 中转后，
+        // 需要手动告知系统输出内容是 HLG 编码，否则色彩会偏淡
+        OH_NativeWindow_SetColorSpace(displayWindow, OH_COLORSPACE_BT2020_HLG_FULL);
+        OH_NativeWindow_NativeWindowHandleOpt(displayWindow, SET_COLOR_GAMUT,
+                                               NATIVEBUFFER_COLOR_GAMUT_BT2100_HLG);
+        OH_LOG_INFO(LOG_APP, "GLPostProcessor: HLG HDR, display set to BT.2020 HLG");
+    } else if (hdrMode_ == PostProcessHdrMode::PQ) {
+        // PQ HDR10: 设置显示窗口为 BT.2020 PQ 色彩空间
+        OH_NativeWindow_SetColorSpace(displayWindow, OH_COLORSPACE_BT2020_PQ_FULL);
+        OH_NativeWindow_NativeWindowHandleOpt(displayWindow, SET_COLOR_GAMUT,
+                                               NATIVEBUFFER_COLOR_GAMUT_BT2100_PQ);
+        OH_LOG_INFO(LOG_APP, "GLPostProcessor: HDR10 PQ, display set to BT.2020 PQ");
     } else {
-        OH_LOG_INFO(LOG_APP, "GLPostProcessor::Init: sdrToHdr=%{public}d hdrMode=%{public}d enabled=%{public}d",
-                     sdrToHdr_ ? 1 : 0, static_cast<int>(hdrMode_), enabled_ ? 1 : 0);
+        OH_LOG_INFO(LOG_APP, "GLPostProcessor::Init: sdrToHdr=%{public}d hdrMode=%{public}d dither=%{public}d",
+                     sdrToHdr_ ? 1 : 0, static_cast<int>(hdrMode_), ditherEnabled_ ? 1 : 0);
     }
 
     // 初始化 EGL（在 display window 上创建 EGL surface）
+    // InitEGL 内部会通过 eglQuerySurface 获取实际 surface 尺寸并更新 outputWidth_/outputHeight_
     if (!InitEGL(displayWindow)) {
         OH_LOG_ERROR(LOG_APP, "GLPostProcessor: EGL init failed");
         ReleaseInternal();
         return -1;
     }
+
+    // EGL surface 实际尺寸由 XComponent 布局决定（已包含 letterbox 计算），
+    // 直接使用 outputWidth_/outputHeight_ 作为渲染区域，无需再手动 letterbox
+    renderWidth_ = outputWidth_;
+    renderHeight_ = outputHeight_;
+    renderX_ = 0;
+    renderY_ = 0;
 
     // 创建 OES 纹理 + OH_NativeImage
     if (!InitNativeImage()) {
@@ -963,6 +984,21 @@ int GLPostProcessor::Init(OHNativeWindow* displayWindow,
             ReleaseFBO();
             upscaleMode_ = UpscaleMode::OFF;
         }
+
+        // 如果超分实际不需要（输出<=输入），释放 FBO 管线
+        if (activeUpscale_ == UpscaleMode::OFF && fbo_) {
+            OH_LOG_INFO(LOG_APP, "GLPostProcessor: upscale not needed (native resolution), releasing FBO pipeline");
+            ReleaseFBO();
+            ReleaseUpscale();
+            upscaleMode_ = UpscaleMode::OFF;
+        }
+    }
+
+    // 如果没有任何后处理需要，释放整个管线避免不必要的中转开销
+    if (!IsActive()) {
+        OH_LOG_INFO(LOG_APP, "GLPostProcessor: no post-processing needed, releasing pipeline");
+        ReleaseInternal();
+        return 0;  // 成功，但不激活管线
     }
 
     initialized_ = true;
@@ -1018,7 +1054,7 @@ bool GLPostProcessor::InitEGL(OHNativeWindow* displayWindow) {
     EGLConfig bestConfig = nullptr;
     int bestScore = -1;
     for (int i = 0; i < gotConfigs; i++) {
-        EGLint r = 0, g = 0, b = 0, a = 0, rt = 0, st = 0, nv = 0, cfgId = 0;
+        EGLint r = 0, g = 0, b = 0, a = 0, rt = 0, st = 0, nv = 0;
         g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_RED_SIZE, &r);
         g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_GREEN_SIZE, &g);
         g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_BLUE_SIZE, &b);
@@ -1026,10 +1062,6 @@ bool GLPostProcessor::InitEGL(OHNativeWindow* displayWindow) {
         g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_RENDERABLE_TYPE, &rt);
         g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_SURFACE_TYPE, &st);
         g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_NATIVE_VISUAL_ID, &nv);
-        g_api.eglGetConfigAttrib(eglDisplay_, allConfigs[i], MY_EGL_CONFIG_ID, &cfgId);
-        // 减少日志量避免 hilog 丢失关键日志
-        // OH_LOG_INFO(LOG_APP, "EGL cfg[%{public}d] id=%{public}d: R%{public}dG%{public}dB%{public}dA%{public}d rt=0x%{public}x st=0x%{public}x nv=%{public}d",
-        //             i, cfgId, r, g, b, a, rt, st, nv);
 
         // Score this config: prefer matching window format, then ES3, then higher color depth
         bool hasWindow = (st & MY_EGL_WINDOW_BIT) != 0;
@@ -1106,6 +1138,25 @@ bool GLPostProcessor::InitEGL(OHNativeWindow* displayWindow) {
     }
 
     OH_LOG_INFO(LOG_APP, "EGL context created and bound");
+
+    // 查询 EGL surface 的实际像素尺寸（由 XComponent 布局决定，已经包含 letterbox 计算）
+    if (g_api.eglQuerySurface) {
+        EGLint surfW = 0, surfH = 0;
+        g_api.eglQuerySurface(eglDisplay_, eglSurface_, MY_EGL_WIDTH, &surfW);
+        g_api.eglQuerySurface(eglDisplay_, eglSurface_, MY_EGL_HEIGHT, &surfH);
+        if (surfW > 0 && surfH > 0) {
+            OH_LOG_INFO(LOG_APP, "EGL surface actual size: %{public}dx%{public}d (passed output: %{public}ux%{public}u)",
+                        surfW, surfH, outputWidth_, outputHeight_);
+            outputWidth_ = static_cast<uint32_t>(surfW);
+            outputHeight_ = static_cast<uint32_t>(surfH);
+        }
+    }
+
+    // 禁用 VSync 同步，避免 eglSwapBuffers 阻塞解码器回调线程
+    if (g_api.eglSwapInterval) {
+        g_api.eglSwapInterval(eglDisplay_, 0);
+    }
+
     return true;
 }
 
@@ -1258,14 +1309,23 @@ bool GLPostProcessor::InitFBO() {
     g_api.glGenFramebuffers(1, &fbo_);
     g_api.glGenTextures(1, &fboTexture_);
 
+    // HDR 模式统一使用 RGBA16F 保留精度，SDR 使用 RGBA8
+    bool isHdr = (hdrMode_ != PostProcessHdrMode::SDR);
+    unsigned int internalFormat = isHdr ? MY_GL_RGBA16F : MY_GL_RGBA8;
+    unsigned int pixelType = isHdr ? MY_GL_HALF_FLOAT : MY_GL_UNSIGNED_BYTE;
+
     g_api.glBindTexture(MY_GL_TEXTURE_2D, fboTexture_);
     g_api.glTexParameteri(MY_GL_TEXTURE_2D, MY_GL_TEXTURE_MIN_FILTER, MY_GL_LINEAR);
     g_api.glTexParameteri(MY_GL_TEXTURE_2D, MY_GL_TEXTURE_MAG_FILTER, MY_GL_LINEAR);
     g_api.glTexParameteri(MY_GL_TEXTURE_2D, MY_GL_TEXTURE_WRAP_S, MY_GL_CLAMP_TO_EDGE);
     g_api.glTexParameteri(MY_GL_TEXTURE_2D, MY_GL_TEXTURE_WRAP_T, MY_GL_CLAMP_TO_EDGE);
-    g_api.glTexImage2D(MY_GL_TEXTURE_2D, 0, MY_GL_RGBA8, inputWidth_, inputHeight_, 0,
-                        MY_GL_RGBA, MY_GL_UNSIGNED_BYTE, nullptr);
+    g_api.glTexImage2D(MY_GL_TEXTURE_2D, 0, internalFormat, inputWidth_, inputHeight_, 0,
+                    MY_GL_RGBA, pixelType, nullptr);
 
+    OH_LOG_INFO(LOG_APP, "FBO texture: %{public}ux%{public}u fmt=0x%{public}x",
+                inputWidth_, inputHeight_, internalFormat);
+
+    // 无论哪种纹理创建方式，都绑定到 FBO
     g_api.glBindFramebuffer(MY_GL_FRAMEBUFFER, fbo_);
     g_api.glFramebufferTexture2D(MY_GL_FRAMEBUFFER, MY_GL_COLOR_ATTACHMENT0,
                                   MY_GL_TEXTURE_2D, fboTexture_, 0);
@@ -1317,17 +1377,11 @@ bool GLPostProcessor::InitUpscale() {
         if (g_api.xegGetString && g_api.xegSpatialUpscaleParam && g_api.xegRenderSpatialUpscale) {
             const char* extensions = reinterpret_cast<const char*>(g_api.xegGetString(0x01)); // XEG_EXTENSIONS
             if (extensions && strstr(extensions, "XEG_spatial_upscale")) {
-                // 配置 XEngine 参数
-                float scissor[4] = {0.0f, 0.0f,
-                                    static_cast<float>(outputWidth_),
-                                    static_cast<float>(outputHeight_)};
-                g_api.xegSpatialUpscaleParam(0x01, scissor); // XEG_SCISSOR
-                float sharp = upscaleSharpness_;
-                g_api.xegSpatialUpscaleParam(0x02, &sharp);  // XEG_SHARPNESS
-
+                // 不在初始化时设置参数，改为每帧设置（确保 EGL context 匹配）
                 activeUpscale_ = UpscaleMode::XENGINE;
                 xengineAvailable_ = true;
-                OH_LOG_INFO(LOG_APP, "XEngine spatial upscale enabled, sharpness=%.2f", sharp);
+
+                OH_LOG_INFO(LOG_APP, "XEngine spatial upscale enabled, sharpness=%.2f", upscaleSharpness_);
                 return true;
             }
             OH_LOG_WARN(LOG_APP, "XEngine loaded but spatial_upscale extension not available");
@@ -1374,6 +1428,10 @@ bool GLPostProcessor::InitUpscale() {
         }
 
         // 创建 FSR 中间 FBO（EASU 输出、RCAS 输入，输出分辨率）
+        bool isHdr = (hdrMode_ != PostProcessHdrMode::SDR);
+        unsigned int fsrInternalFormat = isHdr ? MY_GL_RGBA16F : MY_GL_RGBA8;
+        unsigned int fsrPixelType = isHdr ? MY_GL_HALF_FLOAT : MY_GL_UNSIGNED_BYTE;
+
         g_api.glGenFramebuffers(1, &fsrFbo_);
         g_api.glGenTextures(1, &fsrTexture_);
 
@@ -1382,8 +1440,8 @@ bool GLPostProcessor::InitUpscale() {
         g_api.glTexParameteri(MY_GL_TEXTURE_2D, MY_GL_TEXTURE_MAG_FILTER, MY_GL_LINEAR);
         g_api.glTexParameteri(MY_GL_TEXTURE_2D, MY_GL_TEXTURE_WRAP_S, MY_GL_CLAMP_TO_EDGE);
         g_api.glTexParameteri(MY_GL_TEXTURE_2D, MY_GL_TEXTURE_WRAP_T, MY_GL_CLAMP_TO_EDGE);
-        g_api.glTexImage2D(MY_GL_TEXTURE_2D, 0, MY_GL_RGBA8, outputWidth_, outputHeight_, 0,
-                            MY_GL_RGBA, MY_GL_UNSIGNED_BYTE, nullptr);
+        g_api.glTexImage2D(MY_GL_TEXTURE_2D, 0, fsrInternalFormat, renderWidth_, renderHeight_, 0,
+                            MY_GL_RGBA, fsrPixelType, nullptr);
 
         g_api.glBindFramebuffer(MY_GL_FRAMEBUFFER, fsrFbo_);
         g_api.glFramebufferTexture2D(MY_GL_FRAMEBUFFER, MY_GL_COLOR_ATTACHMENT0,
@@ -1399,8 +1457,9 @@ bool GLPostProcessor::InitUpscale() {
         }
 
         activeUpscale_ = UpscaleMode::FSR1;
-        OH_LOG_INFO(LOG_APP, "FSR1 upscale enabled: %{public}ux%{public}u → %{public}ux%{public}u",
-                    inputWidth_, inputHeight_, outputWidth_, outputHeight_);
+        OH_LOG_INFO(LOG_APP, "FSR1 upscale enabled: %{public}ux%{public}u → %{public}ux%{public}u (render %{public}ux%{public}u +%{public}u+%{public}u)",
+                    inputWidth_, inputHeight_, outputWidth_, outputHeight_,
+                    renderWidth_, renderHeight_, renderX_, renderY_);
         return true;
     }
 
@@ -1422,7 +1481,7 @@ void GLPostProcessor::BlitOESToFBO() {
     g_api.glBindFramebuffer(MY_GL_FRAMEBUFFER, fbo_);
     g_api.glViewport(0, 0, inputWidth_, inputHeight_);
 
-    bool usePostProc = (sdrToHdr_ || enabled_) && shaderProgram_;
+    bool usePostProc = (sdrToHdr_ || ditherEnabled_) && shaderProgram_;
     if (usePostProc) {
         // 使用后处理 shader（包含 SDR→HDR 增强、暗区增强等）
         g_api.glUseProgram(shaderProgram_);
@@ -1446,7 +1505,7 @@ void GLPostProcessor::BlitOESToFBO() {
         g_api.glUniform1f(locSdrSaturation_, sdrToHdrSaturation_);
         g_api.glUniform1f(locSdrContrast_, sdrToHdrContrast_);
         g_api.glUniform1f(locSdrPeakNits_, sdrToHdrPeakNits_);
-        g_api.glUniform1i(locEnableFilter_, enabled_ ? 1 : 0);
+        g_api.glUniform1i(locEnableFilter_, ditherEnabled_ ? 1 : 0);
         g_api.glUniform1i(locHdrMode_, static_cast<int>(hdrMode_));
     } else {
         // 直通 blit
@@ -1465,14 +1524,34 @@ void GLPostProcessor::BlitOESToFBO() {
 }
 
 void GLPostProcessor::ApplyUpscale() {
+    int isHdr = (hdrMode_ != PostProcessHdrMode::SDR) ? 1 : 0;
+
     if (activeUpscale_ == UpscaleMode::XENGINE) {
-        // XEngine 硬件加速超分：直接用 fboTexture_ 作为输入，渲染到默认 FBO（屏幕）
-        g_api.glViewport(0, 0, outputWidth_, outputHeight_);
+        // XEngine 硬件加速超分：fboTexture_ → 默认 FBO（屏幕）
+        // SCISSOR = 输入裁剪窗口（类似 neural upscale，定义输入采样区域）
+        unsigned int scissor[4] = {0, 0, inputWidth_, inputHeight_};
+        g_api.xegSpatialUpscaleParam(0x01, scissor);
+        float sharp = upscaleSharpness_;
+        g_api.xegSpatialUpscaleParam(0x02, &sharp);
+
+        g_api.glActiveTexture(MY_GL_TEXTURE0);
+        g_api.glBindTexture(MY_GL_TEXTURE_2D, fboTexture_);
+        g_api.glViewport(renderX_, renderY_, renderWidth_, renderHeight_);
         g_api.xegRenderSpatialUpscale(fboTexture_);
+
+        if (frameCount_ < 3) {
+            unsigned int err = g_api.glGetError();
+            OH_LOG_INFO(LOG_APP, "XEngine frame %{public}u: tex=%{public}u input=%{public}ux%{public}u "
+                        "output=%{public}ux%{public}u render=%{public}ux%{public}u+%{public}u+%{public}u "
+                        "glErr=0x%{public}x",
+                        frameCount_, fboTexture_, inputWidth_, inputHeight_,
+                        outputWidth_, outputHeight_, renderWidth_, renderHeight_,
+                        renderX_, renderY_, err);
+        }
     } else if (activeUpscale_ == UpscaleMode::FSR1) {
-        // FSR1 Pass 1: EASU（边缘自适应上采样） — 渲染到 fsrFbo_
+        // FSR1 Pass 1: EASU（边缘自适应上采样） — 渲染到 fsrFbo_（renderWidth_ × renderHeight_）
         g_api.glBindFramebuffer(MY_GL_FRAMEBUFFER, fsrFbo_);
-        g_api.glViewport(0, 0, outputWidth_, outputHeight_);
+        g_api.glViewport(0, 0, renderWidth_, renderHeight_);
         g_api.glUseProgram(fsrEasuProgram_);
 
         g_api.glActiveTexture(MY_GL_TEXTURE0);
@@ -1481,7 +1560,8 @@ void GLPostProcessor::ApplyUpscale() {
         g_api.glUniform2f(g_api.glGetUniformLocation(fsrEasuProgram_, "uInputSize"),
                           static_cast<float>(inputWidth_), static_cast<float>(inputHeight_));
         g_api.glUniform2f(g_api.glGetUniformLocation(fsrEasuProgram_, "uOutputSize"),
-                          static_cast<float>(outputWidth_), static_cast<float>(outputHeight_));
+                          static_cast<float>(renderWidth_), static_cast<float>(renderHeight_));
+        g_api.glUniform1i(g_api.glGetUniformLocation(fsrEasuProgram_, "uIsHdr"), isHdr);
 
         g_api.glBindVertexArray(vao_);
         g_api.glDrawArrays(MY_GL_TRIANGLE_STRIP, 0, 4);
@@ -1489,7 +1569,7 @@ void GLPostProcessor::ApplyUpscale() {
 
         // FSR1 Pass 2: RCAS（对比度自适应锐化） — 渲染到默认 FBO（屏幕）
         g_api.glBindFramebuffer(MY_GL_FRAMEBUFFER, 0);
-        g_api.glViewport(0, 0, outputWidth_, outputHeight_);
+        g_api.glViewport(renderX_, renderY_, renderWidth_, renderHeight_);
         g_api.glUseProgram(fsrRcasProgram_);
 
         g_api.glActiveTexture(MY_GL_TEXTURE0);
@@ -1499,6 +1579,7 @@ void GLPostProcessor::ApplyUpscale() {
         // 将 upscaleSharpness_ (0-1) 映射到 (2.0 - 0.0)
         g_api.glUniform1f(g_api.glGetUniformLocation(fsrRcasProgram_, "uSharpness"),
                           2.0f * (1.0f - upscaleSharpness_));
+        g_api.glUniform1i(g_api.glGetUniformLocation(fsrRcasProgram_, "uIsHdr"), isHdr);
 
         g_api.glBindVertexArray(vao_);
         g_api.glDrawArrays(MY_GL_TRIANGLE_STRIP, 0, 4);
@@ -1511,7 +1592,7 @@ void GLPostProcessor::ApplyUpscale() {
 // =============================================================================
 
 OHNativeWindow* GLPostProcessor::GetDecoderWindow() {
-    if (initialized_ && IsEnabled() && proxyWindow_) {
+    if (initialized_ && IsActive() && proxyWindow_) {
         return proxyWindow_;
     }
     return displayWindow_;
@@ -1522,7 +1603,7 @@ void GLPostProcessor::SetHdrMode(PostProcessHdrMode mode) {
 }
 
 void GLPostProcessor::ProcessFrame() {
-    if (!initialized_ || !IsEnabled()) {
+    if (!initialized_ || !IsActive()) {
         return;
     }
 
@@ -1533,18 +1614,12 @@ void GLPostProcessor::ProcessFrame() {
 
     // First frame: attach NativeImage to this EGL context (may differ from creation thread)
     if (frameCount_ == 0 && g_api.nativeImageAttachContext) {
-        int32_t attachRet = g_api.nativeImageAttachContext(nativeImage_, oesTexture_);
-        OH_LOG_INFO(LOG_APP, "NativeImage AttachContext: ret=%{public}d tex=%{public}u", attachRet, oesTexture_);
+        g_api.nativeImageAttachContext(nativeImage_, oesTexture_);
     }
 
     // 从 NativeImage 更新纹理（获取解码器最新输出帧）
     int32_t ret = g_api.nativeImageUpdateSurface(nativeImage_);
     if (ret != 0) {
-        // 没有新帧可用，跳过
-        if (frameCount_ < 3) {
-            OH_LOG_WARN(LOG_APP, "nativeImageUpdateSurface failed: ret=%{public}d frame=%{public}d",
-                        ret, frameCount_);
-        }
         return;
     }
 
@@ -1555,6 +1630,12 @@ void GLPostProcessor::ProcessFrame() {
 
         // Pass 2+3: 超分辨率（XEngine 或 FSR1 EASU+RCAS）→ 默认 FBO（屏幕）
         ApplyUpscale();
+
+        if (frameCount_ == 0) {
+            unsigned int err = g_api.glGetError();
+            OH_LOG_INFO(LOG_APP, "First upscale frame: mode=%{public}d glErr=0x%{public}x",
+                        static_cast<int>(activeUpscale_), err);
+        }
     } else {
         // === 原有管线：直接 OES → 屏幕（暗区增强后处理）===
         DrawFullscreenQuad();
@@ -1594,7 +1675,7 @@ void GLPostProcessor::DrawFullscreenQuad() {
     g_api.glUniform1f(locSdrSaturation_, sdrToHdrSaturation_);
     g_api.glUniform1f(locSdrContrast_, sdrToHdrContrast_);
     g_api.glUniform1f(locSdrPeakNits_, sdrToHdrPeakNits_);
-    g_api.glUniform1i(locEnableFilter_, enabled_ ? 1 : 0);
+    g_api.glUniform1i(locEnableFilter_, ditherEnabled_ ? 1 : 0);
     g_api.glUniform1i(locHdrMode_, static_cast<int>(hdrMode_));
 
     // 绘制

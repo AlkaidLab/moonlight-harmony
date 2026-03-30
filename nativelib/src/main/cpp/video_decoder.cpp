@@ -1403,7 +1403,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
             render->SubmitFrame(codec, index, pts, enqueueTimeMs);
             // 后处理：如果启用，从代理 surface 读取并处理到显示 surface
             GLPostProcessor* postProc = GLPostProcessor::GetInstance();
-            if (postProc->IsEnabled()) {
+            if (postProc->IsActive()) {
                 postProc->ProcessFrame();
             }
             return;
@@ -1425,7 +1425,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     // 后处理：非异步路径也需要处理
     {
         GLPostProcessor* postProc = GLPostProcessor::GetInstance();
-        if (postProc->IsEnabled()) {
+        if (postProc->IsActive()) {
             postProc->ProcessFrame();
         }
     }
@@ -1999,7 +1999,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     // Post-processing: apply GL shader pipeline if enabled
     {
         GLPostProcessor* postProc = GLPostProcessor::GetInstance();
-        if (postProc->IsEnabled()) {
+        if (postProc->IsActive()) {
             postProc->ProcessFrame();
         }
     }
@@ -2036,6 +2036,14 @@ namespace {
     float g_sdrToHdrPeakNits = 500.0f;
     float g_sdrToHdrSaturation = 1.3f;
     float g_sdrToHdrContrast = 1.0f;
+}
+
+namespace VideoDecoderInstance {
+    // 超分辨率配置（跨实例保留，需外部可见）
+    int g_upscaleMode = 0;       // UpscaleMode enum value
+    float g_upscaleSharpness = 0.5f;
+    // 暗区增强
+    bool g_ditherEnabled = false;
 }
 
 namespace VideoDecoderInstance {
@@ -2282,11 +2290,15 @@ int Start() {
     // 后处理管线：如果启用，初始化 GL 管线并使用代理 window
     OHNativeWindow* decoderWindow = g_savedWindow;
     GLPostProcessor* postProc = GLPostProcessor::GetInstance();
-    // 从全局状态恢复 SDR→HDR 设置（实例在 Cleanup 中被销毁重建）
+    // 从全局状态恢复所有后处理设置（实例在 Cleanup 中被销毁重建）
     postProc->SetSdrToHdr(g_sdrToHdr, g_sdrToHdrPeakNits, g_sdrToHdrSaturation, g_sdrToHdrContrast);
-    OH_LOG_INFO(LOG_APP, "PostProc check: IsEnabled=%{public}d sdrToHdr=%{public}d",
-                 postProc->IsEnabled() ? 1 : 0, postProc->IsSdrToHdr() ? 1 : 0);
-    if (postProc->IsEnabled()) {
+    postProc->SetDitherEnabled(g_ditherEnabled);
+    postProc->SetUpscaleMode(static_cast<UpscaleMode>(g_upscaleMode));
+    postProc->SetUpscaleSharpness(g_upscaleSharpness);
+    OH_LOG_INFO(LOG_APP, "PostProc check: IsActive=%{public}d sdrToHdr=%{public}d dither=%{public}d upscaleMode=%{public}d",
+                 postProc->IsActive() ? 1 : 0, postProc->IsSdrToHdr() ? 1 : 0,
+                 g_ditherEnabled ? 1 : 0, g_upscaleMode);
+    if (postProc->IsActive()) {
         // 设置 HDR 模式
         switch (g_hdrType) {
             case HdrType::HDR10:
@@ -2309,7 +2321,7 @@ int Start() {
             decoderWindow = postProc->GetDecoderWindow();
         } else {
             OH_LOG_WARN(LOG_APP, "Post-processing init failed, using direct rendering");
-            postProc->SetEnabled(false);
+            postProc->SetDitherEnabled(false);
         }
     }
     
@@ -2413,9 +2425,15 @@ void SetPreciseFps(double fps) {
 }
 
 void SetPostProcessEnabled(bool enabled) {
+    g_ditherEnabled = enabled;
     GLPostProcessor* postProc = GLPostProcessor::GetInstance();
-    postProc->SetEnabled(enabled);
+    postProc->SetDitherEnabled(enabled);
     OH_LOG_INFO(LOG_APP, "SetPostProcessEnabled: %{public}s", enabled ? "ON" : "OFF");
+}
+
+void SetUpscaleConfig(int mode, float sharpness) {
+    g_upscaleMode = mode;
+    g_upscaleSharpness = sharpness;
 }
 
 void SetSdrToHdr(bool enabled, float peakNits, float saturation, float contrast) {

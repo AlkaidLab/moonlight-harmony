@@ -13,16 +13,17 @@
  * @brief GPU 后处理管线
  *
  * 在视频解码输出与显示之间插入可选的 GL 着色器处理阶段。
- * 
- * 架构：
- *   OH_NativeImage (proxy surface)
- *        ↑ decoder outputs here
- *        ↓ GL_TEXTURE_EXTERNAL_OES
- *   GL shader processing
- *        ↓
- *   XComponent NativeWindow (display)
+ * 三个功能正交：暗区增强(dither)、SDR→HDR、超分辨率(upscale)，任意组合均可。
  *
- * 当禁用时，解码器直接输出到 XComponent 的 NativeWindow，零开销。
+ * 管线拓扑（按 IsActive() 判断是否启用整个管线）：
+ *
+ *   无超分：OES → [后处理shader] → 屏幕           (1 pass)
+ *   有超分：OES → [后处理shader] → FBO → EASU → RCAS → 屏幕  (3 pass)
+ *
+ * 其中后处理 shader 内部通过 uniform 开关控制暗区增强 / SDR→HDR，
+ * 均关闭时自动退化为直通 blit，无额外开销。
+ *
+ * 当所有功能均关闭时，解码器直接输出到 XComponent 的 NativeWindow，零开销。
  */
 
 #ifndef GL_POST_PROCESSOR_H
@@ -107,6 +108,7 @@ public:
      */
     void SetUpscaleMode(UpscaleMode mode) { upscaleMode_ = mode; }
     UpscaleMode GetUpscaleMode() const { return upscaleMode_; }
+    UpscaleMode GetActiveUpscaleMode() const { return activeUpscale_; }
 
     /**
      * 设置超分锐度 (0.0 - 1.0)
@@ -127,11 +129,17 @@ public:
     bool IsSdrToHdr() const { return sdrToHdr_; }
 
     /**
-     * 启用/禁用后处理（运行时切换）
-     * 注意：切换需要重建解码器管线，因此只在串流开始前设置
+     * 暗区增强（HDR 暗部抖动补偿）
+     * 仅在串流开始前设置生效
      */
-    void SetEnabled(bool enabled) { enabled_ = enabled; }
-    bool IsEnabled() const { return enabled_ || sdrToHdr_; }
+    void SetDitherEnabled(bool enabled) { ditherEnabled_ = enabled; }
+    bool IsDitherEnabled() const { return ditherEnabled_; }
+
+    /**
+     * 管线是否需要激活（任一功能启用即需要）
+     * 控制 Init 路径和 ProcessFrame 入口
+     */
+    bool IsActive() const { return ditherEnabled_ || sdrToHdr_ || upscaleMode_ != UpscaleMode::OFF; }
 
     /**
      * 手动触发处理当前帧（供解码器回调调用）
@@ -184,7 +192,7 @@ private:
     static GLPostProcessor* instance_;
     static std::mutex instanceMutex_;
 
-    std::atomic<bool> enabled_{false};
+    std::atomic<bool> ditherEnabled_{false};  // 暗区增强（HDR 暗部抖动补偿）
     std::mutex processMutex_;
 
     // 显示目标
@@ -193,6 +201,12 @@ private:
     uint32_t inputHeight_ = 0;
     uint32_t outputWidth_ = 0;
     uint32_t outputHeight_ = 0;
+
+    // 实际渲染区域（由 eglQuerySurface 获取的 EGL surface 尺寸决定）
+    uint32_t renderWidth_ = 0;
+    uint32_t renderHeight_ = 0;
+    uint32_t renderX_ = 0;
+    uint32_t renderY_ = 0;
 
     // EGL
     EGLDisplay eglDisplay_ = nullptr;

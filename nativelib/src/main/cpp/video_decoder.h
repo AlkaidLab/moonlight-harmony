@@ -480,6 +480,13 @@ namespace VideoDecoderInstance {
      */
     void SetSdrToHdr(bool enabled, float peakNits, float saturation, float contrast);
 
+    // 跨实例保留的后处理配置（全局变量）
+    extern int g_upscaleMode;
+    extern float g_upscaleSharpness;
+    extern bool g_ditherEnabled;
+
+    void SetUpscaleConfig(int mode, float sharpness);
+
     /**
      * 获取当前解码器模式
      */
