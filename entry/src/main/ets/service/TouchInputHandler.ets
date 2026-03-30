@@ -185,6 +185,8 @@ export class TouchInputHandler {
   private static readonly MOUSE_DOUBLE_TAP_DISTANCE = 60;
   /** 鼠标模式滚轮速度因子 */
   private static readonly MOUSE_SCROLL_SPEED_FACTOR = 3;
+  /** 是否启用双击拖动 */
+  private enableDoubleClickDrag: boolean = false;
 
   // 默认配置
   private static readonly DEFAULT_SENSITIVITY = 1.5;
@@ -206,6 +208,13 @@ export class TouchInputHandler {
   setDoubleTapTimeThreshold(threshold: number): void {
     this.twoFingerTapThreshold = threshold;
     this.mouseDoubleTapTime = threshold;
+  }
+
+  /**
+   * 配置是否启用双击拖动（从设置读取后调用）
+   */
+  setEnableDoubleClickDrag(enable: boolean): void {
+    this.enableDoubleClickDrag = enable;
   }
 
   /**
@@ -648,8 +657,9 @@ export class TouchInputHandler {
     this.mouseConfirmedTap = true;
     this.cancelMouseTapDownTimer();
 
-    // 双击判定：如果本次按下距上次抬起很近且时间短，不重定位（方便双击）
-    if (this.mouseDownTime - this.mouseLastUpTime > this.mouseDoubleTapTime ||
+    // 双击判定：如果启用双击拖动且本次按下距上次抬起很近且时间短，不重定位（方便双击）
+    if (!this.enableDoubleClickDrag ||
+        this.mouseDownTime - this.mouseLastUpTime > this.mouseDoubleTapTime ||
         this.mouseDistanceExceeds(
           this.mouseDownX - this.mouseLastUpX,
           this.mouseDownY - this.mouseLastUpY,

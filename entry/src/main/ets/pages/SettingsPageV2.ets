@@ -1592,6 +1592,8 @@ struct SettingsPageV2 {
                 action: () => {
                   this.touchscreenTrackpad = !this.touchscreenTrackpad;
                   this.saveSetting(SettingsKeys.TOUCHSCREEN_TRACKPAD, this.touchscreenTrackpad);
+                  // 清除菜单中选择的触摸模式，使设置页的选项在下次串流时生效
+                  this.saveSetting(SettingsKeys.LAST_TOUCH_MODE, '');
                 }
               },
               {
@@ -1650,7 +1652,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '启用增强触控',
-                subtitle: '增强原生触控体验',
+                subtitle: '尚未实装，敬请期待',
                 type: 'toggle',
                 value: this.enableEnhancedTouch,
                 action: () => {
@@ -1804,9 +1806,10 @@ struct SettingsPageV2 {
               },
               {
                 title: '超分锐度',
-                subtitle: '超分辨率画面锐化程度',
+                subtitle: this.upscaleSharpness <= 20 ? '柔和自然' : (this.upscaleSharpness <= 50 ? '适中锐化' : '强力锐化，可能出现液化伪影'),
                 type: 'slider',
                 visible: this.upscaleMode !== 0,
+                tooltip: '控制超分辨率后的锐化强度\n· 0-20%：柔和自然，推荐写实类游戏\n· 25-50%：适中锐化，适合大多数场景\n· 55%+：强力锐化，可能产生液化/过锐伪影',
                 value: this.upscaleSharpness,
                 min: 0,
                 max: 100,
