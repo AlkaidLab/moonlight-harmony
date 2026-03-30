@@ -44,6 +44,9 @@ More
 Thumbs.db
 nul
 
+# Development docs (local reference only)
+docs/
+
 # Package lock files
 oh-package-lock.json5
 nativelib/src/main/cpp/mbedtls/
