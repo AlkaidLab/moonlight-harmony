@@ -18,18 +18,18 @@
  * - 锁定模式
  */
 
-// 性能项目图标常量类 - 统一管理所有 emoji 图标
-export class PerfIcons {
-  static readonly RESOLUTION: string = '📱';      // 分辨率
-  static readonly DECODER: string = '🎬';         // 解码器
-  static readonly PACKET_LOSS: string = '📶';     // 丢包率/网络信号
-  static readonly BITRATE: string = '⏳';         // 带宽/传输
-  static readonly NETWORK: string = '🌐';         // 网络延迟
-  static readonly DECODE_NORMAL: string = '⏱️';   // 解码延迟（正常）
-  static readonly DECODE_HOT: string = '🥵';      // 解码延迟（过热）
-  static readonly HOST: string = '🖥️';            // 主机延迟
-  static readonly BATTERY: string = '🔋';         // 电池
-  static readonly CHARGING: string = '⚡';        // 充电中
+/**
+ * Phosphor Bold 矢量图标资源引用
+ * SVG 文件位于 resources/base/media/，通过 Image + fillColor 渲染
+ */
+export class PerfSymbols {
+  static readonly PACKET_LOSS: Resource = $r('app.media.perf_signal');
+  static readonly BITRATE: Resource = $r('app.media.perf_gauge');
+  static readonly NETWORK: Resource = $r('app.media.perf_wifi');
+  static readonly DECODE_NORMAL: Resource = $r('app.media.perf_timer');
+  static readonly HOST: Resource = $r('app.media.perf_monitor');
+  static readonly BATTERY: Resource = $r('app.media.perf_battery');
+  static readonly CHARGING: Resource = $r('app.media.perf_charging');
 }
 
 // 性能项目名称常量类 - 统一管理所有显示名称
@@ -103,10 +103,12 @@ export class OverlayConfig {
 export class PerformanceItemInfo {
   title: string;
   description: string;
+  icon?: Resource;
   
-  constructor(title: string, description: string) {
+  constructor(title: string, description: string, icon?: Resource) {
     this.title = title;
     this.description = description;
+    this.icon = icon;
   }
 }
 
@@ -145,48 +147,57 @@ export function getPerformanceItemInfo(item: PerformanceItem): PerformanceItemIn
   switch (item) {
     case PerformanceItem.RESOLUTION:
       return new PerformanceItemInfo(
-        `${PerfIcons.RESOLUTION} 分辨率`,
-        '显示当前串流的分辨率和帧率。客户端分辨率是从服务器接收的视频分辨率，这可能与主机端设置的分辨率不同。'
+        '分辨率',
+        '显示当前串流的分辨率和帧率。客户端分辨率是从服务器接收的视频分辨率，这可能与主机端设置的分辨率不同。',
+        $r('app.media.perf_resolution')
       );
     case PerformanceItem.DECODER:
       return new PerformanceItemInfo(
-        `${PerfIcons.DECODER} 解码器`,
-        '显示当前使用的视频编解码器。HEVC比AVC提供更好的压缩效率，在相同码率下能获得更好的画质。HDR表示正在使用高动态范围，能显示更丰富的色彩和对比度。'
+        '解码器',
+        '显示当前使用的视频编解码器。HEVC比AVC提供更好的压缩效率，在相同码率下能获得更好的画质。HDR表示正在使用高动态范围，能显示更丰富的色彩和对比度。',
+        $r('app.media.perf_decoder')
       );
     case PerformanceItem.RENDER_FPS:
       return new PerformanceItemInfo(
-        `📊 帧率`,
-        'Rx为从服务器接收的帧率，Rd为实际渲染到屏幕的帧率。如果渲染帧率低于接收帧率，可能是解码或显示瓶颈。'
+        '帧率',
+        'Rx为从服务器接收的帧率，Rd为实际渲染到屏幕的帧率。如果渲染帧率低于接收帧率，可能是解码或显示瓶颈。',
+        $r('app.media.perf_fps')
       );
     case PerformanceItem.PACKET_LOSS:
       return new PerformanceItemInfo(
-        `${PerfIcons.PACKET_LOSS} 丢包率`,
-        '显示网络传输过程中丢失的数据包百分比。低于1%是优秀，1-5%是可接受，高于5%可能导致画面卡顿或花屏。'
+        '丢包率',
+        '显示网络传输过程中丢失的数据包百分比。低于1%是优秀，1-5%是可接受，高于5%可能导致画面卡顿或花屏。',
+        $r('app.media.perf_signal')
       );
     case PerformanceItem.BITRATE:
       return new PerformanceItemInfo(
-        `${PerfIcons.BITRATE} 码率`,
-        '当前视频流的下载带宽。带宽越高，画质越好，但也需要更快的网络连接。建议根据网络带宽调整码率设置。'
+        '码率',
+        '当前视频流的下载带宽。带宽越高，画质越好，但也需要更快的网络连接。建议根据网络带宽调整码率设置。',
+        $r('app.media.perf_gauge')
       );
     case PerformanceItem.NETWORK_LATENCY:
       return new PerformanceItemInfo(
-        `${PerfIcons.NETWORK} 网络延迟`,
-        '网络往返延迟(RTT)，即数据包从客户端到服务器再返回的时间。低于20ms是优秀，20-50ms是良好，高于100ms可能感受到明显延迟。'
+        '网络延迟',
+        '网络往返延迟(RTT)，即数据包从客户端到服务器再返回的时间。低于20ms是优秀，20-50ms是良好，高于100ms可能感受到明显延迟。',
+        $r('app.media.perf_wifi')
       );
     case PerformanceItem.DECODE_LATENCY:
       return new PerformanceItemInfo(
-        `${PerfIcons.DECODE_NORMAL} 解码延迟`,
-        '视频帧解码所需的时间。低于10ms是优秀，10-20ms是正常，高于20ms可能需要降低分辨率或使用硬件解码器。'
+        '解码延迟',
+        '视频帧解码所需的时间。低于10ms是优秀，10-20ms是正常，高于20ms可能需要降低分辨率或使用硬件解码器。',
+        $r('app.media.perf_timer')
       );
     case PerformanceItem.HOST_LATENCY:
       return new PerformanceItemInfo(
-        `${PerfIcons.HOST} 主机延迟`,
-        '服务器端渲染和编码游戏画面所需的时间。这取决于服务器的硬件性能和当前运行的游戏。较新的显卡通常有更低的编码延迟。'
+        '主机延迟',
+        '服务器端渲染和编码游戏画面所需的时间。这取决于服务器的硬件性能和当前运行的游戏。较新的显卡通常有更低的编码延迟。',
+        $r('app.media.perf_monitor')
       );
     case PerformanceItem.BATTERY:
       return new PerformanceItemInfo(
-        `${PerfIcons.BATTERY} 电池`,
-        '显示当前设备的电池电量。串流游戏会消耗较多电量，建议在电量充足时或连接充电器时进行长时间串流。'
+        '电池',
+        '显示当前设备的电池电量。串流游戏会消耗较多电量，建议在电量充足时或连接充电器时进行长时间串流。',
+        $r('app.media.perf_battery')
       );
     default:
       return new PerformanceItemInfo('未知', '');

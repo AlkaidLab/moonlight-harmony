@@ -18,7 +18,7 @@ import { promptAction } from '@kit.ArkUI';
 import { batteryInfo } from '@kit.BasicServicesKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './OptionPickerDialog';
 import {
-  PerformanceItem, PerformanceData, PerfIcons, PerfLabels,
+  PerformanceItem, PerformanceData, PerfLabels, PerfSymbols,
   getMoonPhaseIcon, formatDataRate, getDecoderString,
   getPacketLossColor, getLatencyColor, getBatteryColor,
   calculateSnapPosition, findNearestSnapPosition,
@@ -465,6 +465,16 @@ export struct PerformanceOverlay {
     .hitTestBehavior(HitTestMode.Transparent)
   }
   
+  // ==================== 矢量图标 ====================
+  
+  @Builder
+  PerfIcon(res: Resource, size: number = 14, color: ResourceColor = '#FFFFFF') {
+    Image(res)
+      .width(size)
+      .height(size)
+      .fillColor(color)
+  }
+  
   // ==================== 垂直布局 ====================
   
   @Builder
@@ -483,6 +493,12 @@ export struct PerformanceOverlay {
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
           .fontColor('#FFFFFF')
+        if (this.perfUpscaleMode > 0) {
+          Text(` ${this.perfUpscaleMode === 1 ? 'XEngine' : 'FSR1'}`)
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#7CFC00')
+        }
       }
       .margin({ bottom: 4 })
     }
@@ -494,12 +510,6 @@ export struct PerformanceOverlay {
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
-        if (this.perfUpscaleMode > 0) {
-          Text(` ${this.perfUpscaleMode === 1 ? 'XEngine' : 'FSR1'}`)
-            .fontSize(11)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#7CFC00')
-        }
       }
       .margin({ bottom: 4 })
     }
@@ -521,8 +531,7 @@ export struct PerformanceOverlay {
     // 丢包行
     if (this.enabledItemsList.includes(PerformanceItem.PACKET_LOSS)) {
       Row() {
-        Text(PerfIcons.PACKET_LOSS)
-          .fontSize(13)
+        this.PerfIcon(PerfSymbols.PACKET_LOSS, 14, getPacketLossColor(this.perfPacketLoss))
         Text(` ${this.perfPacketLoss.toFixed(2)}`)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
@@ -537,8 +546,7 @@ export struct PerformanceOverlay {
     // 带宽行
     if (this.enabledItemsList.includes(PerformanceItem.BITRATE)) {
       Row() {
-        Text(PerfIcons.BITRATE)
-          .fontSize(13)
+        this.PerfIcon(PerfSymbols.BITRATE, 14, '#BCEDD3')
         Text(` ${formatDataRate(this.perfBitrate)}`)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
@@ -550,8 +558,7 @@ export struct PerformanceOverlay {
     // 网络延迟行
     if (this.enabledItemsList.includes(PerformanceItem.NETWORK_LATENCY)) {
       Row() {
-        Text(PerfIcons.NETWORK)
-          .fontSize(13)
+        this.PerfIcon(PerfSymbols.NETWORK, 14, this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50')
         Text(this.perfNetworkLatency > 0 ? ` ${this.perfNetworkLatency}` : ' N/A')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
@@ -566,8 +573,11 @@ export struct PerformanceOverlay {
     // 解码延迟行
     if (this.enabledItemsList.includes(PerformanceItem.DECODE_LATENCY)) {
       Row() {
-        Text(this.perfLatency < 20 ? PerfIcons.DECODE_NORMAL : PerfIcons.DECODE_HOT)
-          .fontSize(13)
+        if (this.perfLatency >= 20) {
+          Text('🔥').fontSize(13)
+        } else {
+          this.PerfIcon(PerfSymbols.DECODE_NORMAL, 14, getLatencyColor(this.perfLatency))
+        }
         Text(` ${this.perfLatency.toFixed(2)}`)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
@@ -582,8 +592,7 @@ export struct PerformanceOverlay {
     // 主机延迟行
     if (this.enabledItemsList.includes(PerformanceItem.HOST_LATENCY)) {
       Row() {
-        Text(PerfIcons.HOST)
-          .fontSize(13)
+        this.PerfIcon(PerfSymbols.HOST, 14, '#009688')
         Text(this.perfHostLatency > 0 ? ` ${this.perfHostLatency.toFixed(1)}` : ' N/A')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
@@ -598,8 +607,7 @@ export struct PerformanceOverlay {
     // 电池行
     if (this.enabledItemsList.includes(PerformanceItem.BATTERY)) {
       Row() {
-        Text(this.perfIsCharging ? PerfIcons.CHARGING : PerfIcons.BATTERY)
-          .fontSize(13)
+        this.PerfIcon(this.perfIsCharging ? PerfSymbols.CHARGING : PerfSymbols.BATTERY, 14, getBatteryColor(this.perfBatteryLevel))
         Text(` ${this.perfBatteryLevel}`)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
@@ -629,6 +637,12 @@ export struct PerformanceOverlay {
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
           .fontColor('#FFFFFF')
+        if (this.perfUpscaleMode > 0) {
+          Text(` ${this.perfUpscaleMode === 1 ? 'XEngine' : 'FSR1'}`)
+            .fontSize(10)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#7CFC00')
+        }
         if (this.hasNextItem(PerformanceItem.RESOLUTION)) this.Separator()
       }
       
@@ -638,12 +652,6 @@ export struct PerformanceOverlay {
           .fontSize(11)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
-        if (this.perfUpscaleMode > 0) {
-          Text(` ${this.perfUpscaleMode === 1 ? 'XEngine' : 'FSR1'}`)
-            .fontSize(10)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#7CFC00')
-        }
         if (this.hasNextItem(PerformanceItem.DECODER)) this.Separator()
       }
       
@@ -661,8 +669,7 @@ export struct PerformanceOverlay {
       
       // 丢包
       if (this.enabledItemsList.includes(PerformanceItem.PACKET_LOSS)) {
-        Text(PerfIcons.PACKET_LOSS)
-          .fontSize(12)
+        this.PerfIcon(PerfSymbols.PACKET_LOSS, 13, getPacketLossColor(this.perfPacketLoss))
         Text(` ${this.perfPacketLoss.toFixed(1)}%`)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
@@ -672,8 +679,7 @@ export struct PerformanceOverlay {
       
       // 带宽
       if (this.enabledItemsList.includes(PerformanceItem.BITRATE)) {
-        Text(PerfIcons.BITRATE)
-          .fontSize(12)
+        this.PerfIcon(PerfSymbols.BITRATE, 13, '#BCEDD3')
         Text(` ${formatDataRate(this.perfBitrate)}`)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
@@ -683,8 +689,7 @@ export struct PerformanceOverlay {
       
       // 网络延迟
       if (this.enabledItemsList.includes(PerformanceItem.NETWORK_LATENCY)) {
-        Text(PerfIcons.NETWORK)
-          .fontSize(12)
+        this.PerfIcon(PerfSymbols.NETWORK, 13, this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50')
         Text(this.perfNetworkLatency > 0 ? ` ${this.perfNetworkLatency} ms` : ' N/A')
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
@@ -694,8 +699,11 @@ export struct PerformanceOverlay {
       
       // 解码延迟
       if (this.enabledItemsList.includes(PerformanceItem.DECODE_LATENCY)) {
-        Text(this.perfLatency < 20 ? PerfIcons.DECODE_NORMAL : PerfIcons.DECODE_HOT)
-          .fontSize(12)
+        if (this.perfLatency >= 20) {
+          Text('🥵').fontSize(12)
+        } else {
+          this.PerfIcon(PerfSymbols.DECODE_NORMAL, 13, getLatencyColor(this.perfLatency))
+        }
         Text(` ${this.perfLatency.toFixed(1)} ms`)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
@@ -705,8 +713,7 @@ export struct PerformanceOverlay {
       
       // 主机延迟
       if (this.enabledItemsList.includes(PerformanceItem.HOST_LATENCY)) {
-        Text(PerfIcons.HOST)
-          .fontSize(12)
+        this.PerfIcon(PerfSymbols.HOST, 13, '#009688')
         Text(this.perfHostLatency > 0 ? ` ${this.perfHostLatency.toFixed(1)} ms` : ' N/A')
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
@@ -716,8 +723,7 @@ export struct PerformanceOverlay {
       
       // 电池
       if (this.enabledItemsList.includes(PerformanceItem.BATTERY)) {
-        Text(this.perfIsCharging ? PerfIcons.CHARGING : PerfIcons.BATTERY)
-          .fontSize(12)
+        this.PerfIcon(this.perfIsCharging ? PerfSymbols.CHARGING : PerfSymbols.BATTERY, 13, getBatteryColor(this.perfBatteryLevel))
         Text(` ${this.perfBatteryLevel}%`)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
@@ -939,16 +945,18 @@ export struct PerformanceOverlay {
         title: info.title,
         subtitle: info.description,
         value: `item_${i}`,
-        checked: isEnabled
+        checked: isEnabled,
+        icon: info.icon
       };
       options.push(opt);
     }
 
     // 隐藏覆盖层选项
     options.push({
-      title: '🙈 隐藏覆盖层',
+      title: '隐藏覆盖层',
       subtitle: '可在游戏菜单中重新打开',
-      value: 'hide_overlay'
+      value: 'hide_overlay',
+      icon: $r('app.media.perf_hide')
     });
 
     return options;
@@ -963,7 +971,8 @@ export struct PerformanceOverlay {
     const currentPercent = Math.round(this.overlayBgOpacity * 100);
 
     const sliderCfg: SliderConfig = {
-      title: '🎨 背景透明度',
+      title: '背景透明度',
+      icon: $r('app.media.perf_opacity'),
       value: currentPercent,
       min: 0,
       max: 100,
