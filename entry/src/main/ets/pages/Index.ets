@@ -8,7 +8,7 @@
  * (at your option) any later version.
  */
 
-import { router } from '@kit.ArkUI';
+import { curves, router } from '@kit.ArkUI';
 import { AppColors } from '../common/Theme';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { common } from '@kit.AbilityKit';
@@ -32,6 +32,13 @@ struct Index {
   @State logoOpacity: number = 0;
   @State contentOpacity: number = 0;
   @State bottomOpacity: number = 0;
+  // 标题逐字渐显
+  @State moonlightOpacity: number = 0;
+  @State moonlightTranslateY: number = 12;
+  @State vplusOpacity: number = 0;
+  @State vplusScale: number = 0.5;
+  @State harmonyOpacity: number = 0;
+  @State harmonyTranslateY: number = 8;
   /** 是否显示隐私政策同意弹窗 */
   @State showPrivacyConsent: boolean = false;
   /** 隐私政策弹窗透明度（用于淡入动画） */
@@ -142,8 +149,13 @@ struct Index {
    * 同意后快速过渡并跳转到主页面
    */
   private proceedToMain(): void {
-    animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-      this.contentOpacity = 1;
+    animateTo({ duration: 400, curve: Curve.EaseOut }, () => {
+      this.moonlightOpacity = 1;
+      this.moonlightTranslateY = 0;
+      this.vplusOpacity = 1;
+      this.vplusScale = 1;
+      this.harmonyOpacity = 1;
+      this.harmonyTranslateY = 0;
       this.bottomOpacity = 1;
     });
     setTimeout(() => {
@@ -157,24 +169,47 @@ struct Index {
   }
 
   startAnimation(): void {
-    // Logo 淡入
+    // Logo 弹入
     animateTo({
-      duration: 500,
+      duration: 600,
       curve: Curve.EaseOut,
     }, () => {
       this.logoOpacity = 1;
       this.logoScale = 1;
     });
 
-    // 内容淡入
+    // "Moonlight" 滑入
+    setTimeout(() => {
+      animateTo({
+        duration: 450,
+        curve: Curve.EaseOut,
+      }, () => {
+        this.moonlightOpacity = 1;
+        this.moonlightTranslateY = 0;
+      });
+    }, 350);
+
+    // "V+" 弹出
+    setTimeout(() => {
+      animateTo({
+        duration: 350,
+        curve: curves.springMotion(0.6, 0.8),
+      }, () => {
+        this.vplusOpacity = 1;
+        this.vplusScale = 1;
+      });
+    }, 600);
+
+    // "for HarmonyOS" 滑入
     setTimeout(() => {
       animateTo({
         duration: 400,
         curve: Curve.EaseOut,
       }, () => {
-        this.contentOpacity = 1;
+        this.harmonyOpacity = 1;
+        this.harmonyTranslateY = 0;
       });
-    }, 300);
+    }, 750);
 
     // 底部淡入
     setTimeout(() => {
@@ -184,7 +219,7 @@ struct Index {
       }, () => {
         this.bottomOpacity = 1;
       });
-    }, 500);
+    }, 900);
 
     // 跳转
     setTimeout(() => {
@@ -219,6 +254,8 @@ struct Index {
             .fontSize(36)
             .fontWeight(FontWeight.Bold)
             .fontColor(AppColors.TextPrimary)
+            .opacity(this.moonlightOpacity)
+            .translate({ y: this.moonlightTranslateY })
 
           Row() {
             Text('V+')
@@ -229,14 +266,17 @@ struct Index {
               .borderRadius(4)
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
               .margin({ right: 6 })
+              .opacity(this.vplusOpacity)
+              .scale({ x: this.vplusScale, y: this.vplusScale })
 
             Text('for HarmonyOS')
               .fontSize(14)
               .fontColor(AppColors.TextSecondary)
+              .opacity(this.harmonyOpacity)
+              .translate({ y: this.harmonyTranslateY })
           }
           .margin({ top: 8 })
         }
-        .opacity(this.contentOpacity)
         .margin({ bottom: 48 })
 
         // 加载
@@ -245,7 +285,7 @@ struct Index {
             .width(36)
             .height(36)
             .color(AppColors.Primary)
-            .opacity(this.contentOpacity)
+            .opacity(this.moonlightOpacity)
         }
 
         Blank()
