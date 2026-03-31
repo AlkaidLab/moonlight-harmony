@@ -529,8 +529,10 @@ struct PcListPageV2 {
     Column() {
       // 霓虹风格插图
       Column() {
-        Text('🖥️')
-          .fontSize(48)
+        Image($r('app.media.ic_game_controller'))
+          .width(48)
+          .height(48)
+          .fillColor(AppColors.Primary)
       }
       .width(120)
       .height(120)

@@ -519,8 +519,8 @@ export struct GameControllerTestView {
           } else {
             ForEach(this.connectedDevices, (device: GCDeviceInfo) => {
               Row({ space: 8 }) {
-                Text('🎮')
-                  .fontSize(20)
+                Image($r('app.media.ic_game_controller'))
+                  .width(20).height(20).fillColor(AppColors.Primary)
                 Column({ space: 2 }) {
                   Text(device.name)
                     .fontSize(14)
@@ -552,7 +552,7 @@ export struct GameControllerTestView {
         // 原始按键事件（重要诊断信息）
         Column({ space: 8 }) {
           Row() {
-            Text('🔑 原始按键事件')
+            Text('原始按键事件')
               .fontSize(16)
               .fontWeight(FontWeight.Bold)
               .fontColor(AppColors.TextPrimary)
@@ -592,7 +592,7 @@ export struct GameControllerTestView {
 
         // 日志
         Column({ space: 8 }) {
-          Text('📋 日志')
+          Text('日志')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor(AppColors.TextPrimary)
@@ -624,7 +624,7 @@ export struct GameControllerTestView {
   @Builder
   buildButtonsDisplay() {
     Column({ space: 8 }) {
-      Text('🎮 按键状态')
+      Text('按键状态')
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
         .fontColor(AppColors.TextPrimary)

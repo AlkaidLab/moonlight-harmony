@@ -39,6 +39,8 @@ export interface OptionItem {
 export interface SliderConfig {
   /** 滑块标签 */
   title: string;
+  /** 滑块图标 */
+  icon?: Resource;
   /** 当前值 (0-100) */
   value: number;
   /** 最小值 */
@@ -274,6 +276,13 @@ export struct OptionPickerDialog {
               .margin({ top: AppSpacing.Small, bottom: AppSpacing.Small })
             
             Row() {
+              if (this.config.sliderConfig?.icon) {
+                Image(this.config.sliderConfig.icon)
+                  .width(20)
+                  .height(20)
+                  .fillColor(AppColors.TextPrimary)
+                  .margin({ right: AppSpacing.Small })
+              }
               Text(this.sliderTitle)
                 .fontSize(AppSizes.FontBody)
                 .fontColor(AppColors.TextPrimary)

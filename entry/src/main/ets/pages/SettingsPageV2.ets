@@ -16,7 +16,7 @@ import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { StreamingSession, DecoderCapabilities } from '../service/StreamingSession';
 import { getRecommendedBitrate } from '../model/StreamConfig';
-import { PerfIcons, PerfLabels } from '../components/PerformanceOverlayManager';
+import { PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
 import { SettingsBackupService } from '../service/SettingsBackupService';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem as DialogOptionItem } from '../components/OptionPickerDialog';
@@ -1021,7 +1021,7 @@ struct SettingsPageV2 {
               {
                 title: 'HDR',
                 subtitle: this.videoFormat === 'H.264' 
-                  ? '❌ H.264 不支持 HDR' 
+                  ? 'H.264 不支持 HDR' 
                   : '需要支持 HDR 的显示器',
                 type: 'toggle',
                 value: this.enableHdr,
@@ -1054,7 +1054,7 @@ struct SettingsPageV2 {
               {
                 title: 'HDR 高亮度',
                 subtitle: this.videoFormat === 'H.264' 
-                  ? '❌ 需要 HEVC/AV1' 
+                  ? '需要 HEVC/AV1' 
                   : '使用高亮度 HDR 模式',
                 type: 'toggle',
                 visible: this.enableHdr,
@@ -1171,7 +1171,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '音频配置',
-                tooltip: '选「5.1 / 7.1 环绕」后打开空间音频选项系统会把多声道下混成空间音频~\n即刻就能感受到身临其境的环绕声效果 🎧',
+                tooltip: '选「5.1 / 7.1 环绕」后打开空间音频选项系统会把多声道下混成空间音频~\n即刻就能感受到身临其境的环绕声效果',
                 type: 'segment',
                 value: this.audioConfig,
                 segmentLabels: ['立体声', '5.1 环绕', '7.1 环绕'],
@@ -1789,8 +1789,8 @@ struct SettingsPageV2 {
             title: '后处理',
             items: [
               {
-                title: '暗区增强',
-                subtitle: 'HDR 暗部抖动补偿，改善 OLED 暗区灰阶',
+                title: 'OLED 暗部校正',
+                subtitle: '抖动补偿暗区灰阶断层，仅适配 MatePad Pro 12.2',
                 type: 'toggle',
                 value: this.enablePostProcess,
                 action: () => {
@@ -2882,11 +2882,11 @@ struct SettingsPageV2 {
 
     // 添加操作选项
     const actionOptions: PickerOption[] = [
-      { title: '➕ 添加新分辨率', subtitle: '输入宽度和高度', value: 'action:add' } as PickerOption,
+      { title: '+ 添加新分辨率', subtitle: '输入宽度和高度', value: 'action:add' } as PickerOption,
     ];
     if (this.customResolutions.length > 0) {
       actionOptions.push(
-        { title: '🗑️ 清空全部', subtitle: `删除所有 ${this.customResolutions.length} 个自定义分辨率`, value: 'action:clear' } as PickerOption
+        { title: '清空全部', subtitle: `删除所有 ${this.customResolutions.length} 个自定义分辨率`, value: 'action:clear' } as PickerOption
       );
     }
 
@@ -3244,17 +3244,17 @@ struct SettingsPageV2 {
       { title: '自动', subtitle: '系统自动选择', value: '自动' } as PickerOption,
       { 
         title: 'H.264', 
-        subtitle: h264Supported ? '兼容性最好' : '❌ 设备不支持', 
+        subtitle: h264Supported ? '兼容性最好' : '设备不支持', 
         value: 'H.264' 
       } as PickerOption,
       { 
         title: 'HEVC', 
-        subtitle: hevcSupported ? 'H.265，高效压缩' : '❌ 设备不支持（可能是模拟器）', 
+        subtitle: hevcSupported ? 'H.265，高效压缩' : '设备不支持（可能是模拟器）', 
         value: 'HEVC' 
       } as PickerOption,
       { 
         title: 'AV1', 
-        subtitle: av1Supported ? '最新编码，高效压缩' : '❌ 设备不支持', 
+        subtitle: av1Supported ? '最新编码，高效压缩' : '设备不支持', 
         value: 'AV1' 
       } as PickerOption
     ];
@@ -3478,15 +3478,15 @@ struct SettingsPageV2 {
   private showPerfOverlayItemsPicker(): void {
     // 所有可用项目 - 使用常量
     const allItems: PerfOverlayItemOption[] = [
-      new PerfOverlayItemOption('resolution', `${PerfIcons.RESOLUTION} ${PerfLabels.RESOLUTION}`),
-      new PerfOverlayItemOption('decoder', `${PerfIcons.DECODER} ${PerfLabels.DECODER}`),
-      new PerfOverlayItemOption('render_fps', `${PerfLabels.FPS}`),
-      new PerfOverlayItemOption('packet_loss', `${PerfIcons.PACKET_LOSS} ${PerfLabels.PACKET_LOSS}`),
-      new PerfOverlayItemOption('bitrate', `${PerfIcons.BITRATE} ${PerfLabels.BITRATE}`),
-      new PerfOverlayItemOption('network_latency', `${PerfIcons.NETWORK} ${PerfLabels.NETWORK}`),
-      new PerfOverlayItemOption('decode_latency', `${PerfIcons.DECODE_NORMAL} ${PerfLabels.DECODE}`),
-      new PerfOverlayItemOption('host_latency', `${PerfIcons.HOST} ${PerfLabels.HOST}`),
-      new PerfOverlayItemOption('battery', `${PerfIcons.BATTERY} ${PerfLabels.BATTERY}`)
+      new PerfOverlayItemOption('resolution', PerfLabels.RESOLUTION),
+      new PerfOverlayItemOption('decoder', PerfLabels.DECODER),
+      new PerfOverlayItemOption('render_fps', PerfLabels.FPS),
+      new PerfOverlayItemOption('packet_loss', PerfLabels.PACKET_LOSS),
+      new PerfOverlayItemOption('bitrate', PerfLabels.BITRATE),
+      new PerfOverlayItemOption('network_latency', PerfLabels.NETWORK),
+      new PerfOverlayItemOption('decode_latency', PerfLabels.DECODE),
+      new PerfOverlayItemOption('host_latency', PerfLabels.HOST),
+      new PerfOverlayItemOption('battery', PerfLabels.BATTERY)
     ];
     
     // 转换为 DialogMultiOptionItem 格式

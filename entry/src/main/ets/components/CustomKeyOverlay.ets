@@ -538,8 +538,8 @@ export struct CustomKeyOverlay {
           })
 
           Row({ space: 4 }) {
-            Text('⧉')
-              .fontSize(16).fontColor(Color.White)
+            Image($r('app.media.ic_copy'))
+              .width(16).height(16).fillColor(Color.White)
             Text('复制')
               .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
@@ -574,8 +574,8 @@ export struct CustomKeyOverlay {
           .onClick(() => { this.snapEnabled = !this.snapEnabled; })
 
           Row({ space: 4 }) {
-            Text('🎨')
-              .fontSize(14)
+            Image($r('app.media.perf_opacity'))
+              .width(14).height(14).fillColor(OV_TEXT_WHITE)
             Text('配色')
               .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
@@ -1490,8 +1490,8 @@ export struct CustomKeyOverlay {
           .onClick(() => { this.createNewProfile(); })
 
           Row({ space: 4 }) {
-            Text('⧉')
-              .fontSize(14).fontColor(OV_TEXT_WHITE)
+            Image($r('app.media.ic_copy'))
+              .width(14).height(14).fillColor(OV_TEXT_WHITE)
             Text('复制当前')
               .fontSize(OV_FONT_MD).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
@@ -1797,8 +1797,8 @@ export struct CustomKeyOverlay {
   @Builder
   EmptyStateGuide() {
     Column({ space: 12 }) {
-      Text('🎮')
-        .fontSize(36)
+      Image($r('app.media.ic_game_controller'))
+        .width(36).height(36).fillColor(OV_TEXT_WHITE)
       Text('还没有自定义按键')
         .fontSize(15).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
       Text('点击下方「添加」创建你的第一个按键')
@@ -1848,7 +1848,7 @@ export struct CustomKeyOverlay {
     Column() {
       // 标题栏
       Row() {
-        Text('🎨 智能配色').fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
+        Text('智能配色').fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
         Blank()
         Text('✕').fontSize(14).fontColor('#99FFFFFF')
           .width(28).height(28).textAlign(TextAlign.Center)

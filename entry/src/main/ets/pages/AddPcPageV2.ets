@@ -479,8 +479,10 @@ struct AddPcPageV2 {
     Column() {
       // 标题
       Row() {
-        Text('💡')
-          .fontSize(14)
+        Image($r('app.media.ic_lightbulb'))
+          .width(14)
+          .height(14)
+          .fillColor(AppColors.TextSecondary)
           .margin({ right: 6 })
         Text('连接提示')
           .fontSize(AppSizes.FontCaption)
@@ -492,12 +494,12 @@ struct AddPcPageV2 {
 
       // 提示列表 - 分两列
       Flex({ wrap: FlexWrap.Wrap }) {
-        this.TipChip('📡', '同一网络')
-        this.TipChip('☀️', 'Sunshine / GFE')
-        this.TipChip('🔓', '开放防火墙')
-        this.TipChip('🌐', 'IPv4 / IPv6')
-        this.TipChip('🔌', '自定义端口')
-        this.TipChip('📝', '[::1]:47989')
+        this.TipChip($r('app.media.ic_broadcast'), '同一网络')
+        this.TipChip($r('app.media.ic_sun'), 'Sunshine / GFE')
+        this.TipChip($r('app.media.ic_lock_key_open'), '开放防火墙')
+        this.TipChip($r('app.media.ic_globe'), 'IPv4 / IPv6')
+        this.TipChip($r('app.media.ic_plug'), '自定义端口')
+        this.TipChip($r('app.media.ic_note_pencil'), '[::1]:47989')
       }
       .width('100%')
     }
@@ -506,10 +508,12 @@ struct AddPcPageV2 {
   }
 
   @Builder
-  TipChip(icon: string, label: string) {
+  TipChip(icon: Resource, label: string) {
     Row() {
-      Text(icon)
-        .fontSize(13)
+      Image(icon)
+        .width(13)
+        .height(13)
+        .fillColor(AppColors.TextSecondary)
         .margin({ right: 6 })
       Text(label)
         .fontSize(11)
@@ -650,7 +654,7 @@ struct AddPcPageV2 {
         });
 
         promptAction.showToast({
-          message: '🎉 主机添加成功',
+          message: '主机添加成功',
           duration: 1500
         });
 

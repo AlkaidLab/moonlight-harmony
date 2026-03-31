@@ -1514,9 +1514,10 @@ struct StreamPage {
       Scroll() {
         Row({ space: 6 }) {
           // ── 键盘指示 + 主机键盘 ──
-          Text('⌨')
-            .fontSize(17)
-            .fontColor('#D0FFFFFF')
+          Image($r('app.media.ic_keyboard'))
+            .width(17)
+            .height(17)
+            .fillColor('#D0FFFFFF')
 
           Button('主机键盘')
             .fontSize(11)
@@ -1583,8 +1584,10 @@ struct StreamPage {
 
             ForEach(this.cmdList, (cmd: SuperCmd) => {
               Row() {
-                Text('⚡')
-                  .fontSize(11)
+                Image($r('app.media.ic_lightning'))
+                  .width(11)
+                  .height(11)
+                  .fillColor('#F0FFFFFF')
                   .margin({ right: 3 })
                 Text(cmd.name)
                   .fontSize(11)

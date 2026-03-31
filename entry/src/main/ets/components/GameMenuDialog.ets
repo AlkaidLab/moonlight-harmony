@@ -768,9 +768,10 @@ export struct GameMenuDialog {
   @Builder
   UnlockOverlayCard() {
     Column() {
-      SymbolGlyph($r('sys.symbol.lock_open'))
-        .fontSize(22)
-        .fontColor([OV_TEXT_BRIGHT])
+      Image($r('app.media.ic_lock_open'))
+        .width(22)
+        .height(22)
+        .fillColor(OV_TEXT_BRIGHT)
       Text('解锁')
         .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Medium)
@@ -791,9 +792,10 @@ export struct GameMenuDialog {
   @Builder
   ShowOverlayCard() {
     Column() {
-      SymbolGlyph($r('sys.symbol.waveform'))
-        .fontSize(22)
-        .fontColor([OV_TEXT_BRIGHT])
+      Image($r('app.media.ic_pulse'))
+        .width(22)
+        .height(22)
+        .fillColor(OV_TEXT_BRIGHT)
       Text('监控')
         .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Medium)
@@ -813,9 +815,10 @@ export struct GameMenuDialog {
   @Builder
   MicCard() {
     Column() {
-      SymbolGlyph(this.micActive ? $r('sys.symbol.mic') : $r('sys.symbol.mic_slash'))
-        .fontSize(22)
-        .fontColor([this.micActive ? OV_TEXT_BRIGHT : OV_TEXT_DIM])
+      Image(this.micActive ? $r('app.media.ic_microphone') : $r('app.media.ic_microphone_slash'))
+        .width(22)
+        .height(22)
+        .fillColor(this.micActive ? OV_TEXT_BRIGHT : OV_TEXT_DIM)
       Text(this.micActive ? '麦克风' : '已静音')
         .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Medium)
@@ -879,8 +882,8 @@ export struct GameMenuDialog {
   CustomKeyCard() {
     Column() {
       Row() {
-        SymbolGlyph($r('sys.symbol.crown'))
-          .fontSize(14).fontColor([Color.Orange])
+        Image($r('app.media.ic_crown'))
+          .width(14).height(14).fillColor(Color.Orange)
         Text(' 自定义按键')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
@@ -986,7 +989,7 @@ export struct GameMenuDialog {
       Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
 
       Row() {
-        Text('🔎').fontSize(OV_FONT_LG)
+        Image($r('app.media.ic_magnifying_glass')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
         Text(' 画面缩放')
           .fontSize(OV_FONT_MD)
           .fontWeight(FontWeight.Medium)
@@ -1036,7 +1039,7 @@ export struct GameMenuDialog {
   VirtualControllerCard() {
     Column() {
       Row() {
-        Text('🎮').fontSize(OV_FONT_LG)
+        Image($r('app.media.ic_game_controller')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
         Text(' 虚拟手柄')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
@@ -1187,7 +1190,7 @@ export struct GameMenuDialog {
   BitrateCard() {
     Column() {
       Row() {
-        Text('📊').fontSize(OV_FONT_LG)
+        Image($r('app.media.ic_chart_bar')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
         Text(' 码率调整')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
@@ -1252,7 +1255,7 @@ export struct GameMenuDialog {
   GyroAssistCard() {
     Column() {
       Row() {
-        Text('🎮').fontSize(OV_FONT_LG)
+        Image($r('app.media.ic_game_controller')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
         Text(' 体感助手')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
@@ -1394,7 +1397,7 @@ export struct GameMenuDialog {
   SuperCmdCard() {
     Column() {
       Row() {
-        Text('🎯').fontSize(OV_FONT_LG)
+        Image($r('app.media.ic_crosshair')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
         Text(' 服务端指令')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
@@ -1430,7 +1433,7 @@ export struct GameMenuDialog {
   ShortcutCard() {
     Column() {
       Row() {
-        Text('⚡').fontSize(OV_FONT_LG)
+        Image($r('app.media.ic_lightning')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
         Text(' 快捷键')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)

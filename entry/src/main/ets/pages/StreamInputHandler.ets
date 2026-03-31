@@ -654,9 +654,8 @@ export class StreamInputHandler {
     session.setAudioVolume(this.appVolume);
 
     const percent = Math.round(this.appVolume * 100);
-    const icon = this.appVolume === 0 ? '🔇' : (this.appVolume < 0.5 ? '🔉' : '🔊');
     promptAction.showToast({
-      message: `${icon} 音量 ${percent}%`,
+      message: `音量 ${percent}%`,
       duration: 1000
     });
   }

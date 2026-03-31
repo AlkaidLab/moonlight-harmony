@@ -419,9 +419,10 @@ export struct VirtualKeyboard {
         Blank()
 
         // 透明度 Slider
-        Text('👁')
-          .fontSize(11)
-          .fontColor('#80FFFFFF')
+        Image($r('app.media.ic_eye'))
+          .width(11)
+          .height(11)
+          .fillColor('#80FFFFFF')
 
         Slider({
           value: this.opacity_ * 100,

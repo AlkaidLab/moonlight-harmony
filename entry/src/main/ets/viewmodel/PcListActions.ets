@@ -389,7 +389,7 @@ export class PcListActions {
     const serverInfo = reachableResults.find(r => r.serverInfo)?.serverInfo;
 
     if (reachableResults.length > 0) {
-      lines.push('✅ 连接成功');
+      lines.push('[OK] 连接成功');
       lines.push('');
 
       // 地址延迟
@@ -408,7 +408,7 @@ export class PcListActions {
         if (serverInfo.currentGame > 0) lines.push(`运行中游戏 ID: ${serverInfo.currentGame}`);
       }
     } else {
-      lines.push('❌ 所有地址均无法连接');
+      lines.push('所有地址均无法连接');
     }
 
     // 不可达地址
@@ -417,7 +417,7 @@ export class PcListActions {
       for (const r of unreachableResults) {
         const label = this.getAddressLabel(r.address, computerInfo);
         const shortErr = r.error.length > 60 ? r.error.substring(0, 60) + '…' : r.error;
-        lines.push(`❌ ${label}: ${shortErr || '超时'}`);
+        lines.push(`[X] ${label}: ${shortErr || '超时'}`);
       }
     }
 

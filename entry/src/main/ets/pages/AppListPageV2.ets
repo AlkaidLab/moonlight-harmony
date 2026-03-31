@@ -456,8 +456,10 @@ struct AppListPageV2 {
 
         if (!this.isLoading) {
           Row() {
-            Text('🎮')
-              .fontSize(12)
+            Image($r('app.media.ic_game_controller'))
+              .width(12)
+              .height(12)
+              .fillColor(AppColors.TextSecondary)
               .margin({ right: 4 })
             Text(`${this.viewModel.filteredCount} 个应用`)
               .fontSize(AppSizes.FontCaption)
@@ -710,8 +712,10 @@ struct AppListPageV2 {
   @Builder
   EmptyState() {
     Column() {
-      Text(this.viewModel.isSearchEmpty ? '🔍' : '🎮')
-        .fontSize(40)
+      Image(this.viewModel.isSearchEmpty ? $r('app.media.ic_magnifying_glass') : $r('app.media.ic_game_controller'))
+        .width(40)
+        .height(40)
+        .fillColor(AppColors.TextSecondary)
         .margin({ bottom: AppSpacing.Medium })
 
       Text(this.viewModel.isSearchEmpty ? '没有找到匹配的应用' : '没有可用的应用')

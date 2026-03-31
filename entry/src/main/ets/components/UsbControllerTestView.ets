@@ -471,8 +471,8 @@ export struct UsbControllerTestView {
           if (this.connectedDevices.length > 0) {
             ForEach(this.connectedDevices, (device: DeviceInfo) => {
               Row({ space: 8 }) {
-                Text(this.getControllerTypeIcon(device.type))
-                  .fontSize(20)
+                Image($r('app.media.ic_game_controller'))
+                  .width(20).height(20).fillColor(AppColors.Primary)
                 Column({ space: 1 }) {
                   Text(device.name)
                     .fontSize(13)

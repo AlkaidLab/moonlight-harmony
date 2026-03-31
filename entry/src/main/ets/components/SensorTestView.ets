@@ -535,7 +535,7 @@ export struct SensorTestView {
   buildGyroDataSection() {
     Column({ space: 8 }) {
       Row() {
-        Text('🌀 陀螺仪数据')
+        Text('陀螞仪数据')
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
           .fontColor(AppColors.TextPrimary)
@@ -606,7 +606,7 @@ export struct SensorTestView {
   buildAccelDataSection() {
     Column({ space: 8 }) {
       Row() {
-        Text('📐 加速度计数据')
+        Text('加速度计数据')
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
           .fontColor(AppColors.TextPrimary)
@@ -668,8 +668,8 @@ export struct SensorTestView {
 
         // 重力提示
         Row({ space: 4 }) {
-          Text('💡')
-            .fontSize(11)
+          Image($r('app.media.ic_lightbulb'))
+            .width(11).height(11).fillColor(AppColors.TextTertiary)
           Text(`合加速度: ${this.formatValue(Math.sqrt(this.accelX * this.accelX + this.accelY * this.accelY + this.accelZ * this.accelZ))} m/s² (静止时约 9.8)`)
             .fontSize(11)
             .fontColor(AppColors.TextTertiary)
@@ -728,7 +728,7 @@ export struct SensorTestView {
   @Builder
   buildOrientationSection() {
     Column({ space: 8 }) {
-      Text('📱 设备方向校正')
+      Text('设备方向校正')
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
         .fontColor(AppColors.TextPrimary)
@@ -758,8 +758,9 @@ export struct SensorTestView {
   @Builder
   buildOrientationIndicator(rotation: number, label: string) {
     Column({ space: 4 }) {
-      Text(rotation === 0 ? '📱' : rotation === 90 ? '📱' : rotation === 180 ? '📱' : '📱')
-        .fontSize(24)
+      Image($r('app.media.ic_device_mobile'))
+        .width(24).height(24)
+        .fillColor(this.deviceRotation === rotation ? AppColors.Primary : AppColors.TextTertiary)
         .rotate({ angle: rotation })
       Text(label)
         .fontSize(11)
@@ -779,7 +780,7 @@ export struct SensorTestView {
   @Builder
   buildStatsSection() {
     Column({ space: 8 }) {
-      Text('📊 统计信息')
+      Text('统计信息')
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
         .fontColor(AppColors.TextPrimary)
@@ -879,7 +880,7 @@ export struct SensorTestView {
   @Builder
   buildLogSection() {
     Column({ space: 8 }) {
-      Text('📋 日志')
+      Text('日志')
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
         .fontColor(AppColors.TextPrimary)
