@@ -106,6 +106,16 @@ export class ComputerManager {
   }
 
   /**
+   * 从持久化存储重新加载电脑列表到内存。
+   * 备份恢复后调用，确保使用恢复的配对数据而非轮询覆盖的旧数据。
+   */
+  async reloadFromPersistence(): Promise<void> {
+    this.computers = await ComputerPersistence.loadComputers();
+    console.info(`ComputerManager: 从持久化存储重新加载 ${this.computers.size} 台电脑`);
+    this.notifyListChanged();
+  }
+
+  /**
    * 设置电脑列表变化回调
    */
   setOnComputerListChangedListener(callback: () => void): void {

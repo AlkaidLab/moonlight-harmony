@@ -28,6 +28,9 @@ import { util } from '@kit.ArkTS';
 import { preferences } from '@kit.ArkData';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { promptAction } from '@kit.ArkUI';
+import { CryptoService } from './CryptoService';
+import { NvHttp } from './NvHttp';
+import { ComputerManager } from './ComputerManager';
 
 const TAG = '[SettingsBackup]';
 
@@ -244,21 +247,24 @@ export class SettingsBackupService {
     try {
       const json = await SettingsBackupService.exportAll();
 
+      // 加密备份数据
+      const encrypted = await CryptoService.encrypt(json);
+
       const documentPicker = new picker.DocumentViewPicker();
       const saveOptions = new picker.DocumentSaveOptions();
       const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      saveOptions.newFileNames = [`moonlight-backup-${dateStr}.json`];
-      saveOptions.fileSuffixChoices = ['.json'];
+      saveOptions.newFileNames = [`moonlight-backup-${dateStr}.mlbk`];
+      saveOptions.fileSuffixChoices = ['.mlbk'];
       const uris = await documentPicker.save(saveOptions);
 
       if (uris && uris.length > 0) {
         const file = fileIo.openSync(uris[0], fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-        fileIo.writeSync(file.fd, json);
+        fileIo.writeSync(file.fd, encrypted.buffer as ArrayBuffer);
         fileIo.closeSync(file);
 
         const parsed = JSON.parse(json) as BackupData;
         const settingsCount = Object.keys(parsed.settings).length;
-        promptAction.showToast({ message: `已导出 ${settingsCount} 项设置`, duration: 2000 });
+        promptAction.showToast({ message: `已导出 ${settingsCount} 项设置（已加密）`, duration: 2000 });
         return true;
       }
     } catch (e) {
@@ -276,7 +282,7 @@ export class SettingsBackupService {
       const documentPicker = new picker.DocumentViewPicker();
       const selectOptions = new picker.DocumentSelectOptions();
       selectOptions.maxSelectNumber = 1;
-      selectOptions.fileSuffixFilters = ['.json'];
+      selectOptions.fileSuffixFilters = ['.mlbk', '.json'];
       const uris = await documentPicker.select(selectOptions);
 
       if (uris && uris.length > 0) {
@@ -286,11 +292,25 @@ export class SettingsBackupService {
         fileIo.readSync(file.fd, buf);
         fileIo.closeSync(file);
 
-        const json = new util.TextDecoder('utf-8').decodeToString(new Uint8Array(buf));
+        const rawData = new Uint8Array(buf);
+        let json: string;
+        if (CryptoService.isEncrypted(rawData)) {
+          try {
+            json = await CryptoService.decrypt(rawData);
+          } catch (e) {
+            console.error(`${TAG} 解密失败: ${JSON.stringify(e)}`);
+            promptAction.showToast({ message: '解密失败：密钥不匹配或文件损坏', duration: 3000 });
+            return false;
+          }
+        } else {
+          json = new util.TextDecoder('utf-8').decodeToString(rawData);
+        }
         const count = await SettingsBackupService.importAll(json);
 
         if (count >= 0) {
-          promptAction.showToast({ message: `已导入 ${count} 项设置，重启应用生效`, duration: 3000 });
+          // 重新加载内存状态，避免 ComputerManager 轮询覆盖已恢复的数据
+          await SettingsBackupService.reloadInMemoryState();
+          promptAction.showToast({ message: `已导入 ${count} 项设置`, duration: 2000 });
           return true;
         } else {
           promptAction.showToast({ message: '导入失败：文件格式无效', duration: 2000 });
@@ -314,16 +334,17 @@ export class SettingsBackupService {
 
       const documentPicker = new picker.DocumentViewPicker();
       const saveOptions = new picker.DocumentSaveOptions();
-      saveOptions.newFileNames = ['moonlight-settings.json'];
-      saveOptions.fileSuffixChoices = ['.json'];
+      saveOptions.newFileNames = ['moonlight-settings.mlbk'];
+      saveOptions.fileSuffixChoices = ['.mlbk'];
       const uris = await documentPicker.save(saveOptions);
 
       if (uris && uris.length > 0) {
         const uri = uris[0];
 
-        // 写入当前设置
+        // 加密并写入当前设置
+        const encrypted = await CryptoService.encrypt(json);
         const file = fileIo.openSync(uri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-        fileIo.writeSync(file.fd, json);
+        fileIo.writeSync(file.fd, encrypted.buffer as ArrayBuffer);
         fileIo.closeSync(file);
 
         // 持久化文件 URI 访问权限
@@ -410,10 +431,11 @@ export class SettingsBackupService {
       }
 
       const json = await SettingsBackupService.exportAll();
+      const encrypted = await CryptoService.encrypt(json);
       const file = fileIo.openSync(uri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, json);
+      fileIo.writeSync(file.fd, encrypted.buffer as ArrayBuffer);
       fileIo.closeSync(file);
-      console.info(`${TAG} 自动备份完成`);
+      console.info(`${TAG} 自动备份完成（已加密）`);
     } catch (e) {
       console.warn(`${TAG} 自动备份失败（权限可能已过期）: ${JSON.stringify(e)}`);
       // 不弹 toast，静默失败
@@ -430,6 +452,26 @@ export class SettingsBackupService {
       return Object.keys(all).length > 0;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * 导入后重新加载内存状态
+   * 清除 NvHttp 缓存、重新加载 ComputerManager 的电脑列表，
+   * 避免后台轮询用旧的内存状态覆盖已恢复的持久化数据。
+   */
+  private static async reloadInMemoryState(): Promise<void> {
+    try {
+      // 1. 清除 NvHttp 的 uniqueId 静态缓存，下次请求从文件重读
+      NvHttp.clearCachedUniqueId();
+
+      // 2. 重新加载 ComputerManager 的电脑列表
+      const mgr = ComputerManager.getInstance();
+      await mgr.reloadFromPersistence();
+
+      console.info(`${TAG} 内存状态已重新加载`);
+    } catch (e) {
+      console.warn(`${TAG} 重新加载内存状态失败: ${JSON.stringify(e)}`);
     }
   }
 }

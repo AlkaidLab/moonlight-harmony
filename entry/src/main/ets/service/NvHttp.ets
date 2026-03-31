@@ -102,6 +102,14 @@ export class NvHttp {
   // 全局客户端名称缓存（使用设备名称）
   private static cachedClientName: string | null = null;
 
+  /**
+   * 清除 uniqueId 静态缓存，下次请求从文件重新读取。
+   * 备份恢复后调用，确保使用恢复的 uniqueId 而非启动时生成的新值。
+   */
+  static clearCachedUniqueId(): void {
+    NvHttp.cachedUniqueId = null;
+  }
+
   constructor(address: string, serverCert: string | null, context?: common.UIAbilityContext, httpPort?: number) {
     // 解析地址中可能包含的端口号
     const parsedHost = this.parseAddressHost(address);
