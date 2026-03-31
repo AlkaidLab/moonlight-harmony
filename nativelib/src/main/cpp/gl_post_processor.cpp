@@ -588,6 +588,10 @@ void main() {
     // ----- 暗区 PDM 抖动 (0–10 nits) -----
     // 用蓝噪声在安全亮度阶梯间做概率性插值
     // 补偿 OLED 面板最低亮度高于 PQ 曲线的缺陷
+    //
+    // edge 边界 = 面板标定的"PQ 标准亮度→实际输出亮度" 映射节点
+    // 面板无法显示 edge 之间的连续灰阶，通过 0/1 抖动模拟中间亮度
+    // 适配设备：MatePad Pro 12.2 (实测标定)
     vec3 result = lin;
     if (nits > 1e-7 && nits <= 10.0) {
         // 8% 亮度微扰消除阶梯边界
@@ -654,7 +658,8 @@ void main() {
 )";
 
 // FSR 1 EASU (Edge-Adaptive Spatial Upsampling) 着色器
-// 简化的 GLES 3.0 移植版，基于 AMD FidelityFX FSR 1.0 (MIT License)
+// 完整的 GLES 3.0 移植版，基于 AMD FidelityFX FSR 1.0 (MIT License)
+// 使用 12 个采样点、4-位置方向检测、各向异性自适应 Lanczos 核
 static const char* FSR_EASU_FRAGMENT_SRC = R"(#version 300 es
 precision mediump float;
 in vec2 vTexCoord;
@@ -664,26 +669,36 @@ uniform vec2 uOutputSize;     // 输出目标尺寸
 uniform int uIsHdr;           // HDR 模式标志（BT.2020 亮度系数）
 out vec4 outColor;
 
-// 简化的 EASU：方向自适应 lanczos 核上采样
-// 检测局部梯度方向，沿边缘方向拉伸采样核避免跨边缘模糊
+// 近似 Lanczos2 核（无 sin/rcp/sqrt）
+// (25/16 * (2/5*d²-1)² - (25/16-1)) * (1/4*d²-1)²
+float FsrEasuW(float d2, float lob, float clp) {
+    d2 = min(d2, clp);
+    float wB = (2.0/5.0) * d2 - 1.0;
+    float wA = lob * d2 - 1.0;
+    wB *= wB;
+    wA *= wA;
+    wB = (25.0/16.0) * wB - (25.0/16.0 - 1.0);
+    return wB * wA;
+}
+
 void main() {
-    // BT.709 vs BT.2020 亮度系数
-    vec3 lumaCoeff = (uIsHdr == 1) ? vec3(0.2627, 0.6780, 0.0593) : vec3(0.299, 0.587, 0.114);
+    // 近似亮度：luma*2 = 0.5*B + 0.5*R + G（与 AMD 原版一致，节省乘法）
+    vec3 lumaCoeff = vec3(0.5, 1.0, 0.5);
+
     // 从输出空间映射到输入空间
     vec2 inputTexelSize = 1.0 / uInputSize;
-
-    // vTexCoord 覆盖 [0,1]（输出空间），直接映射到输入纹理的 [0,1]
-    // 转换到输入像素空间以计算采样核位置
     vec2 srcPixel = vTexCoord * uInputSize - 0.5;
-    vec2 frac_ = fract(srcPixel);
-    vec2 base = (floor(srcPixel) + 0.5) * inputTexelSize;
+    vec2 fp = floor(srcPixel);
+    vec2 pp = srcPixel - fp;
+    vec2 base = (fp + 0.5) * inputTexelSize;
 
-    // 采样 4x4 邻域（只需要十字形的 12 个）
-    //    b
+    // 采样 12-tap 十字核
+    //    b c
     //  e f g h
     //  i j k l
-    //    n
+    //    n o
     vec3 b = texture(uInputTexture, base + vec2( 0, -1) * inputTexelSize).rgb;
+    vec3 c = texture(uInputTexture, base + vec2( 1, -1) * inputTexelSize).rgb;
     vec3 e = texture(uInputTexture, base + vec2(-1,  0) * inputTexelSize).rgb;
     vec3 f = texture(uInputTexture, base).rgb;
     vec3 g = texture(uInputTexture, base + vec2( 1,  0) * inputTexelSize).rgb;
@@ -693,9 +708,11 @@ void main() {
     vec3 k = texture(uInputTexture, base + vec2( 1,  1) * inputTexelSize).rgb;
     vec3 l = texture(uInputTexture, base + vec2( 2,  1) * inputTexelSize).rgb;
     vec3 n = texture(uInputTexture, base + vec2( 0,  2) * inputTexelSize).rgb;
+    vec3 o = texture(uInputTexture, base + vec2( 1,  2) * inputTexelSize).rgb;
 
-    // 计算亮度
+    // 近似亮度（luma*2）
     float bL = dot(b, lumaCoeff);
+    float cL = dot(c, lumaCoeff);
     float eL = dot(e, lumaCoeff);
     float fL = dot(f, lumaCoeff);
     float gL = dot(g, lumaCoeff);
@@ -705,48 +722,134 @@ void main() {
     float kL = dot(k, lumaCoeff);
     float lL = dot(l, lumaCoeff);
     float nL = dot(n, lumaCoeff);
+    float oL = dot(o, lumaCoeff);
 
-    // 检测边缘方向（梯度反转法）
-    float dc = gL - fL; float cb = fL - eL;
-    float lenX = max(abs(dc), abs(cb));
-    lenX = (lenX > 0.0) ? 1.0 / lenX : 0.0;
-    float dirX = gL - eL;
+    // 方向检测：4 个双线性位置累加方向和长度
+    //   (0): b,e,f,g,j    (1): c,f,g,h,k
+    //   (2): f,i,j,k,n    (3): g,j,k,l,o
+    vec2 dir = vec2(0.0);
+    float len = 0.0;
 
-    float ec = jL - fL; float ca = fL - bL;
-    float lenY = max(abs(ec), abs(ca));
-    lenY = (lenY > 0.0) ? 1.0 / lenY : 0.0;
-    float dirY = jL - bL;
+    // --- Set 0: biS ---
+    {
+        float w = (1.0 - pp.x) * (1.0 - pp.y);
+        float dc = gL - fL; float cb = fL - eL;
+        float lenX = max(abs(dc), abs(cb));
+        lenX = (lenX > 0.0) ? 1.0 / lenX : 0.0;
+        float dX = gL - eL;
+        dir.x += dX * w;
+        float sX = clamp(abs(dX) * lenX, 0.0, 1.0); sX *= sX; len += sX * w;
+        float ec = jL - fL; float ca = fL - bL;
+        float lenY = max(abs(ec), abs(ca));
+        lenY = (lenY > 0.0) ? 1.0 / lenY : 0.0;
+        float dY = jL - bL;
+        dir.y += dY * w;
+        float sY = clamp(abs(dY) * lenY, 0.0, 1.0); sY *= sY; len += sY * w;
+    }
+    // --- Set 1: biT ---
+    {
+        float w = pp.x * (1.0 - pp.y);
+        float dc = hL - gL; float cb = gL - fL;
+        float lenX = max(abs(dc), abs(cb));
+        lenX = (lenX > 0.0) ? 1.0 / lenX : 0.0;
+        float dX = hL - fL;
+        dir.x += dX * w;
+        float sX = clamp(abs(dX) * lenX, 0.0, 1.0); sX *= sX; len += sX * w;
+        float ec = kL - gL; float ca = gL - cL;
+        float lenY = max(abs(ec), abs(ca));
+        lenY = (lenY > 0.0) ? 1.0 / lenY : 0.0;
+        float dY = kL - cL;
+        dir.y += dY * w;
+        float sY = clamp(abs(dY) * lenY, 0.0, 1.0); sY *= sY; len += sY * w;
+    }
+    // --- Set 2: biU ---
+    {
+        float w = (1.0 - pp.x) * pp.y;
+        float dc = kL - jL; float cb = jL - iL;
+        float lenX = max(abs(dc), abs(cb));
+        lenX = (lenX > 0.0) ? 1.0 / lenX : 0.0;
+        float dX = kL - iL;
+        dir.x += dX * w;
+        float sX = clamp(abs(dX) * lenX, 0.0, 1.0); sX *= sX; len += sX * w;
+        float ec = nL - jL; float ca = jL - fL;
+        float lenY = max(abs(ec), abs(ca));
+        lenY = (lenY > 0.0) ? 1.0 / lenY : 0.0;
+        float dY = nL - fL;
+        dir.y += dY * w;
+        float sY = clamp(abs(dY) * lenY, 0.0, 1.0); sY *= sY; len += sY * w;
+    }
+    // --- Set 3: biV ---
+    {
+        float w = pp.x * pp.y;
+        float dc = lL - kL; float cb = kL - jL;
+        float lenX = max(abs(dc), abs(cb));
+        lenX = (lenX > 0.0) ? 1.0 / lenX : 0.0;
+        float dX = lL - jL;
+        dir.x += dX * w;
+        float sX = clamp(abs(dX) * lenX, 0.0, 1.0); sX *= sX; len += sX * w;
+        float ec = oL - kL; float ca = kL - gL;
+        float lenY = max(abs(ec), abs(ca));
+        lenY = (lenY > 0.0) ? 1.0 / lenY : 0.0;
+        float dY = oL - gL;
+        dir.y += dY * w;
+        float sY = clamp(abs(dY) * lenY, 0.0, 1.0); sY *= sY; len += sY * w;
+    }
 
-    // 方向和长度
-    vec2 dir = vec2(dirX, dirY);
-    float len = length(dir);
-    dir = (len > 1.0 / 32768.0) ? dir / len : vec2(1.0, 0.0);
-    len = clamp(abs(dirX) * lenX + abs(dirY) * lenY, 0.0, 1.0);
+    // 归一化方向
+    float dirR = dir.x * dir.x + dir.y * dir.y;
+    bool zro = dirR < (1.0 / 32768.0);
+    dirR = inversesqrt(max(dirR, 1.0 / 32768.0));
+    dirR = zro ? 1.0 : dirR;
+    dir.x = zro ? 1.0 : dir.x;
+    dir *= dirR;
 
-    // 自适应拉伸：沿边缘方向拉长采样核
-    float stretch = max(abs(dir.x), abs(dir.y));
-    stretch = (stretch > 0.0) ? 1.0 / stretch : 0.0;
-    vec2 warpLen = dir * stretch;
+    // 将 len 转换到 {0,1} 并平方
+    len *= 0.5;
+    len *= len;
 
-    // 负瓣强度（控制锐度）
-    float lob = max(-0.5 * len * len + 0.5, 0.36);
+    // 沿边缘拉伸核
+    float stretch = (dir.x * dir.x + dir.y * dir.y) / max(abs(dir.x), abs(dir.y));
+    vec2 len2 = vec2(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
 
-    // 双线性滤波 + 最近邻夹钳（防止过冲）
+    // 负瓣参数
+    float lob = 0.5 + ((0.25 - 0.04) - 0.5) * len;
+    float clp = 1.0 / lob;
+
+    // 邻域极值（f,g,j,k 最近 4 像素）
     vec3 minC = min(min(f, g), min(j, k));
     vec3 maxC = max(max(f, g), max(j, k));
 
-    // 自适应 Lanczos 核权重
-    float w0 = lob * max(1.0 - length(vec2(0, -1) - frac_ + 0.5 * warpLen), 0.0);
-    float w1 = max(1.0 - length(vec2(0, 0) - frac_), 0.0);
-    float w2 = max(1.0 - length(vec2(1, 0) - frac_), 0.0);
-    float w3 = max(1.0 - length(vec2(0, 1) - frac_), 0.0);
-    float w4 = max(1.0 - length(vec2(1, 1) - frac_), 0.0);
-    float w5 = lob * max(1.0 - length(vec2(0, 2) - frac_ - 0.5 * warpLen), 0.0);
+    // 12-tap 累加（旋转+各向异性）
+    vec3 aC = vec3(0.0);
+    float aW = 0.0;
 
-    float wSum = w0 + w1 + w2 + w3 + w4 + w5;
-    vec3 result = (b * w0 + f * w1 + g * w2 + j * w3 + k * w4 + n * w5) / max(wSum, 1e-5);
+    #define TAP(px,py,col) { \
+        vec2 ofs = vec2(px, py) - pp; \
+        float vx = ofs.x * dir.x + ofs.y * dir.y; \
+        float vy = ofs.x * (-dir.y) + ofs.y * dir.x; \
+        vx *= len2.x; vy *= len2.y; \
+        float d2 = vx * vx + vy * vy; \
+        float tw = FsrEasuW(d2, lob, clp); \
+        aC += col * tw; aW += tw; \
+    }
 
-    // 夹钳到局部邻域范围（消除振铃）
+    TAP( 0.0, -1.0, b)  // b
+    TAP( 1.0, -1.0, c)  // c
+    TAP(-1.0,  0.0, e)  // e
+    TAP( 0.0,  0.0, f)  // f
+    TAP( 1.0,  0.0, g)  // g
+    TAP( 2.0,  0.0, h)  // h
+    TAP(-1.0,  1.0, i)  // i
+    TAP( 0.0,  1.0, j)  // j
+    TAP( 1.0,  1.0, k)  // k
+    TAP( 2.0,  1.0, l)  // l
+    TAP( 0.0,  2.0, n)  // n
+    TAP( 1.0,  2.0, o)  // o
+
+    #undef TAP
+
+    // 归一化并夹钳（消除振铃）
+    vec3 result = aC / max(aW, 1e-5);
     outColor = vec4(clamp(result, minC, maxC), 1.0);
 }
 )";
@@ -773,7 +876,7 @@ void main() {
     vec3 f = texture(uInputTexture, vTexCoord + vec2( 1,  0) * texelSize).rgb;
     vec3 h = texture(uInputTexture, vTexCoord + vec2( 0,  1) * texelSize).rgb;
 
-    // 亮度
+    // 亮度（近似 luma*2，与 AMD 原版一致：0.5*B + 0.5*R + G）
     float bL = dot(b, lumaCoeff);
     float dL = dot(d, lumaCoeff);
     float eL = dot(e, lumaCoeff);
@@ -787,18 +890,32 @@ void main() {
     nz = clamp(abs(nz) / max(range, 1e-5), 0.0, 1.0);
     nz = 1.0 - 0.5 * nz;
 
-    // 求解最大不截断的锐化权重
-    float mn4 = min(min(bL, dL), min(fL, hL));
-    float mx4 = max(max(bL, dL), max(fL, hL));
-    float lobeR = max(min(-eL / max(bL + dL + fL + hL, 1e-5),
-                          (1.0 - eL) / max(bL + dL + fL + hL - 4.0, -3.0)), 0.0);
-    float lobeG = lobeR;
-    float lobeB = lobeR;
-    float lobe = max(max(lobeR, lobeG), lobeB);
+    // 邻域极值
+    float mn4R = min(min(b.r, d.r), min(f.r, h.r));
+    float mn4G = min(min(b.g, d.g), min(f.g, h.g));
+    float mn4B = min(min(b.b, d.b), min(f.b, h.b));
+    float mx4R = max(max(b.r, d.r), max(f.r, h.r));
+    float mx4G = max(max(b.g, d.g), max(f.g, h.g));
+    float mx4B = max(max(b.b, d.b), max(f.b, h.b));
 
-    // 限制锐化强度
+    // 求解最大不截断的锐化权重（AMD 原版 RCAS 算法）
+    // hitMin = min(mn4, e) / (4*mx4)          → 正值
+    // hitMax = (1 - max(mx4, e)) / (4*mn4-4)  → 负值
+    // lobe = max(-hitMin, hitMax)              → 负值（锐化权重）
+    vec2 peakC = vec2(1.0, -4.0);
+    float hitMinR = min(mn4R, e.r) / max(4.0 * mx4R, 1e-5);
+    float hitMinG = min(mn4G, e.g) / max(4.0 * mx4G, 1e-5);
+    float hitMinB = min(mn4B, e.b) / max(4.0 * mx4B, 1e-5);
+    float hitMaxR = (peakC.x - max(mx4R, e.r)) / min(4.0 * mn4R + peakC.y, -1e-5);
+    float hitMaxG = (peakC.x - max(mx4G, e.g)) / min(4.0 * mn4G + peakC.y, -1e-5);
+    float hitMaxB = (peakC.x - max(mx4B, e.b)) / min(4.0 * mn4B + peakC.y, -1e-5);
+    float lobeR = max(-hitMinR, hitMaxR);
+    float lobeG = max(-hitMinG, hitMaxG);
+    float lobeB = max(-hitMinB, hitMaxB);
+
+    // 限制锐化强度（lobe 为负值）
     float limit = 0.25 - 1.0 / 16.0;
-    lobe = max(-limit, min(lobe, 0.0));
+    float lobe = max(-limit, min(max(max(lobeR, lobeG), lobeB), 0.0));
 
     // 应用锐度控制
     float sharp = exp2(-uSharpness);
