@@ -162,6 +162,7 @@ struct SettingsPageV2 {
   @State controlOnly: boolean = false;
   @State enableMic: boolean = false;
   @State micBitrate: number = 64;
+  @State audioCompatMode: boolean = false;
   
   // 输入 - 手柄设置
   @State enableVibration: boolean = true;
@@ -481,6 +482,7 @@ struct SettingsPageV2 {
       this.controlOnly = await this.loadBoolean(SettingsKeys.CONTROL_ONLY, false);
       this.enableMic = await this.loadBoolean(SettingsKeys.ENABLE_MIC, false);
       this.micBitrate = await PreferencesUtil.get<number>(SettingsKeys.MIC_BITRATE, 64);
+      this.audioCompatMode = await this.loadBoolean(SettingsKeys.AUDIO_COMPAT_MODE, false);
       
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
@@ -1198,6 +1200,16 @@ struct SettingsPageV2 {
                 action: () => {
                   this.enableSpatializer = !this.enableSpatializer;
                   this.saveSetting(SettingsKeys.ENABLE_SPATIALIZER, this.enableSpatializer);
+                }
+              },
+              {
+                title: '音频兼容模式',
+                subtitle: '如果音频卡顿可尝试开启（增大缓冲区）',
+                type: 'toggle',
+                value: this.audioCompatMode,
+                action: () => {
+                  this.audioCompatMode = !this.audioCompatMode;
+                  this.saveSetting(SettingsKeys.AUDIO_COMPAT_MODE, this.audioCompatMode);
                 }
               },
               {

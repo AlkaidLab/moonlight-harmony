@@ -1657,6 +1657,22 @@ napi_value MoonBridge_IsSpatialAudioEnabled(napi_env env, napi_callback_info inf
     return result;
 }
 
+napi_value MoonBridge_SetAudioCompatMode(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    
+    bool enabled = false;
+    if (argc >= 1) {
+        napi_get_value_bool(env, args[0], &enabled);
+    }
+    
+    OH_LOG_INFO(LOG_APP, "MoonBridge_SetAudioCompatMode: %{public}s", enabled ? "true" : "false");
+    AudioRendererInstance::SetAudioCompatMode(enabled);
+    
+    return GetUndefined(env);
+}
+
 napi_value MoonBridge_SetAudioVolume(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value args[1];

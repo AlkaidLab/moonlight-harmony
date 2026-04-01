@@ -130,6 +130,7 @@ interface NativeModule {
   setSdrToHdr(enabled: boolean, peakNits: number, saturation: number, contrast: number): void;
   setSpatialAudioEnabled(enabled: boolean): void;
   isSpatialAudioEnabled(): boolean;
+  setAudioCompatMode(enabled: boolean): void;
   setAudioVolume(volume: number): boolean;
   setPerformanceModeEnabled(enabled: boolean): void;
   getPerformanceModeEnabled(): boolean;
@@ -853,6 +854,10 @@ export class StreamingSession {
     this.nativeModule.setSpatialAudioEnabled(config.enableSpatializer);
     if (config.enableSpatializer) {
       console.info('空间音频已启用');
+    }
+    this.nativeModule.setAudioCompatMode(config.audioCompatMode);
+    if (config.audioCompatMode) {
+      console.info('音频兼容模式已启用');
     }
     if (config.performanceMode) {
       this.nativeModule.setPerformanceModeEnabled(true);

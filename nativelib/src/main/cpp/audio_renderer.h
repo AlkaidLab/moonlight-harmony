@@ -40,6 +40,7 @@ struct AudioRendererConfig {
     int bitsPerSample;        // 每采样位数（通常 16）
     float volume;             // 音量 (0.0 - 1.0, 默认 1.0)
     bool enableSpatialAudio;  // 是否启用空间音频（HarmonyOS 5.0+）
+    bool audioCompatMode;     // 音频兼容模式（增大缓冲区 + 禁用延迟裁剪）
 };
 
 /**
@@ -144,16 +145,16 @@ private:
     // 消费者: OnWriteData() (OHAudio 音频回调线程)
     // =========================================================================
     // 缓冲区容量：根据实际声道数动态计算，所有声道配置统一 TARGET_BUFFER_MS 时长
-    // 对于 stereo @48kHz: 48000×2×50/1000 = 4800 采样 = 50ms
-    // 对于 5.1   @48kHz: 48000×6×50/1000 = 14400 采样 = 50ms
-    // 对于 7.1   @48kHz: 48000×8×50/1000 = 19200 采样 = 50ms
-    //
     // 延迟控制：消费者 OnWriteData 在读取前检查缓冲区填充水平，
-    // 超过 MAX_AUDIO_LATENCY_MS (40ms) 时跳过旧数据，匹配 Android 40ms 上限
+    // 超过 MAX_AUDIO_LATENCY_MS 时跳过旧数据
     // 生产者 PlaySamples 不触碰 ringHead_，保持 SPSC 无锁正确性
-    static constexpr int TARGET_BUFFER_MS = 50;        // 环形缓冲区容量（毫秒）
-    static constexpr int MAX_AUDIO_LATENCY_MS = 40;    // 延迟丢弃阈值（毫秒），匹配 Android
+    //
+    // 兼容模式：TARGET_BUFFER_COMPAT_MS=120ms 缓冲 + 禁用延迟裁剪（与 v724 行为一致）
+    static constexpr int TARGET_BUFFER_MS = 50;           // 默认环形缓冲区容量（毫秒）
+    static constexpr int TARGET_BUFFER_COMPAT_MS = 120;   // 兼容模式缓冲区容量（毫秒）
+    static constexpr int MAX_AUDIO_LATENCY_MS = 40;       // 延迟丢弃阈值（毫秒），匹配 Android
     
+    bool audioCompatMode_ = false;  // 兼容模式标志
     int ringCapacity_ = 0;          // 实际环形缓冲区容量（int16_t 数量，含 SPSC 保留位）
     int16_t* ringBuffer_ = nullptr; // 动态分配的环形缓冲区
     std::atomic<int> ringHead_{0};  // 消费者读位置（OnWriteData 更新）
@@ -198,6 +199,16 @@ namespace AudioRendererInstance {
      * 获取空间音频是否启用
      */
     bool IsSpatialAudioEnabled();
+    
+    /**
+     * 设置音频兼容模式（增大缓冲区 + 禁用延迟裁剪）
+     */
+    void SetAudioCompatMode(bool enabled);
+    
+    /**
+     * 获取音频兼容模式是否启用
+     */
+    bool IsAudioCompatMode();
     
     /**
      * 初始化音频渲染器

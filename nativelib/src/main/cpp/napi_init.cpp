@@ -135,6 +135,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         // 音频设置
         { "setSpatialAudioEnabled", nullptr, MoonBridge_SetSpatialAudioEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "isSpatialAudioEnabled", nullptr, MoonBridge_IsSpatialAudioEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "setAudioCompatMode", nullptr, MoonBridge_SetAudioCompatMode, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setAudioVolume", nullptr, MoonBridge_SetAudioVolume, nullptr, nullptr, nullptr, napi_default, nullptr },
         
         // 性能模式

@@ -119,10 +119,12 @@ int AudioRenderer::Init(const AudioRendererConfig& config) {
     }
     
     config_ = config;
+    audioCompatMode_ = config.audioCompatMode;
     
     // 动态分配环形缓冲区：根据实际声道数和采样率计算容量
-    // 所有声道配置统一 TARGET_BUFFER_MS 时长，避免 stereo 时缓冲区过大
-    int usableSamples = config_.sampleRate * config_.channelCount * TARGET_BUFFER_MS / 1000;
+    // 兼容模式使用更大的缓冲区（120ms，与 v724 行为一致）
+    int bufferMs = audioCompatMode_ ? TARGET_BUFFER_COMPAT_MS : TARGET_BUFFER_MS;
+    int usableSamples = config_.sampleRate * config_.channelCount * bufferMs / 1000;
     // 对齐到帧边界（channelCount × samplesPerFrame）
     int frameSize = config_.channelCount * config_.samplesPerFrame;
     if (frameSize > 0) {
@@ -137,12 +139,13 @@ int AudioRenderer::Init(const AudioRendererConfig& config) {
     memset(ringBuffer_, 0, ringCapacity_ * sizeof(int16_t));
     
     OH_LOG_INFO(LOG_APP, "Ring buffer: capacity=%{public}d samples (%{public}dms for %{public}dch @%{public}dHz), "
-                "latency cap=%{public}dms",
+                "latency cap=%{public}s, compat=%{public}s",
                 ringCapacity_ - 1,
-                TARGET_BUFFER_MS,
+                bufferMs,
                 config_.channelCount,
                 config_.sampleRate,
-                MAX_AUDIO_LATENCY_MS);
+                audioCompatMode_ ? "disabled" : "40ms",
+                audioCompatMode_ ? "true" : "false");
     
     OH_LOG_INFO(LOG_APP, "Initializing audio renderer: sampleRate=%{public}d, channels=%{public}d, samplesPerFrame=%{public}d",
                 config_.sampleRate, config_.channelCount, config_.samplesPerFrame);
@@ -613,8 +616,9 @@ OH_AudioData_Callback_Result AudioRenderer::OnWriteData(OH_AudioRenderer* render
     }
     
     // 延迟裁剪（消费者端）：如果缓冲区积累过多，跳过旧数据到合理位置
+    // 兼容模式下跳过此逻辑，依赖缓冲区自然满溢丢弃（与 v724 行为一致）
     // 在消费者线程推进 head 是 SPSC 安全的（head 本就是消费者的写变量）
-    if (available > 0 && self->config_.sampleRate > 0) {
+    if (!self->audioCompatMode_ && available > 0 && self->config_.sampleRate > 0) {
         int bufferedFrames = available / channelCount;
         double latencyMs = (double)bufferedFrames * 1000.0 / self->config_.sampleRate;
         if (latencyMs > MAX_AUDIO_LATENCY_MS) {
@@ -772,6 +776,8 @@ namespace AudioRendererInstance {
 
 // 空间音频配置（可通过 NAPI 设置）
 static bool g_enableSpatialAudio = false;
+// 音频兼容模式（增大缓冲区 + 禁用延迟裁剪）
+static bool g_audioCompatMode = false;
 
 void SetSpatialAudioEnabled(bool enabled) {
     g_enableSpatialAudio = enabled;
@@ -780,6 +786,15 @@ void SetSpatialAudioEnabled(bool enabled) {
 
 bool IsSpatialAudioEnabled() {
     return g_enableSpatialAudio;
+}
+
+void SetAudioCompatMode(bool enabled) {
+    g_audioCompatMode = enabled;
+    OH_LOG_INFO(LOG_APP, "Audio compat mode: %{public}s", enabled ? "enabled" : "disabled");
+}
+
+bool IsAudioCompatMode() {
+    return g_audioCompatMode;
 }
 
 int Init(int sampleRate, int channelCount, int samplesPerFrame) {
@@ -799,6 +814,7 @@ int Init(int sampleRate, int channelCount, int samplesPerFrame) {
     config.bitsPerSample = 16;
     config.volume = 1.0f;
     config.enableSpatialAudio = g_enableSpatialAudio;
+    config.audioCompatMode = g_audioCompatMode;
     
     int ret = renderer->Init(config);
     if (ret == 0) {

@@ -32,6 +32,7 @@ export interface StreamConfig {
   micBitrate: number;  // Kbps
   audioConfig: AudioConfiguration;
   enableSpatializer: boolean;
+  audioCompatMode: boolean;
 
   // 主机设置
   sops: boolean;  // 优化游戏设置
@@ -212,6 +213,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     micBitrate: 64,
     audioConfig: AudioConfiguration.STEREO,
     enableSpatializer: false,
+    audioCompatMode: false,
 
     // 主机设置
     sops: true,

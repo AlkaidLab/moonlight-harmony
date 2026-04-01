@@ -58,6 +58,7 @@ export class SettingsKeys {
   static readonly CONTROL_ONLY: string = 'settings_control_only';
   static readonly ENABLE_MIC: string = 'settings_enable_mic';
   static readonly MIC_BITRATE: string = 'settings_mic_bitrate';
+  static readonly AUDIO_COMPAT_MODE: string = 'settings_audio_compat_mode';
 
   // 输入 - 手柄设置
   static readonly ENABLE_VIBRATION: string = 'settings_enable_vibration';
@@ -269,6 +270,7 @@ export interface AudioSettings {
   controlOnly: boolean;
   enableMic: boolean;
   micBitrate: number;
+  audioCompatMode: boolean;
 }
 
 /**
@@ -570,6 +572,7 @@ export class SettingsService {
     const micBitrate = await this.getNumber(SettingsKeys.MIC_BITRATE, 64);
     const controlOnly = await this.getBoolean(SettingsKeys.CONTROL_ONLY, false);
     const enableSpatializer = await this.getBoolean(SettingsKeys.ENABLE_SPATIALIZER, false);
+    const audioCompatMode = await this.getBoolean(SettingsKeys.AUDIO_COMPAT_MODE, false);
 
     // 获取主机设置
     const enableSops = await this.getBoolean(SettingsKeys.ENABLE_SOPS, true);
@@ -644,6 +647,7 @@ export class SettingsService {
       micBitrate: micBitrate,
       audioConfig: this.parseAudioConfig(audioConfigStr),
       enableSpatializer: enableSpatializer,
+      audioCompatMode: audioCompatMode,
 
       // 主机设置
       sops: enableSops,
@@ -829,7 +833,8 @@ export class SettingsService {
       enableSpatializer: await this.getBoolean(SettingsKeys.ENABLE_SPATIALIZER, false),
       controlOnly: await this.getBoolean(SettingsKeys.CONTROL_ONLY, false),
       enableMic: await this.getBoolean(SettingsKeys.ENABLE_MIC, false),
-      micBitrate: await this.getNumber(SettingsKeys.MIC_BITRATE, 64)
+      micBitrate: await this.getNumber(SettingsKeys.MIC_BITRATE, 64),
+      audioCompatMode: await this.getBoolean(SettingsKeys.AUDIO_COMPAT_MODE, false)
     };
   }
 

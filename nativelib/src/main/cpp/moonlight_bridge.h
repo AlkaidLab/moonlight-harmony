@@ -268,6 +268,12 @@ napi_value MoonBridge_SetSpatialAudioEnabled(napi_env env, napi_callback_info in
 napi_value MoonBridge_IsSpatialAudioEnabled(napi_env env, napi_callback_info info);
 
 /**
+ * 设置音频兼容模式
+ * @param enabled boolean
+ */
+napi_value MoonBridge_SetAudioCompatMode(napi_env env, napi_callback_info info);
+
+/**
  * 设置音量
  * @param volume 音量 (0.0 - 1.0)
  */
