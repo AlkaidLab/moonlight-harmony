@@ -117,6 +117,8 @@ export class GamepadManager implements UsbDriverListener {
   // ==================== USB 设备移除防抖 ====================
   /** USB 设备移除的待执行定时器，用于防抖闪断式 disconnect/reconnect */
   private pendingRemovalTimers = new Map<number, number>();
+  /** USB 驱动层设备移除防抖（按物理设备 Key 索引，与 GCK 路径的 deviceId 防抖独立） */
+  private pendingUsbRemovalTimers = new Map<string, number>();
   /** 防抖延迟（ms）：USB 设备移除后等待此时间再真正清理 */
   private static readonly DEVICE_REMOVAL_DEBOUNCE_MS = 5000;
 
@@ -2145,19 +2147,30 @@ export class GamepadManager implements UsbDriverListener {
     }
 
     if (!this.connectedDevices.has(controllerId)) return;
-    
-    const slot = this.getControllerSlot(controllerId);
-    
-    // 清理所有相关状态
-    this.connectedDevices.delete(controllerId);
-    this.deviceStates.delete(controllerId);
-    this.deviceInfoMap.delete(controllerId);
-    this.usbDeviceKeyToId.delete(deviceKey);
-    this.controllerIdToDeviceKey.delete(controllerId);
-    this.releaseSlotForDevice(deviceKey);
-    this.dpadAxisActive.delete(controllerId);
 
-    this.listener?.onGamepadDisconnected(slot);
+    // 防抖：某些手柄（如雷蛇）频繁闪断导致反复 disconnect/reconnect toast。
+    // 延迟处理移除事件，如果设备在延迟内通过 deviceAdded 重新出现则取消移除。
+    const existingTimer = this.pendingUsbRemovalTimers.get(deviceKey);
+    if (existingTimer !== undefined) {
+      clearTimeout(existingTimer);
+    }
+    console.info(`[GAMEPAD-USB] 设备短暂断开，${GamepadManager.DEVICE_REMOVAL_DEBOUNCE_MS}ms 防抖: Key=${deviceKey}`);
+    const timerId = setTimeout(() => {
+      this.pendingUsbRemovalTimers.delete(deviceKey);
+      // 防抖超时 — 设备确实已断开
+      if (!this.connectedDevices.has(controllerId)) return;
+      const slot = this.getControllerSlot(controllerId);
+      console.info(`[GAMEPAD-USB] 防抖超时，确认移除: ID=${controllerId}, Key=${deviceKey}, Slot=${slot}`);
+      this.connectedDevices.delete(controllerId);
+      this.deviceStates.delete(controllerId);
+      this.deviceInfoMap.delete(controllerId);
+      this.usbDeviceKeyToId.delete(deviceKey);
+      this.controllerIdToDeviceKey.delete(controllerId);
+      this.releaseSlotForDevice(deviceKey);
+      this.dpadAxisActive.delete(controllerId);
+      this.listener?.onGamepadDisconnected(slot);
+    }, GamepadManager.DEVICE_REMOVAL_DEBOUNCE_MS);
+    this.pendingUsbRemovalTimers.set(deviceKey, timerId);
   }
   
   /**
@@ -2178,6 +2191,17 @@ export class GamepadManager implements UsbDriverListener {
       this.controllerIdToDeviceKey.set(controllerId, deviceKey);
       console.info(`[GAMEPAD-USB] 混合模式: 记录 USB 设备用于震动: ${name} (ID=${controllerId})`);
       return;
+    }
+    
+    // 检查是否有待执行的防抖移除定时器（设备闪断后重新出现）
+    // 如有则取消定时器，走正常注册流程但跳过连接 toast
+    let silentReconnect = false;
+    const pendingTimer = this.pendingUsbRemovalTimers.get(deviceKey);
+    if (pendingTimer !== undefined) {
+      clearTimeout(pendingTimer);
+      this.pendingUsbRemovalTimers.delete(deviceKey);
+      console.info(`[GAMEPAD-USB] 设备闪断后恢复，静默重连: Key=${deviceKey}, newID=${controllerId}`);
+      silentReconnect = true;
     }
     
     // 防止重复添加
@@ -2202,10 +2226,14 @@ export class GamepadManager implements UsbDriverListener {
     // 注册设备
     this.registerUsbDevice(controllerId, deviceKey, name, vendorId, productId);
     const ddkTag = controller.isDdkPolling() ? ' [DDK]' : '';
-    console.info(`[GAMEPAD-USB] 设备添加: ${name}${ddkTag} (ID=${controllerId}, Slot=${slot})`);
     
-    const ctrlType = MoonlightControllerType.fromVendorProduct(vendorId, productId);
-    this.listener?.onGamepadConnected(slot, `${name}${ddkTag}`, ctrlType);
+    if (silentReconnect) {
+      console.info(`[GAMEPAD-USB] 设备静默重连完成: ${name}${ddkTag} (ID=${controllerId}, Slot=${slot})`);
+    } else {
+      console.info(`[GAMEPAD-USB] 设备添加: ${name}${ddkTag} (ID=${controllerId}, Slot=${slot})`);
+      const ctrlType = MoonlightControllerType.fromVendorProduct(vendorId, productId);
+      this.listener?.onGamepadConnected(slot, `${name}${ddkTag}`, ctrlType);
+    }
   }
   
   /**
