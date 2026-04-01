@@ -139,7 +139,7 @@ export class ComputerManager {
       await this.verifyOrPollComputer(existing, discovered.address);
     } else {
       try {
-        await this.addComputerInternal(discovered.address, discovered.name, discovered.port);
+        await this.addComputerInternal(discovered.address, discovered.name, discovered.port, discovered.ipv6Address);
       } catch (err) {
         console.error(`ComputerManager: 无法添加电脑 ${discovered.name}: ${err}`);
       }
@@ -157,7 +157,8 @@ export class ComputerManager {
         c.address === address ||
         c.localAddress === address ||
         c.remoteAddress === address ||
-        c.manualAddress === address
+        c.manualAddress === address ||
+        c.ipv6Address === address
       );
   }
 
@@ -193,6 +194,13 @@ export class ComputerManager {
       if (!computer.address) computer.address = address;
       computer.runningGameId = serverInfo.currentGame;
       if (serverInfo.hostname) computer.name = serverInfo.hostname;
+
+      // 如果仍缺少 IPv6 全局地址，异步补充
+      if (!computer.ipv6Address && serverInfo.hostname) {
+        this.lookupAndSetIpv6(computer, serverInfo.hostname);
+      }
+
+      this.saveComputers();
     } catch (err) {
       console.warn(`ComputerManager: mDNS 地址无法连接 ${computer.name}，回退轮询`);
       await this.pollComputer(computer);
@@ -379,7 +387,7 @@ export class ComputerManager {
    * 内部添加电脑方法
    * 如果该 UUID 的电脑已存在，合并更新而非替换，保留 serverCert 等配对信息
    */
-  private async addComputerInternal(address: string, discoveredName?: string, httpPort?: number): Promise<ComputerInfo> {
+  private async addComputerInternal(address: string, discoveredName?: string, httpPort?: number, discoveredIpv6?: string): Promise<ComputerInfo> {
     const nvHttp = new NvHttp(address, null, this.context || undefined, httpPort);
 
     try {
@@ -392,6 +400,8 @@ export class ComputerManager {
       
       // 检测连接地址是否为 IPv6（包含至少2个冒号）
       const isIPv6 = address.includes(':') && address.split(':').length > 2;
+      // mDNS 发现时可能已经拿到了 IPv6 地址
+      const ipv6Addr = isIPv6 ? address : (discoveredIpv6 || undefined);
 
       // 检查是否已存在相同 UUID 的电脑
       const existing = this.computers.get(serverInfo.uniqueId);
@@ -403,8 +413,8 @@ export class ComputerManager {
         if (remoteAddr) {
           existing.remoteAddress = remoteAddr;
         }
-        if (isIPv6) {
-          existing.ipv6Address = address;
+        if (ipv6Addr) {
+          existing.ipv6Address = ipv6Addr;
         }
         if (serverInfo.macAddress) {
           existing.macAddress = serverInfo.macAddress;
@@ -425,6 +435,12 @@ export class ComputerManager {
         console.info(`ComputerManager: 合并更新已有电脑 ${existing.name} (${existing.uuid}), 保留配对信息`);
         this.computers.set(existing.uuid, existing);
         await this.saveComputers();
+
+        // 如果仍缺少 IPv6 全局地址，异步补充
+        if (!existing.ipv6Address && serverInfo.hostname) {
+          this.lookupAndSetIpv6(existing, serverInfo.hostname);
+        }
+
         return existing;
       }
 
@@ -435,7 +451,7 @@ export class ComputerManager {
         .setAddress(address) // 保持原始连接地址
         .setLocalAddress(localAddr) // 服务器返回的本地地址
         .setRemoteAddress(remoteAddr) // 服务器返回的外部地址
-        .setIpv6Address(isIPv6 ? address : undefined) // 如果连接地址是 IPv6，存储之
+        .setIpv6Address(ipv6Addr) // mDNS 发现的 IPv6 或连接地址本身
         .setMacAddress(serverInfo.macAddress || '')
         .setState(ComputerState.ONLINE)
         .setPairState(serverInfo.paired ? PairState.PAIRED : PairState.NOT_PAIRED)
@@ -445,6 +461,11 @@ export class ComputerManager {
 
       this.computers.set(computer.uuid, computer);
       await this.saveComputers();
+
+      // 如果仍缺少 IPv6 全局地址，异步补充
+      if (!computer.ipv6Address && serverInfo.hostname) {
+        this.lookupAndSetIpv6(computer, serverInfo.hostname);
+      }
 
       console.info(`ComputerManager: 成功添加电脑 ${computer.name} (${computer.uuid}), localAddr=${localAddr}, remoteAddr=${remoteAddr}`);
       return computer;
@@ -822,6 +843,7 @@ export class ComputerManager {
     const tryLookup = async (host: string): Promise<string | undefined> => {
       try {
         const addresses = await connection.getAddressesByName(host);
+        console.info(`ComputerManager: getAddressesByName('${host}') 返回 ${addresses.length} 个地址`);
         const ipv6List: string[] = [];
         for (const addr of addresses) {
           if (addr.family === 2 && addr.address) {
@@ -829,7 +851,8 @@ export class ComputerManager {
           }
         }
         return getBestIpv6Address(ipv6List);
-      } catch (_err) {
+      } catch (err) {
+        console.info(`ComputerManager: getAddressesByName('${host}') 失败: ${err}`);
         return undefined;
       }
     };

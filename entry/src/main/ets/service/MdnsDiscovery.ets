@@ -9,11 +9,9 @@
  */
 
 import { mdns } from '@kit.NetworkKit';
-import { connection } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { NvHttp } from './NvHttp';
-import { getBestIpv6Address } from '../utils/NetHelper';
 
 /**
  * 发现的计算机信息
@@ -144,13 +142,11 @@ export class MdnsDiscovery {
 
     // mDNS 返回的主地址
     let primaryAddress = host.address;
+    // 如果 mDNS 直接返回了 IPv6 地址，记录下来
     let ipv6Address: string | undefined = host.family === 2 ? host.address : undefined;
 
-    // 如果 mDNS 只返回了 IPv4，主动查询主机的 IPv6 全局地址
-    // 对齐 Android MdnsDiscoveryAgent.getBestIpv6Address() 的行为
-    if (host.family === 1) {
-      ipv6Address = await this.lookupIpv6ForHost(resolvedInfo.serviceName);
-    }
+    // IPv6 查找统一由 ComputerManager.lookupAndSetIpv6 负责
+    // 避免在此处重复查询：ComputerManager 有更完整的上下文（serverInfo 返回的真实 hostname）
 
     const computer: DiscoveredComputer = {
       name: resolvedInfo.serviceName,
@@ -164,60 +160,6 @@ export class MdnsDiscovery {
     if (this.onComputerFound) {
       this.onComputerFound(computer);
     }
-  }
-
-  /**
-   * 通过 DNS 查询获取主机的 IPv6 全局地址
-   *
-   * 尝试解析 "<hostname>.local" 的 AAAA 记录，
-   * 从返回的地址中选出最佳的 IPv6 全局单播地址。
-   *
-   * @param hostname mDNS 服务名称（即主机名）
-   * @returns IPv6 全局地址，无则返回 undefined
-   */
-  private async lookupIpv6ForHost(hostname: string): Promise<string | undefined> {
-    try {
-      const addresses = await connection.getAddressesByName(hostname);
-      const ipv6List: string[] = [];
-      for (const addr of addresses) {
-        if (addr.family === 2 && addr.address) {
-          ipv6List.push(addr.address);
-        }
-      }
-      if (ipv6List.length > 0) {
-        const best = getBestIpv6Address(ipv6List);
-        if (best) {
-          console.info(`MdnsDiscovery: 为 ${hostname} 找到 IPv6 全局地址: ${best}`);
-          return best;
-        }
-      }
-    } catch (_err) {
-      // hostname 可能无法被系统 DNS 解析（.local 域名需要 mDNS 支持）
-      // 这不是错误，静默忽略
-    }
-
-    // 回退：尝试 hostname.local
-    try {
-      const addresses = await connection.getAddressesByName(`${hostname}.local`);
-      const ipv6List: string[] = [];
-      for (const addr of addresses) {
-        if (addr.family === 2 && addr.address) {
-          ipv6List.push(addr.address);
-        }
-      }
-      if (ipv6List.length > 0) {
-        const best = getBestIpv6Address(ipv6List);
-        if (best) {
-          console.info(`MdnsDiscovery: 为 ${hostname}.local 找到 IPv6 全局地址: ${best}`);
-          return best;
-        }
-      }
-    } catch (_err) {
-      // 静默忽略
-    }
-
-    console.info(`MdnsDiscovery: 未能为 ${hostname} 获取 IPv6 地址`);
-    return undefined;
   }
 
   /**
