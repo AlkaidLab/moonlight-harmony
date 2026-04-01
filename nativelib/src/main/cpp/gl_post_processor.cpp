@@ -661,7 +661,7 @@ void main() {
 // 完整的 GLES 3.0 移植版，基于 AMD FidelityFX FSR 1.0 (MIT License)
 // 使用 12 个采样点、4-位置方向检测、各向异性自适应 Lanczos 核
 static const char* FSR_EASU_FRAGMENT_SRC = R"(#version 300 es
-precision mediump float;
+precision highp float;
 in vec2 vTexCoord;
 uniform sampler2D uInputTexture;
 uniform vec2 uInputSize;      // 输入纹理尺寸
@@ -857,7 +857,7 @@ void main() {
 // FSR 1 RCAS (Robust Contrast Adaptive Sharpening) 着色器
 // 在 EASU 上采样后应用自适应锐化
 static const char* FSR_RCAS_FRAGMENT_SRC = R"(#version 300 es
-precision mediump float;
+precision highp float;
 in vec2 vTexCoord;
 uniform sampler2D uInputTexture;
 uniform float uSharpness;  // 0.0 = 最大锐化, 值越大锐化越弱
@@ -1693,9 +1693,10 @@ void GLPostProcessor::ApplyUpscale() {
         g_api.glBindTexture(MY_GL_TEXTURE_2D, fsrTexture_);
         g_api.glUniform1i(g_api.glGetUniformLocation(fsrRcasProgram_, "uInputTexture"), 0);
         // sharpness: 0.0 = 最大锐化, 2.0 = 非常柔和
-        // 将 upscaleSharpness_ (0-1) 映射到 (2.0 - 0.0)
+        // 将 upscaleSharpness_ (0-1) 映射到 (1.0 - 0.0)
+        // 流媒体内容有压缩损失，需要更强的锐化来补偿
         g_api.glUniform1f(g_api.glGetUniformLocation(fsrRcasProgram_, "uSharpness"),
-                          2.0f * (1.0f - upscaleSharpness_));
+                          1.0f * (1.0f - upscaleSharpness_));
         g_api.glUniform1i(g_api.glGetUniformLocation(fsrRcasProgram_, "uIsHdr"), isHdr);
 
         g_api.glBindVertexArray(vao_);
