@@ -2176,7 +2176,11 @@ struct SettingsPageV2 {
                 title: '版本',
                 subtitle: this.appVersion,
                 type: 'action',
-                action: () => {}
+                action: () => {
+                  const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.appVersion);
+                  pasteboard.getSystemPasteboard().setDataSync(pasteData);
+                  this.showToast(`已复制版本号: ${this.appVersion}`);
+                }
               },
               {
                 title: '更新日志',
@@ -3590,7 +3594,7 @@ struct SettingsPageV2 {
         if (option.value === 'none') {
           bgUtil.disableBackgroundImage();
         }
-        this.showToast(`背景图片设置为: ${option.title}`);
+        this.showToast(`背景图片设置为: ${option.title}，重启应用后生效`);
       }
     };
     this.showPicker(config);
