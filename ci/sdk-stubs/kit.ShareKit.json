@@ -1,0 +1,8 @@
+{
+  "symbols": {
+    "systemShare": {
+      "source": "@ohos.share.systemShare.d.ts",
+      "bindings": "default"
+    }
+  }
+}

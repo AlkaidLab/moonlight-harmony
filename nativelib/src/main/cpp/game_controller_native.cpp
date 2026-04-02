@@ -770,6 +770,7 @@ static void OnRightTriggerAxis(const struct GamePad_AxisEvent* axisEvent) {
 // 按键 + 轴监听的注册/注销在 StartMonitor、StopMonitor、Pause、Resume 中重复出现 4 次
 // 提取为内部 helper 消除重复
 
+#if GAME_CONTROLLER_KIT_AVAILABLE
 /**
  * 注册所有按键 + 轴输入监听（不含设备监听）
  * 调用者需持有 g_mutex 或保证线程安全
@@ -833,6 +834,7 @@ static void UnregisterAllInputMonitors() {
     OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor();
     OH_GamePad_RightTrigger_UnregisterAxisInputMonitor();
 }
+#endif // GAME_CONTROLLER_KIT_AVAILABLE
 
 // ==================== 公共 API ====================
 

@@ -464,7 +464,7 @@ export class QrShareService {
       }
       return null;
     } catch (e) {
-      console.error('[QrShareService] 扫码失败:', JSON.stringify(e));
+      console.error('[QrShareService] 扫码失败:', String(e));
       return null;
     }
   }
