@@ -359,6 +359,25 @@ static bool TryLoadGameControllerLib() {
         g_gcLibAvailable = false;
         return false;
     }
+
+    // 验证所有按键/轴监听函数是否加载成功
+    int missingCount = 0;
+    #define CHECK_FUNC(name) if (!pfn_##name) { LOGW("GCK: 缺少符号 " #name); missingCount++; }
+    CHECK_FUNC(OH_GamePad_ButtonA_RegisterButtonInputMonitor)
+    CHECK_FUNC(OH_GamePad_ButtonB_RegisterButtonInputMonitor)
+    CHECK_FUNC(OH_GamePad_ButtonX_RegisterButtonInputMonitor)
+    CHECK_FUNC(OH_GamePad_ButtonY_RegisterButtonInputMonitor)
+    CHECK_FUNC(OH_GamePad_LeftShoulder_RegisterButtonInputMonitor)
+    CHECK_FUNC(OH_GamePad_RightShoulder_RegisterButtonInputMonitor)
+    CHECK_FUNC(OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor)
+    CHECK_FUNC(OH_GamePad_RightThumbstick_RegisterAxisInputMonitor)
+    CHECK_FUNC(OH_GamePad_Dpad_RegisterAxisInputMonitor)
+    CHECK_FUNC(OH_GamePad_LeftTrigger_RegisterAxisInputMonitor)
+    CHECK_FUNC(OH_GamePad_RightTrigger_RegisterAxisInputMonitor)
+    #undef CHECK_FUNC
+    if (missingCount > 0) {
+        LOGW("Game Controller Kit: %d 个函数符号缺失，监听可能不完整", missingCount);
+    }
 #endif
     
     LOGI("Game Controller Kit 动态库加载成功");
@@ -771,36 +790,41 @@ static void OnRightTriggerAxis(const struct GamePad_AxisEvent* axisEvent) {
 // 提取为内部 helper 消除重复
 
 #if GAME_CONTROLLER_KIT_AVAILABLE
+
+// 安全调用宏：函数指针非空时才调用（已被 #define 重定向为 pfn_* 指针）
+#define SAFE_CALL(func, ...) do { if (func) func(__VA_ARGS__); } while(0)
+#define SAFE_CALL0(func) do { if (func) func(); } while(0)
+
 /**
  * 注册所有按键 + 轴输入监听（不含设备监听）
  * 调用者需持有 g_mutex 或保证线程安全
  */
 static void RegisterAllInputMonitors() {
     // 按键监听
-    OH_GamePad_ButtonA_RegisterButtonInputMonitor(OnButtonA);
-    OH_GamePad_ButtonB_RegisterButtonInputMonitor(OnButtonB);
-    OH_GamePad_ButtonX_RegisterButtonInputMonitor(OnButtonX);
-    OH_GamePad_ButtonY_RegisterButtonInputMonitor(OnButtonY);
-    OH_GamePad_ButtonC_RegisterButtonInputMonitor(OnButtonC);
-    OH_GamePad_LeftShoulder_RegisterButtonInputMonitor(OnLeftShoulder);
-    OH_GamePad_RightShoulder_RegisterButtonInputMonitor(OnRightShoulder);
-    OH_GamePad_LeftTrigger_RegisterButtonInputMonitor(OnLeftTriggerButton);
-    OH_GamePad_RightTrigger_RegisterButtonInputMonitor(OnRightTriggerButton);
-    OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor(OnLeftThumbstick);
-    OH_GamePad_RightThumbstick_RegisterButtonInputMonitor(OnRightThumbstick);
-    OH_GamePad_ButtonHome_RegisterButtonInputMonitor(OnButtonHome);
-    OH_GamePad_ButtonMenu_RegisterButtonInputMonitor(OnButtonMenu);
-    OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor(OnDpadUp);
-    OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor(OnDpadDown);
-    OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor(OnDpadLeft);
-    OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor(OnDpadRight);
+    SAFE_CALL(OH_GamePad_ButtonA_RegisterButtonInputMonitor, OnButtonA);
+    SAFE_CALL(OH_GamePad_ButtonB_RegisterButtonInputMonitor, OnButtonB);
+    SAFE_CALL(OH_GamePad_ButtonX_RegisterButtonInputMonitor, OnButtonX);
+    SAFE_CALL(OH_GamePad_ButtonY_RegisterButtonInputMonitor, OnButtonY);
+    SAFE_CALL(OH_GamePad_ButtonC_RegisterButtonInputMonitor, OnButtonC);
+    SAFE_CALL(OH_GamePad_LeftShoulder_RegisterButtonInputMonitor, OnLeftShoulder);
+    SAFE_CALL(OH_GamePad_RightShoulder_RegisterButtonInputMonitor, OnRightShoulder);
+    SAFE_CALL(OH_GamePad_LeftTrigger_RegisterButtonInputMonitor, OnLeftTriggerButton);
+    SAFE_CALL(OH_GamePad_RightTrigger_RegisterButtonInputMonitor, OnRightTriggerButton);
+    SAFE_CALL(OH_GamePad_LeftThumbstick_RegisterButtonInputMonitor, OnLeftThumbstick);
+    SAFE_CALL(OH_GamePad_RightThumbstick_RegisterButtonInputMonitor, OnRightThumbstick);
+    SAFE_CALL(OH_GamePad_ButtonHome_RegisterButtonInputMonitor, OnButtonHome);
+    SAFE_CALL(OH_GamePad_ButtonMenu_RegisterButtonInputMonitor, OnButtonMenu);
+    SAFE_CALL(OH_GamePad_Dpad_UpButton_RegisterButtonInputMonitor, OnDpadUp);
+    SAFE_CALL(OH_GamePad_Dpad_DownButton_RegisterButtonInputMonitor, OnDpadDown);
+    SAFE_CALL(OH_GamePad_Dpad_LeftButton_RegisterButtonInputMonitor, OnDpadLeft);
+    SAFE_CALL(OH_GamePad_Dpad_RightButton_RegisterButtonInputMonitor, OnDpadRight);
 
     // 轴监听
-    OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor(OnLeftThumbstickAxis);
-    OH_GamePad_RightThumbstick_RegisterAxisInputMonitor(OnRightThumbstickAxis);
-    OH_GamePad_Dpad_RegisterAxisInputMonitor(OnDpadAxis);
-    OH_GamePad_LeftTrigger_RegisterAxisInputMonitor(OnLeftTriggerAxis);
-    OH_GamePad_RightTrigger_RegisterAxisInputMonitor(OnRightTriggerAxis);
+    SAFE_CALL(OH_GamePad_LeftThumbstick_RegisterAxisInputMonitor, OnLeftThumbstickAxis);
+    SAFE_CALL(OH_GamePad_RightThumbstick_RegisterAxisInputMonitor, OnRightThumbstickAxis);
+    SAFE_CALL(OH_GamePad_Dpad_RegisterAxisInputMonitor, OnDpadAxis);
+    SAFE_CALL(OH_GamePad_LeftTrigger_RegisterAxisInputMonitor, OnLeftTriggerAxis);
+    SAFE_CALL(OH_GamePad_RightTrigger_RegisterAxisInputMonitor, OnRightTriggerAxis);
 }
 
 /**
@@ -809,31 +833,34 @@ static void RegisterAllInputMonitors() {
  */
 static void UnregisterAllInputMonitors() {
     // 按键监听
-    OH_GamePad_ButtonA_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonB_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonX_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonY_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonC_UnregisterButtonInputMonitor();
-    OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor();
-    OH_GamePad_RightShoulder_UnregisterButtonInputMonitor();
-    OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor();
-    OH_GamePad_RightTrigger_UnregisterButtonInputMonitor();
-    OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor();
-    OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonHome_UnregisterButtonInputMonitor();
-    OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor();
-    OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor();
+    SAFE_CALL0(OH_GamePad_ButtonA_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_ButtonB_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_ButtonX_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_ButtonY_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_ButtonC_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_LeftShoulder_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_RightShoulder_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_LeftTrigger_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_RightTrigger_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_LeftThumbstick_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_RightThumbstick_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_ButtonHome_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_ButtonMenu_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_Dpad_UpButton_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_Dpad_DownButton_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_Dpad_LeftButton_UnregisterButtonInputMonitor);
+    SAFE_CALL0(OH_GamePad_Dpad_RightButton_UnregisterButtonInputMonitor);
 
     // 轴监听
-    OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor();
-    OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor();
-    OH_GamePad_Dpad_UnregisterAxisInputMonitor();
-    OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor();
-    OH_GamePad_RightTrigger_UnregisterAxisInputMonitor();
+    SAFE_CALL0(OH_GamePad_LeftThumbstick_UnregisterAxisInputMonitor);
+    SAFE_CALL0(OH_GamePad_RightThumbstick_UnregisterAxisInputMonitor);
+    SAFE_CALL0(OH_GamePad_Dpad_UnregisterAxisInputMonitor);
+    SAFE_CALL0(OH_GamePad_LeftTrigger_UnregisterAxisInputMonitor);
+    SAFE_CALL0(OH_GamePad_RightTrigger_UnregisterAxisInputMonitor);
 }
+
+#undef SAFE_CALL
+#undef SAFE_CALL0
 #endif // GAME_CONTROLLER_KIT_AVAILABLE
 
 // ==================== 公共 API ====================
