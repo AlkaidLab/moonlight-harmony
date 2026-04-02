@@ -904,13 +904,16 @@ int GameController_Init(void) {
 #endif
 }
 
+// Forward declaration - defined after GameController_StopMonitor
+static void GameController_StopMonitorUnlocked();
+
 void GameController_Uninit(void) {
     std::lock_guard<std::mutex> lock(g_mutex);
     
     if (!g_initialized) return;
     
     if (g_gcLibAvailable) {
-        GameController_StopMonitor();
+        GameController_StopMonitorUnlocked();
     }
     
     g_deviceStates.clear();
@@ -1034,10 +1037,9 @@ int GameController_StartMonitor(void) {
 #endif
 }
 
-void GameController_StopMonitor(void) {
+// 无锁版本，供已持有 g_mutex 的调用者使用（如 Uninit）
+static void GameController_StopMonitorUnlocked() {
 #if GAME_CONTROLLER_KIT_AVAILABLE
-    // 注意: 此函数可能在 Uninit 的锁内被调用，不要再加锁
-    
     if (!g_monitoring) return;
     
     if (!g_gcLibAvailable) {
@@ -1056,6 +1058,13 @@ void GameController_StopMonitor(void) {
     g_monitoring = false;
     g_inputPaused = false;
     LOGI("监听已停止");
+#endif
+}
+
+void GameController_StopMonitor(void) {
+#if GAME_CONTROLLER_KIT_AVAILABLE
+    std::lock_guard<std::mutex> lock(g_mutex);
+    GameController_StopMonitorUnlocked();
 #endif
 }
 
