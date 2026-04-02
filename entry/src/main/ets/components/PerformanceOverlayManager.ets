@@ -270,9 +270,18 @@ export function getPacketLossColor(loss: number): string {
  * 获取延迟颜色
  */
 export function getLatencyColor(ms: number): string {
+  if (ms < 0) return '#64FFDA';    // 青色 - 负延迟™
   if (ms < 10) return '#7D9D7D';   // 绿色 - 优秀
   if (ms < 20) return '#D597E3';   // 紫色 - 正常
   return '#B57D7D';  // 红色 - 差
+}
+
+/**
+ * 愚人节彩蛋：负延迟串流™
+ */
+export function isAprilFools(): boolean {
+  const now = new Date();
+  return now.getMonth() === 3 && now.getDate() === 1;
 }
 
 /**

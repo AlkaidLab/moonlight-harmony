@@ -1,0 +1,40 @@
+# CodeRabbit AI 代码审查配置
+# 文档: https://docs.coderabbit.ai/reference/configuration
+
+language: "zh-CN"
+tone_instructions: "使用简洁的中文进行代码审查，关注实际问题而非风格偏好。"
+early_access: true
+
+reviews:
+  profile: "chill"
+  high_level_summary: true
+  poem: false
+  sequence_diagrams: false
+  collapse_walkthrough: true
+  changed_files_summary: true
+  path_filters:
+    - "!build/**"
+    - "!oh_modules/**"
+    - "!entry/oh_modules/**"
+    - "!entry/build/**"
+    - "!nativelib/build/**"
+    - "!hvigor/**"
+    - "!oh-package-lock.json5"
+    - "!entry/oh-package-lock.json5"
+    - "!store-assets/**"
+    - "!nativelib/src/main/cpp/moonlight-common-c/**"
+    - "!nativelib/src/main/cpp/ohos-openssl/**"
+  path_instructions:
+    - path: "entry/src/main/ets/**"
+      instructions: |
+        这是 HarmonyOS ArkTS 前端代码。使用 ArkUI 声明式 UI 框架，@Component/@State/@Prop/@Link 等装饰器。
+        关注线程安全（UI 线程 vs Worker）、内存泄漏（定时器/事件监听未清理）、空指针安全。
+    - path: "nativelib/src/main/cpp/**"
+      instructions: |
+        C/C++ 原生层代码，通过 N-API 与 ArkTS 交互。关注内存管理、线程安全、JNI/N-API 生命周期。
+  auto_review:
+    enabled: true
+    drafts: false
+
+chat:
+  auto_reply: true

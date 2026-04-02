@@ -116,4 +116,27 @@ if [ -n "$DISPLAY_DTS" ] && ! grep -q "getBrightnessInfo" "$DISPLAY_DTS"; then
   echo "  Patched display module"
 fi
 
+# ─── @kit.ScanKit ───
+[ ! -f "$KIT_CONFIGS/@kit.ScanKit.json" ] && \
+  cp "$STUBS_DIR/kit.ScanKit.json" "$KIT_CONFIGS/@kit.ScanKit.json"
+cp "$STUBS_DIR/kit.ScanKit.d.ts" "$ETS_API/@kit.ScanKit.d.ts"
+cp "$STUBS_DIR/ohos.scan.scanCore.d.ts" "$ETS_API/@ohos.scan.scanCore.d.ts"
+cp "$STUBS_DIR/ohos.scan.scanBarcode.d.ts" "$ETS_API/@ohos.scan.scanBarcode.d.ts"
+echo "  Applied ScanKit stubs"
+
+# ─── @kit.ShareKit ───
+[ ! -f "$KIT_CONFIGS/@kit.ShareKit.json" ] && \
+  cp "$STUBS_DIR/kit.ShareKit.json" "$KIT_CONFIGS/@kit.ShareKit.json"
+cp "$STUBS_DIR/kit.ShareKit.d.ts" "$ETS_API/@kit.ShareKit.d.ts"
+cp "$STUBS_DIR/ohos.share.systemShare.d.ts" "$ETS_API/@ohos.share.systemShare.d.ts"
+echo "  Applied ShareKit stubs"
+
+# ─── DevKeySecret (CI-only placeholder) ───
+DEV_KEY_SECRET="entry/src/main/ets/config/DevKeySecret.ets"
+if [ ! -f "$DEV_KEY_SECRET" ]; then
+  mkdir -p "$(dirname "$DEV_KEY_SECRET")"
+  cp "${DEV_KEY_SECRET}.example" "$DEV_KEY_SECRET"
+  echo "  Created DevKeySecret from example"
+fi
+
 echo "✅ SDK patches applied"

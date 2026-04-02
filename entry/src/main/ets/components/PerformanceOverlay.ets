@@ -22,7 +22,8 @@ import {
   getMoonPhaseIcon, formatDataRate, getDecoderString,
   getPacketLossColor, getLatencyColor, getBatteryColor,
   calculateSnapPosition, findNearestSnapPosition,
-  getPerformanceItemInfo, getSnapBorderRadius, SnapPosition
+  getPerformanceItemInfo, getSnapBorderRadius, SnapPosition,
+  isAprilFools
 } from './PerformanceOverlayManager';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
@@ -60,6 +61,7 @@ export struct PerformanceOverlay {
   @State perfBatteryLevel: number = 100;
   @State perfIsCharging: boolean = false;
   @State perfUpscaleMode: number = 0;
+  private aprilFoolsToastShown: boolean = false;
   
   // 覆盖层状态
   @State overlayX: number = 8;
@@ -190,6 +192,26 @@ export struct PerformanceOverlay {
         this.perfNetworkLatency = stats.networkLatency;
         this.perfHostLatency = stats.hostLatency;
         this.perfPacketLoss = stats.packetLoss;
+
+        // 🎃 愚人节彩蛋：负延迟串流™
+        if (isAprilFools()) {
+          if (stats.latency > 0) {
+            this.perfLatency = -(stats.latency * (0.3 + Math.random() * 0.4));
+          }
+          if (stats.networkLatency > 0) {
+            this.perfNetworkLatency = -Math.ceil(stats.networkLatency * (0.2 + Math.random() * 0.3));
+          }
+          if (stats.hostLatency > 0) {
+            this.perfHostLatency = -(stats.hostLatency * (0.3 + Math.random() * 0.3));
+          }
+          if (!this.aprilFoolsToastShown) {
+            this.aprilFoolsToastShown = true;
+            promptAction.showToast({
+              message: '🔮 负延迟串流™ 已激活\n画面将在你操作之前到达',
+              duration: 5000
+            });
+          }
+        }
 
         // 延迟查询超分引擎（解码器初始化后才有值）
         if (this.perfUpscaleMode === 0) {
@@ -558,11 +580,12 @@ export struct PerformanceOverlay {
     // 网络延迟行
     if (this.enabledItemsList.includes(PerformanceItem.NETWORK_LATENCY)) {
       Row() {
-        this.PerfIcon(PerfSymbols.NETWORK, 14, this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50')
-        Text(this.perfNetworkLatency > 0 ? ` ${this.perfNetworkLatency}` : ' N/A')
+        this.PerfIcon(PerfSymbols.NETWORK, 14,
+          this.perfNetworkLatency < 0 ? '#64FFDA' : (this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50'))
+        Text(this.perfNetworkLatency !== 0 ? ` ${this.perfNetworkLatency}` : ' N/A')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50')
+          .fontColor(this.perfNetworkLatency < 0 ? '#64FFDA' : (this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50'))
         Text(' ms')
           .fontSize(11)
           .fontColor('#CCFFFFFF')
@@ -575,6 +598,8 @@ export struct PerformanceOverlay {
       Row() {
         if (this.perfLatency >= 20) {
           Text('🔥').fontSize(13)
+        } else if (this.perfLatency < 0) {
+          Text('❄️').fontSize(13)
         } else {
           this.PerfIcon(PerfSymbols.DECODE_NORMAL, 14, getLatencyColor(this.perfLatency))
         }
@@ -592,11 +617,11 @@ export struct PerformanceOverlay {
     // 主机延迟行
     if (this.enabledItemsList.includes(PerformanceItem.HOST_LATENCY)) {
       Row() {
-        this.PerfIcon(PerfSymbols.HOST, 14, '#009688')
-        Text(this.perfHostLatency > 0 ? ` ${this.perfHostLatency.toFixed(1)}` : ' N/A')
+        this.PerfIcon(PerfSymbols.HOST, 14, this.perfHostLatency < 0 ? '#64FFDA' : '#009688')
+        Text(this.perfHostLatency !== 0 ? ` ${this.perfHostLatency.toFixed(1)}` : ' N/A')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#009688')
+          .fontColor(this.perfHostLatency < 0 ? '#64FFDA' : '#009688')
         Text(' ms')
           .fontSize(11)
           .fontColor('#CCFFFFFF')
@@ -689,11 +714,12 @@ export struct PerformanceOverlay {
       
       // 网络延迟
       if (this.enabledItemsList.includes(PerformanceItem.NETWORK_LATENCY)) {
-        this.PerfIcon(PerfSymbols.NETWORK, 13, this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50')
-        Text(this.perfNetworkLatency > 0 ? ` ${this.perfNetworkLatency} ms` : ' N/A')
+        this.PerfIcon(PerfSymbols.NETWORK, 13,
+          this.perfNetworkLatency < 0 ? '#64FFDA' : (this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50'))
+        Text(this.perfNetworkLatency !== 0 ? ` ${this.perfNetworkLatency} ms` : ' N/A')
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50')
+          .fontColor(this.perfNetworkLatency < 0 ? '#64FFDA' : (this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50'))
         if (this.hasNextItem(PerformanceItem.NETWORK_LATENCY)) this.Separator()
       }
       
@@ -701,6 +727,8 @@ export struct PerformanceOverlay {
       if (this.enabledItemsList.includes(PerformanceItem.DECODE_LATENCY)) {
         if (this.perfLatency >= 20) {
           Text('🥵').fontSize(12)
+        } else if (this.perfLatency < 0) {
+          Text('❄️').fontSize(12)
         } else {
           this.PerfIcon(PerfSymbols.DECODE_NORMAL, 13, getLatencyColor(this.perfLatency))
         }
@@ -713,11 +741,11 @@ export struct PerformanceOverlay {
       
       // 主机延迟
       if (this.enabledItemsList.includes(PerformanceItem.HOST_LATENCY)) {
-        this.PerfIcon(PerfSymbols.HOST, 13, '#009688')
-        Text(this.perfHostLatency > 0 ? ` ${this.perfHostLatency.toFixed(1)} ms` : ' N/A')
+        this.PerfIcon(PerfSymbols.HOST, 13, this.perfHostLatency < 0 ? '#64FFDA' : '#009688')
+        Text(this.perfHostLatency !== 0 ? ` ${this.perfHostLatency.toFixed(1)} ms` : ' N/A')
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#009688')
+          .fontColor(this.perfHostLatency < 0 ? '#64FFDA' : '#009688')
         if (this.hasNextItem(PerformanceItem.HOST_LATENCY)) this.Separator()
       }
       

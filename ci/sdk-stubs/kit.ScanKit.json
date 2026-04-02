@@ -1,0 +1,12 @@
+{
+  "symbols": {
+    "scanCore": {
+      "source": "@ohos.scan.scanCore.d.ts",
+      "bindings": "default"
+    },
+    "scanBarcode": {
+      "source": "@ohos.scan.scanBarcode.d.ts",
+      "bindings": "default"
+    }
+  }
+}
