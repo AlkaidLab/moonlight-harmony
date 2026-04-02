@@ -334,6 +334,3 @@ jobs:
         retention-days: 7
 
   # Release 由本地手动构建签名后上传
-        fail_on_unmatched_files: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
