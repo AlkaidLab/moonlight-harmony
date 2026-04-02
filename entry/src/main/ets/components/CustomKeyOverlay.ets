@@ -1613,7 +1613,7 @@ export struct CustomKeyOverlay {
         previewMode: systemShare.SharePreviewMode.DEFAULT,
       });
     } catch (e) {
-      console.error('[CustomKeyOverlay] 分享失败:', String(e));
+      console.error('[CustomKeyOverlay] 分享失败:', JSON.stringify(e));
       promptAction.showToast({ message: '分享失败', duration: 1500 });
     }
   }

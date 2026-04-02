@@ -301,7 +301,7 @@ jobs:
         ci/patch-sdk.sh ~/ohos-sdk
 
     # ── 构建 ──
-    - name: Build HAP
+    - name: Build Native
       run: |
         set -o pipefail
         BUILD_MODE="${{ steps.build-mode.outputs.mode }}"
@@ -310,57 +310,19 @@ jobs:
         export JAVA_HOME="${JAVA_HOME_17_X64}"
         export LD_LIBRARY_PATH="${HOME}/ohos-sdk/toolchains/lib:${HOME}/ohos-sdk/previewer/common/bin:${LD_LIBRARY_PATH:-}"
 
-        node hvigorw.js assembleHap \
+        node hvigorw.js assembleHar \
           --mode module \
+          -p module=nativelib@default \
           -p product=default \
           -p buildMode="${BUILD_MODE}" \
           --no-daemon \
           --stacktrace \
           2>&1 | tee build-hap.log
 
-        find . -name "*.hap" -type f -exec sh -c 'echo "  $(du -h "$1" | cut -f1)  $1"' _ {} \;
-
-    - name: Build APP (signed)
-      if: steps.signing.outputs.available == 'true'
-      run: |
-        set -o pipefail
-        BUILD_MODE="${{ steps.build-mode.outputs.mode }}"
-        export NODE_HOME="$(dirname "$(dirname "$(which node)")")"
-        export JAVA_HOME="${JAVA_HOME_17_X64}"
-
-        node hvigorw.js assembleApp \
-          --mode module \
-          -p product=default \
-          -p buildMode="${BUILD_MODE}" \
-          --no-daemon \
-          2>&1 | tee build-app.log
-
-        find . -name "*.app" -type f -exec sh -c 'echo "  $(du -h "$1" | cut -f1)  $1"' _ {} \;
-
     # ── 清理 & 上传 ──
     - name: Cleanup signing files
       if: always()
       run: rm -rf .signing/
-
-    - name: Upload HAP artifact
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: moonlight-hap-${{ steps.version.outputs.version }}-${{ steps.build-mode.outputs.mode }}
-        path: entry/build/default/outputs/**/*.hap
-        if-no-files-found: warn
-        retention-days: 30
-
-    - name: Upload APP artifact
-      uses: actions/upload-artifact@v4
-      if: steps.signing.outputs.available == 'true'
-      with:
-        name: moonlight-app-${{ steps.version.outputs.version }}-${{ steps.build-mode.outputs.mode }}
-        path: |
-          entry/build/default/outputs/**/*.app
-          build/default/outputs/**/*.app
-        if-no-files-found: warn
-        retention-days: 30
 
     - name: Upload build logs on failure
       uses: actions/upload-artifact@v4
@@ -369,35 +331,9 @@ jobs:
         name: build-logs-${{ github.run_id }}
         path: |
           build-hap.log
-          build-app.log
         retention-days: 7
 
-  # ── Release ──
-  release:
-    name: Create Release
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-
-    steps:
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        pattern: moonlight-*
-        path: ./artifacts
-        merge-multiple: true
-
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          ./artifacts/**/*.hap
-          ./artifacts/**/*.app
-        draft: false
-        prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') || contains(github.ref, 'rc') }}
-        generate_release_notes: true
+  # Release 由本地手动构建签名后上传
         fail_on_unmatched_files: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
