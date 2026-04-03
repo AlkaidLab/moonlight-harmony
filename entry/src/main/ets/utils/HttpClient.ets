@@ -283,9 +283,7 @@ export class HttpClient {
     const session = rcp.createSession(sessionConfig);
 
     try {
-      const response = await session.post(url, body, {
-        'Content-Type': 'application/json'
-      });
+      const response = await session.post(url, body);
       console.debug(`HttpClient: POST 响应状态码 = ${response.statusCode}`);
 
       if (!response.body) {

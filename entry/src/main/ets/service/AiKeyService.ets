@@ -12,6 +12,7 @@ import { NvHttp, AiMessage } from './NvHttp';
 import {
   CustomKeyDef,
   KeyAction,
+  AnalogStickAction,
   createDefaultKeyDef,
 } from './CustomKeyTypes';
 
@@ -190,7 +191,8 @@ function getAppearanceForAction(action: KeyAction): KeyAppearance {
         borderRadius: 28, fontSize: 13
       };
     case 'analogStick': {
-      const isInvisible = 'invisible' in action && (action as Record<string, boolean>).invisible === true;
+      const actionObj = action as AnalogStickAction;
+      const isInvisible = actionObj.invisible === true;
       return {
         width: isInvisible ? 200 : 120,
         height: isInvisible ? 200 : 120,

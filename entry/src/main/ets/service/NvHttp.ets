@@ -912,10 +912,13 @@ export class NvHttp {
     });
 
     if (response.statusCode === 403) {
-      throw new Error('AI 代理未启用，请在 Sunshine Web UI 中配置 AI');
+      throw new Error('AI 代理未启用，请在 Sunshine 设置中配置 LLM API');
+    }
+    if (response.statusCode === 404) {
+      throw new Error('当前 Sunshine 版本不支持 AI 功能，请升级到基地阳光最新版');
     }
     if (response.statusCode !== 200) {
-      throw new Error(`AI 请求失败: HTTP ${response.statusCode}`);
+      throw new Error(`AI 服务异常 (HTTP ${response.statusCode})，请检查 Sunshine 的 LLM 配置`);
     }
 
     // 解析 OpenAI 兼容响应

@@ -1118,7 +1118,18 @@ export struct CustomKeyOverlay {
         this.aiError = 'AI 未返回有效的按键布局';
       }
     } catch (err) {
-      this.aiError = `推荐失败: ${(err as Error).message || '未知错误'}`;
+      const msg = (err as Error).message ?? '';
+      if (msg.includes('SyntaxError') || msg.includes('JSON')) {
+        this.aiError = 'AI 返回格式异常，请重试';
+      } else if (msg.includes('timed out') || msg.includes('timeout') || msg.includes('ETIMEDOUT')) {
+        this.aiError = '连接超时，请检查与电脑的网络连接';
+      } else if (msg.includes('connect') || msg.includes('ECONNREFUSED') || msg.includes('network')) {
+        this.aiError = '无法连接到电脑，请检查 Sunshine 是否运行';
+      } else if (msg) {
+        this.aiError = msg;
+      } else {
+        this.aiError = '未知错误，请重试';
+      }
     } finally {
       this.aiLoading = false;
     }
