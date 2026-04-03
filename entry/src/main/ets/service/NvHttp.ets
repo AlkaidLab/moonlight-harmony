@@ -886,6 +886,49 @@ export class NvHttp {
     return result;
   }
 
+  /**
+   * POST /ai/completions — 调用 Sunshine LLM 代理端点（OpenAI 兼容）
+   * @param messages OpenAI 格式的消息数组
+   * @param maxTokens 最大生成 token 数
+   * @returns 助手回复文本
+   */
+  async aiCompletion(messages: AiMessage[], maxTokens: number = 4096): Promise<string> {
+    const baseUrl = await this.getHttpsBaseUrl();
+    const url = `${baseUrl}/ai/completions`;
+
+    const body = JSON.stringify({
+      messages: messages,
+      max_tokens: maxTokens,
+    });
+
+    console.info(`NvHttp: AI completion request to ${url}`);
+
+    if (!this.certFilePath || !this.keyFilePath) {
+      throw new Error('客户端证书不可用，无法调用 AI 端点');
+    }
+
+    const response = await HttpClient.postWithClientCert(url, body, this.certFilePath, this.keyFilePath, {
+      transferTimeout: 120000
+    });
+
+    if (response.statusCode === 403) {
+      throw new Error('AI 代理未启用，请在 Sunshine Web UI 中配置 AI');
+    }
+    if (response.statusCode !== 200) {
+      throw new Error(`AI 请求失败: HTTP ${response.statusCode}`);
+    }
+
+    // 解析 OpenAI 兼容响应
+    const result = JSON.parse(response.body) as AiCompletionResponse;
+    if (result.choices && result.choices.length > 0) {
+      return result.choices[0].message?.content ?? '';
+    }
+    if (result.error) {
+      throw new Error(`AI 错误: ${result.error.message ?? JSON.stringify(result.error)}`);
+    }
+    return '';
+  }
+
 }
 
 export interface AppEntry {
@@ -922,4 +965,25 @@ export interface LaunchConfig {
   maxBrightness?: number;       // 客户端屏幕最大亮度 (nits)
   maxAverageBrightness?: number; // 客户端屏幕最大平均亮度 (nits)
   screenCombinationMode?: number; // 屏幕组合模式 (-1=主机默认, 0=不修改, 1=确保开启, 2=主屏, 3=仅此屏)
+}
+
+/** OpenAI 兼容消息格式 */
+export interface AiMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+interface AiCompletionChoice {
+  message?: AiMessage;
+  finish_reason?: string;
+}
+
+interface AiCompletionError {
+  message?: string;
+  type?: string;
+}
+
+interface AiCompletionResponse {
+  choices?: AiCompletionChoice[];
+  error?: AiCompletionError;
 }

@@ -30,7 +30,7 @@ import { ShortcutEditorDialog, ShortcutEditData } from '../components/ShortcutEd
 import { GamepadManager, GamepadState, MoonlightControllerType, MouseEmulationCallback } from '../service/GamepadManager';
 import { GyroAssistService } from '../service/GyroAssistService';
 import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../service/MoonBridge';
-import { SuperCmd } from '../service/NvHttp';
+import { SuperCmd, NvHttp } from '../service/NvHttp';
 import { VirtualKey, KeyAction, sendShortcutKeys } from '../service/CustomKeyTypes';
 import { pointer } from '@kit.InputKit';
 import { InputInterceptorService } from '../service/InputInterceptorService';
@@ -44,6 +44,9 @@ import { CustomKeyOverlay } from '../components/CustomKeyOverlay';
 import { CustomKeyManager, CustomKeyManagerHost, SessionLike } from '../service/CustomKeyManager';
 import { CustomKeyStore } from '../service/CustomKeyStore';
 import { PanZoomHandler, PanZoomState, PointXY } from '../service/PanZoomHandler';
+import { AiKeyService, AiKeyRecommendation } from '../service/AiKeyService';
+import { selectBestAddress } from '../model/ComputerInfo';
+import { ComputerManager } from '../service/ComputerManager';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -204,6 +207,7 @@ struct StreamPage {
   private customKeyManager: CustomKeyManager | null = null;
   private panZoomHandler: PanZoomHandler = new PanZoomHandler();
   private controllerTypes: Map<number, number> = new Map();  // slot → MoonlightControllerType
+  private aiKeyService: AiKeyService | null = null;
   
   // 页面参数
   private computerId: string = '';
@@ -242,6 +246,19 @@ struct StreamPage {
       });
     }
     
+    // 初始化 AI 按键推荐服务
+    if (this.computerId) {
+      try {
+        const computer = ComputerManager.getInstance().getComputer(this.computerId);
+        if (computer) {
+          const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert, this.context, computer.httpPort);
+          this.aiKeyService = new AiKeyService(nvHttp);
+        }
+      } catch (err) {
+        console.warn(`[StreamPage] AI 服务初始化失败: ${err}`);
+      }
+    }
+
     // 初始化窗口管理器
     this.windowManager = new StreamWindowManager(this.context);
     this.windowManager.setOnWindowSizeChanged(() => this.recalculateXComponentSize());
@@ -1459,6 +1476,12 @@ struct StreamPage {
                   CustomKeyStore.setGameProfile(this.appId, name);
                 });
               }
+            },
+            onAiRecommend: async (gameName: string): Promise<AiKeyRecommendation> => {
+              if (!this.aiKeyService) {
+                throw new Error('AI 服务不可用（未连接到 Sunshine）');
+              }
+              return this.aiKeyService.getRecommendation(gameName);
             },
           })
         }

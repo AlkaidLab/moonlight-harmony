@@ -242,4 +242,86 @@ export class HttpClient {
       transferTimeout: config?.transferTimeout ?? HttpClient.DEFAULT_TRANSFER_TIMEOUT
     });
   }
+
+  /**
+   * 执行 POST 请求（JSON body）
+   * @param url 请求 URL
+   * @param body 请求体（JSON 字符串）
+   * @param config 配置选项
+   * @returns HTTP 响应
+   */
+  static async post(url: string, body: string, config?: HttpClientConfig): Promise<HttpResponse> {
+    const connectTimeout = config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT;
+    const transferTimeout = config?.transferTimeout ?? HttpClient.DEFAULT_TRANSFER_TIMEOUT;
+
+    console.debug(`HttpClient: POST ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms)`);
+
+    const securityConfig: rcp.SecurityConfiguration = {
+      remoteValidation: config?.skipServerValidation !== false ? 'skip' : 'system'
+    };
+
+    if (config?.clientCertPath && config?.clientKeyPath) {
+      securityConfig.certificate = {
+        type: 'PEM',
+        filePath: config.clientCertPath,
+        key: config.clientKeyPath
+      };
+    }
+
+    const sessionConfig: rcp.SessionConfiguration = {
+      requestConfiguration: {
+        security: securityConfig,
+        transfer: {
+          timeout: {
+            connectMs: connectTimeout,
+            transferMs: transferTimeout
+          }
+        }
+      }
+    };
+
+    const session = rcp.createSession(sessionConfig);
+
+    try {
+      const response = await session.post(url, body, {
+        'Content-Type': 'application/json'
+      });
+      console.debug(`HttpClient: POST 响应状态码 = ${response.statusCode}`);
+
+      if (!response.body) {
+        throw new Error('响应体为空');
+      }
+
+      const responseBody = StringUtil.arrayBufferToString(response.body);
+      return {
+        statusCode: response.statusCode ?? 0,
+        body: responseBody
+      };
+    } catch (err) {
+      const error = err as Error;
+      console.error(`HttpClient: POST 请求失败 - ${error.message}`);
+      throw new Error(`HTTP POST 请求失败: ${error.message}`);
+    } finally {
+      session.close();
+    }
+  }
+
+  /**
+   * 执行带客户端证书的 POST 请求
+   */
+  static async postWithClientCert(
+    url: string,
+    body: string,
+    certPath: string,
+    keyPath: string,
+    config?: HttpClientConfig
+  ): Promise<HttpResponse> {
+    return HttpClient.post(url, body, {
+      skipServerValidation: true,
+      clientCertPath: certPath,
+      clientKeyPath: keyPath,
+      connectTimeout: config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT,
+      transferTimeout: config?.transferTimeout ?? 120000
+    });
+  }
 }
