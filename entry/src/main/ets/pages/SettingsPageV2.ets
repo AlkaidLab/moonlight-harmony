@@ -142,6 +142,7 @@ struct SettingsPageV2 {
   @State fps: string = '60 FPS';
   @State customFps: number = 0;  // 自定义帧率值 (0 表示使用预设)
   @State bitrate: number = 20;
+  @State adaptiveBitrate: boolean = false;
   @State hostScale: number = 100;
   @State enableHdr: boolean = false;
   @State hdrMode: string = 'HDR10';  // 'HDR10' or 'HLG'
@@ -462,6 +463,7 @@ struct SettingsPageV2 {
       this.fps = await PreferencesUtil.get<string>(SettingsKeys.FPS, '60 FPS');
       this.customFps = await PreferencesUtil.get<number>(SettingsKeys.CUSTOM_FPS, 0);
       this.bitrate = await PreferencesUtil.get<number>(SettingsKeys.BITRATE, 0);
+      this.adaptiveBitrate = await this.loadBoolean(SettingsKeys.ADAPTIVE_BITRATE, false);
       this.hostScale = await PreferencesUtil.get<number>(SettingsKeys.HOST_SCALE, 100);
       this.enableHdr = await this.loadBoolean(SettingsKeys.ENABLE_HDR, false);
       this.hdrMode = await PreferencesUtil.get<string>(SettingsKeys.HDR_MODE, 'HDR10');
@@ -980,6 +982,17 @@ struct SettingsPageV2 {
                 onSliderChange: (value: number) => {
                   this.bitrate = value;
                   this.saveSetting(SettingsKeys.BITRATE, value);
+                }
+              },
+              {
+                title: '智能码率',
+                subtitle: this.adaptiveBitrate ? '根据网络状况自动调节码率' : '手动码率模式',
+                tooltip: '实时上报丢包率、延迟、帧率等网络指标，由本地 PID 控制器自动调节码率；连接基地阳光的米塔智能体时，服务端 LLM 可综合游戏类型和画面复杂度给出更精准的码率推荐',
+                type: 'toggle',
+                value: this.adaptiveBitrate,
+                action: () => {
+                  this.adaptiveBitrate = !this.adaptiveBitrate;
+                  this.saveSetting(SettingsKeys.ADAPTIVE_BITRATE, this.adaptiveBitrate);
                 }
               },
               {

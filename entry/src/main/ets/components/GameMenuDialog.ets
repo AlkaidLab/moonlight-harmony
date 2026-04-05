@@ -161,6 +161,7 @@ export struct GameMenuDialog {
   @State private currentBitrate: number = 0;
   @State private bitrateSliderValue: number = 0;
   @State private isAdjustingBitrate: boolean = false;
+  @State private abrEnabled: boolean = false;
   private bitrateDebounceTimer: number = -1;
 
   // 体感助手状态
@@ -210,6 +211,7 @@ export struct GameMenuDialog {
     this.shortcuts = this.shortcutManager.getShortcuts();
     this.currentBitrate = this.viewModel.getCurrentBitrate();
     this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
+    this.abrEnabled = this.viewModel.isAbrEnabled();
     this.controllerOpacityLocal = this.controllerOpacity;
     this.controllerScaleLocal = this.controllerScale;
     this.touchPassthroughLocal = this.touchPassthrough;
@@ -1204,48 +1206,87 @@ export struct GameMenuDialog {
       .width('100%')
       .padding({ left: 16, right: 16, top: 14, bottom: 4 })
 
-      Text('实时调整串流画质，需 Foundation Sunshine 支持')
-        .fontSize(OV_FONT_SM)
-        .fontColor(OV_TEXT_FAINT)
-        .width('100%')
-        .padding({ left: 16, right: 16, bottom: 8 })
-
-      Column() {
-        Slider({
-          value: this.bitrateSliderValue,
-          min: 0,
-          max: 1995,
-          step: 1,
-          style: SliderStyle.OutSet
-        })
-          .width('100%')
-          .blockColor(OV_ACCENT_PINK)
-          .trackColor(OV_BG_TRACK)
-          .selectedColor(OV_ACCENT_PINK)
-          .showSteps(false)
-          .showTips(false)
-          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
-          .onChange((value: number, mode: SliderChangeMode) => {
-            this.bitrateSliderValue = value;
-            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-              this.applyBitrateChange();
+      // 智能码率开关
+      Row() {
+        Text('智能码率')
+          .fontSize(OV_FONT_MD)
+          .fontColor(OV_TEXT_MEDIUM)
+        Text(this.abrEnabled ? (this.viewModel.getAbrStatusText() || '运行中') : '')
+          .fontSize(OV_FONT_SM)
+          .fontColor(OV_TEXT_FAINT)
+          .margin({ left: 6 })
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.abrEnabled })
+          .selectedColor(OV_ACCENT_BLUE)
+          .switchPointColor(OV_TEXT_WHITE)
+          .width(40)
+          .height(22)
+          .onChange(async (isOn: boolean) => {
+            this.abrEnabled = isOn;
+            if (isOn) {
+              await this.viewModel.startAbr('balanced');
+              promptAction.showToast({ message: '智能码率已启用', duration: 2000 });
+            } else {
+              await this.viewModel.stopAbr();
+              promptAction.showToast({ message: '智能码率已关闭，恢复手动设置', duration: 2000 });
+              this.currentBitrate = this.viewModel.getCurrentBitrate();
+              this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
             }
           })
-
-        Row() {
-          Text('0.5').fontSize(OV_FONT_SM).fontColor(OV_TEXT_DIM)
-          Blank()
-          Text(this.isAdjustingBitrate ? '调整中...' : this.formatBitrate(this.sliderValueToBitrate(this.bitrateSliderValue)))
-            .fontSize(OV_FONT_MD)
-            .fontColor(this.isAdjustingBitrate ? OV_TEXT_DIM : OV_ACCENT_PINK)
-            .fontWeight(FontWeight.Bold)
-          Blank()
-          Text('200').fontSize(OV_FONT_SM).fontColor(OV_TEXT_DIM)
-        }
-        .width('100%')
       }
       .width('100%')
-      .padding({ left: 14, right: 14, bottom: 12 })
+      .padding({ left: 16, right: 12, top: 2, bottom: 4 })
+
+      if (!this.abrEnabled) {
+        Text('实时调整串流画质，需 Foundation Sunshine 支持')
+          .fontSize(OV_FONT_SM)
+          .fontColor(OV_TEXT_FAINT)
+          .width('100%')
+          .padding({ left: 16, right: 16, bottom: 8 })
+
+        Column() {
+          Slider({
+            value: this.bitrateSliderValue,
+            min: 0,
+            max: 1995,
+            step: 1,
+            style: SliderStyle.OutSet
+          })
+            .width('100%')
+            .blockColor(OV_ACCENT_PINK)
+            .trackColor(OV_BG_TRACK)
+            .selectedColor(OV_ACCENT_PINK)
+            .showSteps(false)
+            .showTips(false)
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+            .onChange((value: number, mode: SliderChangeMode) => {
+              this.bitrateSliderValue = value;
+              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                this.applyBitrateChange();
+              }
+            })
+
+          Row() {
+            Text('0.5').fontSize(OV_FONT_SM).fontColor(OV_TEXT_DIM)
+            Blank()
+            Text(this.isAdjustingBitrate ? '调整中...' : this.formatBitrate(this.sliderValueToBitrate(this.bitrateSliderValue)))
+              .fontSize(OV_FONT_MD)
+              .fontColor(this.isAdjustingBitrate ? OV_TEXT_DIM : OV_ACCENT_PINK)
+              .fontWeight(FontWeight.Bold)
+            Blank()
+            Text('200').fontSize(OV_FONT_SM).fontColor(OV_TEXT_DIM)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ left: 14, right: 14, bottom: 12 })
+      } else {
+        Text('网络自适应调节中，丢包升高自动降码率')
+          .fontSize(OV_FONT_SM)
+          .fontColor(OV_TEXT_FAINT)
+          .width('100%')
+          .padding({ left: 16, right: 16, bottom: 14 })
+      }
     }
     .width(OV_CARD_WIDTH)
     .cardStyle()

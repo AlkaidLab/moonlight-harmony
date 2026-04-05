@@ -20,6 +20,7 @@ import { GamepadManager } from './GamepadManager';
 import { MoonlightButton } from './GamepadTypes';
 import { MicrophoneStream } from './microphone/MicrophoneStream';
 import { AudioVibrationService } from './AudioVibrationService';
+import { AdaptiveBitrateService } from './AdaptiveBitrateService';
 import {
   MoonBridge,
   CONTROLLER_TYPE_UNKNOWN,
@@ -387,6 +388,12 @@ export class StreamingSession {
   private abilityContext: common.UIAbilityContext | undefined = undefined;
 
   // ---------------------------------------------------------------------------
+  // 成员变量 — 智能码率
+  // ---------------------------------------------------------------------------
+
+  private abrService: AdaptiveBitrateService | null = null;
+
+  // ---------------------------------------------------------------------------
   // 构造函数
   // ---------------------------------------------------------------------------
 
@@ -559,6 +566,52 @@ export class StreamingSession {
     } catch {
       return false;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 智能码率 (ABR)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 启动智能码率调节
+   */
+  async startAbr(mode: string): Promise<void> {
+    if (!this.nvHttp || !this.config) return;
+    if (this.abrService) return;  // 已启动
+
+    this.abrService = new AdaptiveBitrateService(this.nvHttp);
+    await this.abrService.checkCapabilities();
+    await this.abrService.start(
+      this.config.bitrate,
+      mode,
+      () => this.getStats(),
+      async (bitrate: number, _reason: string): Promise<boolean> => {
+        return this.setBitrate(bitrate);
+      }
+    );
+  }
+
+  /**
+   * 停止智能码率调节
+   */
+  async stopAbr(): Promise<void> {
+    if (!this.abrService) return;
+    await this.abrService.stop();
+    this.abrService = null;
+  }
+
+  /**
+   * 智能码率是否启用
+   */
+  isAbrEnabled(): boolean {
+    return this.abrService?.isEnabled() ?? false;
+  }
+
+  /**
+   * 获取 ABR 状态文本（用于性能面板）
+   */
+  getAbrStatusText(): string {
+    return this.abrService?.getStatusText() ?? '';
   }
 
   /**
@@ -1336,6 +1389,7 @@ export class StreamingSession {
   private async cleanup(): Promise<void> {
     console.info('清理串流资源');
     this.stopMicrophone();
+    await this.stopAbr();
     this.nativeModule.setPerformanceModeEnabled(false);
     try {
       this.nativeModule.stopConnection();

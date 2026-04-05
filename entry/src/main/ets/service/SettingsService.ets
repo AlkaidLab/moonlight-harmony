@@ -125,6 +125,8 @@ export class SettingsKeys {
   static readonly ENABLE_SYNC_DECODE: string = 'settings_enable_sync_decode';  // 同步解码模式
   static readonly ENABLE_VRR: string = 'settings_enable_vrr';  // VRR 可变刷新率模式
   static readonly ENABLE_VSYNC: string = 'settings_enable_vsync';
+  static readonly ADAPTIVE_BITRATE: string = 'settings_adaptive_bitrate';  // 智能码率调节
+  static readonly ABR_MODE: string = 'settings_abr_mode';  // ABR 模式: balanced | quality | lowLatency
   static readonly ENABLE_POST_PROCESS: string = 'settings_enable_post_process';  // 后处理滤镜
   static readonly UPSCALE_MODE: string = 'settings_upscale_mode';               // 超分辨率模式
   static readonly UPSCALE_SHARPNESS: string = 'settings_upscale_sharpness';     // 超分锐度 (0-100)

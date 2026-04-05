@@ -380,6 +380,14 @@ export class StreamViewModel {
       
       // 查询实际生效的超分引擎
       this.activeUpscaleMode = this.streamingSession?.getActiveUpscaleMode() ?? 0;
+
+      // 自动启动智能码率（如果用户在设置中启用了）
+      const abrEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.ADAPTIVE_BITRATE, false);
+      if (abrEnabled) {
+        const abrMode = await PreferencesUtil.get<string>(SettingsKeys.ABR_MODE, 'balanced');
+        await this.startAbr(abrMode);
+        console.info(`StreamViewModel: 智能码率已自动启动 (mode=${abrMode})`);
+      }
       
     } catch (err) {
       this.connectionState = StreamConnectionState.ERROR;
@@ -587,6 +595,28 @@ export class StreamViewModel {
       this.streamConfig.bitrate = bitrateKbps;
     }
     return success;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 智能码率 (ABR)
+  // ---------------------------------------------------------------------------
+
+  async startAbr(mode: string): Promise<void> {
+    if (!this.streamingSession) return;
+    await this.streamingSession.startAbr(mode);
+  }
+
+  async stopAbr(): Promise<void> {
+    if (!this.streamingSession) return;
+    await this.streamingSession.stopAbr();
+  }
+
+  isAbrEnabled(): boolean {
+    return this.streamingSession?.isAbrEnabled() ?? false;
+  }
+
+  getAbrStatusText(): string {
+    return this.streamingSession?.getAbrStatusText() ?? '';
   }
   
   /**

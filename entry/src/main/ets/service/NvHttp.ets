@@ -932,6 +932,103 @@ export class NvHttp {
     return '';
   }
 
+  // ---------------------------------------------------------------------------
+  // 智能码率 (ABR) API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 查询服务端 ABR 能力
+   */
+  async getAbrCapabilities(): Promise<AbrCapabilities> {
+    try {
+      const baseUrl = await this.getHttpsBaseUrl();
+      const url = `${baseUrl}/api/abr/capabilities`;
+      const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+      return JSON.parse(response) as AbrCapabilities;
+    } catch {
+      return { supported: false, version: 0, features: [] };
+    }
+  }
+
+  /**
+   * 通知服务端启用/关闭智能码率
+   */
+  async setAbrMode(config: AbrConfig): Promise<boolean> {
+    try {
+      const baseUrl = await this.getHttpsBaseUrl();
+      const url = `${baseUrl}/api/abr`;
+
+      if (!this.certFilePath || !this.keyFilePath) return false;
+
+      const response = await HttpClient.postWithClientCert(
+        url,
+        JSON.stringify(config),
+        this.certFilePath,
+        this.keyFilePath,
+        { transferTimeout: 5000 }
+      );
+      return response.statusCode === 200;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 上报客户端网络指标（每秒调用）
+   */
+  async reportNetworkFeedback(feedback: NetworkFeedback): Promise<AbrAction | null> {
+    try {
+      const baseUrl = await this.getHttpsBaseUrl();
+      const url = `${baseUrl}/api/abr/feedback`;
+
+      if (!this.certFilePath || !this.keyFilePath) return null;
+
+      const response = await HttpClient.postWithClientCert(
+        url,
+        JSON.stringify(feedback),
+        this.certFilePath,
+        this.keyFilePath,
+        { transferTimeout: 3000 }
+      );
+      if (response.statusCode === 200) {
+        return JSON.parse(response.body) as AbrAction;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+}
+
+// ---------------------------------------------------------------------------
+// ABR 类型定义
+// ---------------------------------------------------------------------------
+
+export interface AbrCapabilities {
+  supported: boolean;
+  version: number;
+  features: string[];
+}
+
+export interface AbrConfig {
+  enabled: boolean;
+  minBitrate: number;
+  maxBitrate: number;
+  mode: string;  // 'quality' | 'balanced' | 'lowLatency'
+}
+
+export interface NetworkFeedback {
+  packetLoss: number;
+  rttMs: number;
+  decodeFps: number;
+  droppedFrames: number;
+  currentBitrate: number;
+}
+
+export interface AbrAction {
+  newBitrate?: number;
+  reason?: string;
 }
 
 export interface AppEntry {
