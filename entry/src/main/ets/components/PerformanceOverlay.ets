@@ -118,10 +118,7 @@ export struct PerformanceOverlay {
     this.enabledItemsList = Array.from(this.viewModel.overlayState.config.enabledItems);
     
     // 如果当前正好是整刻钟，立即显示时钟（避免等待第一个定时器 tick）
-    if (new Date().getMinutes() % 15 === 0) {
-      this.showMiniClock = true;
-      this.updateClockAngles();
-    }
+    this.updateClock();
     
     // 启动数据更新定时器
     this.startUpdateTimer();
@@ -181,81 +178,88 @@ export struct PerformanceOverlay {
   private startUpdateTimer(): void {
     let batteryUpdateCounter = 0;
     this.updateTimer = setInterval(() => {
-      // 从 ViewModel 获取 session 更新性能数据
-      const session = this.viewModel.getSession();
-      if (session) {
-        const stats = session.getStats();
-        this.perfFps = stats.fps;
-        this.perfRenderedFps = stats.renderedFps;
-        this.perfBitrate = stats.bitrate;
-        this.perfLatency = stats.latency;
-        this.perfNetworkLatency = stats.networkLatency;
-        this.perfHostLatency = stats.hostLatency;
-        this.perfPacketLoss = stats.packetLoss;
-
-        // 🎃 愚人节彩蛋：负延迟串流™
-        if (isAprilFools()) {
-          if (stats.latency > 0) {
-            this.perfLatency = -(stats.latency * (0.3 + Math.random() * 0.4));
-          }
-          if (stats.networkLatency > 0) {
-            this.perfNetworkLatency = -Math.ceil(stats.networkLatency * (0.2 + Math.random() * 0.3));
-          }
-          if (stats.hostLatency > 0) {
-            this.perfHostLatency = -(stats.hostLatency * (0.3 + Math.random() * 0.3));
-          }
-          if (!this.aprilFoolsToastShown) {
-            this.aprilFoolsToastShown = true;
-            promptAction.showToast({
-              message: '🔮 负延迟串流™ 已激活\n画面将在你操作之前到达',
-              duration: 5000
-            });
-          }
-        }
-
-        // 延迟查询超分引擎（解码器初始化后才有值）
-        if (this.perfUpscaleMode === 0) {
-          const mode = session.getActiveUpscaleMode();
-          if (mode > 0) {
-            this.perfUpscaleMode = mode;
-          }
-        }
-      }
-      
-      // 整刻钟时钟显示（直接同步状态，不依赖过渡检测）
-      const now = new Date();
-      const isClockMinute = now.getMinutes() % 15 === 0;
-      if (isClockMinute) {
-        if (!this.showMiniClock) {
-          this.showMiniClock = true;
-          this.triggerClockBounce();
-        }
-        this.updateClockAngles();
-      } else if (this.showMiniClock) {
-        this.showMiniClock = false;
-      }
-
-      // 每15秒更新电池
+      this.updateClock();
+      this.updateSessionStats();
       batteryUpdateCounter++;
       if (batteryUpdateCounter >= 15) {
         batteryUpdateCounter = 0;
-        try {
-          this.perfBatteryLevel = batteryInfo.batterySOC;
-          this.perfIsCharging = batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE ||
-            batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.FULL;
-        } catch (e) {
-          // 忽略电池信息获取失败
-        }
+        this.updateBattery();
       }
     }, 1000);
     
     // 初始化电池信息
+    this.updateBattery();
+  }
+
+  /** 整刻钟时钟显示/隐藏 */
+  private updateClock(): void {
+    const isClockMinute = new Date().getMinutes() % 15 === 0;
+    if (isClockMinute) {
+      if (!this.showMiniClock) {
+        this.showMiniClock = true;
+        this.triggerClockBounce();
+      }
+      this.updateClockAngles();
+    } else if (this.showMiniClock) {
+      this.showMiniClock = false;
+    }
+  }
+
+  /** 从 session 拉取性能数据（try-catch 防止 native 异常中断定时器） */
+  private updateSessionStats(): void {
+    const session = this.viewModel.getSession();
+    if (!session) {
+      return;
+    }
+    try {
+      const stats = session.getStats();
+      this.perfFps = stats.fps;
+      this.perfRenderedFps = stats.renderedFps;
+      this.perfBitrate = stats.bitrate;
+      this.perfLatency = stats.latency;
+      this.perfNetworkLatency = stats.networkLatency;
+      this.perfHostLatency = stats.hostLatency;
+      this.perfPacketLoss = stats.packetLoss;
+
+      // 🎃 愚人节彩蛋：负延迟串流™
+      if (isAprilFools()) {
+        if (stats.latency > 0) {
+          this.perfLatency = -(stats.latency * (0.3 + Math.random() * 0.4));
+        }
+        if (stats.networkLatency > 0) {
+          this.perfNetworkLatency = -Math.ceil(stats.networkLatency * (0.2 + Math.random() * 0.3));
+        }
+        if (stats.hostLatency > 0) {
+          this.perfHostLatency = -(stats.hostLatency * (0.3 + Math.random() * 0.3));
+        }
+        if (!this.aprilFoolsToastShown) {
+          this.aprilFoolsToastShown = true;
+          promptAction.showToast({
+            message: '🔮 负延迟串流™ 已激活\n画面将在你操作之前到达',
+            duration: 5000
+          });
+        }
+      }
+
+      // 延迟查询超分引擎（解码器初始化后才有值）
+      if (this.perfUpscaleMode === 0) {
+        const mode = session.getActiveUpscaleMode();
+        if (mode > 0) {
+          this.perfUpscaleMode = mode;
+        }
+      }
+    } catch (e) {
+      // 防止 native 调用异常中断定时器回调
+    }
+  }
+
+  private updateBattery(): void {
     try {
       this.perfBatteryLevel = batteryInfo.batterySOC;
       this.perfIsCharging = batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE ||
         batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.FULL;
     } catch (e) {
-      // 忽略
+      // 忽略电池信息获取失败
     }
   }
   
