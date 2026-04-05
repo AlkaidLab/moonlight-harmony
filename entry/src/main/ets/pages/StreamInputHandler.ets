@@ -62,6 +62,8 @@ export class StreamInputHandler {
   private static readonly KEYCODE_ESCAPE: number = 2070;
   /** 当前用于打开串流菜单的按键码（可通过设置替换为 F1/F12/~ 等） */
   private menuKeyCode: number = 2070; // 默认 ESC
+  /** ESC 菜单功能是否启用（设置页开关） */
+  private escMenuEnabled: boolean = true;
   private onShowStreamMenu: (() => void) | null = null;
 
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
@@ -112,6 +114,13 @@ export class StreamInputHandler {
         this.menuKeyCode = StreamInputHandler.KEYCODE_ESCAPE;
         break;
     }
+  }
+
+  /**
+   * 设置 ESC 菜单功能是否启用
+   */
+  setEscMenuEnabled(enabled: boolean): void {
+    this.escMenuEnabled = enabled;
   }
 
   /**
@@ -379,7 +388,7 @@ export class StreamInputHandler {
     }
 
     // 菜单键双击检测（可配置按键，默认 ESC，2in1 物理键盘用于打开串流菜单）
-    if (keyCode === this.menuKeyCode) {
+    if (this.escMenuEnabled && keyCode === this.menuKeyCode) {
       if (this.checkEscDoubleTap(event.type === KeyType.Down)) {
         return true; // 事件被消费（第二次按键）
       }
@@ -457,7 +466,7 @@ export class StreamInputHandler {
       }
 
       // 3.5 菜单键双击检测（同 handleKeyEvent 中的逻辑，拦截器路径也需要处理）
-      if (keyCode === this.menuKeyCode) {
+      if (this.escMenuEnabled && keyCode === this.menuKeyCode) {
         if (this.checkEscDoubleTap(isPressed)) {
           return; // 事件被消费（第二次按键）
         }

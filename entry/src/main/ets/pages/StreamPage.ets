@@ -1087,6 +1087,8 @@ struct StreamPage {
       // 配置 ESC 菜单按键（可替换为 F1/F12/~ 等）
       const escMenuKey = await PreferencesUtil.get<string>(SettingsKeys.ESC_MENU_KEY, 'ESC');
       this.inputHandler.setMenuKey(escMenuKey);
+      const enableEscMenu = await PreferencesUtil.get<boolean>(SettingsKeys.ENABLE_ESC_MENU, true);
+      this.inputHandler.setEscMenuEnabled(enableEscMenu);
 
       // 初始化自定义按键存储
       await this.customKeyManager?.init();

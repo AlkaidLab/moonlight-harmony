@@ -15,6 +15,7 @@
  */
 import nativeLib from 'libmoonlight_nativelib.so';
 import { PointXY } from './PanZoomHandler';
+import { TrackpadGestureHandler, TrackpadInputSink, TrackpadConfig } from './TrackpadGestureHandler';
 import {
   BUTTON_ACTION_PRESS,
   BUTTON_ACTION_RELEASE,
@@ -85,6 +86,44 @@ export interface TouchInputConfig {
 }
 
 /**
+ * NativeInputModule → TrackpadInputSink 适配器
+ */
+class NativeTrackpadSink implements TrackpadInputSink {
+  private native: NativeInputModule;
+
+  constructor(native: NativeInputModule) {
+    this.native = native;
+  }
+
+  sendMouseMove(deltaX: number, deltaY: number): void {
+    this.native.sendMouseMove(deltaX, deltaY);
+  }
+
+  sendMouseButton(buttonEvent: number, mouseButton: number): void {
+    this.native.sendMouseButton(buttonEvent, mouseButton);
+  }
+
+  sendMouseHighResScroll(scrollAmount: number): void {
+    this.native.sendMouseHighResScroll(scrollAmount);
+  }
+}
+
+/**
+ * NativeTrackpadConfig - TrackpadConfig 的具名实现
+ */
+class NativeTrackpadConfig implements TrackpadConfig {
+  sensitivity: number;
+  tapTimeThreshold: number;
+  enableDoubleClickDrag: boolean;
+
+  constructor(sensitivity: number, tapTimeThreshold: number, enableDoubleClickDrag: boolean) {
+    this.sensitivity = sensitivity;
+    this.tapTimeThreshold = tapTimeThreshold;
+    this.enableDoubleClickDrag = enableDoubleClickDrag;
+  }
+}
+
+/**
  * TouchInputHandler - 触摸输入处理器
  */
 export class TouchInputHandler {
@@ -103,35 +142,9 @@ export class TouchInputHandler {
   
   /** HarmonyOS HistoricalPoint.force 最大值，用于归一化 */
   private static readonly FORCE_MAX = 65535.0;
-  
-  // ====== 双指手势状态（用于触控板模式的右键和滚轮） ======
-  /** 双指按下时的时间戳 */
-  private twoFingerDownTime: number = 0;
-  /** 第一根手指抬起的时间戳 */
-  private firstFingerUpTime: number = 0;
-  /** 是否有待处理的双指轻触（等待第二根手指抬起确认） */
-  private twoFingerTapPending: boolean = false;
-  /** 双指按下后是否发生了明显移动（若移动则为滚轮，不再是右键轻触） */
-  private twoFingerMoved: boolean = false;
-  /** 双指按下时第一根手指的起始位置 */
-  private twoFingerStartX: number = 0;
-  private twoFingerStartY: number = 0;
-  /** 当前触摸点数量（实时跟踪） */
-  private activePointerCount: number = 0;
-  /** 本次手势中出现过的最大触摸点数量 */
-  private maxPointerCountInGesture: number = 0;
-  /** 双指滚轮模式已确认 */
-  private confirmedScroll: boolean = false;
-  /** 第二根手指的最后位置（用于计算滚轮增量） */
-  private secondFingerLastY: number = 0;
 
-  // 双指手势常量
-  /** 双指轻触右键的时间阈值（ms）—— 双指按下到抬起在此时间内视为轻触 */
-  private twoFingerTapThreshold: number = 250;
-  /** 双指移动阈值（px）—— 超过此距离视为滚轮，不再是轻触 */
-  private static readonly TWO_FINGER_MOVE_THRESHOLD = 30;
-  /** 滚轮速度因子 */
-  private static readonly SCROLL_SPEED_FACTOR = 5;
+  /** 触控板手势处理器（对齐 Android RelativeTouchContext） */
+  private trackpad: TrackpadGestureHandler;
 
   // ====== 鼠标模式状态（绝对定位 + 死区 + 长按右键，对齐 Android AbsoluteTouchContext） ======
   /** 主手指按下位置 */
@@ -200,13 +213,17 @@ export class TouchInputHandler {
       clickThreshold: config?.clickThreshold ?? TouchInputHandler.DEFAULT_CLICK_THRESHOLD,
       clickTimeThreshold: config?.clickTimeThreshold ?? TouchInputHandler.DEFAULT_CLICK_TIME_THRESHOLD,
     };
+    this.trackpad = new TrackpadGestureHandler(
+      new NativeTrackpadSink(this.nativeInput),
+      new NativeTrackpadConfig(this.config.sensitivity!, 250, false),
+    );
   }
 
   /**
    * 配置双击时间阈值（从设置读取后调用）
    */
   setDoubleTapTimeThreshold(threshold: number): void {
-    this.twoFingerTapThreshold = threshold;
+    this.trackpad.updateConfig(undefined, threshold, undefined);
     this.mouseDoubleTapTime = threshold;
   }
 
@@ -214,6 +231,7 @@ export class TouchInputHandler {
    * 配置是否启用双击拖动（从设置读取后调用）
    */
   setEnableDoubleClickDrag(enable: boolean): void {
+    this.trackpad.updateConfig(undefined, undefined, enable);
     this.enableDoubleClickDrag = enable;
   }
 
@@ -282,6 +300,7 @@ export class TouchInputHandler {
    */
   setSensitivity(sensitivity: number): void {
     this.config.sensitivity = sensitivity;
+    this.trackpad.updateConfig(sensitivity, undefined, undefined);
   }
   
   /**
@@ -307,9 +326,9 @@ export class TouchInputHandler {
       return;
     }
     
-    // TRACKPAD 模式：支持多指手势（双指右键 + 双指滚轮）
+    // TRACKPAD 模式：委托给 TrackpadGestureHandler
     if (this.mode === TouchInputMode.TRACKPAD) {
-      this.handleTrackpadEvent(event);
+      this.trackpad.handleEvent(event);
       return;
     }
     
@@ -418,205 +437,6 @@ export class TouchInputHandler {
     }
   }
   
-  // ====== 触控板模式多指手势处理 ======
-
-  /**
-   * 处理触控板模式的触摸事件（支持多指手势）
-   * 
-   * 手势逻辑：
-   * - 单指移动 → 移动光标
-   * - 单指轻触 → 左键点击
-   * - 双指轻触 → 右键点击（参考 Android moonlight 的 TWO_FINGER_TAP 实现）
-   * - 双指滑动 → 滚轮
-   * - 三指轻触 → 可扩展（如弹出键盘）
-   */
-  private handleTrackpadEvent(event: TouchEvent): void {
-    const touches = event.touches;
-    const changedTouches = event.changedTouches;
-    
-    switch (event.type) {
-      case TouchType.Down:
-        this.handleTrackpadDown(touches, changedTouches, event);
-        break;
-      case TouchType.Move:
-        this.handleTrackpadMove(touches, event);
-        break;
-      case TouchType.Up:
-      case TouchType.Cancel:
-        this.handleTrackpadUp(touches, changedTouches, event);
-        break;
-    }
-  }
-
-  /**
-   * 触控板模式 - 按下
-   */
-  private handleTrackpadDown(touches: TouchObject[], changedTouches: TouchObject[], event: TouchEvent): void {
-    // 更新触摸点计数
-    this.activePointerCount = touches.length;
-    if (this.activePointerCount > this.maxPointerCountInGesture) {
-      this.maxPointerCountInGesture = this.activePointerCount;
-    }
-
-    // 为每个新按下的触摸点记录状态
-    for (const touch of changedTouches) {
-      this.touchStates.set(touch.id, {
-        startX: touch.x,
-        startY: touch.y,
-        lastX: touch.x,
-        lastY: touch.y,
-        startTime: Date.now()
-      });
-    }
-
-    // 双指按下：记录起始信息用于后续判断（右键轻触 or 滚轮）
-    if (touches.length === 2) {
-      this.twoFingerDownTime = Date.now();
-      this.twoFingerStartX = touches[0].x;
-      this.twoFingerStartY = touches[0].y;
-      this.twoFingerMoved = false;
-      this.twoFingerTapPending = false;
-      this.confirmedScroll = false;
-      this.secondFingerLastY = touches[1].y;
-    }
-  }
-
-  /**
-   * 触控板模式 - 移动
-   */
-  private handleTrackpadMove(touches: TouchObject[], event: TouchEvent): void {
-    if (touches.length === 1 && this.maxPointerCountInGesture === 1) {
-      // ---- 单指移动：移动光标 ----
-      const touch = touches[0];
-      const state = this.touchStates.get(touch.id);
-      if (!state) return;
-
-      const deltaX = touch.x - state.lastX;
-      const deltaY = touch.y - state.lastY;
-      state.lastX = touch.x;
-      state.lastY = touch.y;
-
-      const sensitivity = this.config.sensitivity!;
-      this.nativeInput.sendMouseMove(
-        Math.round(deltaX * sensitivity),
-        Math.round(deltaY * sensitivity)
-      );
-    } else if (touches.length === 2) {
-      // ---- 双指移动：检测是否超出移动阈值 ----
-      if (!this.twoFingerMoved) {
-        const dx = touches[0].x - this.twoFingerStartX;
-        const dy = touches[0].y - this.twoFingerStartY;
-        if (Math.sqrt(dx * dx + dy * dy) > TouchInputHandler.TWO_FINGER_MOVE_THRESHOLD) {
-          this.twoFingerMoved = true;
-          this.confirmedScroll = true;
-        }
-      }
-
-      // 已确认为滚轮模式：用第一根手指的 Y 轴增量作为滚轮值
-      if (this.confirmedScroll) {
-        const touch = touches[0];
-        const state = this.touchStates.get(touch.id);
-        if (state) {
-          const deltaY = touch.y - state.lastY;
-          state.lastX = touch.x;
-          state.lastY = touch.y;
-
-          if (Math.abs(deltaY) > 0) {
-            // 触感方向：手指下滑 → deltaY > 0 → 页面向下滚 → scrollAmount 为负值
-            const scrollAmount = Math.round(-deltaY * TouchInputHandler.SCROLL_SPEED_FACTOR);
-            this.nativeInput.sendMouseHighResScroll(scrollAmount);
-          }
-        }
-
-        // 同步更新第二根手指的 lastX/lastY
-        const secondState = this.touchStates.get(touches[1].id);
-        if (secondState) {
-          secondState.lastX = touches[1].x;
-          secondState.lastY = touches[1].y;
-        }
-      }
-    }
-  }
-
-  /**
-   * 触控板模式 - 抬起
-   */
-  private handleTrackpadUp(touches: TouchObject[], changedTouches: TouchObject[], event: TouchEvent): void {
-    const now = Date.now();
-    // 计算剩余触摸点数量
-    // HarmonyOS ArkUI 的 touches 在 Up 事件中不包含正在抬起的手指（类似 Web 标准），
-    // 因此用已追踪的 activePointerCount 减去抬起数量来计算，确保计算一致。
-    const remainingPointers = Math.max(0, this.activePointerCount - changedTouches.length);
-
-    // ---- 双指右键检测（仿 Android Game.java 逻辑）----
-    // 情况A：从2指变为1指（第一根手指抬起）
-    if (this.activePointerCount === 2 && remainingPointers === 1 && !this.twoFingerMoved) {
-      const elapsed = now - this.twoFingerDownTime;
-      if (elapsed < this.twoFingerTapThreshold) {
-        // 快速双指轻触：立即发送右键
-        this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_RIGHT);
-        setTimeout(() => {
-          this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
-        }, 50);
-        this.twoFingerTapPending = false;
-        this.twoFingerMoved = true; // 防止重复触发
-        this.resetTrackpadGesture(changedTouches);
-        this.activePointerCount = remainingPointers;
-        return;
-      } else {
-        // 非快速轻触，进入 pending 状态等待最后一根手指也抬起
-        this.firstFingerUpTime = now;
-        this.twoFingerTapPending = true;
-      }
-    }
-
-    // 情况B：从1指变为0指（最后一根手指抬起）
-    if (remainingPointers === 0) {
-      if (this.twoFingerTapPending && !this.twoFingerMoved) {
-        const elapsed = now - this.firstFingerUpTime;
-        if (elapsed < this.twoFingerTapThreshold) {
-          // 两根手指相继快速抬起：发送右键
-          this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_RIGHT);
-          setTimeout(() => {
-            this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
-          }, 50);
-          this.twoFingerTapPending = false;
-          this.resetTrackpadGesture(changedTouches);
-          this.activePointerCount = 0;
-          this.maxPointerCountInGesture = 0;
-          return;
-        }
-      }
-      this.twoFingerTapPending = false;
-
-      // ---- 单指轻触左键检测 ----
-      if (this.maxPointerCountInGesture === 1) {
-        for (const touch of changedTouches) {
-          const state = this.touchStates.get(touch.id);
-          if (state) {
-            this.checkForClick(touch, state);
-          }
-        }
-      }
-
-      // 手势结束，重置所有状态
-      this.maxPointerCountInGesture = 0;
-    }
-
-    // 清理抬起的触摸点
-    this.resetTrackpadGesture(changedTouches);
-    this.activePointerCount = remainingPointers;
-  }
-
-  /**
-   * 清理已抬起触摸点的状态
-   */
-  private resetTrackpadGesture(changedTouches: TouchObject[]): void {
-    for (const touch of changedTouches) {
-      this.touchStates.delete(touch.id);
-    }
-  }
-
   // ====== MOUSE 模式：绝对定位（对齐 Android AbsoluteTouchContext） ======
 
   /**
@@ -1110,27 +930,6 @@ export class TouchInputHandler {
   }
   
   /**
-   * 检测并处理点击（仅在移动距离很小时触发）
-   * 注意：只有当触摸几乎没有移动时才视为点击，避免移动操作被误判
-   */
-  private checkForClick(touch: TouchObject, state: TouchState): void {
-    // 使用起始位置和结束位置计算总移动距离
-    const moveDistance = Math.abs(touch.x - state.startX) + Math.abs(touch.y - state.startY);
-    
-    // 检查触摸持续时间
-    const touchDuration = Date.now() - state.startTime;
-    
-    // 只有当移动距离很小且触摸时间较短时才视为点击
-    // 长时间触摸+小移动可能是用户在等待/思考，不应视为点击
-    if (moveDistance < this.config.clickThreshold! && touchDuration < this.config.clickTimeThreshold!) {
-      this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
-      setTimeout(() => {
-        this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
-      }, 50);
-    }
-  }
-  
-  /**
    * 发送右键点击
    */
   sendRightClick(): void {
@@ -1154,6 +953,7 @@ export class TouchInputHandler {
    * 清理资源
    */
   dispose(): void {
+    this.trackpad.dispose();
     this.touchStates.clear();
     this.lastForce.clear();
     this.lastSize.clear();
