@@ -29,6 +29,10 @@ export class PerfSymbols {
   static readonly DECODE_NORMAL: Resource = $r('app.media.perf_timer');
   static readonly HOST: Resource = $r('app.media.perf_monitor');
   static readonly BATTERY: Resource = $r('app.media.perf_battery');
+  static readonly BATTERY_FULL: Resource = $r('app.media.perf_battery_full');
+  static readonly BATTERY_MID: Resource = $r('app.media.perf_battery_mid');
+  static readonly BATTERY_LOW: Resource = $r('app.media.perf_battery_low');
+  static readonly BATTERY_EMPTY: Resource = $r('app.media.perf_battery_empty');
   static readonly CHARGING: Resource = $r('app.media.perf_charging');
 }
 
@@ -291,6 +295,16 @@ export function getBatteryColor(level: number): string {
   if (level > 50) return '#90EE90';  // 浅绿色 - 充足
   if (level > 20) return '#FFA500';  // 橙色 - 偏低
   return '#FF6B6B';  // 红色 - 不足
+}
+
+/**
+ * 根据电量等级获取对应的电池图标
+ */
+export function getBatteryIcon(level: number): Resource {
+  if (level > 75) return PerfSymbols.BATTERY_FULL;
+  if (level > 50) return PerfSymbols.BATTERY_MID;
+  if (level > 20) return PerfSymbols.BATTERY_LOW;
+  return PerfSymbols.BATTERY_EMPTY;
 }
 
 /**

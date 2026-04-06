@@ -20,7 +20,7 @@ import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig 
 import {
   PerformanceItem, PerformanceData, PerfLabels, PerfSymbols,
   getMoonPhaseIcon, formatDataRate, getDecoderString,
-  getPacketLossColor, getLatencyColor, getBatteryColor,
+  getPacketLossColor, getLatencyColor, getBatteryColor, getBatteryIcon,
   calculateSnapPosition, findNearestSnapPosition,
   getPerformanceItemInfo, getSnapBorderRadius, SnapPosition,
   isAprilFools
@@ -636,7 +636,7 @@ export struct PerformanceOverlay {
     // 电池行
     if (this.enabledItemsList.includes(PerformanceItem.BATTERY)) {
       Row() {
-        this.PerfIcon(this.perfIsCharging ? PerfSymbols.CHARGING : PerfSymbols.BATTERY, 14, getBatteryColor(this.perfBatteryLevel))
+        this.PerfIcon(this.perfIsCharging ? PerfSymbols.CHARGING : getBatteryIcon(this.perfBatteryLevel), 14, getBatteryColor(this.perfBatteryLevel))
         Text(` ${this.perfBatteryLevel}`)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
@@ -755,7 +755,7 @@ export struct PerformanceOverlay {
       
       // 电池
       if (this.enabledItemsList.includes(PerformanceItem.BATTERY)) {
-        this.PerfIcon(this.perfIsCharging ? PerfSymbols.CHARGING : PerfSymbols.BATTERY, 13, getBatteryColor(this.perfBatteryLevel))
+        this.PerfIcon(this.perfIsCharging ? PerfSymbols.CHARGING : getBatteryIcon(this.perfBatteryLevel), 13, getBatteryColor(this.perfBatteryLevel))
         Text(` ${this.perfBatteryLevel}%`)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
