@@ -901,8 +901,6 @@ export class NvHttp {
       max_tokens: maxTokens,
     });
 
-    console.info(`NvHttp: AI completion request to ${url}`);
-
     if (!this.certFilePath || !this.keyFilePath) {
       throw new Error('客户端证书不可用，无法调用 AI 端点');
     }
@@ -930,6 +928,31 @@ export class NvHttp {
       throw new Error(`AI 错误: ${result.error.message ?? JSON.stringify(result.error)}`);
     }
     return '';
+  }
+
+  /**
+   * 轻量级检测 AI 代理是否可用（不消耗 token）
+   * 发送一个空 messages 请求，仅检查 HTTP 状态码
+   */
+  async checkAiAvailable(): Promise<boolean> {
+    const baseUrl = await this.getHttpsBaseUrl();
+    const url = `${baseUrl}/ai/completions`;
+    const body = JSON.stringify({ messages: [], max_tokens: 1 });
+
+    if (!this.certFilePath || !this.keyFilePath) {
+      return false;
+    }
+
+    try {
+      const response = await HttpClient.postWithClientCert(url, body, this.certFilePath, this.keyFilePath, {
+        transferTimeout: 5000
+      });
+      // 403 = AI 未启用, 404 = 版本不支持
+      // 200 或其他非 403/404 状态码说明 AI 代理已启用（即使 LLM 端可能报错）
+      return response.statusCode !== 403 && response.statusCode !== 404;
+    } catch (_) {
+      return false;
+    }
   }
 
   // ---------------------------------------------------------------------------

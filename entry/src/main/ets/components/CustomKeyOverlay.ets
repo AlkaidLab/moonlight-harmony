@@ -176,6 +176,9 @@ export struct CustomKeyOverlay {
   @State private aiError: string = '';
   @State private aiDescription: string = '';
   @State private aiPreviewKeys: CustomKeyDef[] = [];
+  @State private aiTerminalLogs: string[] = [];
+  @State private aiElapsedSec: number = 0;
+  private aiLoadingTimer: number = 0;
   /** AI 推荐回调（由 StreamPage 注入，提供 NvHttp 访问） */
   onAiRecommend: (gameName: string) => Promise<AiKeyRecommendation> = () => {
     return Promise.reject(new Error('AI 推荐不可用'));
@@ -439,9 +442,14 @@ export struct CustomKeyOverlay {
           this.SharePanel()
         }
 
-        // AI 推荐面板
+        // AI 推荐面板 - 锚定底部
         if (this.showAiPanel) {
-          this.AiPanel()
+          Column() {
+            Blank()
+            this.AiPanel()
+          }
+          .width('100%')
+          .height('100%')
         }
 
         // 科幻扫描线取色动画
@@ -1109,9 +1117,37 @@ export struct CustomKeyOverlay {
     this.aiError = '';
     this.aiPreviewKeys = [];
     this.aiDescription = '';
+    this.aiElapsedSec = 0;
+    this.aiTerminalLogs = [`> ai-layout-engine --game "${gameName}"`];
+
+    // 终端虚拟日志
+    const fakeLogs: string[] = [
+      `[init] 连接 LLM 推理引擎…`,
+      `[conn] TLS 握手完成 ✓`,
+      `[game] 加载游戏数据库索引…`,
+      `[game] 匹配: "${gameName}" → 分析操作模式`,
+      `[scan] 扫描键位映射表 (keyboard/mouse/gamepad)`,
+      `[scan] 检测屏幕比例 → 计算安全区域`,
+      `[gen]  构建按键拓扑图…`,
+      `[gen]  规划摇杆/扳机/肩键布局`,
+      `[opt]  优化按键间距 (min: 48dp)`,
+      `[opt]  适配触控热区密度`,
+      `[llm]  等待推理引擎响应…`,
+      `[llm]  解码 token 流…`,
+      `[llm]  解析 JSON 布局数据…`,
+    ];
+    let logIdx = 0;
+    this.aiLoadingTimer = setInterval(() => {
+      this.aiElapsedSec++;
+      if (logIdx < fakeLogs.length) {
+        this.aiTerminalLogs = [...this.aiTerminalLogs, fakeLogs[logIdx]];
+        logIdx++;
+      }
+    }, 1000) as number;
 
     try {
       const result = await this.onAiRecommend(gameName);
+      this.aiTerminalLogs = [...this.aiTerminalLogs, `[done] 生成完成 — ${result.keys.length} 个按键 ✓`];
       this.aiPreviewKeys = result.keys;
       this.aiDescription = result.description;
       if (result.keys.length === 0) {
@@ -1119,6 +1155,7 @@ export struct CustomKeyOverlay {
       }
     } catch (err) {
       const msg = (err as Error).message ?? '';
+      this.aiTerminalLogs = [...this.aiTerminalLogs, `[err]  ${msg || '未知错误'} ✗`];
       if (msg.includes('SyntaxError') || msg.includes('JSON')) {
         this.aiError = 'AI 返回格式异常，请重试';
       } else if (msg.includes('timed out') || msg.includes('timeout') || msg.includes('ETIMEDOUT')) {
@@ -1131,6 +1168,8 @@ export struct CustomKeyOverlay {
         this.aiError = '未知错误，请重试';
       }
     } finally {
+      clearInterval(this.aiLoadingTimer);
+      this.aiLoadingTimer = 0;
       this.aiLoading = false;
     }
   }
@@ -1139,6 +1178,7 @@ export struct CustomKeyOverlay {
     if (this.aiPreviewKeys.length === 0) return;
 
     this.pushUndoState();
+    const appendCount = this.aiPreviewKeys.length;
 
     if (replace) {
       // 替换模式：清空现有按键
@@ -1153,14 +1193,31 @@ export struct CustomKeyOverlay {
     }
 
     await CustomKeyStore.saveKeys(this.keys);
+
+    // 替换模式下自动将当前配置命名为游戏名
+    let toastMsg: string;
+    if (replace && this.aiGameInput.trim()) {
+      const gameName = this.aiGameInput.trim();
+      const currentName = await CustomKeyStore.getActiveProfileName();
+      if (currentName !== gameName) {
+        try {
+          await CustomKeyStore.renameProfile(currentName, gameName);
+          toastMsg = `AI 布局已应用，配置已命名为「${gameName}」`;
+        } catch (_) {
+          toastMsg = 'AI 布局已应用';
+        }
+      } else {
+        toastMsg = 'AI 布局已应用';
+      }
+    } else {
+      toastMsg = `已追加 ${appendCount} 个按键`;
+    }
+
     this.showAiPanel = false;
     this.aiPreviewKeys = [];
     this.aiDescription = '';
 
-    promptAction.showToast({
-      message: replace ? 'AI 布局已应用' : `已追加 ${this.aiPreviewKeys.length} 个按键`,
-      duration: 2000,
-    });
+    promptAction.showToast({ message: toastMsg, duration: 2000 });
   }
 
   enterEditMode(): void {
@@ -2404,7 +2461,7 @@ export struct CustomKeyOverlay {
 
   @Builder
   AiPanel() {
-    Column({ space: 12 }) {
+    Column({ space: 8 }) {
       // 标题栏
       Row() {
         Text('✨ AI 按键推荐').fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
@@ -2417,6 +2474,7 @@ export struct CustomKeyOverlay {
             this.aiError = '';
             this.aiPreviewKeys = [];
             this.aiDescription = '';
+            this.aiTerminalLogs = [];
           })
       }
       .width('100%')
@@ -2424,100 +2482,119 @@ export struct CustomKeyOverlay {
 
       // 输入区
       Row({ space: 8 }) {
-        TextInput({ placeholder: '输入游戏名称，如: 原神、GTA V、Elden Ring', text: this.aiGameInput })
+        TextInput({ placeholder: '输入游戏名，如: 原神、GTA V', text: this.aiGameInput })
           .layoutWeight(1)
-          .height(40)
-          .fontSize(14)
+          .height(36)
+          .fontSize(13)
           .fontColor(OV_TEXT_WHITE)
           .placeholderColor('#60FFFFFF')
           .backgroundColor('#30FFFFFF')
-          .borderRadius(20)
-          .padding({ left: 16, right: 16 })
+          .borderRadius(18)
+          .padding({ left: 14, right: 14 })
+          .enabled(!this.aiLoading)
+          .opacity(this.aiLoading ? 0.5 : 1)
           .onChange((value: string) => { this.aiGameInput = value; })
           .onSubmit(() => { this.requestAiRecommendation(); })
 
         Button(this.aiLoading ? '...' : '生成')
-          .height(40)
-          .fontSize(14)
+          .height(36)
+          .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .backgroundColor(this.aiLoading ? '#40FFFFFF' : '#9060D0')
-          .borderRadius(20)
+          .borderRadius(18)
           .enabled(!this.aiLoading && this.aiGameInput.trim().length > 0)
           .onClick(() => { this.requestAiRecommendation(); })
       }
       .width('100%')
       .padding({ left: 16, right: 16 })
 
-      // 错误提示
-      if (this.aiError) {
-        Text(this.aiError)
-          .fontSize(12)
-          .fontColor('#FFD06060')
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .padding({ left: 16, right: 16 })
-      }
-
-      // 加载指示器
-      if (this.aiLoading) {
-        Row({ space: 8 }) {
-          LoadingProgress().width(24).height(24).color('#9060D0')
-          Text('AI 正在分析游戏并生成按键布局…')
-            .fontSize(13).fontColor('#A0FFFFFF')
-        }
-        .padding({ left: 16, right: 16 })
-      }
-
-      // 结果预览
-      if (this.aiPreviewKeys.length > 0) {
+      // 可滚动内容区
+      Scroll() {
         Column({ space: 8 }) {
-          if (this.aiDescription) {
-            Text(this.aiDescription)
+          // 错误提示
+          if (this.aiError) {
+            Text(this.aiError)
               .fontSize(12)
-              .fontColor('#B0FFFFFF')
-              .maxLines(3)
+              .fontColor('#FFD06060')
+              .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .padding({ left: 16, right: 16 })
           }
 
-          // 按键预览网格
-          Scroll() {
-            Flex({ wrap: FlexWrap.Wrap,
-              space: { main: LengthMetrics.vp(6), cross: LengthMetrics.vp(6) } }) {
-              ForEach(this.aiPreviewKeys, (key: CustomKeyDef) => {
-                Text(key.label)
-                  .fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Bold)
-                  .constraintSize({ minWidth: 42 })
-                  .padding({ left: 6, right: 6 })
-                  .height(36).textAlign(TextAlign.Center)
-                  .borderRadius(8).backgroundColor(OV_BG_TRACK)
-                  .border({ width: 1, color: '#20FFFFFF' })
-              }, (key: CustomKeyDef) => key.id)
+          // 执行日志
+          if (this.aiLoading || (this.aiTerminalLogs.length > 0 && this.aiPreviewKeys.length === 0)) {
+            Column() {
+              ForEach(this.aiTerminalLogs, (log: string, idx: number) => {
+                Text(log)
+                  .fontSize(11)
+                  .fontColor(log.includes('✓') ? '#60D060' : (log.includes('✗') ? '#FF6060' : '#80FFFFFF'))
+                  .width('100%')
+                  .padding({ top: 1, bottom: 1 })
+                  .opacity(idx === this.aiTerminalLogs.length - 1 ? 1 : 0.6)
+              }, (log: string, idx: number) => `${idx}_${log}`)
+              if (this.aiLoading) {
+                Row({ space: 6 }) {
+                  LoadingProgress().width(14).height(14).color('#9060D0')
+                  Text(`${this.aiElapsedSec}s`).fontSize(11).fontColor('#60FFFFFF')
+                }
+                .padding({ top: 4 })
+              }
             }
+            .width('100%')
             .padding({ left: 16, right: 16 })
+            .alignItems(HorizontalAlign.Start)
           }
-          .constraintSize({ maxHeight: 120 })
-          .scrollBar(BarState.Off)
 
-          // 应用按钮
-          Row({ space: 12 }) {
-            Button('替换当前布局')
-              .height(36).fontSize(13).fontWeight(FontWeight.Bold)
-              .backgroundColor('#D06060')
-              .borderRadius(18)
-              .onClick(() => { this.applyAiKeys(true); })
+          // 结果预览
+          if (this.aiPreviewKeys.length > 0) {
+            Column({ space: 8 }) {
+              if (this.aiDescription) {
+                Text(this.aiDescription)
+                  .fontSize(12)
+                  .fontColor('#B0FFFFFF')
+                  .maxLines(3)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .padding({ left: 16, right: 16 })
+              }
 
-            Button('追加到当前布局')
-              .height(36).fontSize(13).fontWeight(FontWeight.Bold)
-              .backgroundColor('#50C080')
-              .borderRadius(18)
-              .onClick(() => { this.applyAiKeys(false); })
+              // 按键预览网格
+              Flex({ wrap: FlexWrap.Wrap,
+                space: { main: LengthMetrics.vp(6), cross: LengthMetrics.vp(6) } }) {
+                ForEach(this.aiPreviewKeys, (key: CustomKeyDef) => {
+                  Text(key.label)
+                    .fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Bold)
+                    .constraintSize({ minWidth: 42 })
+                    .padding({ left: 6, right: 6 })
+                    .height(32).textAlign(TextAlign.Center)
+                    .borderRadius(8).backgroundColor(OV_BG_TRACK)
+                    .border({ width: 1, color: '#20FFFFFF' })
+                }, (key: CustomKeyDef) => key.id)
+              }
+              .padding({ left: 16, right: 16 })
+
+              // 应用按钮
+              Row({ space: 12 }) {
+                Button('替换当前布局')
+                  .height(32).fontSize(12).fontWeight(FontWeight.Bold)
+                  .backgroundColor('#D06060')
+                  .borderRadius(16)
+                  .onClick(() => { this.applyAiKeys(true); })
+
+                Button('追加到当前布局')
+                  .height(32).fontSize(12).fontWeight(FontWeight.Bold)
+                  .backgroundColor('#50C080')
+                  .borderRadius(16)
+                  .onClick(() => { this.applyAiKeys(false); })
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding({ left: 16, right: 16, bottom: 8 })
+            }
           }
-          .width('100%')
-          .justifyContent(FlexAlign.Center)
-          .padding({ left: 16, right: 16, bottom: 8 })
         }
       }
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
     }
     .width('100%')
     .constraintSize({ maxHeight: '55%' })

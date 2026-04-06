@@ -253,6 +253,18 @@ struct StreamPage {
         if (computer) {
           const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert, this.context, computer.httpPort);
           this.aiKeyService = new AiKeyService(nvHttp);
+
+          // 异步探测 AI 可用性，延迟显示避免与手柄连接等 toast 冲突
+          nvHttp.checkAiAvailable().then((available: boolean) => {
+            if (available) {
+              setTimeout(() => {
+                promptAction.showToast({
+                  message: '✨ AI LLM 已连接，可使用 AIV+ 功能',
+                  duration: 2500
+                });
+              }, 3000);
+            }
+          });
         }
       } catch (err) {
         console.warn(`[StreamPage] AI 服务初始化失败: ${err}`);

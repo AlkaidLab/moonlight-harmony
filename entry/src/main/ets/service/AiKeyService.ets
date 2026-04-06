@@ -63,7 +63,7 @@ const SYSTEM_PROMPT = `你是一个游戏触屏按键布局专家。用户会提
    - 快捷键: { "type": "shortcut", "keys": [vk1, vk2] }
 7. 常用 VK: W=0x57 A=0x41 S=0x53 D=0x44 Space=0x20 Shift=0xA0 Ctrl=0xA2 E=0x45 R=0x52 F=0x46 Q=0x51 Tab=0x09 ESC=0x1B 1-9=0x31-0x39
 8. 手柄 mask: A=0x1000 B=0x2000 X=0x4000 Y=0x8000 LB=0x0100 RB=0x0200 Start=0x0010 Back=0x0020
-9. 推荐 8-15 个按键，根据游戏类型选择合适的按键
+9. 尽可能多生成按键(12-16个)，完整覆盖游戏常用操作，包含移动、视角、主要动作和辅助功能键
 10. FPS 游戏优先用键鼠布局（WASD + 鼠标按键），动作/平台游戏用手柄布局
 11. 布局间距要求：
     - 普通按键(60vp)占屏幕约 8%宽 17%高，相邻按键中心距至少 10%
@@ -117,11 +117,21 @@ export class AiKeyService {
   }
 
   private parseResponse(responseText: string): AiKeyRecommendation {
-    // 尝试提取 JSON（AI 可能返回 markdown 代码块包裹）
+    // 尝试提取 JSON（AI 可能返回 markdown 代码块包裹或夹杂解释文字）
     let jsonStr = responseText.trim();
+
+    // 1. 尝试 markdown 代码块
     const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (codeBlockMatch) {
       jsonStr = codeBlockMatch[1].trim();
+    }
+
+    // 2. 如果不是以 { 开头，尝试提取第一个 {...} JSON 对象
+    if (!jsonStr.startsWith('{')) {
+      const jsonObjMatch = jsonStr.match(/(\{[\s\S]*\})/);
+      if (jsonObjMatch) {
+        jsonStr = jsonObjMatch[1].trim();
+      }
     }
 
     const parsed = JSON.parse(jsonStr) as AiLayoutResponse;
@@ -159,10 +169,62 @@ export class AiKeyService {
       keys.push(keyDef);
     }
 
+    // 防重叠后处理：检测并推开过近的按键
+    resolveOverlaps(keys);
+
     return {
       keys,
       description: parsed.description ?? '',
     };
+  }
+}
+
+/**
+ * 检测并修复按键重叠
+ * 基于按键尺寸计算最小安全距离，迭代推开过近的按键
+ */
+function resolveOverlaps(keys: CustomKeyDef[]): void {
+  const SCREEN_W = 720;
+  const SCREEN_H = 360;
+  const MAX_ITER = 10;
+
+  for (let iter = 0; iter < MAX_ITER; iter++) {
+    let hasOverlap = false;
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const a = keys[i];
+        const b = keys[j];
+        // 隐形摇杆不参与碰撞检测
+        if ((a.action as AnalogStickAction).invisible || (b.action as AnalogStickAction).invisible) continue;
+
+        const minDx = (a.width + b.width) / 2 / SCREEN_W + 0.01;
+        const minDy = (a.height + b.height) / 2 / SCREEN_H + 0.01;
+        const dx = Math.abs(a.xPercent - b.xPercent);
+        const dy = Math.abs(a.yPercent - b.yPercent);
+
+        if (dx < minDx && dy < minDy) {
+          hasOverlap = true;
+          // 沿两者连线方向推开
+          const pushX = (minDx - dx) / 2 + 0.01;
+          const pushY = (minDy - dy) / 2 + 0.01;
+          if (a.xPercent <= b.xPercent) {
+            a.xPercent = clamp(a.xPercent - pushX, 0.05, 0.95);
+            b.xPercent = clamp(b.xPercent + pushX, 0.05, 0.95);
+          } else {
+            a.xPercent = clamp(a.xPercent + pushX, 0.05, 0.95);
+            b.xPercent = clamp(b.xPercent - pushX, 0.05, 0.95);
+          }
+          if (a.yPercent <= b.yPercent) {
+            a.yPercent = clamp(a.yPercent - pushY, 0.08, 0.92);
+            b.yPercent = clamp(b.yPercent + pushY, 0.08, 0.92);
+          } else {
+            a.yPercent = clamp(a.yPercent + pushY, 0.08, 0.92);
+            b.yPercent = clamp(b.yPercent - pushY, 0.08, 0.92);
+          }
+        }
+      }
+    }
+    if (!hasOverlap) break;
   }
 }
 
