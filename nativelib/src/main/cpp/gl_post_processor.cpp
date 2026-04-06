@@ -384,7 +384,7 @@ void main() {
 static const char* FRAGMENT_SHADER_SRC = R"(#version 300 es
 #extension GL_OES_EGL_image_external_essl3 : require
 
-precision mediump float;
+precision highp float;
 
 in vec2 vTexCoord;
 uniform samplerExternalOES uTexture;
@@ -448,34 +448,56 @@ vec3 lin_to_hlg(vec3 l) {
 // BT.2020 亮度系数
 float luma_2020(vec3 c) { return dot(c, vec3(0.2627, 0.6780, 0.0593)); }
 
+// =========================================================================
+// Luma-Preserving Mapper (inspired by AMD FidelityFX LPM)
+// 输入/输出：绝对亮度 (nits)
+// =========================================================================
+
+// BT.709 → BT.2020 线性色域转换矩阵 (column-major)
+const mat3 MAT_709_TO_2020 = mat3(
+    0.6274, 0.0691, 0.0164,
+    0.3293, 0.9195, 0.0880,
+    0.0433, 0.0114, 0.8956
+);
+
+// SDR→HDR 亮度保持映射 + 高光去饱和
+// sdrRef: SDR 参考白 (nits), peakNits: HDR 峰值, sat: 饱和度倍率
+vec3 lpmExpand(vec3 nitsIn, float sdrRef, float peakNits, float sat) {
+    vec3 lw = vec3(0.2627, 0.6780, 0.0593);
+    float Yin = dot(nitsIn, lw);
+    // 极暗或已超 SDR 参考范围 → 不处理
+    if (Yin < 0.01 || Yin >= sdrRef * 1.1) return nitsIn;
+
+    // 指数映射：暗部线性扩展，高光柔和肩部趋近 peak
+    float normY = Yin / sdrRef;
+    float k = log(peakNits / sdrRef + 1.0);
+    float Yout = peakNits * (1.0 - exp(-k * normY)) / (1.0 - exp(-k));
+
+    // 亮度保持 RGB 等比缩放（保持色度比不变）
+    vec3 nitsOut = nitsIn * (Yout / Yin);
+
+    // 高光去饱和（模拟 Hunt 效应 / LPM crosstalk）
+    // 人眼在高亮度下色彩敏感度下降，自然呈现去饱和
+    float ct = smoothstep(peakNits * 0.5, peakNits, Yout);
+    nitsOut = mix(nitsOut, vec3(Yout), ct * 0.3);
+
+    // 用户饱和度控制
+    float Ys = dot(nitsOut, lw);
+    nitsOut = max(Ys + (nitsOut - Ys) * sat, 0.0);
+
+    return min(nitsOut, peakNits);
+}
+
 void main() {
     vec4 tex = texture(uTexture, vTexCoord);
 
-    // SDR 内容 + HDR 显示面 → 扩展动态范围
+    // SDR 内容 + HDR 显示面 → LPM 亮度保持映射 + BT.709→2020 + PQ 编码
     if (uSdrToHdr == 1 && uHdrMode == 0) {
-        // sRGB gamma 解码 → 线性光
         vec3 linear = pow(max(tex.rgb, 0.0), vec3(2.2));
-        float L = dot(linear, vec3(0.2126, 0.7152, 0.0722));
-
-        if (L > 0.001) {
-            // 逆 Reinhard 扩展亮度范围
-            // SDR 参考白 80 nits，目标峰值由 uniform 控制
-            float peakScale = uSdrPeakNits / 80.0;
-            // 修正逆 Reinhard：F(L) = L * peakScale / (1 + L * (peakScale - 1))
-            // 低亮度近似线性扩展，高亮度非线性压缩
-            float Lhdr = L * peakScale / (1.0 + L * (peakScale - 1.0));
-
-            // 保持色度不变，仅缩放亮度
-            vec3 hdr = linear * (Lhdr / L);
-            // 限幅防止超出 PQ 编码范围
-            hdr = min(hdr, uSdrPeakNits / MAX_NITS);
-
-            // 线性 → PQ 编码
-            outColor = vec4(lin_to_pq(hdr), tex.a);
-        } else {
-            // 纯黑或极暗：直接映射为 PQ 零值
-            outColor = vec4(lin_to_pq(vec3(0.0)), tex.a);
-        }
+        // BT.709 → BT.2020 色域转换 + SDR 100 nits 参考 → HDR 扩展
+        vec3 linear2020 = MAT_709_TO_2020 * max(linear, vec3(0.0));
+        vec3 hdrNits = lpmExpand(linear2020 * 100.0, 100.0, uSdrPeakNits, uSdrSaturation);
+        outColor = vec4(lin_to_pq(hdrNits / MAX_NITS), tex.a);
         return;
     }
 
@@ -501,8 +523,13 @@ void main() {
             vec3 boost = maxBoost * x3 / (1.0 + x3);
             hlg = hlg + boost;
 
-            // 对比度调整：以中灰(0.5)为锚点缩放
-            hlg = clamp(vec3(0.5) + (hlg - 0.5) * uSdrContrast, 0.0, 1.0);
+            // 对比度（power-curve，感知均匀）
+            if (uSdrContrast != 1.0) {
+                vec3 centered = 2.0 * hlg - 1.0;
+                vec3 absc = abs(centered);
+                vec3 adj = sign(centered) * pow(max(absc, 1e-7), vec3(1.0 / uSdrContrast));
+                hlg = clamp(0.5 + 0.5 * adj, 0.0, 1.0);
+            }
 
             // 饱和度调整
             float Yout = dot(hlg, lw);
@@ -539,23 +566,13 @@ void main() {
     // ----- 解码到线性空间 -----
     vec3 lin = (uHdrMode == 1) ? pq_to_lin(rgb) : hlg_to_lin(rgb);
 
-    // ----- SDR-in-HDR 动态范围增强 -----
-    // HDR 串流中 SDR 内容的动态范围有限，用逆 Reinhard 拉伸到更宽范围
+    // ----- SDR-in-HDR 动态范围增强 (LPM) -----
     if (uSdrToHdr == 1) {
-        float Ysrc = luma_2020(lin);
-
         if (uHdrMode == 1) {
-            // PQ 模式：绝对亮度系统，SDR 参考白 = 203 nits (BT.2408)
-            float nitsSrc = Ysrc * MAX_NITS;
-            float refWhite = 203.0;
-            if (nitsSrc > 0.01 && nitsSrc < refWhite * 1.1) {
-                float normL = nitsSrc / refWhite;
-                float peakScale = uSdrPeakNits / refWhite;
-                float expanded = normL * peakScale / (1.0 + normL * (peakScale - 1.0));
-                float targetNits = expanded * refWhite;
-                lin = lin * (targetNits / nitsSrc);
-                lin = min(lin, uSdrPeakNits / MAX_NITS);
-            }
+            // PQ 模式：LPM 扩展 SDR 范围 (0-203 nits) 到 HDR 峰值
+            // 已是 BT.2020，无需色域转换
+            vec3 nitsExpanded = lpmExpand(lin * MAX_NITS, 203.0, uSdrPeakNits, uSdrSaturation);
+            lin = nitsExpanded / MAX_NITS;
         } else {
             // HLG 模式：直接在 HLG 编码域增强（避免线性域精度问题）
             // HLG 编码已经是感知均匀的，直接操作更安全
@@ -582,6 +599,13 @@ void main() {
         outColor = vec4(
             (uHdrMode == 1) ? lin_to_pq(lin) : lin_to_hlg(lin),
             tex.a);
+        return;
+    }
+
+    // HLG 暗区抖动不适用：nits = lin * 10000 仅对 PQ 绝对亮度正确，
+    // HLG 场景参考光无法映射到 OLED 标定阶梯。直接重编码输出。
+    if (uHdrMode == 2) {
+        outColor = vec4(lin_to_hlg(lin), tex.a);
         return;
     }
 

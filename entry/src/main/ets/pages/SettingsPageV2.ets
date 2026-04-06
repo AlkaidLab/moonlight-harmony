@@ -1815,7 +1815,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: 'OLED 暗部校正',
-                subtitle: '抖动补偿暗区灰阶断层，仅适配 MatePad Pro 12.2',
+                subtitle: '抖动补偿暗区灰阶断层，仅 HDR10(PQ) + MatePad Pro 12.2',
                 type: 'toggle',
                 value: this.enablePostProcess,
                 action: () => {
@@ -1848,7 +1848,7 @@ struct SettingsPageV2 {
               },
               {
                 title: 'HDR 映像增强',
-                subtitle: '智能逆向色调映射，让 SDR 画面焕发 HDR 光彩',
+                subtitle: 'SDR→HDR 逆向色调映射（HLG 模式下对比度/饱和度效果有限）',
                 type: 'toggle',
                 value: this.sdrToHdr,
                 action: () => {
