@@ -42,6 +42,8 @@ export struct CustomKeyBtn {
   onAction: (action: KeyAction, isDown: boolean) => void = () => {};
   /** 拖拽完成回调，参数为 vp 偏移量 (deltaX, deltaY) */
   onDragFinish: (keyId: string, deltaX: number, deltaY: number) => void = () => {};
+  /** 拖拽实时移动回调，参数为 vp 偏移量 */
+  onGroupDragMove: (keyId: string, deltaX: number, deltaY: number) => void = () => {};
   onSelect: (keyId: string) => void = () => {};
   onLongPress: (keyId: string) => void = () => {};
 
@@ -65,6 +67,15 @@ export struct CustomKeyBtn {
   private longPressTimer: number = -1;
 
   build() {
+    if (this.keyDef.shape === 'hexagon') {
+      this.HexagonBtn()
+    } else {
+      this.NormalBtn()
+    }
+  }
+
+  @Builder
+  NormalBtn() {
     Text(this.keyDef.label)
       .fontSize(this.keyDef.fontSize)
       .fontColor(this.isPressed || this.isToggled ? OV_TEXT_WHITE : this.keyDef.textColor)
@@ -103,6 +114,85 @@ export struct CustomKeyBtn {
           this.handlePlayTouch(event);
         }
       })
+  }
+
+  /** 六边形按键（flat-top 平顶六边形） */
+  @Builder
+  HexagonBtn() {
+    Stack() {
+      // 六边形背景 + 边框
+      Polygon()
+        .points(this.hexPoints(this.keyDef.width, this.keyDef.height))
+        .fill(this.isPressed || this.isToggled
+          ? this.keyDef.pressedColor
+          : this.keyDef.bgColor)
+        .stroke(this.editMode
+          ? (this.isSelected ? SELECT_BORDER_COLOR : EDIT_BORDER_COLOR)
+          : (this.isPressed || this.isToggled
+              ? this.keyDef.pressedColor
+              : this.keyDef.normalColor))
+        .strokeWidth(this.editMode ? 2 : (this.keyDef.borderWidth ?? 1))
+        .strokeDashArray(this.editMode ? [4, 3] : [])
+        .antiAlias(true)
+        .width(this.keyDef.width)
+        .height(this.keyDef.height)
+
+      // 标签文字
+      Text(this.keyDef.label)
+        .fontSize(this.keyDef.fontSize)
+        .fontColor(this.isPressed || this.isToggled ? OV_TEXT_WHITE : this.keyDef.textColor)
+        .fontWeight(FontWeight.Bold)
+        .textAlign(TextAlign.Center)
+    }
+    .width(this.keyDef.width)
+    .height(this.keyDef.height)
+    .backgroundColor(Color.Transparent)
+    .opacity(this.keyDef.opacity / 100)
+    .translate({ x: this.dragOffsetX, y: this.dragOffsetY })
+    .hitTestBehavior(HitTestMode.Block)
+    .onTouch((event: TouchEvent) => {
+      event.stopPropagation();
+      // 游戏模式下只响应六边形内部的触摸
+      if (!this.editMode) {
+        const t = event.touches[0];
+        if (t && !this.isInsideHexagon(t.x, t.y)) return;
+      }
+      if (this.editMode) {
+        this.handleEditTouch(event);
+      } else {
+        this.handlePlayTouch(event);
+      }
+    })
+  }
+
+  /** 判断组件局部坐标 (x, y) 是否在六边形内部（射线法） */
+  private isInsideHexagon(x: number, y: number): boolean {
+    const pts = this.hexPoints(this.keyDef.width, this.keyDef.height);
+    const n = pts.length;
+    let inside = false;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const xi = pts[i][0], yi = pts[i][1];
+      const xj = pts[j][0], yj = pts[j][1];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  private hexPoints(w: number, h: number): Array<[number, number]> {
+    const cx = w / 2;
+    const cy = h / 2;
+    const rx = w / 2;  // 水平半径
+    const ry = h / 2;  // 垂直半径
+    // 平顶六边形顶点（从右侧开始, 顺时针）
+    return [
+      [cx + rx, cy],           // 右
+      [cx + rx / 2, cy + ry],  // 右下
+      [cx - rx / 2, cy + ry],  // 左下
+      [cx - rx, cy],           // 左
+      [cx - rx / 2, cy - ry],  // 左上
+      [cx + rx / 2, cy - ry],  // 右上
+    ];
   }
 
   // ── 普通模式触摸处理 ──
@@ -167,6 +257,7 @@ export struct CustomKeyBtn {
             this.dragOffsetX = dx;
             this.dragOffsetY = dy;
           }
+          this.onGroupDragMove(this.keyDef.id, this.dragOffsetX, this.dragOffsetY);
         }
         break;
       }
@@ -175,6 +266,7 @@ export struct CustomKeyBtn {
       case TouchType.Cancel:
         this.cancelLongPress();
         if (this.dragging) {
+          this.onGroupDragMove(this.keyDef.id, 0, 0); // 清除组拖拽视觉偏移
           // 传递 vp 偏移量（不是新坐标），由父层转换为百分比
           this.onDragFinish(this.keyDef.id,
             this.dragOffsetX,

@@ -132,6 +132,12 @@ export struct CustomKeyOverlay {
   @State private alignGuideX: number = -1;
   @State private alignGuideY: number = -1;
 
+  /** 组拖拽实时偏移（编辑模式视觉跟随） */
+  @State private groupDragId: string = '';
+  @State private groupDragKeyId: string = ''; // 正在被直接拖拽的键 ID
+  @State private groupDragX: number = 0;
+  @State private groupDragY: number = 0;
+
   /** 二维码分享面板 */
   @State private showSharePanel: boolean = false;
   @State private qrPixelMap: image.PixelMap | undefined = undefined;
@@ -139,6 +145,7 @@ export struct CustomKeyOverlay {
   @State private qrTooLarge: boolean = false;
   @State private qrError: string = '';
   @State private shareJson: string = '';
+  @State private qrDataLen: number = 0;
   /** 扫码导入预览 */
   @State private importPreviewName: string = '';
   @State private importPreviewCount: number = 0;
@@ -382,7 +389,26 @@ export struct CustomKeyOverlay {
                 onAction: (action: KeyAction, isDown: boolean): void => {
                   this.onKeyAction(action, isDown);
                 },
+                onGroupDragMove: (keyId: string, deltaX: number, deltaY: number): void => {
+                  // 更新组拖拽视觉偏移
+                  const dragKey = this.keys.find(k => k.id === keyId);
+                  if (dragKey && dragKey.groupId) {
+                    if (deltaX === 0 && deltaY === 0) {
+                      this.groupDragId = '';
+                      this.groupDragKeyId = '';
+                    } else {
+                      this.groupDragId = dragKey.groupId;
+                      this.groupDragKeyId = keyId;
+                    }
+                    this.groupDragX = deltaX;
+                    this.groupDragY = deltaY;
+                  }
+                },
                 onDragFinish: (keyId: string, deltaX: number, deltaY: number): void => {
+                  this.groupDragId = '';
+                  this.groupDragKeyId = '';
+                  this.groupDragX = 0;
+                  this.groupDragY = 0;
                   this.alignGuideX = -1;
                   this.alignGuideY = -1;
                   this.handleDragEnd(keyId, deltaX, deltaY);
@@ -397,8 +423,10 @@ export struct CustomKeyOverlay {
               })
             }
               .position({
-                x: key.xPercent * this.screenWidthVp - key.width / 2,
-                y: key.yPercent * this.screenHeightVp - key.height / 2,
+                x: key.xPercent * this.screenWidthVp - key.width / 2
+                  + (this.groupDragId !== '' && key.groupId === this.groupDragId && key.id !== this.groupDragKeyId ? this.groupDragX : 0),
+                y: key.yPercent * this.screenHeightVp - key.height / 2
+                  + (this.groupDragId !== '' && key.groupId === this.groupDragId && key.id !== this.groupDragKeyId ? this.groupDragY : 0),
               })
           }
         }, (key: CustomKeyDef) => {
@@ -562,7 +590,7 @@ export struct CustomKeyOverlay {
           Row({ space: 4 }) {
             SymbolGlyph($r('sys.symbol.trash'))
               .fontSize(16).fontColor([Color.White])
-            Text('删除')
+            Text(this.getSelectedKey()?.groupId ? '删除组' : '删除')
               .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
           .height(32).padding({ left: 10, right: 12 })
@@ -578,7 +606,7 @@ export struct CustomKeyOverlay {
           Row({ space: 4 }) {
             Image($r('app.media.ic_copy'))
               .width(16).height(16).fillColor(Color.White)
-            Text('复制')
+            Text(this.getSelectedKey()?.groupId ? '复制组' : '复制')
               .fontSize(OV_FONT_LG).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
           }
           .height(32).padding({ left: 10, right: 12 })
@@ -882,17 +910,27 @@ export struct CustomKeyOverlay {
     const idx = this.keys.findIndex(k => k.id === keyId);
     if (idx === -1) return;
     this.pushUndoState();
-    const updated = cloneKeyDef(this.keys[idx]);
-    // vp 偏移量 → 百分比偏移量
-    if (this.screenWidthVp > 0 && this.screenHeightVp > 0) {
-      updated.xPercent = updated.xPercent + deltaX / this.screenWidthVp;
-      updated.yPercent = updated.yPercent + deltaY / this.screenHeightVp;
-      // 边界约束: 0.0~1.0
-      updated.xPercent = Math.max(0.0, Math.min(1.0, updated.xPercent));
-      updated.yPercent = Math.max(0.0, Math.min(1.0, updated.yPercent));
-    }
+    if (this.screenWidthVp <= 0 || this.screenHeightVp <= 0) return;
+
+    const dxPercent = deltaX / this.screenWidthVp;
+    const dyPercent = deltaY / this.screenHeightVp;
+    const draggedKey = this.keys[idx];
+    const groupId = draggedKey.groupId;
+
     const newKeys: CustomKeyDef[] = this.keys.slice();
-    newKeys[idx] = updated;
+
+    // 整组拖动：同 groupId 的按键都偏移相同百分比
+    for (let i = 0; i < newKeys.length; i++) {
+      const shouldMove = newKeys[i].id === keyId ||
+        (groupId !== undefined && groupId !== '' && newKeys[i].groupId === groupId);
+      if (shouldMove) {
+        const updated = cloneKeyDef(newKeys[i]);
+        updated.xPercent = Math.max(0.0, Math.min(1.0, updated.xPercent + dxPercent));
+        updated.yPercent = Math.max(0.0, Math.min(1.0, updated.yPercent + dyPercent));
+        newKeys[i] = updated;
+      }
+    }
+
     this.keys = newKeys;
     CustomKeyStore.saveKeys(this.keys);
   }
@@ -1037,28 +1075,150 @@ export struct CustomKeyOverlay {
   private async deleteSelectedKey(): Promise<void> {
     if (!this.selectedKeyId) return;
     this.pushUndoState();
-    this.keys = this.keys.filter(k => k.id !== this.selectedKeyId);
-    await CustomKeyStore.deleteKey(this.selectedKeyId);
+    const sel = this.getSelectedKey();
+    if (sel && sel.groupId) {
+      // 整组删除
+      const gid = sel.groupId;
+      this.keys = this.keys.filter(k => k.groupId !== gid);
+    } else {
+      this.keys = this.keys.filter(k => k.id !== this.selectedKeyId);
+    }
+    await CustomKeyStore.saveKeys(this.keys);
     this.selectedKeyId = '';
     this.showPropertyPanel = false;
   }
 
-  /** 克隆选中按键：复制全部属性，位置略微偏移避免完全重叠 */
+  /** 克隆选中按键：如果属于组则整组克隆，否则单键克隆 */
   private async cloneSelectedKey(): Promise<void> {
     const src = this.getSelectedKey();
     if (!src) return;
     this.pushUndoState();
-    const cloned = cloneKeyDef(src);
-    cloned.id = generateKeyId();
-    // 偏移 3% 避免完全重叠
-    cloned.xPercent = Math.min(1.0, cloned.xPercent + 0.03);
-    cloned.yPercent = Math.min(1.0, cloned.yPercent + 0.03);
-    const newArr: CustomKeyDef[] = this.keys.slice();
-    newArr.push(cloned);
-    this.keys = newArr;
+
+    if (src.groupId) {
+      // 整组克隆：新 groupId，所有成员偏移
+      const newGroupId = generateKeyId();
+      const groupKeys = this.keys.filter(k => k.groupId === src.groupId);
+      const newArr: CustomKeyDef[] = this.keys.slice();
+      for (let i = 0; i < groupKeys.length; i++) {
+        const cloned = cloneKeyDef(groupKeys[i]);
+        cloned.id = generateKeyId();
+        cloned.groupId = newGroupId;
+        cloned.xPercent = Math.min(1.0, cloned.xPercent + 0.05);
+        cloned.yPercent = Math.min(1.0, cloned.yPercent + 0.05);
+        newArr.push(cloned);
+      }
+      this.keys = newArr;
+      await CustomKeyStore.saveKeys(this.keys);
+      promptAction.showToast({ message: `已复制整组（${groupKeys.length}个键）`, duration: 1200 });
+    } else {
+      const cloned = cloneKeyDef(src);
+      cloned.id = generateKeyId();
+      cloned.xPercent = Math.min(1.0, cloned.xPercent + 0.03);
+      cloned.yPercent = Math.min(1.0, cloned.yPercent + 0.03);
+      const newArr: CustomKeyDef[] = this.keys.slice();
+      newArr.push(cloned);
+      this.keys = newArr;
+      await CustomKeyStore.saveKeys(this.keys);
+      this.selectedKeyId = cloned.id;
+      promptAction.showToast({ message: '已复制按键', duration: 1200 });
+    }
+  }
+
+  /**
+   * 添加蜂窝群组：7 个六边形按键（1 中心 + 6 外围）紧密排列
+   */
+  /**
+   * 添加蜂窝群组
+   * @param layout 排列方式: 'hex7' (1+6环绕), 'row3' (横排3), 'grid2x3' (2行交错3+4)
+   */
+  private async addHoneycombCluster(layout: string = 'hex7'): Promise<void> {
+    if (this.screenWidthVp <= 0) return;
+    this.pushUndoState();
+
+    const groupId = generateKeyId();
+    const keySize = 52;
+    const keyHeight = Math.round(keySize * 0.866);
+    const gap = 4;
+
+    const W = this.screenWidthVp;
+    const H = this.screenHeightVp;
+    const centerX = W / 2;
+    const centerY = H / 2;
+
+    // 计算偏移量
+    const dx34 = (keySize + gap) * 0.75;
+    const dy12 = (keyHeight + gap) / 2;
+    const dyFull = keyHeight + gap;
+
+    // 根据布局生成 (label, dx, dy) 数组
+    let cells: Array<[string, number, number]> = [];
+
+    // 同行水平间距（平顶六边形同行中心距 = 宽 + gap）
+    const dxRow = keySize + gap;
+
+    if (layout === 'row3') {
+      // 横排3键（蜂窝交错）：左右键与中键交错 dy12，水平间距 dx34
+      cells = [
+        ['1', -dx34, dy12],
+        ['2', 0, 0],
+        ['3', dx34, dy12],
+      ];
+    } else if (layout === 'grid2x3') {
+      // 2行交错排列（蜂窝紧密5键）：2-1-2 菱形
+      cells = [
+        // 上排2个
+        ['1', -dx34, -dy12],
+        ['2', dx34, -dy12],
+        // 中心1个
+        ['3', 0, 0],
+        // 下排2个
+        ['4', -dx34, dy12],
+        ['5', dx34, dy12],
+      ];
+    } else {
+      // hex7: 1中心 + 6环绕
+      cells = [
+        ['●', 0, 0],
+        ['1', dx34, -dy12],
+        ['2', dx34, dy12],
+        ['3', 0, dyFull],
+        ['4', -dx34, dy12],
+        ['5', -dx34, -dy12],
+        ['6', 0, -dyFull],
+      ];
+    }
+
+    const newKeys: CustomKeyDef[] = this.keys.slice();
+
+    for (let i = 0; i < cells.length; i++) {
+      const label = cells[i][0];
+      const dx = cells[i][1];
+      const dy = cells[i][2];
+
+      newKeys.push(createDefaultKeyDef({
+        label: label,
+        action: { type: 'keyboard', vk: 0 },
+        xPercent: (centerX + dx) / W,
+        yPercent: (centerY + dy) / H,
+        shape: 'hexagon',
+        width: keySize,
+        height: keyHeight,
+        bgColor: '#3050C080',
+        pressedColor: '#8050C080',
+        textColor: '#E0FFFFFF',
+        fontSize: 13,
+        borderRadius: 0,
+        groupId: groupId,
+      }));
+    }
+
+    this.keys = newKeys;
     await CustomKeyStore.saveKeys(this.keys);
-    this.selectedKeyId = cloned.id;
-    promptAction.showToast({ message: '已复制按键', duration: 1200 });
+    this.showAddPanel = false;
+
+    const countMap: Record<string, number> = { 'hex7': 7, 'row3': 3, 'grid2x3': 5 };
+    const count = countMap[layout] ?? cells.length;
+    promptAction.showToast({ message: `已添加蜂窝群组（${count}个键）`, duration: 1500 });
   }
 
   /** 微调选中按键位置，单位 vp */
@@ -1410,6 +1570,14 @@ export struct CustomKeyOverlay {
     return [];
   }
 
+  /** 当前选中的分类是否为"按键组" */
+  private isGroupCategory(): boolean {
+    if (this.addPanelCategoryIdx >= 0 && this.addPanelCategoryIdx < KEY_PRESET_CATEGORIES.length) {
+      return KEY_PRESET_CATEGORIES[this.addPanelCategoryIdx].name === '按键组';
+    }
+    return false;
+  }
+
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // 配置档案切换
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1688,16 +1856,20 @@ export struct CustomKeyOverlay {
     this.qrPixelMap = undefined;
 
     const profileName = await CustomKeyStore.getActiveProfileName();
-    const json = QrShareService.serialize(profileName, this.keys);
-    this.shareJson = json;
+    // 使用压缩序列化，QR 数据量减少 50-70%
+    const compressed = await QrShareService.serializeCompressed(profileName, this.keys);
+    this.qrDataLen = compressed.length;
+    // 剪贴板仍使用未压缩 JSON（方便人工阅读/编辑）
+    const rawJson = QrShareService.serializeJson(profileName, this.keys);
+    this.shareJson = rawJson;
 
-    if (!QrShareService.canFitInQr(json)) {
+    if (!QrShareService.canFitInQr(compressed)) {
       this.qrTooLarge = true;
       this.qrLoading = false;
       return;
     }
 
-    const result = await QrShareService.generateQrCode(json, 600);
+    const result = await QrShareService.generateQrCode(compressed, 600);
     if (result.pixelMap) {
       this.qrPixelMap = result.pixelMap;
     } else {
@@ -1888,7 +2060,7 @@ export struct CustomKeyOverlay {
         promptAction.showToast({ message: '剪贴板为空', duration: 1500 });
         return;
       }
-      this.handleImportJson(text);
+      await this.handleImportJson(text);
     } catch (_e) {
       promptAction.showToast({ message: '读取剪贴板失败', duration: 1500 });
     }
@@ -1901,12 +2073,12 @@ export struct CustomKeyOverlay {
       promptAction.showToast({ message: '扫码取消或失败', duration: 1500 });
       return;
     }
-    this.handleImportJson(result);
+    await this.handleImportJson(result);
   }
 
-  /** 解析 JSON 并显示导入确认 */
-  private handleImportJson(json: string): void {
-    const parsed = QrShareService.deserialize(json);
+  /** 解析 JSON 并显示导入确认（支持压缩和未压缩格式） */
+  private async handleImportJson(json: string): Promise<void> {
+    const parsed = await QrShareService.deserialize(json);
     if (!parsed) {
       promptAction.showToast({ message: '无效的配置数据', duration: 2000 });
       return;
@@ -2181,16 +2353,16 @@ export struct CustomKeyOverlay {
                   Text('请使用剪贴板分享')
                     .fontSize(11).fontColor(OV_TEXT_DIM)
                 }
-                .width(140).height(140)
+                .width(200).height(200)
                 .justifyContent(FlexAlign.Center)
                 .borderRadius(8).backgroundColor('#20FFFFFF')
                 .border({ width: 1, color: '#30FFD700' })
               } else if (this.qrPixelMap) {
                 Image(this.qrPixelMap)
-                  .width(140).height(140)
-                  .borderRadius(8)
+                  .width(200).height(200)
                   .backgroundColor(Color.White)
                   .objectFit(ImageFit.Contain)
+                  .interpolation(ImageInterpolation.None)
               } else {
                 Column({ space: 4 }) {
                   Text('⚠')
@@ -2205,7 +2377,7 @@ export struct CustomKeyOverlay {
                       .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
                   }
                 }
-                .width(140).height(140)
+                .width(200).height(200)
                 .justifyContent(FlexAlign.Center)
                 .borderRadius(8).backgroundColor('#20FFFFFF')
                 .border({ width: 1, color: '#20FFFFFF' })
@@ -2228,7 +2400,7 @@ export struct CustomKeyOverlay {
                   .onClick(() => { this.shareToFriend(); })
               }
 
-              Text(`${this.keys.length} 个按键 · ${this.shareJson.length} 字符`)
+              Text(`${this.keys.length} 个按键 · QR ${this.qrDataLen} 字符`)
                 .fontSize(10).fontColor(OV_TEXT_DIM)
             }
 
@@ -2266,7 +2438,7 @@ export struct CustomKeyOverlay {
       }
     }
     .width('100%')
-    .constraintSize({ maxHeight: '45%' })
+    .constraintSize({ maxHeight: '55%' })
     .backgroundColor('#E01A1A2E')
     .backdropBlur(50)
     .borderRadius({ topLeft: 16, topRight: 16 })
@@ -2432,6 +2604,38 @@ export struct CustomKeyOverlay {
       Scroll() {
         Flex({ wrap: FlexWrap.Wrap,
           space: { main: LengthMetrics.vp(6), cross: LengthMetrics.vp(6) } }) {
+          if (this.isGroupCategory()) {
+            // "按键组" 分类：显示多种蜂窝排列模板
+            Text('⬡ 横排3')
+              .fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Bold)
+              .constraintSize({ minWidth: 42 })
+              .padding({ left: 8, right: 8 })
+              .height(36).textAlign(TextAlign.Center)
+              .borderRadius(8).backgroundColor(OV_BG_TRACK)
+              .border({ width: 1, color: '#20FFFFFF' })
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+              .onClick(() => { this.addHoneycombCluster('row3'); })
+
+            Text('⬡ 蜂窝7')
+              .fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Bold)
+              .constraintSize({ minWidth: 42 })
+              .padding({ left: 8, right: 8 })
+              .height(36).textAlign(TextAlign.Center)
+              .borderRadius(8).backgroundColor(OV_BG_TRACK)
+              .border({ width: 1, color: '#20FFFFFF' })
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+              .onClick(() => { this.addHoneycombCluster('hex7'); })
+
+            Text('⬡ 2行交错')
+              .fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Bold)
+              .constraintSize({ minWidth: 42 })
+              .padding({ left: 8, right: 8 })
+              .height(36).textAlign(TextAlign.Center)
+              .borderRadius(8).backgroundColor(OV_BG_TRACK)
+              .border({ width: 1, color: '#20FFFFFF' })
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+              .onClick(() => { this.addHoneycombCluster('grid2x3'); })
+          }
           ForEach(this.getSelectedCategoryPresets(), (preset: KeyPreset) => {
             Text(preset.label)
               .fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Bold)
@@ -2443,6 +2647,8 @@ export struct CustomKeyOverlay {
               .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
               .onClick(() => { this.addKeyFromPreset(preset); })
           })
+
+
         }
         .padding({ left: 16, right: 16, top: 8, bottom: 16 })
       }
@@ -2694,6 +2900,7 @@ export struct CustomKeyOverlay {
             Row({ space: 6 }) {
               this.ShapeChip('方', 'rect')
               this.ShapeChip('圆', 'circle')
+              this.ShapeChip('⬡', 'hexagon')
               Text('|').fontSize(10).fontColor('#30FFFFFF')
               this.BehaviorChip('点触', 'momentary')
               this.BehaviorChip('切换', 'toggle')

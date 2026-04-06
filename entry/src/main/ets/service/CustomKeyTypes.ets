@@ -193,7 +193,7 @@ export type KeyAction =
 // =============================================================================
 
 /** 按键形态 */
-export type KeyShape = 'rect' | 'circle';
+export type KeyShape = 'rect' | 'circle' | 'hexagon';
 
 /** 按键行为模式 */
 export type KeyBehavior = 'momentary' | 'toggle';
@@ -252,6 +252,8 @@ export interface CustomKeyDef {
   borderWidth: number;
   /** 振动反馈等级: none=无, light=轻(15ms), medium=中(40ms), heavy=重(80ms) */
   haptic: string;
+  /** 按键组 ID — 同一 groupId 的按键在编辑模式下整组拖动 */
+  groupId?: string;
 }
 
 // =============================================================================
@@ -297,6 +299,7 @@ export function cloneKeyDef(src: CustomKeyDef): CustomKeyDef {
     fontSize: src.fontSize,
     borderWidth: src.borderWidth ?? 1,
     haptic: src.haptic ?? 'light',
+    groupId: src.groupId,
   };
   return dst;
 }
@@ -344,6 +347,7 @@ export function createDefaultKeyDef(partial?: Partial<CustomKeyDef>): CustomKeyD
     if (partial.fontSize !== undefined) def.fontSize = partial.fontSize;
     if (partial.borderWidth !== undefined) def.borderWidth = partial.borderWidth;
     if (partial.haptic !== undefined) def.haptic = partial.haptic;
+    if (partial.groupId !== undefined) def.groupId = partial.groupId;
   }
   return def;
 }
@@ -800,7 +804,7 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
     ],
   },
   {
-    name: '轮盘',
+    name: '按键组',
     presets: buildWheelPadPresets(),
   },
   {

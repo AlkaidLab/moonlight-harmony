@@ -849,7 +849,7 @@ struct PcListPageV2 {
       return;
     }
 
-    const parsed = QrShareService.deserialize(trimmed);
+    const parsed = await QrShareService.deserialize(trimmed);
     if (!parsed) {
       promptAction.showToast({ message: '无法识别的二维码内容', duration: 2000 });
       return;

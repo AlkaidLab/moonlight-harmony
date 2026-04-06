@@ -20,9 +20,11 @@
  * 向后兼容 v1 格式（动作直接存储为 JSON 对象）。
  */
 
-import { scanCore, scanBarcode } from '@kit.ScanKit';
+import { scanCore, scanBarcode, generateBarcode } from '@kit.ScanKit';
 import { image } from '@kit.ImageKit';
-import { generateQrPixelMap } from './QrCodeGenerator';
+import { zlib } from '@kit.BasicServicesKit';
+import { buffer, util } from '@kit.ArkTS';
+import { generateQrPixelMap, ECLevel } from './QrCodeGenerator';
 import {
   CustomKeyDef,
   KeyAction,
@@ -59,7 +61,7 @@ export interface QrCodeResult {
 interface CompactKeyV2 {
   l: string;       // label
   a: string;       // action (v2 encoded string)
-  s: string;       // shape: 'r' | 'c'
+  s: string;       // shape: 'r' | 'c' | 'h' (hexagon)
   b: string;       // behavior: 'm' | 't'
   x: number;       // xPercent
   y: number;       // yPercent
@@ -75,6 +77,7 @@ interface CompactKeyV2 {
   ly?: number;     // layer (default=0)
   bw?: number;     // borderWidth (default=1)
   hp?: string;     // haptic (default='light')
+  gid?: string;    // groupId
 }
 
 /** 紧凑导出包 */
@@ -86,6 +89,57 @@ interface CompactExportV2 {
 
 /** QR 码最大推荐字符数（留余量） */
 const QR_MAX_CHARS = 4000;
+
+/** 压缩数据前缀 — Moonlight Compressed */
+const COMPRESSED_PREFIX = 'MLC:';
+
+// =============================================================================
+// zlib 压缩 / 解压
+// =============================================================================
+
+/**
+ * 压缩 JSON 字符串 → base64 字符串（带 MLC: 前缀）
+ * 压缩率约 50-70%，使 QR 码版本大幅降低
+ */
+async function compressToBase64(json: string): Promise<string> {
+  const encoder = new util.TextEncoder();
+  const encResult = encoder.encodeInto(json);
+  const sourceBuffer = encResult.buffer as ArrayBuffer;
+
+  // 目标缓冲区：压缩数据通常不会比原始数据大
+  const destBuffer = new ArrayBuffer(sourceBuffer.byteLength + 128);
+  const zip = zlib.createZipSync();
+  const result = await zip.compress2(destBuffer, sourceBuffer,
+    zlib.CompressLevel.COMPRESS_LEVEL_BEST_COMPRESSION);
+
+  // 只取实际压缩后的有效数据
+  const compressedBytes = new Uint8Array(destBuffer, 0, result.destLen);
+  const buf = buffer.from(compressedBytes);
+  return COMPRESSED_PREFIX + buf.toString('base64');
+}
+
+/**
+ * 解压 base64 字符串（带 MLC: 前缀）→ JSON 字符串
+ */
+async function decompressFromBase64(data: string): Promise<string> {
+  const b64 = data.substring(COMPRESSED_PREFIX.length);
+  const buf = buffer.from(b64, 'base64');
+  const sourceBuffer = buf.buffer as ArrayBuffer;
+
+  // 解压缓冲区：预估原始数据最大为压缩数据的 10 倍
+  const destBuffer = new ArrayBuffer(sourceBuffer.byteLength * 10);
+  const zip = zlib.createZipSync();
+  const result = await zip.uncompress(destBuffer, sourceBuffer);
+
+  const decompressedBytes = new Uint8Array(destBuffer, 0, result.destLen);
+  const decoder = util.TextDecoder.create('utf-8');
+  return decoder.decodeToString(decompressedBytes);
+}
+
+/** 检查是否为压缩格式 */
+function isCompressedData(data: string): boolean {
+  return data.startsWith(COMPRESSED_PREFIX);
+}
 
 // =============================================================================
 // v2 动作编码 / 解码
@@ -298,7 +352,118 @@ function decodeAction(s: string): KeyAction {
 }
 
 // =============================================================================
-// 紧凑序列化 / 反序列化
+// v3 管道分隔格式 — 比 JSON 更紧凑 (~50% smaller)
+// =============================================================================
+// 格式: "3\n名称\nl|a|x|y|w|h[|flags]\n..."
+// flags: 可选字段用 key=value 对表示，仅非默认值时出现
+// 例: "A|K65|0.5|0.3|40|40" 或 "A|K65|0.5|0.3|40|40|s=c|o=60|gid=abc"
+
+/** 序列化为 v3 紧凑管道格式 */
+function serializeV3(profileName: string, keys: CustomKeyDef[]): string {
+  const lines: string[] = [];
+  lines.push('3');  // version
+  lines.push(profileName);
+  for (const key of keys) {
+    const action = encodeAction(key.action);
+    const x = Math.round(key.xPercent * 1000) / 1000;
+    const y = Math.round(key.yPercent * 1000) / 1000;
+    // 必填字段：label|action|x|y|width|height
+    const parts: string[] = [];
+    parts.push(key.label);
+    parts.push(action);
+    parts.push(x.toString());
+    parts.push(y.toString());
+    parts.push(key.width.toString());
+    parts.push(key.height.toString());
+    // 可选字段：仅非默认值时追加
+    if (key.shape !== 'rect') parts.push('s=' + (key.shape === 'circle' ? 'c' : 'h'));
+    if (key.behavior === 'toggle') parts.push('b=t');
+    if (key.opacity !== 80) parts.push('o=' + key.opacity.toString());
+    if (key.borderRadius !== 12) parts.push('r=' + key.borderRadius.toString());
+    if (key.bgColor !== '#30FFFFFF') parts.push('bg=' + key.bgColor);
+    if (key.textColor !== '#E0FFFFFF') parts.push('tc=' + key.textColor);
+    if (key.pressedColor !== '#80A8D8EA') parts.push('pc=' + key.pressedColor);
+    if (key.fontSize !== 14) parts.push('fs=' + key.fontSize.toString());
+    if (key.layer !== 0) parts.push('ly=' + key.layer.toString());
+    if ((key.borderWidth ?? 1) !== 1) parts.push('bw=' + (key.borderWidth ?? 1).toString());
+    if (key.haptic !== 'light') parts.push('hp=' + key.haptic);
+    if (key.groupId) parts.push('gid=' + key.groupId);
+    lines.push(parts.join('|'));
+  }
+  return lines.join('\n');
+}
+
+/** 从 v3 管道格式反序列化 */
+function deserializeV3(data: string): [string, CustomKeyDef[]] | null {
+  const lines = data.split('\n');
+  if (lines.length < 3 || lines[0] !== '3') return null;
+  const profileName = lines[1];
+  const keys: CustomKeyDef[] = [];
+  for (let i = 2; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.length === 0) continue;
+    const parts = line.split('|');
+    if (parts.length < 6) continue;
+    // 解析可选 flags
+    let shape: KeyShape = 'rect';
+    let behavior: KeyBehavior = 'momentary';
+    let opacity = 80;
+    let borderRadius = 12;
+    let bgColor = '#30FFFFFF';
+    let textColor = '#E0FFFFFF';
+    let pressedColor = '#80A8D8EA';
+    let fontSize = 14;
+    let layer = 0;
+    let borderWidth = 1;
+    let haptic = 'light';
+    let groupId: string | undefined = undefined;
+    for (let j = 6; j < parts.length; j++) {
+      const eqIdx = parts[j].indexOf('=');
+      if (eqIdx < 0) continue;
+      const k = parts[j].substring(0, eqIdx);
+      const v = parts[j].substring(eqIdx + 1);
+      if (k === 's') shape = (v === 'c' ? 'circle' : (v === 'h' ? 'hexagon' : 'rect')) as KeyShape;
+      else if (k === 'b') behavior = (v === 't' ? 'toggle' : 'momentary') as KeyBehavior;
+      else if (k === 'o') opacity = parseInt(v) || 80;
+      else if (k === 'r') borderRadius = parseInt(v) || 12;
+      else if (k === 'bg') bgColor = v;
+      else if (k === 'tc') textColor = v;
+      else if (k === 'pc') pressedColor = v;
+      else if (k === 'fs') fontSize = parseInt(v) || 14;
+      else if (k === 'ly') layer = parseInt(v) || 0;
+      else if (k === 'bw') borderWidth = parseInt(v) || 1;
+      else if (k === 'hp') haptic = v;
+      else if (k === 'gid') groupId = v;
+    }
+    const keyDef: CustomKeyDef = {
+      id: generateKeyId(),
+      label: parts[0],
+      action: decodeAction(parts[1]),
+      shape: shape,
+      behavior: behavior,
+      xPercent: parseFloat(parts[2]) || 0,
+      yPercent: parseFloat(parts[3]) || 0,
+      width: parseInt(parts[4]) || 40,
+      height: parseInt(parts[5]) || 40,
+      layer: layer,
+      opacity: opacity,
+      borderRadius: borderRadius,
+      normalColor: '#60FFFFFF',
+      pressedColor: pressedColor,
+      bgColor: bgColor,
+      textColor: textColor,
+      fontSize: fontSize,
+      borderWidth: borderWidth,
+      haptic: haptic,
+      groupId: groupId,
+    };
+    keys.push(keyDef);
+  }
+  return keys.length > 0 ? [profileName, keys] : null;
+}
+
+// =============================================================================
+// 紧凑序列化 / 反序列化 (v2 JSON 格式)
 // =============================================================================
 
 /** 将 CustomKeyDef 转为 v2 紧凑格式 */
@@ -306,10 +471,10 @@ function toCompact(key: CustomKeyDef): CompactKeyV2 {
   const ck: CompactKeyV2 = {
     l: key.label,
     a: encodeAction(key.action),
-    s: key.shape === 'circle' ? 'c' : 'r',
+    s: key.shape === 'circle' ? 'c' : (key.shape === 'hexagon' ? 'h' : 'r'),
     b: key.behavior === 'toggle' ? 't' : 'm',
-    x: Math.round(key.xPercent * 10000) / 10000,
-    y: Math.round(key.yPercent * 10000) / 10000,
+    x: Math.round(key.xPercent * 1000) / 1000,
+    y: Math.round(key.yPercent * 1000) / 1000,
     w: key.width,
     h: key.height,
   };
@@ -322,6 +487,7 @@ function toCompact(key: CustomKeyDef): CompactKeyV2 {
   if (key.layer !== 0) ck.ly = key.layer;
   if ((key.borderWidth ?? 1) !== 1) ck.bw = key.borderWidth;
   if (key.haptic !== 'light') ck.hp = key.haptic;
+  if (key.groupId) ck.gid = key.groupId;
   return ck;
 }
 
@@ -331,7 +497,7 @@ function fromCompactV2(ck: CompactKeyV2): CustomKeyDef {
     id: generateKeyId(),
     label: ck.l,
     action: decodeAction(ck.a),
-    shape: (ck.s === 'c' ? 'circle' : 'rect') as KeyShape,
+    shape: (ck.s === 'c' ? 'circle' : (ck.s === 'h' ? 'hexagon' : 'rect')) as KeyShape,
     behavior: (ck.b === 't' ? 'toggle' : 'momentary') as KeyBehavior,
     xPercent: ck.x,
     yPercent: ck.y,
@@ -347,6 +513,7 @@ function fromCompactV2(ck: CompactKeyV2): CustomKeyDef {
     fontSize: ck.fs ?? 14,
     borderWidth: ck.bw ?? 1,
     haptic: ck.hp ?? 'light',
+    groupId: ck.gid,
   };
 }
 
@@ -356,7 +523,7 @@ function fromCompactV1(raw: Record<string, Object>): CustomKeyDef {
     id: generateKeyId(),
     label: raw['l'] as string ?? '',
     action: raw['a'] as KeyAction,
-    shape: ((raw['s'] as string) === 'c' ? 'circle' : 'rect') as KeyShape,
+    shape: ((raw['s'] as string) === 'c' ? 'circle' : ((raw['s'] as string) === 'h' ? 'hexagon' : 'rect')) as KeyShape,
     behavior: ((raw['b'] as string) === 't' ? 'toggle' : 'momentary') as KeyBehavior,
     xPercent: raw['x'] as number ?? 0.5,
     yPercent: raw['y'] as number ?? 0.5,
@@ -382,9 +549,16 @@ function fromCompactV1(raw: Record<string, Object>): CustomKeyDef {
 export class QrShareService {
 
   /**
-   * 将配置序列化为 v2 紧凑 JSON 字符串
+   * 将配置序列化为 v3 管道格式（QR/压缩用，最紧凑）
    */
   static serialize(profileName: string, keys: CustomKeyDef[]): string {
+    return serializeV3(profileName, keys);
+  }
+
+  /**
+   * 将配置序列化为 v2 JSON 字符串（剪贴板用，人类可读）
+   */
+  static serializeJson(profileName: string, keys: CustomKeyDef[]): string {
     const data: CompactExportV2 = {
       v: 2,
       n: profileName,
@@ -394,12 +568,52 @@ export class QrShareService {
   }
 
   /**
-   * 从紧凑 JSON 反序列化为按键列表（兼容 v1 和 v2）
+   * 将配置序列化并压缩为 base64 字符串（MLC: 前缀）
+   * 压缩率约 50-70%，显著降低 QR 码版本
+   */
+  static async serializeCompressed(profileName: string, keys: CustomKeyDef[]): Promise<string> {
+    const json = QrShareService.serialize(profileName, keys);
+    try {
+      const compressed = await compressToBase64(json);
+      console.info(`[QrShareService] 压缩: ${json.length} -> ${compressed.length} (${Math.round(compressed.length * 100 / json.length)}%)`);
+      // 只有压缩后更小才使用压缩格式
+      if (compressed.length < json.length) {
+        return compressed;
+      }
+    } catch (e) {
+      console.warn('[QrShareService] 压缩失败，回退到未压缩:', JSON.stringify(e));
+    }
+    return json;
+  }
+
+  /**
+   * 从紧凑 JSON 反序列化为按键列表（兼容 v1、v2 和压缩格式）
    * @returns [profileName, keys] 或 null（解析失败）
    */
-  static deserialize(json: string): [string, CustomKeyDef[]] | null {
+  static async deserialize(data: string): Promise<[string, CustomKeyDef[]] | null> {
+    let json = data;
+    if (isCompressedData(data)) {
+      try {
+        json = await decompressFromBase64(data);
+      } catch (e) {
+        console.error('[QrShareService] 解压失败:', JSON.stringify(e));
+        return null;
+      }
+    }
+    return QrShareService.parseData(json);
+  }
+
+  /**
+   * 解析数据为按键列表（兼容 v3 管道格式、v2 JSON、v1 JSON）
+   */
+  private static parseData(data: string): [string, CustomKeyDef[]] | null {
+    // v3 管道格式：首行为 "3"
+    if (data.startsWith('3\n')) {
+      return deserializeV3(data);
+    }
+    // v1/v2 JSON 格式
     try {
-      const raw = JSON.parse(json) as Record<string, Object>;
+      const raw = JSON.parse(data) as Record<string, Object>;
       const version = raw['v'] as number ?? 1;
       const keyArr = raw['k'] as Object[];
       if (!keyArr || !Array.isArray(keyArr) || keyArr.length === 0) {
@@ -430,13 +644,44 @@ export class QrShareService {
   }
 
   /**
-   * 生成 QR 码 PixelMap（纯 ArkTS 实现，无 512 字节限制）
+   * 生成 QR 码 PixelMap
+   * 优先使用 ScanKit generateBarcode（系统级生成，识别率最高）
+   * 超过 ScanKit 512 字符限制时回退到自定义生成器
    * @param content 要编码的字符串
    * @param size 图片尺寸 (px)
+   * @param ecLevel 纠错级别
    */
-  static async generateQrCode(content: string, size: number = 600): Promise<QrCodeResult> {
+  static async generateQrCode(content: string, size: number = 600,
+    ecLevel?: ECLevel): Promise<QrCodeResult> {
+    // 压缩数据用低纠错（zlib 自带校验）
+    const level = ecLevel ?? (isCompressedData(content) ? ECLevel.L : ECLevel.M);
+
+    // ScanKit 限制 512 字符，如果在范围内优先使用系统生成
+    if (content.length <= 512) {
+      try {
+        const scanEcLevel = level === ECLevel.L ? generateBarcode.ErrorCorrectionLevel.LEVEL_L
+          : level === ECLevel.Q ? generateBarcode.ErrorCorrectionLevel.LEVEL_Q
+          : level === ECLevel.H ? generateBarcode.ErrorCorrectionLevel.LEVEL_H
+          : generateBarcode.ErrorCorrectionLevel.LEVEL_M;
+        const options: generateBarcode.CreateOptions = {
+          scanType: scanCore.ScanType.QR_CODE,
+          width: size,
+          height: size,
+          margin: 2,
+          level: scanEcLevel,
+        };
+        const pixelMap = await generateBarcode.createBarcode(content, options);
+        console.info(`[QrShareService] ScanKit 生成 QR: ${content.length} chars, ECLevel=${level}`);
+        return { pixelMap };
+      } catch (e) {
+        console.warn('[QrShareService] ScanKit 生成失败，回退到自定义生成器:', JSON.stringify(e));
+      }
+    }
+
+    // 回退到自定义 QR 生成器（支持大数据量）
     try {
-      const pixelMap = await generateQrPixelMap(content, size);
+      const pixelMap = await generateQrPixelMap(content, size, level);
+      console.info(`[QrShareService] 自定义生成 QR: ${content.length} chars, ECLevel=${level}`);
       return { pixelMap };
     } catch (e) {
       const errMsg = (e as Record<string, Object>)?.message as string
