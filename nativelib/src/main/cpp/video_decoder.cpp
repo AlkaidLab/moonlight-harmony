@@ -933,6 +933,7 @@ void VideoDecoder::Cleanup() {
     lastFrameArrivalMs_ = 0;
     burstFrameCount_ = 0;
     lastAsyncRenderTimeMs_ = 0;
+    lastAsyncOutputTimeMs_ = 0;
     
     OH_LOG_INFO(LOG_APP, "Video decoder cleaned up");
 }
@@ -1326,6 +1327,8 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     if (enqueueTimeMs > 0) {
         auto currentTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
+        // 记录回调到达时间（用于 L5 输出间隔检测，排除渲染处理开销的抖动）
+        int64_t prevOutputTimeMs = self->lastAsyncOutputTimeMs_.exchange(currentTimeMs);
         int64_t instantDecodeTimeMs = currentTimeMs - enqueueTimeMs;
         double expectedFrameTimeMs = 1000.0 / self->config_.fps;
         bool isKeyframe = (attr.flags & AVCODEC_BUFFER_FLAGS_SYNC_FRAME) != 0;
@@ -1346,10 +1349,10 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
         // === L5 异步渲染跳帧（高帧率自适应） ===
         // 当帧输出间隔过短（解码器批量输出）且延迟偏高时，跳过中间帧
         // 高帧率（>90fps）使用更宽松的阈值，避免 VPU 正常管线延迟被误判
-        int64_t lastAsyncRender = self->lastAsyncRenderTimeMs_.load();
-        if (lastAsyncRender > 0 && !isKeyframe &&
+        // 使用回调到达间隔（而非渲染完成间隔），排除 GL 后处理/锁竞争等开销的抖动
+        if (prevOutputTimeMs > 0 && !isKeyframe &&
             self->stats_.decodedFrames > kLatencyRecoveryMinFrames) {
-            int64_t outputInterval = currentTimeMs - lastAsyncRender;
+            int64_t outputInterval = currentTimeMs - prevOutputTimeMs;
             // 根据帧率选择阈值
             double latencyRatio = (self->config_.fps > kL5HighFpsThreshold)
                 ? kL5LatencyRatio_HighFps : kL5LatencyRatio_Base;
@@ -1367,10 +1370,10 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
                     self->stats_.droppedFrames++;
                     self->stats_.droppedByL5++;
                 }
-                // 高帧率：更新时间戳（避免级联丢帧过度）
-                // 低帧率：不更新（级联丢帧确保 burst 中只保留最新帧，保持均匀帧间距）
-                if (self->config_.fps > kL5HighFpsThreshold) {
-                    self->lastAsyncRenderTimeMs_.store(currentTimeMs);
+                // 低帧率：回退 outputTime（级联丢帧确保 burst 中只保留最新帧）
+                // 高帧率：保持当前值不回退（避免级联丢帧过度）
+                if (self->config_.fps <= kL5HighFpsThreshold) {
+                    self->lastAsyncOutputTimeMs_.store(prevOutputTimeMs);
                 }
                 return;
             }

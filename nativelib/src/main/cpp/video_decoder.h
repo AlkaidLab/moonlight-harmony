@@ -365,6 +365,7 @@ private:
     
     // === 异步模式渲染跳帧（Render Skip） ===
     std::atomic<int64_t> lastAsyncRenderTimeMs_{0};     // 上一次异步渲染时间 (ms)
+    std::atomic<int64_t> lastAsyncOutputTimeMs_{0};     // 上一次回调到达时间 (ms)，用于 L5 输出间隔检测
     
     // 解码器健康检查状态
     std::atomic<int64_t> lastHealthCheckTimeMs_{0};     // 上次健康检查时间 (ms)
