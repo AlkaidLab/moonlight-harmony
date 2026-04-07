@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audio Haptics Demo — 音频驱动触觉反馈</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --card: #12121a;
+    --border: #1e1e2e;
+    --text: #e0e0e0;
+    --dim: #888;
+    --accent: #6c5ce7;
+    --accent2: #00cec9;
+    --orange: #e17055;
+    --green: #00b894;
+    --red: #d63031;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+
+  header { text-align: center; padding: 30px 0 20px; }
+  header h1 { font-size: 1.6em; font-weight: 700; margin-bottom: 6px; }
+  header p { color: var(--dim); font-size: 0.9em; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--dim);
+    margin-bottom: 14px;
+  }
+
+  /* Audio source */
+  .source-row {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  }
+  .btn {
+    padding: 10px 20px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover { border-color: var(--accent); background: #1a1a2e; }
+  .btn.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .btn.stop { border-color: var(--red); }
+  .btn.stop:hover { background: var(--red); color: #fff; }
+  input[type="file"] { display: none; }
+
+  /* Mode selector */
+  .mode-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .mode-btn {
+    flex: 1; padding: 10px; text-align: center;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); color: var(--dim);
+    cursor: pointer; transition: all 0.15s;
+    font-size: 0.85em;
+  }
+  .mode-btn.active { border-color: var(--accent); color: var(--text); background: #1a1a2e; }
+  .mode-btn .icon { font-size: 1.3em; display: block; margin-bottom: 4px; }
+
+  /* Canvas visualizers */
+  canvas {
+    width: 100%;
+    height: 100px;
+    border-radius: 8px;
+    background: #080810;
+    display: block;
+    margin-bottom: 10px;
+  }
+  canvas.tall { height: 140px; }
+  .canvas-label {
+    font-size: 0.75em;
+    color: var(--dim);
+    margin-bottom: 4px;
+    display: flex; justify-content: space-between;
+  }
+
+  /* Intensity bar */
+  .intensity-section { display: flex; align-items: center; gap: 16px; }
+  .intensity-bar-wrap {
+    flex: 1; height: 32px; background: #080810;
+    border-radius: 16px; overflow: hidden; position: relative;
+  }
+  .intensity-bar {
+    height: 100%; width: 0%; transition: width 50ms ease;
+    border-radius: 16px;
+    background: linear-gradient(90deg, var(--green), var(--accent), var(--orange), var(--red));
+  }
+  .intensity-value {
+    font-size: 2em; font-weight: 700; width: 80px;
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+
+  /* Slider */
+  .slider-row {
+    display: flex; align-items: center; gap: 12px; margin-top: 10px;
+  }
+  .slider-row label { font-size: 0.85em; color: var(--dim); white-space: nowrap; }
+  .slider-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+  .slider-row .val { font-size: 0.85em; width: 50px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Stats grid */
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px; margin-top: 14px;
+  }
+  .stat {
+    background: #080810; border-radius: 8px; padding: 10px 12px;
+    text-align: center;
+  }
+  .stat .label { font-size: 0.7em; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .value { font-size: 1.3em; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+  /* Pipeline diagram */
+  .pipeline {
+    display: flex; align-items: center; gap: 0;
+    overflow-x: auto; padding: 10px 0;
+    font-size: 0.75em;
+  }
+  .pipe-node {
+    padding: 8px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--card);
+    white-space: nowrap; text-align: center;
+    min-width: 80px; position: relative;
+  }
+  .pipe-node.active-node { border-color: var(--accent); box-shadow: 0 0 8px rgba(108,92,231,0.3); }
+  .pipe-arrow { color: var(--dim); padding: 0 4px; font-size: 1.2em; flex-shrink: 0; }
+
+  /* Haptic pulse indicator */
+  .haptic-ring {
+    width: 60px; height: 60px; border-radius: 50%;
+    border: 3px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5em; transition: all 80ms;
+    margin: 0 auto;
+  }
+  .haptic-ring.pulse {
+    border-color: var(--accent);
+    box-shadow: 0 0 20px rgba(108,92,231,0.5);
+    transform: scale(1.1);
+  }
+
+  .note { font-size: 0.8em; color: var(--dim); margin-top: 12px; line-height: 1.5; }
+  .note a { color: var(--accent2); text-decoration: none; }
+
+  @media (max-width: 600px) {
+    .container { padding: 12px; }
+    header h1 { font-size: 1.2em; }
+    canvas { height: 80px; }
+    canvas.tall { height: 100px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>🎵 Audio Haptics Demo</h1>
+    <p>音频驱动触觉反馈 · 可视化演示</p>
+  </header>
+
+  <!-- Audio source -->
+  <div class="card">
+    <h2>🔊 音频源</h2>
+    <div class="source-row">
+      <button class="btn" id="btnMic">🎤 麦克风</button>
+      <button class="btn" id="btnFile">📁 选择音频文件</button>
+      <input type="file" id="fileInput" accept="audio/*">
+      <button class="btn" id="btnDemo">🎹 内置 Demo</button>
+      <button class="btn stop" id="btnStop" style="display:none">⏹ 停止</button>
+    </div>
+    <div id="audioInfo" style="margin-top:8px; font-size:0.8em; color:var(--dim)"></div>
+  </div>
+
+  <!-- Mode selector -->
+  <div class="card">
+    <h2>🎮 场景模式</h2>
+    <div class="mode-row">
+      <div class="mode-btn active" data-mode="game">
+        <span class="icon">💥</span>
+        游戏/电影
+      </div>
+      <div class="mode-btn" data-mode="music">
+        <span class="icon">🥁</span>
+        音乐/节奏
+      </div>
+      <div class="mode-btn" data-mode="auto">
+        <span class="icon">🤖</span>
+        自动
+      </div>
+    </div>
+
+    <!-- Pipeline diagram -->
+    <div class="pipeline" id="pipeline">
+      <div class="pipe-node" id="pn-input">PCM 输入</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-node" id="pn-lpf">LPF 80Hz</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-node" id="pn-env">包络跟踪</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-node" id="pn-gate">噪声门限</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-node" id="pn-mode">游戏映射</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-node" id="pn-out">振动输出</div>
+    </div>
+  </div>
+
+  <!-- Visualizations -->
+  <div class="card">
+    <h2>📊 实时分析</h2>
+
+    <div class="canvas-label">
+      <span>原始波形</span>
+      <span id="rmsLabel">RMS: 0.000</span>
+    </div>
+    <canvas id="cvWaveform"></canvas>
+
+    <div class="canvas-label">
+      <span>低频能量 (LPF 80Hz 后)</span>
+      <span id="envLabel">包络: 0.000</span>
+    </div>
+    <canvas id="cvLowFreq"></canvas>
+
+    <div class="canvas-label">
+      <span>频谱 (0-500Hz)</span>
+      <span id="freqLabel">峰值: 0 Hz</span>
+    </div>
+    <canvas id="cvSpectrum" class="tall"></canvas>
+  </div>
+
+  <!-- Vibration output -->
+  <div class="card">
+    <h2>📳 振动输出</h2>
+    <div class="intensity-section">
+      <div class="intensity-bar-wrap">
+        <div class="intensity-bar" id="intensityBar"></div>
+      </div>
+      <div class="intensity-value" id="intensityValue">0</div>
+    </div>
+
+    <div class="slider-row">
+      <label>灵敏度</label>
+      <input type="range" id="sensitivity" min="10" max="300" value="100">
+      <span class="val" id="sensVal">1.0×</span>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="label">低频占比</div>
+        <div class="value" id="statLowRatio">0%</div>
+      </div>
+      <div class="stat">
+        <div class="label">Onset 计数</div>
+        <div class="value" id="statOnsets">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">回调频率</div>
+        <div class="value" id="statCallbackRate">0/s</div>
+      </div>
+      <div class="stat">
+        <div class="label">检测模式</div>
+        <div class="value" id="statDetectedMode">—</div>
+      </div>
+    </div>
+
+    <div style="text-align:center; margin-top:16px;">
+      <div class="haptic-ring" id="hapticRing">📳</div>
+      <div style="font-size:0.75em; color:var(--dim); margin-top:6px;">
+        移动设备支持实际振动
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>提示：</strong>在支持 Vibration API 的移动浏览器上，会触发真实的设备振动。
+      桌面浏览器仅显示可视化效果。
+      <br>基于 Moonlight for HarmonyOS 的 <a href="AUDIO_HAPTICS_DEEP_DIVE.md">BassEnergyAnalyzer v3</a> 算法的 Web 端移植。
+    </div>
+  </div>
+</div>
+
+<script>
+// ===================================================================
+// Audio Haptics Demo — Web 端 BassEnergyAnalyzer 移植
+// ===================================================================
+
+const $ = id => document.getElementById(id);
+
+// --- Audio Context ---
+let audioCtx = null;
+let analyserNode = null;
+let sourceNode = null;
+let mediaStream = null;
+let isRunning = false;
+
+// --- Canvas ---
+const cvWaveform = $('cvWaveform');
+const cvLowFreq = $('cvLowFreq');
+const cvSpectrum = $('cvSpectrum');
+
+function resizeCanvas(cv) {
+  const rect = cv.getBoundingClientRect();
+  cv.width = rect.width * devicePixelRatio;
+  cv.height = rect.height * devicePixelRatio;
+}
+[cvWaveform, cvLowFreq, cvSpectrum].forEach(resizeCanvas);
+window.addEventListener('resize', () => [cvWaveform, cvLowFreq, cvSpectrum].forEach(resizeCanvas));
+
+// --- BassEnergyAnalyzer (JS port) ---
+class BassEnergyAnalyzer {
+  constructor(sampleRate) {
+    this.sampleRate = sampleRate;
+    this.sceneMode = 0; // 0=game, 1=music, 2=auto
+    this.sensitivity = 1.0;
+
+    // Butterworth LPF 80Hz
+    const fc = 80, Q = 0.7071;
+    const w0 = 2 * Math.PI * fc / sampleRate;
+    const sinW0 = Math.sin(w0), cosW0 = Math.cos(w0);
+    const alpha = sinW0 / (2 * Q);
+    const a0 = 1 + alpha;
+    this.b0 = (1 - cosW0) / 2 / a0;
+    this.b1 = (1 - cosW0) / a0;
+    this.b2 = this.b0;
+    this.a1 = -2 * cosW0 / a0;
+    this.a2 = (1 - alpha) / a0;
+
+    // Biquad state
+    this.x1 = 0; this.x2 = 0; this.y1 = 0; this.y2 = 0;
+
+    // Envelope
+    this.attackCoeff = 1 - Math.exp(-1 / (sampleRate * 0.005));
+    this.releaseCoeff = 1 - Math.exp(-1 / (sampleRate * 0.08));
+    this.envelope = 0;
+
+    // RMS
+    this.rmsEnvelope = 0;
+
+    // Noise floor
+    this.noiseFloor = 0;
+    this.noiseAlpha = 1 - Math.exp(-1 / (sampleRate * 2));
+
+    // Onset detection (music mode)
+    const fps = sampleRate / 128; // AnalyserNode fftSize based
+    this.shortAlpha = 2 / (fps * 0.08 + 1);
+    this.longAlpha = 2 / (fps * 0.8 + 1);
+    this.shortEnergy = 0;
+    this.longEnergy = 0;
+    this.prevEnergy = 0;
+    this.onsetSignalAvg = 0;
+    this.onsetSignalAlpha = 2 / (fps * 2 + 1);
+    this.cooldown = 0;
+    this.cooldownFrames = Math.max(1, Math.floor(fps * 0.15));
+    this.pulseIntensity = 0;
+    this.pulseDecay = 0;
+
+    // Auto mode
+    this.transientCount = 0;
+    this.transientFrames = 0;
+    this.transientWindowSize = Math.floor(fps * 3);
+    this.autoMode = 0;
+    this.onsetHistory = [];
+    this.frameCounter = 0;
+    this.pendingMode = 0;
+    this.pendingCount = 0;
+
+    // Stats
+    this.onsetTotal = 0;
+    this.callbackCount = 0;
+    this.lastCallbackTime = 0;
+    this.lastIntensity = 0;
+
+    // History buffers for visualization
+    this.envHistory = new Float32Array(256).fill(0);
+    this.envWriteIdx = 0;
+  }
+
+  processTimeDomain(timeDomainData) {
+    // timeDomainData: Uint8Array from AnalyserNode (0-255, 128=zero)
+    const N = timeDomainData.length;
+    let sumSq = 0, frameEnergy = 0, fullBandEnergy = 0;
+
+    for (let i = 0; i < N; i++) {
+      const sample = (timeDomainData[i] - 128) / 128;
+      sumSq += sample * sample;
+      fullBandEnergy += Math.abs(sample);
+
+      // Biquad LPF
+      const filtered = this.b0 * sample + this.b1 * this.x1 + this.b2 * this.x2
+                      - this.a1 * this.y1 - this.a2 * this.y2;
+      this.x2 = this.x1; this.x1 = sample;
+      this.y2 = this.y1; this.y1 = filtered;
+
+      // Envelope
+      const rect = Math.abs(filtered);
+      if (rect > this.envelope) {
+        this.envelope += this.attackCoeff * (rect - this.envelope);
+      } else {
+        this.envelope += this.releaseCoeff * (rect - this.envelope);
+      }
+      frameEnergy += rect;
+    }
+
+    frameEnergy /= N;
+    fullBandEnergy /= N;
+
+    // RMS
+    const rms = Math.sqrt(sumSq / N);
+    if (rms > this.rmsEnvelope) {
+      this.rmsEnvelope += 0.3 * (rms - this.rmsEnvelope);
+    } else {
+      this.rmsEnvelope += 0.02 * (rms - this.rmsEnvelope);
+    }
+
+    // Volume weight
+    const rmsLow = 0.015, rmsHigh = 0.12;
+    let volumeWeight;
+    if (this.rmsEnvelope <= rmsLow) volumeWeight = 0;
+    else if (this.rmsEnvelope >= rmsHigh) volumeWeight = 1;
+    else {
+      const t = (this.rmsEnvelope - rmsLow) / (rmsHigh - rmsLow);
+      volumeWeight = t * t * (3 - 2 * t);
+    }
+
+    // Noise floor
+    if (this.envelope < this.noiseFloor || this.noiseFloor < 1e-8) {
+      this.noiseFloor = this.envelope;
+    } else {
+      this.noiseFloor += this.noiseAlpha * (this.envelope - this.noiseFloor);
+    }
+
+    // Store envelope history
+    this.envHistory[this.envWriteIdx] = this.envelope;
+    this.envWriteIdx = (this.envWriteIdx + 1) % this.envHistory.length;
+
+    // Determine active mode
+    let activeMode = this.sceneMode;
+    if (this.sceneMode === 2) {
+      activeMode = this.autoDetect(fullBandEnergy);
+    }
+
+    // Compute intensity
+    let intensity;
+    if (activeMode === 1) {
+      intensity = this.musicMode(fullBandEnergy, frameEnergy, volumeWeight);
+    } else {
+      intensity = this.gameMode(volumeWeight);
+    }
+
+    // Low freq ratio
+    let lowFreqRatio = 50;
+    if (fullBandEnergy > 1e-6) {
+      lowFreqRatio = Math.max(0, Math.min(100, Math.round(frameEnergy / fullBandEnergy * 100)));
+    }
+
+    // Throttle
+    const now = performance.now();
+    const minInterval = (activeMode === 1) ? 15 : 20;
+    if (now - this.lastCallbackTime < minInterval) return null;
+
+    const delta = Math.abs(intensity - this.lastIntensity);
+    const shouldCallback = (this.lastIntensity > 0 && intensity === 0)
+      || (intensity > 0 && this.lastIntensity === 0)
+      || delta >= 3;
+
+    if (!shouldCallback) return null;
+
+    this.lastIntensity = intensity;
+    this.lastCallbackTime = now;
+    this.callbackCount++;
+
+    return { intensity, lowFreqRatio, rms, activeMode };
+  }
+
+  gameMode(volumeWeight) {
+    const threshold = this.noiseFloor * 8 + 0.005;
+    const effective = Math.max(0, this.envelope - threshold);
+    let normalized = Math.min(effective * this.sensitivity * 10, 1);
+    const mapped = Math.pow(normalized, 2.5) * volumeWeight * 100;
+    return Math.max(0, Math.min(100, Math.round(mapped)));
+  }
+
+  musicMode(fullBandEnergy, lowFreqEnergy, volumeWeight) {
+    this.shortEnergy += this.shortAlpha * (fullBandEnergy - this.shortEnergy);
+    this.longEnergy += this.longAlpha * (fullBandEnergy - this.longEnergy);
+
+    if (this.cooldown > 0) this.cooldown--;
+
+    const onsetSignal = this.longEnergy > 1e-6 ? fullBandEnergy / this.longEnergy : 0;
+    const smoothed = this.longEnergy > 1e-6 ? this.shortEnergy / this.longEnergy : 0;
+    this.onsetSignalAvg += this.onsetSignalAlpha * (smoothed - this.onsetSignalAvg);
+    const adaptiveThreshold = Math.max(this.onsetSignalAvg * 1.5, 1.5);
+
+    const energyDelta = fullBandEnergy - this.prevEnergy;
+    this.prevEnergy = fullBandEnergy;
+
+    let isOnset = false;
+    if (onsetSignal > adaptiveThreshold && this.cooldown <= 0 && energyDelta > 0) {
+      isOnset = true;
+    }
+
+    if (isOnset) {
+      this.onsetTotal++;
+      const ratio = this.longEnergy > 1e-6 ? fullBandEnergy / this.longEnergy : 1;
+      let pulseStrength = Math.min((ratio - 1) / 2, 1);
+      pulseStrength = Math.pow(Math.max(pulseStrength, 0.1), 0.5);
+
+      let lowBoost = 1;
+      if (lowFreqEnergy > 0.001) lowBoost = 1 + Math.min(lowFreqEnergy * 20, 0.4);
+
+      this.pulseIntensity = Math.max(15, Math.min(100,
+        Math.round(pulseStrength * lowBoost * this.sensitivity * volumeWeight * 100)));
+      this.pulseDecay = 8;
+      this.cooldown = this.cooldownFrames;
+    }
+
+    if (this.pulseDecay > 0) {
+      const t = this.pulseDecay / 8;
+      const decay = Math.exp(-3 * (1 - t));
+      const output = Math.round(this.pulseIntensity * decay);
+      this.pulseDecay--;
+      return Math.max(0, Math.min(100, output));
+    }
+    return 0;
+  }
+
+  autoDetect(energy) {
+    this.frameCounter++;
+    this.transientFrames++;
+
+    if (energy > this.longEnergy * 1.8 + 0.002) {
+      this.transientCount++;
+      this.onsetHistory.push(this.frameCounter);
+      if (this.onsetHistory.length > 16) this.onsetHistory.shift();
+    }
+
+    if (this.transientFrames >= this.transientWindowSize) {
+      let detected = 0;
+      if (this.transientCount >= 6 && this.transientCount <= 30 && this.onsetHistory.length >= 4) {
+        const intervals = [];
+        for (let i = 1; i < this.onsetHistory.length; i++) {
+          intervals.push(this.onsetHistory[i] - this.onsetHistory[i - 1]);
+        }
+        if (intervals.length >= 3) {
+          const mean = intervals.reduce((a, b) => a + b) / intervals.length;
+          if (mean > 0) {
+            const variance = intervals.reduce((s, v) => s + (v - mean) ** 2, 0) / intervals.length;
+            const cv = Math.sqrt(variance) / mean;
+            if (cv < 0.5) detected = 1;
+          }
+        }
+      }
+
+      if (detected === this.pendingMode) {
+        this.pendingCount++;
+        if (this.pendingCount >= 2) this.autoMode = detected;
+      } else {
+        this.pendingMode = detected;
+        this.pendingCount = 1;
+      }
+
+      this.transientCount = 0;
+      this.transientFrames = 0;
+    }
+    return this.autoMode;
+  }
+}
+
+// --- State ---
+let analyzer = null;
+let animFrameId = null;
+let timeDomainData = null;
+let freqData = null;
+let callbackTimes = [];
+let audioElement = null;
+
+// --- Mode ---
+let currentMode = 'game';
+
+// --- Init Audio ---
+function initAudioContext() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  analyserNode = audioCtx.createAnalyser();
+  analyserNode.fftSize = 2048;
+  analyserNode.smoothingTimeConstant = 0.5;
+  analyserNode.connect(audioCtx.destination);
+  timeDomainData = new Uint8Array(analyserNode.fftSize);
+  freqData = new Uint8Array(analyserNode.frequencyBinCount);
+  analyzer = new BassEnergyAnalyzer(audioCtx.sampleRate);
+  updateMode(currentMode);
+}
+
+function stopAll() {
+  if (sourceNode) { try { sourceNode.disconnect(); } catch(e) {} sourceNode = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  if (audioElement) { audioElement.pause(); audioElement = null; }
+  if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
+  isRunning = false;
+  $('btnStop').style.display = 'none';
+  $('audioInfo').textContent = '';
+  [$('btnMic'), $('btnFile'), $('btnDemo')].forEach(b => b.classList.remove('active'));
+}
+
+function startLoop() {
+  if (animFrameId) return;
+  isRunning = true;
+  $('btnStop').style.display = '';
+
+  function loop() {
+    if (!isRunning) return;
+    animFrameId = requestAnimationFrame(loop);
+
+    analyserNode.getByteTimeDomainData(timeDomainData);
+    analyserNode.getByteFrequencyData(freqData);
+
+    const result = analyzer.processTimeDomain(timeDomainData);
+
+    // Draw waveform
+    drawWaveform(cvWaveform, timeDomainData);
+
+    // Draw low-freq envelope history
+    drawEnvelopeHistory(cvLowFreq, analyzer.envHistory, analyzer.envWriteIdx);
+
+    // Draw spectrum (low freq focus)
+    drawSpectrum(cvSpectrum, freqData);
+
+    // Update labels
+    const rmsVal = analyzer.rmsEnvelope;
+    $('rmsLabel').textContent = `RMS: ${rmsVal.toFixed(4)}`;
+    $('envLabel').textContent = `包络: ${analyzer.envelope.toFixed(4)}`;
+
+    // Find peak frequency
+    const binHz = audioCtx.sampleRate / analyserNode.fftSize;
+    const maxBin = Math.min(Math.floor(500 / binHz), freqData.length);
+    let peakBin = 0, peakVal = 0;
+    for (let i = 0; i < maxBin; i++) {
+      if (freqData[i] > peakVal) { peakVal = freqData[i]; peakBin = i; }
+    }
+    $('freqLabel').textContent = `峰值: ${Math.round(peakBin * binHz)} Hz`;
+
+    // Update intensity display
+    if (result) {
+      const { intensity, lowFreqRatio, activeMode } = result;
+      $('intensityBar').style.width = intensity + '%';
+      $('intensityValue').textContent = intensity;
+      $('statLowRatio').textContent = lowFreqRatio + '%';
+
+      // Haptic ring pulse
+      const ring = $('hapticRing');
+      if (intensity > 10) {
+        ring.classList.add('pulse');
+        ring.style.borderColor = intensity > 60 ? 'var(--orange)' : 'var(--accent)';
+      } else {
+        ring.classList.remove('pulse');
+      }
+
+      // Real vibration (mobile)
+      if (intensity > 15 && navigator.vibrate) {
+        const dur = activeMode === 1 ? Math.min(30 + intensity * 0.3, 60) : Math.min(20 + intensity * 1.5, 150);
+        navigator.vibrate(Math.round(dur));
+      }
+
+      // Track callbacks/sec
+      callbackTimes.push(performance.now());
+      const cutoff = performance.now() - 1000;
+      callbackTimes = callbackTimes.filter(t => t > cutoff);
+      $('statCallbackRate').textContent = callbackTimes.length + '/s';
+
+      const modeNames = ['游戏', '音乐', '游戏'];
+      $('statDetectedMode').textContent = analyzer.sceneMode === 2
+        ? `自动→${modeNames[activeMode]}`
+        : modeNames[activeMode];
+    }
+
+    $('statOnsets').textContent = analyzer.onsetTotal;
+  }
+
+  loop();
+}
+
+// --- Drawing ---
+function drawWaveform(canvas, data) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // Center line
+  ctx.strokeStyle = '#1e1e2e';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
+
+  ctx.strokeStyle = '#6c5ce7';
+  ctx.lineWidth = 1.5 * devicePixelRatio;
+  ctx.beginPath();
+  const step = w / data.length;
+  for (let i = 0; i < data.length; i++) {
+    const y = (data[i] / 255) * h;
+    if (i === 0) ctx.moveTo(0, y);
+    else ctx.lineTo(i * step, y);
+  }
+  ctx.stroke();
+}
+
+function drawEnvelopeHistory(canvas, history, writeIdx) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const len = history.length;
+  const step = w / len;
+
+  // Find max for scaling
+  let maxVal = 0;
+  for (let i = 0; i < len; i++) maxVal = Math.max(maxVal, history[i]);
+  maxVal = Math.max(maxVal, 0.01);
+
+  // Draw filled
+  const grad = ctx.createLinearGradient(0, h, 0, 0);
+  grad.addColorStop(0, 'rgba(108,92,231,0.05)');
+  grad.addColorStop(1, 'rgba(108,92,231,0.4)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  for (let i = 0; i < len; i++) {
+    const idx = (writeIdx + i) % len;
+    const y = h - (history[idx] / maxVal) * h * 0.9;
+    ctx.lineTo(i * step, y);
+  }
+  ctx.lineTo(w, h);
+  ctx.fill();
+
+  // Draw line
+  ctx.strokeStyle = '#6c5ce7';
+  ctx.lineWidth = 1.5 * devicePixelRatio;
+  ctx.beginPath();
+  for (let i = 0; i < len; i++) {
+    const idx = (writeIdx + i) % len;
+    const y = h - (history[idx] / maxVal) * h * 0.9;
+    if (i === 0) ctx.moveTo(0, y);
+    else ctx.lineTo(i * step, y);
+  }
+  ctx.stroke();
+
+  // Noise floor line
+  if (analyzer) {
+    const nfY = h - (analyzer.noiseFloor / maxVal) * h * 0.9;
+    ctx.strokeStyle = 'rgba(214,48,49,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(0, nfY); ctx.lineTo(w, nfY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = 'rgba(214,48,49,0.7)';
+    ctx.font = `${10 * devicePixelRatio}px sans-serif`;
+    ctx.fillText('噪声门限', 4 * devicePixelRatio, nfY - 4 * devicePixelRatio);
+  }
+}
+
+function drawSpectrum(canvas, data) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!audioCtx) return;
+  const binHz = audioCtx.sampleRate / analyserNode.fftSize;
+  const maxFreq = 500;
+  const maxBin = Math.min(Math.floor(maxFreq / binHz), data.length);
+
+  const barW = w / maxBin;
+
+  for (let i = 0; i < maxBin; i++) {
+    const val = data[i] / 255;
+    const barH = val * h * 0.95;
+
+    // Color: bass = purple, mid = cyan
+    const freq = i * binHz;
+    let r, g, b;
+    if (freq < 80) { r = 108; g = 92; b = 231; }
+    else if (freq < 200) { r = 0; g = 206; b = 201; }
+    else { r = 99; g = 110; b = 114; }
+
+    ctx.fillStyle = `rgba(${r},${g},${b},${0.3 + val * 0.7})`;
+    ctx.fillRect(i * barW, h - barH, barW - 1, barH);
+  }
+
+  // 80Hz marker
+  const hz80x = (80 / binHz) * barW;
+  ctx.strokeStyle = 'rgba(225,112,85,0.6)';
+  ctx.lineWidth = 1.5 * devicePixelRatio;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(hz80x, 0); ctx.lineTo(hz80x, h); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(225,112,85,0.8)';
+  ctx.font = `${10 * devicePixelRatio}px sans-serif`;
+  ctx.fillText('80Hz ← LPF', hz80x + 4 * devicePixelRatio, 14 * devicePixelRatio);
+
+  // Frequency labels
+  ctx.fillStyle = 'rgba(136,136,136,0.5)';
+  ctx.font = `${9 * devicePixelRatio}px sans-serif`;
+  for (const f of [100, 200, 300, 400, 500]) {
+    const x = (f / binHz) * barW;
+    if (x < w - 20) ctx.fillText(f + 'Hz', x, h - 4 * devicePixelRatio);
+  }
+}
+
+// --- Mode switching ---
+function updateMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+
+  if (analyzer) {
+    analyzer.sceneMode = mode === 'game' ? 0 : mode === 'music' ? 1 : 2;
+  }
+
+  // Update pipeline
+  const modeNode = $('pn-mode');
+  if (mode === 'game') modeNode.textContent = 'pow(x,2.5)';
+  else if (mode === 'music') modeNode.textContent = 'Onset 检测';
+  else modeNode.textContent = '自动切换';
+
+  // Highlight active nodes
+  document.querySelectorAll('.pipe-node').forEach(n => n.classList.add('active-node'));
+}
+
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => updateMode(btn.dataset.mode));
+});
+
+// --- Sensitivity slider ---
+$('sensitivity').addEventListener('input', e => {
+  const val = e.target.value / 100;
+  $('sensVal').textContent = val.toFixed(1) + '×';
+  if (analyzer) analyzer.sensitivity = val;
+});
+
+// --- Mic ---
+$('btnMic').addEventListener('click', async () => {
+  stopAll();
+  initAudioContext();
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    sourceNode.connect(analyserNode);
+    $('btnMic').classList.add('active');
+    $('audioInfo').textContent = '🎤 麦克风已连接 · ' + audioCtx.sampleRate + 'Hz';
+    startLoop();
+  } catch (e) {
+    $('audioInfo').textContent = '❌ 麦克风访问被拒绝: ' + e.message;
+  }
+});
+
+// --- File ---
+$('btnFile').addEventListener('click', () => {
+  $('fileInput').click();
+});
+$('fileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  stopAll();
+  initAudioContext();
+
+  audioElement = new Audio();
+  audioElement.src = URL.createObjectURL(file);
+  audioElement.crossOrigin = 'anonymous';
+  audioElement.loop = true;
+
+  sourceNode = audioCtx.createMediaElementSource(audioElement);
+  sourceNode.connect(analyserNode);
+  await audioElement.play();
+
+  $('btnFile').classList.add('active');
+  $('audioInfo').textContent = `📁 ${file.name} · ${audioCtx.sampleRate}Hz`;
+  startLoop();
+  e.target.value = '';
+});
+
+// --- Demo oscillator ---
+$('btnDemo').addEventListener('click', () => {
+  stopAll();
+  initAudioContext();
+
+  // Create a bass-heavy demo: kick drum + hi-hat pattern
+  const bufLen = audioCtx.sampleRate * 4; // 4 seconds loop
+  const buffer = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  const sr = audioCtx.sampleRate;
+
+  // BPM 120 = beat every 0.5s
+  const beatInterval = 0.5;
+  const totalBeats = 8;
+
+  for (let beat = 0; beat < totalBeats; beat++) {
+    const t0 = beat * beatInterval;
+    const startSample = Math.floor(t0 * sr);
+
+    // Kick drum: decaying sine at 50Hz + noise click
+    const kickLen = Math.floor(0.15 * sr);
+    for (let i = 0; i < kickLen && startSample + i < bufLen; i++) {
+      const t = i / sr;
+      const env = Math.exp(-t * 30);
+      const freq = 50 + 100 * Math.exp(-t * 40); // pitch sweep
+      data[startSample + i] += env * 0.7 * Math.sin(2 * Math.PI * freq * t);
+      // Click transient
+      if (i < sr * 0.005) {
+        data[startSample + i] += (Math.random() * 2 - 1) * 0.3 * Math.exp(-t * 500);
+      }
+    }
+
+    // Hi-hat on off-beats
+    if (beat % 2 === 1) {
+      const hhStart = startSample;
+      const hhLen = Math.floor(0.05 * sr);
+      for (let i = 0; i < hhLen && hhStart + i < bufLen; i++) {
+        const t = i / sr;
+        data[hhStart + i] += (Math.random() * 2 - 1) * 0.15 * Math.exp(-t * 100);
+      }
+    }
+
+    // Snare on beats 2 and 6
+    if (beat === 2 || beat === 6) {
+      const snStart = startSample;
+      const snLen = Math.floor(0.12 * sr);
+      for (let i = 0; i < snLen && snStart + i < bufLen; i++) {
+        const t = i / sr;
+        const env = Math.exp(-t * 25);
+        data[snStart + i] += env * 0.4 * Math.sin(2 * Math.PI * 180 * t);
+        data[snStart + i] += (Math.random() * 2 - 1) * 0.25 * Math.exp(-t * 40);
+      }
+    }
+  }
+
+  // Add subtle bass line
+  for (let i = 0; i < bufLen; i++) {
+    const t = i / sr;
+    const beatPhase = (t % beatInterval) / beatInterval;
+    const bassEnv = Math.max(0, 1 - beatPhase * 3) * 0.15;
+    data[i] += bassEnv * Math.sin(2 * Math.PI * 55 * t);
+  }
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  source.connect(analyserNode);
+  source.start();
+  sourceNode = source;
+
+  $('btnDemo').classList.add('active');
+  $('audioInfo').textContent = '🎹 内置 Demo · 120 BPM kick/snare/hihat · ' + sr + 'Hz';
+  startLoop();
+});
+
+// --- Stop ---
+$('btnStop').addEventListener('click', stopAll);
+
+// Resume AudioContext on user gesture (autoplay policy)
+document.addEventListener('click', () => {
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}, { once: true });
+
+</script>
+</body>
+</html>
