@@ -514,7 +514,8 @@ skip_enqueue:
 
             if (ret == USB_DDK_IO_FAILED || ret == USB_DDK_INVALID_OP) {
                 // === 智能错误恢复 ===
-                // 瞬态错误保留最后输入状态（不归零），避免中断长按
+                // 错误打断了数据连续性，去重缓存失效：恢复后第一帧必须传递给 JS
+                ctx->lastInputValid = false;
                 if (consecutiveErrors == 3) {
                     OH_LOG_WARN(LOG_APP, "[%{public}s] id=%{public}d 连续 %d 次错误，尝试恢复", LOG_TAG, pollerId, consecutiveErrors);
                 }
