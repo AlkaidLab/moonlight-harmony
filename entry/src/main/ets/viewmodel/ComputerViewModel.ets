@@ -30,6 +30,7 @@ export class ObservableComputer implements AddressHolder {
   remoteAddress: string = '';
   manualAddress: string = '';  // 用户手动输入的地址（如域名），轮询时最优先尝试
   ipv6Address: string = '';     // IPv6 地址
+  preferredAddress: string = ''; // 用户锁定的优先地址
   pairName: string = '';
   gpuType: string = '';
   isNvidiaSoftware: boolean = false;
@@ -63,6 +64,7 @@ export class ObservableComputer implements AddressHolder {
     this.remoteAddress = info.remoteAddress;
     this.manualAddress = info.manualAddress || '';
     this.ipv6Address = info.ipv6Address || '';
+    this.preferredAddress = info.preferredAddress || '';
     this.pairName = info.pairName;
     this.gpuType = info.gpuType;
     this.isNvidiaSoftware = info.isNvidiaSoftware;
@@ -104,6 +106,7 @@ export class ObservableComputer implements AddressHolder {
       remoteAddress: this.remoteAddress,
       manualAddress: this.manualAddress || undefined,
       ipv6Address: this.ipv6Address || undefined,
+      preferredAddress: this.preferredAddress || undefined,
       pairName: this.pairName,
       gpuType: this.gpuType,
       maxSupportedResolution: { width: 1920, height: 1080 },

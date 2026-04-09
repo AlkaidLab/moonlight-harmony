@@ -42,6 +42,7 @@ export interface AddressHolder {
   remoteAddress: string;
   manualAddress?: string;
   ipv6Address?: string;
+  preferredAddress?: string;
 }
 
 export interface ComputerInfo extends AddressHolder {
@@ -78,6 +79,11 @@ export interface ComputerInfo extends AddressHolder {
  *   2. 回退链（无活跃地址时，如首次添加/离线）
  */
 export function selectBestAddress(computer: AddressHolder): string {
+  // 0. 用户锁定的优先地址 — 跳过竞速，直接使用
+  if (computer.preferredAddress) {
+    return computer.preferredAddress;
+  }
+
   // 1. 活跃地址存在 → 直接返回（已被最近一次轮询验证为可达）
   //    - LAN IP 胜出：低延迟 + 可达 ✓
   //    - 域名/WAN IP 胜出：可达 ✓（不假设 localAddress 也可达）
@@ -140,6 +146,7 @@ export class ComputerInfoBuilder {
       remoteAddress: '',
       manualAddress: undefined,
       ipv6Address: undefined,
+      preferredAddress: undefined,
       macAddress: '',
       state: ComputerState.UNKNOWN,
       pairState: PairState.NOT_PAIRED,
@@ -186,6 +193,11 @@ export class ComputerInfoBuilder {
 
   setIpv6Address(ipv6Address: string | undefined): ComputerInfoBuilder {
     this.info.ipv6Address = ipv6Address;
+    return this;
+  }
+
+  setPreferredAddress(preferredAddress: string | undefined): ComputerInfoBuilder {
+    this.info.preferredAddress = preferredAddress;
     return this;
   }
 
@@ -253,6 +265,7 @@ export class ComputerInfoBuilder {
       remoteAddress: this.info.remoteAddress,
       manualAddress: this.info.manualAddress,
       ipv6Address: this.info.ipv6Address,
+      preferredAddress: this.info.preferredAddress,
       macAddress: this.info.macAddress,
       state: this.info.state,
       pairState: this.info.pairState,

@@ -190,6 +190,8 @@ export struct ComputerCard {
         .fontSize(AppSizes.FontBody)
         .fontColor(AppColors.TextSecondary)
         .fontFamily('monospace')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.MARQUEE })
         .margin({ top: AppSpacing.XSmall })
 
       // 第三行：状态圆点 + 状态文本

@@ -290,6 +290,10 @@ export class ComputerManager {
     if (updates.state !== undefined) {
       computer.state = updates.state;
     }
+    // preferredAddress: 空字符串表示清除锁定
+    if (updates.preferredAddress !== undefined) {
+      computer.preferredAddress = updates.preferredAddress || undefined;
+    }
     
     console.info(`ComputerManager: 更新电脑 ${computer.name} - pairState=${computer.pairState}, serverCert=${computer.serverCert ? '有' : '无'}`);
     

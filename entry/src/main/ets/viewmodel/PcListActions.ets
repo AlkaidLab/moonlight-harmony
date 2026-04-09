@@ -396,7 +396,8 @@ export class PcListActions {
       for (const r of reachableResults) {
         const label = this.getAddressLabel(r.address, computerInfo);
         const quality = r.latencyMs < 10 ? '极佳' : r.latencyMs < 30 ? '良好' : r.latencyMs < 80 ? '一般' : '较高';
-        lines.push(`${label}: ${r.latencyMs}ms (${quality})`);
+        const pin = r.address === computerInfo.preferredAddress ? ' 📌' : '';
+        lines.push(`${label}: ${r.latencyMs}ms (${quality})${pin}`);
       }
 
       // 服务器信息
@@ -421,7 +422,80 @@ export class PcListActions {
       }
     }
 
-    this.ui.showInfoDialog({ title: '网络测试 — ' + computer.name, content: lines.join('\n') });
+    // 当前锁定的地址
+    const currentPreferred = computerInfo.preferredAddress;
+    if (currentPreferred) {
+      lines.push('');
+      lines.push(`📌 已锁定: ${currentPreferred}`);
+    }
+
+    // 显示结果后提供锁定/解锁操作
+    if (reachableResults.length > 0) {
+      this.ui.showInfoDialog({
+        title: '网络测试 — ' + computer.name,
+        content: lines.join('\n'),
+        closeButtonText: '关闭',
+        onClose: () => {
+          this.showAddressPinMenu(computer, reachableResults, currentPreferred);
+        }
+      });
+    } else {
+      this.ui.showInfoDialog({ title: '网络测试 — ' + computer.name, content: lines.join('\n') });
+    }
+  }
+
+  /** 显示地址锁定/解锁菜单 */
+  private showAddressPinMenu(
+    computer: ObservableComputer,
+    reachableResults: AddressTestResult[],
+    currentPreferred: string | undefined
+  ): void {
+    const computerInfo = computer.toComputerInfo();
+
+    // 构建按钮列表（showDialog 最多 3 个按钮，我们用前几个可达地址 + 解锁）
+    interface DialogBtn {
+      text: string;
+      color: string;
+    }
+    const dialogButtons: DialogBtn[] = [];
+    // 记录每个按钮对应的动作
+    const actions: string[] = []; // 'unlock' | address string
+
+    // 如果已锁定，提供解锁选项
+    if (currentPreferred) {
+      dialogButtons.push({ text: '解除锁定', color: '#E57373' });
+      actions.push('unlock');
+    }
+
+    // 提供可达地址（最多填满到 3 个按钮）
+    for (const r of reachableResults) {
+      if (dialogButtons.length >= 3) break;
+      const label = this.getAddressLabel(r.address, computerInfo);
+      const pinned = r.address === currentPreferred ? ' ✓' : '';
+      dialogButtons.push({ text: `${label}${pinned}`, color: '#4CAF50' });
+      actions.push(r.address);
+    }
+
+    if (dialogButtons.length === 0) return;
+
+    promptAction.showDialog({
+      title: '锁定优先连接地址',
+      message: currentPreferred ? `当前锁定: ${currentPreferred}` : '选择要锁定的地址',
+      buttons: dialogButtons
+    }).then((result) => {
+      const action = actions[result.index];
+      if (action === 'unlock') {
+        this.computerManager.updateComputer(computer.uuid, { preferredAddress: '' });
+        computer.preferredAddress = '';
+        promptAction.showToast({ message: '已解除地址锁定' });
+      } else if (action) {
+        this.computerManager.updateComputer(computer.uuid, { preferredAddress: action });
+        computer.preferredAddress = action;
+        promptAction.showToast({ message: `已锁定: ${action}` });
+      }
+    }).catch(() => {
+      // 用户取消
+    });
   }
 
   /** 根据地址匹配返回易读标签 */

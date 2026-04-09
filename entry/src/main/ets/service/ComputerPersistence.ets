@@ -35,6 +35,7 @@ interface SavedComputerData {
   remoteAddress: string;
   manualAddress?: string;
   ipv6Address?: string;
+  preferredAddress?: string;
   macAddress: string;
   serverCert: string;
   pairState: string;
@@ -84,6 +85,7 @@ export class ComputerPersistence {
       remoteAddress: computer.remoteAddress,
       manualAddress: computer.manualAddress,
       ipv6Address: computer.ipv6Address,
+      preferredAddress: computer.preferredAddress,
       macAddress: computer.macAddress,
       state: computer.state,
       pairState: computer.pairState,
@@ -129,6 +131,7 @@ export class ComputerPersistence {
           remoteAddress: computer.remoteAddress,
           manualAddress: computer.manualAddress,
           ipv6Address: computer.ipv6Address,
+          preferredAddress: computer.preferredAddress,
           macAddress: computer.macAddress,
           serverCert: computer.serverCert,
           pairState: pairStateStr,
@@ -192,6 +195,7 @@ export class ComputerPersistence {
           .setRemoteAddress(saved.remoteAddress || '')
           .setManualAddress(saved.manualAddress)
           .setIpv6Address(saved.ipv6Address)
+          .setPreferredAddress(saved.preferredAddress)
           .setMacAddress(saved.macAddress || '')
           .setServerCert(saved.serverCert || '')
           .setState(ComputerState.UNKNOWN)
