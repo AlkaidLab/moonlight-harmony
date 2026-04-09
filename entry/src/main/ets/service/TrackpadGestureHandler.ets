@@ -258,7 +258,7 @@ export class TrackpadGestureHandler {
         state.lastX = touches[0].x;
         state.lastY = touches[0].y;
         if (Math.abs(dy) > 0) {
-          this.sink.sendMouseHighResScroll(Math.round(-dy * SCROLL_SPEED_FACTOR));
+          this.sink.sendMouseHighResScroll(Math.round(dy * SCROLL_SPEED_FACTOR));
         }
       }
       // 同步第二根手指
@@ -342,6 +342,7 @@ export class TrackpadGestureHandler {
       this.maxCountInGesture = 0;
       this.confirmedMove = false;
       this.confirmedDrag = false;
+      this.confirmedScroll = false;
       this.distanceMoved = 0;
     }
 
@@ -354,6 +355,7 @@ export class TrackpadGestureHandler {
   private resetGestureFlags(): void {
     this.confirmedMove = false;
     this.confirmedDrag = false;
+    this.confirmedScroll = false;
     this.distanceMoved = 0;
     this.isDoubleClickDrag = false;
     this.isPotentialDoubleClick = false;
