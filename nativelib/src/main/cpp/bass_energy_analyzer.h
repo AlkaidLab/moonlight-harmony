@@ -27,6 +27,7 @@
  * 2. 攻击/释放包络跟踪器
  * 3. 自适应噪声门限
  * 4. RMS 绝对音量权重
+ * 5. 立体声空间分析（左右声道能量差 → EMA 平滑 → 双马达不对称振动）
  *
  * 设计原则:
  * - 零堆分配，所有状态内联
@@ -139,6 +140,7 @@ public:
         enabled_ = false;
         sensitivity_ = 1.0f;
         sceneMode_ = SCENE_GAME;
+        stereoBalanceSmoothed_ = 0.5f;
 
         // ---- aubio onset detector ----
         // hop_size = 每帧 per-channel 样本数 (通常 240 @48kHz = 5ms Opus 帧)
@@ -173,6 +175,7 @@ public:
             pendingAutoMode_ = SCENE_GAME;
             pendingAutoModeCount_ = 0;
             lastIntensity_ = 0;
+            stereoBalanceSmoothed_ = 0.5f;
             aubioOnset_.Reset();
         }
     }
@@ -218,13 +221,15 @@ public:
      * @param sampleCount 每声道采样数 (per-channel frame count)
      * @param outIntensity 输出振动强度 (0-100)
      * @param outLowFreqRatio 输出低频占比 (0-100)，用于 low/high motor 分配
+     * @param outStereoBalance 输出立体声平衡 (0-100)，50=居中，0=全左，100=全右
      * @return true 如果应该触发 TSFN 回调（经过节流控制）
      */
     bool ProcessFrame(const int16_t* pcmData, int sampleCount, int& outIntensity,
-                      int& outLowFreqRatio) {
+                      int& outLowFreqRatio, int& outStereoBalance) {
         if (!enabled_ || pcmData == nullptr || sampleCount <= 0) {
             outIntensity = 0;
             outLowFreqRatio = 50;
+            outStereoBalance = 50;
             return false;
         }
 
@@ -234,13 +239,27 @@ public:
         float sumSquares = 0.0f;
         float frameEnergy = 0.0f;     // 本帧低频能量 (LPF 后)
         float fullBandEnergy = 0.0f;  // 本帧全频段能量 (未滤波，用于音乐模式 onset)
+        float leftEnergy = 0.0f;      // 左声道能量（立体声空间感）
+        float rightEnergy = 0.0f;     // 右声道能量
 
         for (int i = 0; i < frameCount; i++) {
             float sample = 0.0f;
-            for (int ch = 0; ch < channelCount_; ch++) {
-                sample += static_cast<float>(pcmData[i * channelCount_ + ch]);
+            // 立体声时分别累加左右声道能量
+            if (channelCount_ >= 2) {
+                float sL = static_cast<float>(pcmData[i * channelCount_]) / 32768.0f;
+                float sR = static_cast<float>(pcmData[i * channelCount_ + 1]) / 32768.0f;
+                leftEnergy += std::fabs(sL);
+                rightEnergy += std::fabs(sR);
+                sample = (sL + sR) * 0.5f;
+                // 环绕声额外声道混入（保持能量一致性）
+                for (int ch = 2; ch < channelCount_; ch++) {
+                    sample += static_cast<float>(pcmData[i * channelCount_ + ch]) / (32768.0f * channelCount_);
+                }
+            } else {
+                sample = static_cast<float>(pcmData[i]) / 32768.0f;
+                leftEnergy += std::fabs(sample);
+                rightEnergy += std::fabs(sample);
             }
-            sample /= (channelCount_ * 32768.0f);
             sumSquares += sample * sample;
 
             // 全频段能量 (含鼓点的中高频瞬态)
@@ -330,6 +349,19 @@ public:
             outLowFreqRatio = std::max(0, std::min(100, static_cast<int>(ratio * 100.0f)));
         } else {
             outLowFreqRatio = 50; // 无信号时默认均分
+        }
+
+        // ---- 立体声平衡计算 ----
+        // 左右声道能量比，EMA 平滑避免快速抖动
+        // 0=全左, 50=居中, 100=全右
+        float totalLR = leftEnergy + rightEnergy;
+        if (totalLR > 1e-6f) {
+            float rawBalance = rightEnergy / totalLR;  // 0~1, 0.5=居中
+            stereoBalanceSmoothed_ += 0.15f * (rawBalance - stereoBalanceSmoothed_);
+            outStereoBalance = std::max(0, std::min(100,
+                static_cast<int>(stereoBalanceSmoothed_ * 100.0f)));
+        } else {
+            outStereoBalance = 50;
         }
 
         // ---- 节流控制 ----
@@ -629,6 +661,9 @@ private:
     // 节流
     int lastIntensity_ = 0;
     std::chrono::steady_clock::time_point lastCallbackTime_;
+
+    // 立体声平衡 (EMA 平滑)
+    float stereoBalanceSmoothed_ = 0.5f;  // 0=全左, 0.5=居中, 1=全右
 
     // ---- aubio onset detector ----
     AubioOnsetWrapper aubioOnset_;

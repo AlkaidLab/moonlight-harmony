@@ -2059,7 +2059,8 @@ export class GamepadManager implements UsbDriverListener {
       return;
     }
 
-    // TODO: 当 USB 驱动支持 IMU 时，优先使用手柄自带传感器
+    // DS4 等自带 IMU 的手柄已在驱动层（如 Dualshock4Controller）主动推送运动数据，
+    // 无需在此处查询；Xbox/Switch 等无 IMU 手柄则依赖下方设备传感器回退。
 
     // 回退到设备传感器
     if (!this.sensorFallbackEnabled) {
@@ -2104,8 +2105,7 @@ export class GamepadManager implements UsbDriverListener {
 
     let capabilities = 0;
 
-    // 检查 USB 手柄传感器
-    // TODO: 从 USB 驱动获取手柄传感器信息
+    // USB 手柄传感器能力由驱动层（如 DS4）自行上报，此处仅处理设备传感器回退
 
     // 检查设备传感器回退
     if (this.sensorFallbackEnabled) {

@@ -178,7 +178,7 @@ interface StreamCallbacks {
   setMotionEventState?: (controllerNumber: number, motionType: number, reportRateHz: number) => void;
   setControllerLED?: (controllerNumber: number, r: number, g: number, b: number) => void;
   resolutionChanged?: (width: number, height: number) => void;
-  bassEnergy?: (intensity: number, lowFreqRatio: number) => void;
+  bassEnergy?: (intensity: number, lowFreqRatio: number, stereoBalance: number) => void;
 }
 
 interface VideoStats {
@@ -1020,8 +1020,8 @@ export class StreamingSession {
         console.info(`分辨率变化: ${width}x${height}`);
         if (this.resolutionChangedCallback) this.resolutionChangedCallback(width, height);
       },
-      bassEnergy: (intensity: number, lowFreqRatio: number): void => {
-        this.audioVibrationService.handleBassEnergy(intensity, lowFreqRatio);
+      bassEnergy: (intensity: number, lowFreqRatio: number, stereoBalance: number): void => {
+        this.audioVibrationService.handleBassEnergy(intensity, lowFreqRatio, stereoBalance);
       }
     };
 

@@ -41,6 +41,7 @@ export class AudioVibrationService {
   // 状态
   private lastIntensity: number = 0;
   private lastLowFreqRatio: number = 50; // 低频占比 (0-100)
+  private lastStereoBalance: number = 50; // 立体声平衡 (0-100, 50=居中)
 
   // 设备振动状态
   private hdHapticSupported: boolean | null = null;
@@ -85,8 +86,9 @@ export class AudioVibrationService {
    * 处理 C++ 层传来的低频能量值
    * @param intensity 低频能量强度 (0-100)
    * @param lowFreqRatio 低频占比 (0-100)，用于精确分配 low/high motor
+   * @param stereoBalance 立体声平衡 (0-100)，50=居中，0=全左，100=全右
    */
-  handleBassEnergy(intensity: number, lowFreqRatio: number = 50): void {
+  handleBassEnergy(intensity: number, lowFreqRatio: number = 50, stereoBalance: number = 50): void {
     if (!this.enabled) return;
 
     // 强度为 0 → 停止振动
@@ -124,6 +126,7 @@ export class AudioVibrationService {
 
     this.lastIntensity = effectiveIntensity;
     this.lastLowFreqRatio = lowFreqRatio;
+    this.lastStereoBalance = stereoBalance;
     this.lastVibrationTime = now;
 
     // 根据振动模式分路由
@@ -325,8 +328,13 @@ export class AudioVibrationService {
   // ==================== USB 手柄振动（场景感知） ====================
 
   /**
-   * USB 手柄振动 — 根据实际音频频段分配 low/high motor
+   * USB 手柄振动 — 根据实际音频频段和立体声位置分配 low/high motor
+   *
    * lowFreqRatio 由 C++ 层实时计算，反映低频在总能量中的真实占比
+   * stereoBalance 反映声源的左右位置:
+   *   - 低频马达 (heavy) 模拟左侧，高频马达 (light) 模拟右侧
+   *   - 声源偏左时增强低频马达，偏右时增强高频马达
+   *   - 与 lowFreqRatio 叠加: 先按频段分配基础强度，再按空间位置微调
    */
   private triggerUsbRumble(intensity: number, lowFreqRatio: number = 50): void {
     const base = Math.floor(intensity * RUMBLE_MAX / 100);
@@ -336,8 +344,21 @@ export class AudioVibrationService {
     const lowWeight = Math.max(0.15, Math.min(0.85, lowFreqRatio / 100));
     const highWeight = 1.0 - lowWeight;
 
-    const lowFreq = Math.floor(base * lowWeight);
-    const highFreq = Math.floor(base * highWeight);
+    let lowFreq = Math.floor(base * lowWeight);
+    let highFreq = Math.floor(base * highWeight);
+
+    // 立体声空间增强: 低频马达=左, 高频马达=右
+    // balance: 0=全左, 50=居中, 100=全右
+    // 偏离中心越多，空间效果越明显 (最大 ±30% 调制)
+    const balance = this.lastStereoBalance;
+    const deviation = (balance - 50) / 50;  // -1 ~ +1
+    const spatialFactor = deviation * 0.3;  // ±30% 调制幅度
+    lowFreq = Math.floor(lowFreq * (1.0 - spatialFactor));   // 左偏 → 增强
+    highFreq = Math.floor(highFreq * (1.0 + spatialFactor)); // 右偏 → 增强
+
+    // 钳位
+    lowFreq = Math.max(0, Math.min(RUMBLE_MAX, lowFreq));
+    highFreq = Math.max(0, Math.min(RUMBLE_MAX, highFreq));
 
     GamepadManager.getInstance().rumbleUsbControllers(0, lowFreq, highFreq);
     this.isUsbRumbling = true;
@@ -358,6 +379,7 @@ export class AudioVibrationService {
       this.stopUsbRumble();
     }
     this.lastIntensity = 0;
+    this.lastStereoBalance = 50;
   }
 
   private stopDeviceVibration(): void {
