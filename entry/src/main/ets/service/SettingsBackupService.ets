@@ -295,11 +295,15 @@ export class SettingsBackupService {
         const rawData = new Uint8Array(buf);
         let json: string;
         if (CryptoService.isEncrypted(rawData)) {
+          const version = CryptoService.getVersion(rawData);
           try {
             json = await CryptoService.decrypt(rawData);
           } catch (e) {
-            console.error(`${TAG} 解密失败: ${JSON.stringify(e)}`);
-            promptAction.showToast({ message: '解密失败：密钥不匹配或文件损坏', duration: 3000 });
+            console.error(`${TAG} 解密失败 (v${version}): ${JSON.stringify(e)}`);
+            const hint = version === 1
+              ? '解密失败：该备份使用旧版加密（设备绑定密钥），卸载重装后无法恢复'
+              : '解密失败：密钥不匹配或文件损坏';
+            promptAction.showToast({ message: hint, duration: 4000 });
             return false;
           }
         } else {
