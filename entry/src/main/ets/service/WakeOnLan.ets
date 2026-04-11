@@ -9,152 +9,205 @@
  */
 
 import socket from '@ohos.net.socket';
+import connection from '@ohos.net.connection';
 import { NvHttp } from './NvHttp';
 
 /**
- * 发送结果统计
- */
-interface SendResult {
-  sent: number;
-  errors: number;
-}
-
-/**
  * Wake-on-LAN 魔术包发送器
- * 
- * 通过发送特殊的 UDP 数据包唤醒休眠的电脑
+ *
+ * 对齐 Android WakeOnLanSender 实现：
+ * - 每个地址独立尝试，广播失败不影响单播发送
+ * - 支持 DNS 解析（域名/DDNS 地址）
+ * - 广播和单播使用独立 socket，避免 broadcast 标志影响单播路由
+ *
  * 魔术包格式: 6 字节 0xFF + 16 次目标 MAC 地址 = 102 字节
  */
 export class WakeOnLan {
-  /** 标准 WOL 端口 */
   private static readonly STATIC_PORTS: number[] = [
-    9,      // 标准 WOL 端口 (特权端口)
+    9,      // 标准 WOL 端口
     47009,  // Moonlight Internet Hosting Tool 的 WOL 端口
   ];
 
-  /** 动态端口基础值 (相对于 HTTP 端口 47989 的偏移量) */
   private static readonly DYNAMIC_PORT_BASES: number[] = [
-    47998, 47999, 48000, 48002, 48010,  // GFE 打开的端口
+    47998, 47999, 48000, 48002, 48010,
   ];
-  
+
   private static readonly DEFAULT_HTTP_PORT = NvHttp.DEFAULT_HTTP_PORT;
-  private static readonly MAGIC_PACKET_SIZE = 102;  // 6 + 16 * 6
+  private static readonly MAGIC_PACKET_SIZE = 102;
   private static readonly MAC_BYTES = 6;
   private static readonly MAC_REPETITIONS = 16;
   private static readonly ZERO_MAC = '00:00:00:00:00:00';
 
   /**
-   * 发送 WOL 魔术包唤醒目标设备
-   * 
-   * @param macAddress MAC 地址 (格式: XX:XX:XX:XX:XX:XX 或 XX-XX-XX-XX-XX-XX)
-   * @param address 目标地址 (IPv4/IPv6)
-   * @param httpPort HTTP 端口用于计算动态端口 (默认 47989)
+   * 发送 WOL 魔术包唤醒目标设备（单地址版本）
    */
   static async sendWolPacket(macAddress: string, address: string, httpPort: number = WakeOnLan.DEFAULT_HTTP_PORT): Promise<void> {
+    await WakeOnLan.sendWolToAddresses(macAddress, [address], httpPort);
+  }
+
+  /**
+   * 批量发送 WOL 到多个地址（对齐 Android WakeOnLanSender.sendWolPacket）
+   *
+   * 策略：遍历每个地址，先尝试广播（失败忽略），再 DNS 解析后发送到实际 IP。
+   * 任何一个地址发送成功即视为成功，全部失败才抛异常。
+   */
+  static async sendWolToAddresses(macAddress: string, addresses: string[], httpPort: number = WakeOnLan.DEFAULT_HTTP_PORT): Promise<void> {
     WakeOnLan.validateMacAddress(macAddress);
-    
+
     const payload = WakeOnLan.createMagicPacket(macAddress);
-    const isIPv6 = WakeOnLan.isIPv6Address(address);
-    
+    const allPorts = WakeOnLan.getAllPorts(httpPort);
+    let sentWolPacket = false;
+    let lastError: Error | null = null;
+
+    // 去重
+    const uniqueAddresses = Array.from(new Set(addresses.filter(a => !!a)));
+    if (uniqueAddresses.length === 0) {
+      uniqueAddresses.push('255.255.255.255');
+    }
+
+    console.info(`WOL: 开始发送魔术包 MAC=${macAddress} 地址列表=[${uniqueAddresses.join(', ')}] httpPort=${httpPort}`);
+
+    for (const address of uniqueAddresses) {
+      const isIPv6 = WakeOnLan.isIPv6Address(address);
+
+      // 1) IPv4: 先用独立广播 socket 尝试发送 255.255.255.255（失败忽略）
+      if (!isIPv6) {
+        try {
+          await WakeOnLan.sendBroadcast(payload, allPorts);
+          sentWolPacket = true;
+          console.info(`WOL: 广播发送成功 (255.255.255.255)`);
+        } catch (e) {
+          lastError = e instanceof Error ? e : new Error(String(e));
+          console.info(`WOL: 广播发送失败（已忽略）: ${lastError.message}`);
+        }
+      }
+
+      // 2) DNS 解析地址后发送到每个解析结果（单播，不设 broadcast 标志）
+      try {
+        const resolvedAddresses = await WakeOnLan.resolveAddress(address);
+        console.info(`WOL: DNS 解析 ${address} → [${resolvedAddresses.join(', ')}]`);
+        for (const resolved of resolvedAddresses) {
+          try {
+            const resolvedIsIPv6 = WakeOnLan.isIPv6Address(resolved);
+            await WakeOnLan.sendUnicast(payload, resolved, allPorts, resolvedIsIPv6);
+            sentWolPacket = true;
+            console.info(`WOL: 单播发送成功 → ${resolved}`);
+          } catch (e) {
+            lastError = e instanceof Error ? e : new Error(String(e));
+            console.info(`WOL: 单播发送失败 → ${resolved}: ${lastError.message}`);
+          }
+        }
+      } catch (e) {
+        // DNS 解析失败，尝试直接用原始地址发送
+        lastError = e instanceof Error ? e : new Error(String(e));
+        console.info(`WOL: DNS 解析失败 ${address}: ${lastError.message}，尝试直接发送`);
+        try {
+          await WakeOnLan.sendUnicast(payload, address, allPorts, isIPv6);
+          sentWolPacket = true;
+          console.info(`WOL: 直接发送成功 → ${address}`);
+        } catch (e2) {
+          lastError = e2 instanceof Error ? e2 : new Error(String(e2));
+          console.info(`WOL: 直接发送失败 → ${address}: ${lastError.message}`);
+        }
+      }
+    }
+
+    console.info(`WOL: 发送完毕, 成功=${sentWolPacket}`);
+
+    if (!sentWolPacket && lastError) {
+      throw lastError;
+    }
+  }
+
+  // ==================== 发送方法 ====================
+
+  /**
+   * 广播发送（独立 socket，设置 broadcast 标志）
+   */
+  private static async sendBroadcast(payload: ArrayBuffer, ports: number[]): Promise<void> {
     const udpSocket = socket.constructUDPSocketInstance();
     try {
-      await WakeOnLan.bindSocket(udpSocket, isIPv6);
-      
-      // IPv4 时先发送广播
-      if (!isIPv6) {
-        await WakeOnLan.enableBroadcast(udpSocket);
-        await WakeOnLan.sendToAllPorts(udpSocket, '255.255.255.255', httpPort, payload, false);
+      await udpSocket.bind({ address: '0.0.0.0', port: 0, family: 1 });
+      await udpSocket.setExtraOptions({ broadcast: true });
+
+      for (const port of ports) {
+        try {
+          await udpSocket.send({
+            data: payload,
+            address: { address: '255.255.255.255', port: port, family: 1 }
+          });
+        } catch {
+          // 单个端口发送失败忽略
+        }
       }
-      
-      // 发送到目标地址
-      await WakeOnLan.sendToAllPorts(udpSocket, address, httpPort, payload, isIPv6);
     } finally {
       udpSocket.close();
     }
   }
 
   /**
-   * 批量发送 WOL 到多个地址
-   * 发送到: 全局广播 + 子网广播 + 目标地址
-   * 
-   * @param macAddress MAC 地址
-   * @param addresses 目标地址列表
-   * @param httpPort HTTP 端口用于计算动态端口
+   * 单播发送（独立 socket，不设 broadcast 标志）
    */
-  static async sendWolToAddresses(macAddress: string, addresses: string[], httpPort: number = WakeOnLan.DEFAULT_HTTP_PORT): Promise<void> {
-    WakeOnLan.validateMacAddress(macAddress);
-    
-    if (addresses.length === 0) {
-      addresses = ['255.255.255.255'];
-    }
-    
-    const payload = WakeOnLan.createMagicPacket(macAddress);
-    
-    // 构建完整的目标地址列表（包括子网广播地址）
-    const allAddresses = new Set<string>();
-    allAddresses.add('255.255.255.255');  // 全局广播
-    
-    for (const addr of addresses) {
-      if (!WakeOnLan.isIPv6Address(addr)) {
-        allAddresses.add(addr);
-        // 计算子网广播地址 (假设 /24 子网)
-        const subnetBroadcast = WakeOnLan.getSubnetBroadcast(addr);
-        if (subnetBroadcast) {
-          allAddresses.add(subnetBroadcast);
+  private static async sendUnicast(payload: ArrayBuffer, address: string, ports: number[], isIPv6: boolean): Promise<void> {
+    const family = isIPv6 ? 2 : 1;
+    const udpSocket = socket.constructUDPSocketInstance();
+    try {
+      await udpSocket.bind({ address: isIPv6 ? '::' : '0.0.0.0', port: 0, family: family });
+
+      let sent = 0;
+      for (const port of ports) {
+        try {
+          await udpSocket.send({
+            data: payload,
+            address: { address: address, port: port, family: family }
+          });
+          sent++;
+        } catch {
+          // 单个端口发送失败忽略
         }
-      } else {
-        allAddresses.add(addr);
       }
-    }
-    
-    // 按地址类型分组
-    const addressArray = Array.from(allAddresses);
-    const ipv4Addresses = addressArray.filter(addr => !WakeOnLan.isIPv6Address(addr));
-    const ipv6Addresses = addressArray.filter(addr => WakeOnLan.isIPv6Address(addr));
-    
-    // 发送 IPv4
-    if (ipv4Addresses.length > 0) {
-      const udpSocket = socket.constructUDPSocketInstance();
-      try {
-        await WakeOnLan.bindSocket(udpSocket, false);
-        await WakeOnLan.enableBroadcast(udpSocket);
-        
-        for (const addr of ipv4Addresses) {
-          await WakeOnLan.sendToAllPorts(udpSocket, addr, httpPort, payload, false);
-        }
-      } finally {
-        udpSocket.close();
+      if (sent === 0) {
+        throw new Error(`WOL 发送失败: 所有端口均无法到达 ${address}`);
       }
+    } finally {
+      udpSocket.close();
     }
-    
-    // 发送 IPv6
-    if (ipv6Addresses.length > 0) {
-      const udpSocket = socket.constructUDPSocketInstance();
-      try {
-        await WakeOnLan.bindSocket(udpSocket, true);
-        
-        for (const addr of ipv6Addresses) {
-          await WakeOnLan.sendToAllPorts(udpSocket, addr, httpPort, payload, true);
-        }
-      } finally {
-        udpSocket.close();
-      }
-    }
-  }
-  
-  /**
-   * 从 IPv4 地址计算子网广播地址 (假设 /24 子网)
-   */
-  private static getSubnetBroadcast(ipv4Address: string): string | null {
-    const parts = ipv4Address.split('.');
-    if (parts.length !== 4) {
-      return null;
-    }
-    parts[3] = '255';
-    return parts.join('.');
   }
 
-  // ==================== 私有方法 ====================
+  // ==================== DNS 解析 ====================
+
+  /**
+   * 解析地址为 IP 列表（类似 Java InetAddress.getAllByName）
+   * 纯 IP 地址直接返回，域名通过系统 DNS 解析
+   */
+  private static async resolveAddress(address: string): Promise<string[]> {
+    // 纯 IPv4 或 IPv6 地址直接返回
+    if (WakeOnLan.isIPAddress(address)) {
+      return [address];
+    }
+    // 域名 → DNS 解析（connection 模块级方法）
+    const result: connection.NetAddress[] = await connection.getAddressesByName(address);
+    const resolved: string[] = [];
+    for (const addr of result) {
+      if (addr.address) {
+        resolved.push(addr.address);
+      }
+    }
+    if (resolved.length === 0) {
+      throw new Error(`DNS 解析 ${address} 返回空结果`);
+    }
+    return resolved;
+  }
+
+  private static isIPAddress(address: string): boolean {
+    // IPv4: x.x.x.x
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(address)) return true;
+    // IPv6: contains multiple colons
+    if (WakeOnLan.isIPv6Address(address)) return true;
+    return false;
+  }
+
+  // ==================== 工具方法 ====================
 
   private static validateMacAddress(macAddress: string): void {
     if (!macAddress || macAddress === WakeOnLan.ZERO_MAC) {
@@ -166,101 +219,36 @@ export class WakeOnLan {
     return address.includes(':') && (address.split(':').length > 2 || address.startsWith('['));
   }
 
-  private static getSocketFamily(isIPv6: boolean): number {
-    return isIPv6 ? 2 : 1;  // IPv4=1, IPv6=2
-  }
-
-  private static async bindSocket(udpSocket: socket.UDPSocket, isIPv6: boolean): Promise<void> {
-    await udpSocket.bind({
-      address: isIPv6 ? '::' : '0.0.0.0',
-      port: 0,
-      family: WakeOnLan.getSocketFamily(isIPv6)
-    });
-  }
-
-  private static async enableBroadcast(udpSocket: socket.UDPSocket): Promise<void> {
-    try {
-      await udpSocket.setExtraOptions({ broadcast: true });
-    } catch {
-      // 广播选项可能不被支持，忽略错误
-    }
-  }
-
-  private static async sendToAllPorts(
-    udpSocket: socket.UDPSocket,
-    address: string,
-    httpPort: number,
-    payload: ArrayBuffer,
-    isIPv6: boolean
-  ): Promise<SendResult> {
-    const family = WakeOnLan.getSocketFamily(isIPv6);
-    const allPorts = WakeOnLan.getAllPorts(httpPort);
-    let sent = 0;
-    let errors = 0;
-    
-    for (const port of allPorts) {
-      try {
-        const destAddr: socket.NetAddress = {
-          address: address,
-          port: port,
-          family: family
-        };
-        await udpSocket.send({
-          data: payload,
-          address: destAddr
-        });
-        sent++;
-      } catch {
-        errors++;
-      }
-    }
-    
-    const result: SendResult = { sent: sent, errors: errors };
-    return result;
-  }
-
   private static getAllPorts(httpPort: number): number[] {
     const ports = [...WakeOnLan.STATIC_PORTS];
     const portOffset = httpPort - WakeOnLan.DEFAULT_HTTP_PORT;
-    
     for (const basePort of WakeOnLan.DYNAMIC_PORT_BASES) {
       ports.push(basePort + portOffset);
     }
-    
     return ports;
   }
 
   private static createMagicPacket(macAddress: string): ArrayBuffer {
     const macBytes = WakeOnLan.parseMacAddress(macAddress);
     const payload = new Uint8Array(WakeOnLan.MAGIC_PACKET_SIZE);
-    
-    // 填充 6 字节 0xFF 前导
     payload.fill(0xFF, 0, WakeOnLan.MAC_BYTES);
-    
-    // 填充 16 次 MAC 地址
     for (let i = 0; i < WakeOnLan.MAC_REPETITIONS; i++) {
       const offset = WakeOnLan.MAC_BYTES + i * WakeOnLan.MAC_BYTES;
       payload.set(macBytes, offset);
     }
-    
     return payload.buffer;
   }
 
   private static parseMacAddress(macAddress: string): Uint8Array {
     const macBytes = new Uint8Array(WakeOnLan.MAC_BYTES);
     const parts = macAddress.split(/[:\-]/);
-    
     for (let i = 0; i < WakeOnLan.MAC_BYTES && i < parts.length; i++) {
       const value = parseInt(parts[i], 16);
       macBytes[i] = isNaN(value) ? 0 : value;
     }
-    
     return macBytes;
   }
 
-  /**
-   * 验证 MAC 地址格式是否正确
-   */
   static isValidMacAddress(macAddress: string): boolean {
     return /^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$/.test(macAddress);
   }
