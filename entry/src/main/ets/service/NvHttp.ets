@@ -328,13 +328,10 @@ export class NvHttp {
     if (this.httpsPort > 0) {
       // 使用已知的 HTTPS 端口
       port = this.httpsPort;
-    } else if (this.httpPort !== NvHttp.DEFAULT_HTTP_PORT) {
-      // 自动解析也失败了，使用计算值作为兜底
-      port = this.httpPort - 5;
-      console.info(`NvHttp: 使用计算的 HTTPS 端口 ${port} (httpPort=${this.httpPort})`);
     } else {
-      // 最终兜底：默认端口
+      // 自动解析也失败了，使用默认 HTTPS 端口（对齐 Android getHttpsPort 回退逻辑）
       port = NvHttp.DEFAULT_HTTPS_PORT;
+      console.info(`NvHttp: 使用默认 HTTPS 端口 ${port}`);
     }
     return `https://${this.getFormattedAddress()}:${port}`;
   }
@@ -395,13 +392,22 @@ export class NvHttp {
           response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
         } catch (err) {
           const errMsg = String(err).toLowerCase();
-          // 匹配 Android 行为：仅在证书不匹配（401/certificate/handshake/ssl/tls）时降级到 HTTP
-          // 网络超时、连接拒绝等瞬态错误不应降级，否则 HTTP 返回 PairStatus=0 会导致状态异常
-          const isCertError = errMsg.includes('401') ||
+          // 对齐 Android：SSLHandshakeException+CertificateException 或 HTTP 401 才降级
+          // 注意：HarmonyOS 错误为英文消息（即使中文设备），无中文误判风险
+          // 排除明确的非证书错误（超时/拒绝/DNS）以避免错误降级
+          const isTransientError = errMsg.includes('timeout') ||
+            errMsg.includes('timed out') ||
+            errMsg.includes('refused') ||
+            errMsg.includes('unreachable') ||
+            errMsg.includes('dns') ||
+            errMsg.includes('getaddrinfo');
+          const isCertError = !isTransientError && (
+            errMsg.includes('401') ||
             errMsg.includes('certificate') ||
             errMsg.includes('handshake') ||
             errMsg.includes('ssl') ||
-            errMsg.includes('tls');
+            errMsg.includes('tls') ||
+            /\bcode[=: ]+2305/.test(errMsg));  // HarmonyOS TLS 证书错误码系列
           if (isCertError) {
             console.warn(`NvHttp: HTTPS serverinfo 证书错误: ${err}, 降级到 HTTP`);
             const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');

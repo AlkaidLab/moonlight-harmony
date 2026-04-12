@@ -398,8 +398,8 @@ export class ComputerManager {
       // 获取服务器信息
       const serverInfo = await nvHttp.getServerInfo();
 
-      // 使用服务器返回的本地地址，如果没有则使用连接地址
-      const localAddr = serverInfo.localAddress || address;
+      // 使用服务器返回的本地地址（过滤 127.x 回环，对齐 Android GS IPv6 Forwarder 保护）
+      const localAddr = (serverInfo.localAddress && !serverInfo.localAddress.startsWith('127.')) ? serverInfo.localAddress : '';
       const remoteAddr = serverInfo.externalAddress || '';
       
       // 检测连接地址是否为 IPv6（包含至少2个冒号）
@@ -411,9 +411,12 @@ export class ComputerManager {
       const existing = this.computers.get(serverInfo.uniqueId);
       if (existing) {
         // 合并更新：保留已有的配对信息，更新地址和状态
+        // 对齐 Android ComputerDetails.update()：只在新值有效时才覆盖
         existing.name = serverInfo.hostname || existing.name;
         existing.address = address;
-        existing.localAddress = localAddr;
+        if (localAddr) {
+          existing.localAddress = localAddr;
+        }
         if (remoteAddr) {
           existing.remoteAddress = remoteAddr;
         }
@@ -453,7 +456,7 @@ export class ComputerManager {
         .setUuid(serverInfo.uniqueId)
         .setName(serverInfo.hostname || discoveredName || address)
         .setAddress(address) // 保持原始连接地址
-        .setLocalAddress(localAddr) // 服务器返回的本地地址
+        .setLocalAddress(localAddr || address) // 服务器返回的本地地址（已过滤 127.x）
         .setRemoteAddress(remoteAddr) // 服务器返回的外部地址
         .setIpv6Address(ipv6Addr) // mDNS 发现的 IPv6 或连接地址本身
         .setMacAddress(serverInfo.macAddress || '')
@@ -498,6 +501,7 @@ export class ComputerManager {
    */
   async removeComputer(uuid: string): Promise<void> {
     this.computers.delete(uuid);
+    this.offlineStreak.delete(uuid);
     await this.saveComputers();
   }
 
@@ -801,8 +805,10 @@ export class ComputerManager {
       target.macAddress = info.macAddress;
     }
     
-    // 更新本地/远程地址
-    if (info.localAddress) target.localAddress = info.localAddress;
+    // 更新本地/远程地址（过滤 127.x 回环，对齐 Android ComputerDetails.update()）
+    if (info.localAddress && !info.localAddress.startsWith('127.')) {
+      target.localAddress = info.localAddress;
+    }
     if (info.externalAddress) target.remoteAddress = info.externalAddress;
 
     // 如果连接地址是 IPv6，更新 ipv6Address

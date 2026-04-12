@@ -36,6 +36,7 @@ export class MdnsDiscovery {
   private discoveryService: mdns.DiscoveryService | null = null;
   private discoveredComputers: Map<string, DiscoveredComputer> = new Map();
   private isDiscovering: boolean = false;
+  private disposed: boolean = false;
   private context: common.Context;
   private onComputerFound: ((computer: DiscoveredComputer) => void) | null = null;
 
@@ -60,6 +61,7 @@ export class MdnsDiscovery {
     }
 
     this.isDiscovering = true;
+    this.disposed = false;
     this.discoveredComputers.clear();
 
     console.info(`MdnsDiscovery: 开始发现服务类型 ${MdnsDiscovery.SERVICE_TYPE}`);
@@ -130,6 +132,10 @@ export class MdnsDiscovery {
    * 处理已解析的服务（参考 moonlight-ohos 的 localServiceInfoToExternalAddr）
    */
   private async handleResolvedService(resolvedInfo: mdns.LocalServiceInfo): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
     if (!resolvedInfo.host) {
       console.warn('MdnsDiscovery: 解析的服务没有 host 信息');
       return;
@@ -215,6 +221,7 @@ export class MdnsDiscovery {
     }
 
     console.info('MdnsDiscovery: 停止发现');
+    this.disposed = true;
 
     try {
       this.discoveryService.stopSearchingMDNS();
