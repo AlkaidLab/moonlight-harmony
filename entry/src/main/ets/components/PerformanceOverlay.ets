@@ -132,6 +132,7 @@ export struct PerformanceOverlay {
     if (this.guideTimer !== -1) {
       clearTimeout(this.guideTimer);
     }
+    this.settingsDialogController?.close();
   }
   
   private async checkAndShowGuide(): Promise<void> {
@@ -500,6 +501,25 @@ export struct PerformanceOverlay {
       .height(size)
       .fillColor(color)
   }
+
+  /**
+   * 电池图标 — 通过 if/else 分支让 ArkUI 在电量档位变化时销毁/重建 Image
+   * 解决 Image(Resource) 不检测 Resource 对象变化的框架问题
+   */
+  @Builder
+  BatteryIcon(size: number) {
+    if (this.perfIsCharging) {
+      Image(PerfSymbols.CHARGING).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+    } else if (this.perfBatteryLevel > 75) {
+      Image(PerfSymbols.BATTERY_FULL).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+    } else if (this.perfBatteryLevel > 50) {
+      Image(PerfSymbols.BATTERY_MID).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+    } else if (this.perfBatteryLevel > 20) {
+      Image(PerfSymbols.BATTERY_LOW).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+    } else {
+      Image(PerfSymbols.BATTERY_EMPTY).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+    }
+  }
   
   // ==================== 垂直布局 ====================
   
@@ -636,7 +656,7 @@ export struct PerformanceOverlay {
     // 电池行
     if (this.enabledItemsList.includes(PerformanceItem.BATTERY)) {
       Row() {
-        this.PerfIcon(this.perfIsCharging ? PerfSymbols.CHARGING : getBatteryIcon(this.perfBatteryLevel), 14, getBatteryColor(this.perfBatteryLevel))
+        this.BatteryIcon(14)
         Text(` ${this.perfBatteryLevel}`)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
@@ -755,7 +775,7 @@ export struct PerformanceOverlay {
       
       // 电池
       if (this.enabledItemsList.includes(PerformanceItem.BATTERY)) {
-        this.PerfIcon(this.perfIsCharging ? PerfSymbols.CHARGING : getBatteryIcon(this.perfBatteryLevel), 13, getBatteryColor(this.perfBatteryLevel))
+        this.BatteryIcon(13)
         Text(` ${this.perfBatteryLevel}%`)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
