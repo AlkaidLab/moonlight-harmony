@@ -17,8 +17,7 @@
 import { ComputerInfo, ComputerState, PairState, ComputerInfoBuilder } from '../model/ComputerInfo';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { NvHttp } from './NvHttp';
-import { isLoopbackIPv4 } from '../utils/NetHelper';
-import { MAX_PORT } from '../common/NetworkConstants';
+import { isLoopbackIPv4, parseAddressAndPort } from '../utils/NetHelper';
 import { SettingsBackupService } from './SettingsBackupService';
 
 // =============================================================================
@@ -43,14 +42,6 @@ interface SavedComputerData {
   runningGameId: number;
   boxArtUrl?: string;
   httpPort?: number;
-}
-
-/**
- * 地址端口提取结果
- */
-interface ExtractedHostPort {
-  host: string;
-  port: number;
 }
 
 /** 持久化存储键名 */
@@ -179,10 +170,10 @@ export class ComputerPersistence {
         let httpPort = saved.httpPort;
         let addressHost = saved.address;
         if (!httpPort && saved.address) {
-          const extracted = ComputerPersistence.extractPortFromAddress(saved.address);
-          if (extracted) {
-            httpPort = extracted.port;
-            addressHost = extracted.host;
+          const parsed = parseAddressAndPort(saved.address);
+          if (parsed.port && parsed.port !== NvHttp.DEFAULT_HTTP_PORT) {
+            httpPort = parsed.port;
+            addressHost = parsed.host;
           }
         }
 
@@ -232,22 +223,5 @@ export class ComputerPersistence {
     if (stateStr === 'FAILED' || stateStr === '3') return PairState.FAILED;
     if (stateStr === 'PIN_WRONG' || stateStr === '2') return PairState.PIN_WRONG;
     return PairState.NOT_PAIRED;
-  }
-
-  /**
-   * 从旧格式地址中提取端口（兼容迁移）
-   * 例如 "192.168.1.100:48000" → { host: "192.168.1.100", port: 48000 }
-   */
-  static extractPortFromAddress(address: string): ExtractedHostPort | null {
-    const colonIndex = address.indexOf(':');
-    if (colonIndex > 0 && address.indexOf(':', colonIndex + 1) === -1) {
-      const portStr = address.substring(colonIndex + 1);
-      const port = parseInt(portStr);
-      if (port > 0 && port <= MAX_PORT && port !== NvHttp.DEFAULT_HTTP_PORT) {
-        const result: ExtractedHostPort = { host: address.substring(0, colonIndex), port: port };
-        return result;
-      }
-    }
-    return null;
   }
 }

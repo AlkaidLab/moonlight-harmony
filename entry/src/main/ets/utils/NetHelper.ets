@@ -422,3 +422,67 @@ function stripPort(addressStr: string): string {
 
   return addr;
 }
+
+// =============================================================================
+// 地址解析与格式化
+// =============================================================================
+
+/**
+ * 解析地址字符串，提取主机和可选端口
+ *
+ * 支持格式：
+ *   - "192.168.1.1"          → { host: "192.168.1.1" }
+ *   - "192.168.1.1:47989"    → { host: "192.168.1.1", port: 47989 }
+ *   - "::1"                  → { host: "::1" }
+ *   - "[::1]:47989"          → { host: "::1", port: 47989 }
+ *   - "hostname:47989"       → { host: "hostname", port: 47989 }
+ */
+export function parseAddressAndPort(input: string): { host: string; port?: number } {
+  const trimmed = input.trim();
+
+  // [IPv6]:port 格式
+  if (trimmed.startsWith('[')) {
+    const closeBracket = trimmed.indexOf(']');
+    if (closeBracket > 0) {
+      const host = trimmed.substring(1, closeBracket);
+      if (closeBracket < trimmed.length - 1 && trimmed.charAt(closeBracket + 1) === ':') {
+        const port = parseInt(trimmed.substring(closeBracket + 2));
+        if (port > 0 && port <= 65535) {
+          return { host, port };
+        }
+      }
+      return { host };
+    }
+  }
+
+  // 裸 IPv6 地址（多个冒号），无法分离端口
+  if (isIPv6Address(trimmed)) {
+    return { host: trimmed };
+  }
+
+  // IPv4 或主机名，最多一个冒号作为端口分隔符
+  const colonIndex = trimmed.indexOf(':');
+  if (colonIndex > 0 && trimmed.indexOf(':', colonIndex + 1) === -1) {
+    const host = trimmed.substring(0, colonIndex);
+    const port = parseInt(trimmed.substring(colonIndex + 1));
+    if (port > 0 && port <= 65535) {
+      return { host, port };
+    }
+  }
+
+  return { host: trimmed };
+}
+
+/**
+ * 格式化地址用于 URL：IPv6 地址需要加方括号
+ *
+ *   - "fe80::1"      → "[fe80::1]"
+ *   - "192.168.1.1"  → "192.168.1.1"
+ *   - "[::1]"        → "[::1]"  (已有方括号则不变)
+ */
+export function formatAddressForUrl(addr: string): string {
+  if (addr.includes(':') && !addr.startsWith('[')) {
+    return `[${addr}]`;
+  }
+  return addr;
+}

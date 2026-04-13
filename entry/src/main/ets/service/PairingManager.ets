@@ -17,6 +17,7 @@ import { common } from '@kit.AbilityKit';
 import { HttpClient } from '../utils/HttpClient';
 import { XmlUtil } from '../utils/XmlUtil';
 import { NvHttp } from './NvHttp';
+import { parseAddressAndPort, formatAddressForUrl } from '../utils/NetHelper';
 
 /**
  * 配对状态
@@ -73,12 +74,11 @@ export class PairingManager {
 
   constructor(address: string, uniqueId: string, context?: common.Context, httpPort?: number) {
     // 解析地址中可能包含的端口号
-    const parsedHost = this.parseAddressHost(address);
-    const parsedPort = this.parseAddressPort(address);
-    this.address = parsedHost;
-    const port = httpPort || parsedPort || PairingManager.DEFAULT_HTTP_PORT;
+    const parsed = parseAddressAndPort(address);
+    this.address = parsed.host;
+    const port = httpPort || parsed.port || PairingManager.DEFAULT_HTTP_PORT;
     // IPv6 地址在 URL 中需要方括号包裹，否则冒号会与端口分隔符冲突
-    const formattedHost = this.formatAddressForUrl(this.address);
+    const formattedHost = formatAddressForUrl(this.address);
     this.formattedHost = formattedHost;
     this.baseUrl = `http://${formattedHost}:${port}`;
     this.uniqueId = uniqueId;
@@ -112,75 +112,6 @@ export class PairingManager {
   }
   
   /**
-   * 从地址字符串中解析主机部分
-   */
-  private parseAddressHost(addressInput: string): string {
-    const trimmed = addressInput.trim();
-    
-    // 检查是否为 IPv6 地址
-    if (trimmed.startsWith('[')) {
-      // 格式: [::1] 或 [::1]:47989
-      const closeBracket = trimmed.indexOf(']');
-      if (closeBracket > 0) {
-        return trimmed.substring(1, closeBracket);
-      }
-    }
-    
-    // IPv4 或主机名
-    const colonIndex = trimmed.indexOf(':');
-    // 只有一个冒号，说明是端口分隔符（IPv6 有多个冒号）
-    if (colonIndex > 0 && trimmed.indexOf(':', colonIndex + 1) === -1) {
-      return trimmed.substring(0, colonIndex);
-    }
-    
-    return trimmed;
-  }
-  
-  /**
-   * 从地址字符串中解析端口部分
-   */
-  private parseAddressPort(addressInput: string): number | undefined {
-    const trimmed = addressInput.trim();
-    
-    // 检查是否为 IPv6 地址
-    if (trimmed.startsWith('[')) {
-      // 格式: [::1]:47989
-      const closeBracket = trimmed.indexOf(']');
-      if (closeBracket > 0 && closeBracket < trimmed.length - 1 && trimmed.charAt(closeBracket + 1) === ':') {
-        const portStr = trimmed.substring(closeBracket + 2);
-        const port = parseInt(portStr);
-        if (port > 0 && port <= 65535) {
-          return port;
-        }
-      }
-      return undefined;
-    }
-    
-    // IPv4 或主机名
-    const colonIndex = trimmed.indexOf(':');
-    // 只有一个冒号，说明是端口分隔符（IPv6 有多个冒号）
-    if (colonIndex > 0 && trimmed.indexOf(':', colonIndex + 1) === -1) {
-      const portStr = trimmed.substring(colonIndex + 1);
-      const port = parseInt(portStr);
-      if (port > 0 && port <= 65535) {
-        return port;
-      }
-    }
-    
-    return undefined;
-  }
-
-  /**
-   * 格式化地址用于 URL：IPv6 地址需要加方括号
-   * e.g. "fe80::1" → "[fe80::1]", "192.168.1.1" → "192.168.1.1"
-   */
-  private formatAddressForUrl(addr: string): string {
-    if (addr.includes(':') && !addr.startsWith('[')) {
-      return `[${addr}]`;
-    }
-    return addr;
-  }
-
   /**
    * 初始化客户端密钥对
    * 如果证书文件已存在，则从文件加载；否则生成新的密钥对和证书

@@ -11,6 +11,7 @@
 import socket from '@ohos.net.socket';
 import connection from '@ohos.net.connection';
 import { NvHttp } from './NvHttp';
+import { isIPv6Address, isIPv4Address } from '../utils/NetHelper';
 
 /**
  * Wake-on-LAN 魔术包发送器
@@ -68,7 +69,7 @@ export class WakeOnLan {
     console.info(`WOL: 开始发送魔术包 MAC=${macAddress} 地址列表=[${uniqueAddresses.join(', ')}] httpPort=${httpPort}`);
 
     for (const address of uniqueAddresses) {
-      const isIPv6 = WakeOnLan.isIPv6Address(address);
+      const isIPv6 = isIPv6Address(address);
 
       // 1) IPv4: 先用独立广播 socket 尝试发送 255.255.255.255（失败忽略）
       if (!isIPv6) {
@@ -88,7 +89,7 @@ export class WakeOnLan {
         console.info(`WOL: DNS 解析 ${address} → [${resolvedAddresses.join(', ')}]`);
         for (const resolved of resolvedAddresses) {
           try {
-            const resolvedIsIPv6 = WakeOnLan.isIPv6Address(resolved);
+            const resolvedIsIPv6 = isIPv6Address(resolved);
             await WakeOnLan.sendUnicast(payload, resolved, allPorts, resolvedIsIPv6);
             sentWolPacket = true;
             console.info(`WOL: 单播发送成功 → ${resolved}`);
@@ -200,11 +201,7 @@ export class WakeOnLan {
   }
 
   private static isIPAddress(address: string): boolean {
-    // IPv4: x.x.x.x
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(address)) return true;
-    // IPv6: contains multiple colons
-    if (WakeOnLan.isIPv6Address(address)) return true;
-    return false;
+    return isIPv4Address(address) || isIPv6Address(address);
   }
 
   // ==================== 工具方法 ====================
@@ -213,10 +210,6 @@ export class WakeOnLan {
     if (!macAddress || macAddress === WakeOnLan.ZERO_MAC) {
       throw new Error('MAC 地址无效，无法发送 WOL 包');
     }
-  }
-
-  private static isIPv6Address(address: string): boolean {
-    return address.includes(':') && (address.split(':').length > 2 || address.startsWith('['));
   }
 
   private static getAllPorts(httpPort: number): number[] {

@@ -18,6 +18,7 @@ import { XmlUtil } from '../utils/XmlUtil';
 import { StringUtil } from '../utils/StringUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT } from '../common/NetworkConstants';
+import { parseAddressAndPort, formatAddressForUrl } from '../utils/NetHelper';
 
 /**
  * NvHTTP - 与 NVIDIA GameStream / Sunshine 服务器通信
@@ -112,12 +113,11 @@ export class NvHttp {
 
   constructor(address: string, serverCert: string | null, context?: common.UIAbilityContext, httpPort?: number) {
     // 解析地址中可能包含的端口号
-    const parsedHost = this.parseAddressHost(address);
-    const parsedPort = this.parseAddressPort(address);
-    this.address = parsedHost;
+    const parsed = parseAddressAndPort(address);
+    this.address = parsed.host;
     this.serverCert = serverCert;
     // 优先使用显式传入的端口，其次使用地址中解析的端口，最后使用默认端口
-    this.httpPort = httpPort || parsedPort || NvHttp.DEFAULT_HTTP_PORT;
+    this.httpPort = httpPort || parsed.port || NvHttp.DEFAULT_HTTP_PORT;
     if (context) {
       this.context = context;
       this.certFilePath = context.filesDir + '/client_cert.pem';
@@ -127,65 +127,6 @@ export class NvHttp {
     this.clientName = this.getClientName();
   }
   
-  /**
-   * 从地址字符串中解析主机部分
-   */
-  private parseAddressHost(addressInput: string): string {
-    const trimmed = addressInput.trim();
-    
-    // 检查是否为 IPv6 地址
-    if (trimmed.startsWith('[')) {
-      // 格式: [::1] 或 [::1]:47989
-      const closeBracket = trimmed.indexOf(']');
-      if (closeBracket > 0) {
-        return trimmed.substring(1, closeBracket);
-      }
-    }
-    
-    // IPv4 或主机名
-    const colonIndex = trimmed.indexOf(':');
-    // 只有一个冒号，说明是端口分隔符（IPv6 有多个冒号）
-    if (colonIndex > 0 && trimmed.indexOf(':', colonIndex + 1) === -1) {
-      return trimmed.substring(0, colonIndex);
-    }
-    
-    return trimmed;
-  }
-  
-  /**
-   * 从地址字符串中解析端口部分
-   */
-  private parseAddressPort(addressInput: string): number | undefined {
-    const trimmed = addressInput.trim();
-    
-    // 检查是否为 IPv6 地址
-    if (trimmed.startsWith('[')) {
-      // 格式: [::1]:47989
-      const closeBracket = trimmed.indexOf(']');
-      if (closeBracket > 0 && closeBracket < trimmed.length - 1 && trimmed.charAt(closeBracket + 1) === ':') {
-        const portStr = trimmed.substring(closeBracket + 2);
-        const port = parseInt(portStr);
-        if (port > 0 && port <= 65535) {
-          return port;
-        }
-      }
-      return undefined;
-    }
-    
-    // IPv4 或主机名
-    const colonIndex = trimmed.indexOf(':');
-    // 只有一个冒号，说明是端口分隔符（IPv6 有多个冒号）
-    if (colonIndex > 0 && trimmed.indexOf(':', colonIndex + 1) === -1) {
-      const portStr = trimmed.substring(colonIndex + 1);
-      const port = parseInt(portStr);
-      if (port > 0 && port <= 65535) {
-        return port;
-      }
-    }
-    
-    return undefined;
-  }
-
   /**
    * 检查客户端证书文件是否存在
    */
@@ -283,21 +224,10 @@ export class NvHttp {
   }
 
   /**
-   * 获取格式化的地址（IPv6 需要加方括号）
-   */
-  private getFormattedAddress(): string {
-    // 如果是 IPv6 地址且没有方括号，添加方括号
-    if (this.address.includes(':') && !this.address.startsWith('[')) {
-      return `[${this.address}]`;
-    }
-    return this.address;
-  }
-
-  /**
    * 获取 HTTP 基础 URL
    */
   private getHttpBaseUrl(): string {
-    return `http://${this.getFormattedAddress()}:${this.httpPort}`;
+    return `http://${formatAddressForUrl(this.address)}:${this.httpPort}`;
   }
 
   /**
@@ -333,7 +263,7 @@ export class NvHttp {
       port = NvHttp.DEFAULT_HTTPS_PORT;
       console.info(`NvHttp: 使用默认 HTTPS 端口 ${port}`);
     }
-    return `https://${this.getFormattedAddress()}:${port}`;
+    return `https://${formatAddressForUrl(this.address)}:${port}`;
   }
 
   /**

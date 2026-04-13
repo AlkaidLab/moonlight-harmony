@@ -16,19 +16,14 @@ import { ComputerPersistence } from './ComputerPersistence';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { WakeOnLan } from './WakeOnLan';
-import { isLanAddress, getBestIpv6Address, isIPv6Address, isLoopbackIPv4 } from '../utils/NetHelper';
+import { isLanAddress, getBestIpv6Address, isIPv6Address, isLoopbackIPv4, parseAddressAndPort } from '../utils/NetHelper';
 import { connection } from '@kit.NetworkKit';
-import { MAX_PORT } from '../common/NetworkConstants';
 import { common } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
 
 /**
  * 地址解析结果
  */
-class AddressParseResult {
-  host: string = '';
-  port: number | undefined = undefined;
-}
 
 /**
  * 轮询结果
@@ -311,7 +306,7 @@ export class ComputerManager {
    *   - "mydomain.com" - 域名，会被保存为 manualAddress
    */
   async addComputer(addressInput: string): Promise<ComputerInfo> {
-    const parsed = this.parseAddressInput(addressInput);
+    const parsed = parseAddressAndPort(addressInput);
     const result = await this.addComputerInternal(parsed.host, undefined, parsed.port);
     
     // 保存用户手动输入的地址（仅主机部分，端口已存储在 httpPort 中）
@@ -323,67 +318,6 @@ export class ComputerManager {
     await this.saveComputers();
     
     this.notifyListChanged();
-    return result;
-  }
-
-  /**
-   * 解析用户输入的地址，提取主机和端口
-   */
-  private parseAddressInput(input: string): AddressParseResult {
-    const trimmed = input.trim();
-    const result = new AddressParseResult();
-    
-    // 检查是否为 IPv6 地址（包含多个冒号）
-    let colonCount = 0;
-    for (let i = 0; i < trimmed.length; i++) {
-      if (trimmed.charAt(i) === ':') {
-        colonCount++;
-      }
-    }
-    const isLikelyIPv6 = colonCount >= 2;
-    
-    if (isLikelyIPv6) {
-      // IPv6 地址处理
-      if (trimmed.startsWith('[')) {
-        // 格式: [::1] 或 [::1]:47989
-        const closeBracket = trimmed.indexOf(']');
-        if (closeBracket > 0) {
-          result.host = trimmed.substring(1, closeBracket);
-          if (closeBracket < trimmed.length - 1 && trimmed.charAt(closeBracket + 1) === ':') {
-            const portStr = trimmed.substring(closeBracket + 2);
-            const port = parseInt(portStr);
-            if (port > 0 && port <= MAX_PORT) {
-              result.port = port;
-            }
-          }
-          return result;
-        }
-      } else {
-        // 裸 IPv6 地址（无方括号），如 ::1 或 fe80::1
-        // 注意：裸 IPv6 地址无法无歧义地分离端口（地址本身就包含冒号）
-        // 只有 [addr]:port 格式才能指定 IPv6 + 端口
-        // 因此直接将整个字符串作为主机名
-        result.host = trimmed;
-        return result;
-      }
-    } else {
-      // IPv4 或主机名
-      const colonIndex = trimmed.indexOf(':');
-      if (colonIndex > 0) {
-        // 格式: 192.168.1.100:47989
-        const host = trimmed.substring(0, colonIndex);
-        const portStr = trimmed.substring(colonIndex + 1);
-        const port = parseInt(portStr);
-        if (port > 0 && port <= MAX_PORT) {
-          result.host = host;
-          result.port = port;
-          return result;
-        }
-      }
-    }
-    
-    // 默认：没有端口
-    result.host = trimmed;
     return result;
   }
 
@@ -402,8 +336,8 @@ export class ComputerManager {
       const localAddr = (serverInfo.localAddress && !isLoopbackIPv4(serverInfo.localAddress)) ? serverInfo.localAddress : '';
       const remoteAddr = serverInfo.externalAddress || '';
       
-      // 检测连接地址是否为 IPv6（包含至少2个冒号）
-      const isIPv6 = address.includes(':') && address.split(':').length > 2;
+      // 检测连接地址是否为 IPv6
+      const isIPv6 = isIPv6Address(address);
       // mDNS 发现时可能已经拿到了 IPv6 地址
       const ipv6Addr = isIPv6 ? address : (discoveredIpv6 || undefined);
 
