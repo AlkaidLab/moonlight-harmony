@@ -16,7 +16,7 @@ import { ComputerPersistence } from './ComputerPersistence';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { WakeOnLan } from './WakeOnLan';
-import { isLanAddress, getBestIpv6Address, isIPv6Address } from '../utils/NetHelper';
+import { isLanAddress, getBestIpv6Address, isIPv6Address, isLoopbackIPv4 } from '../utils/NetHelper';
 import { connection } from '@kit.NetworkKit';
 import { MAX_PORT } from '../common/NetworkConstants';
 import { common } from '@kit.AbilityKit';
@@ -399,7 +399,7 @@ export class ComputerManager {
       const serverInfo = await nvHttp.getServerInfo();
 
       // 使用服务器返回的本地地址（过滤 127.x 回环，对齐 Android GS IPv6 Forwarder 保护）
-      const localAddr = (serverInfo.localAddress && !serverInfo.localAddress.startsWith('127.')) ? serverInfo.localAddress : '';
+      const localAddr = (serverInfo.localAddress && !isLoopbackIPv4(serverInfo.localAddress)) ? serverInfo.localAddress : '';
       const remoteAddr = serverInfo.externalAddress || '';
       
       // 检测连接地址是否为 IPv6（包含至少2个冒号）
@@ -806,8 +806,11 @@ export class ComputerManager {
     }
     
     // 更新本地/远程地址（过滤 127.x 回环，对齐 Android ComputerDetails.update()）
-    if (info.localAddress && !info.localAddress.startsWith('127.')) {
+    if (info.localAddress && !isLoopbackIPv4(info.localAddress)) {
       target.localAddress = info.localAddress;
+    } else if (target.localAddress && isLoopbackIPv4(target.localAddress)) {
+      // 清理历史遗留的 127.x 回环地址
+      target.localAddress = result.address;
     }
     if (info.externalAddress) target.remoteAddress = info.externalAddress;
 

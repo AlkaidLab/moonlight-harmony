@@ -24,6 +24,7 @@ import { NvHttp, ServerInfo } from '../service/NvHttp';
 import { PairState, ComputerState, selectBestAddress, ComputerInfo } from '../model/ComputerInfo';
 import { ConfirmDialogConfig, InfoDialogConfig } from '../components/ConfirmDialog';
 import { AppColors } from '../common/Theme';
+import { isLoopbackIPv4 } from '../utils/NetHelper';
 
 /** 单地址网络测试结果 */
 interface AddressTestResult {
@@ -330,13 +331,16 @@ export class PcListActions {
     promptAction.showToast({ message: '正在检测网络…' });
     const computerInfo = computer.toComputerInfo();
 
-    // 收集所有可用地址
+    // 收集所有可用地址（过滤 127.x 回环地址）
     const addressSet = new Set<string>();
-    if (computerInfo.manualAddress) addressSet.add(computerInfo.manualAddress);
-    if (computerInfo.address) addressSet.add(computerInfo.address);
-    if (computerInfo.localAddress) addressSet.add(computerInfo.localAddress);
-    if (computerInfo.remoteAddress) addressSet.add(computerInfo.remoteAddress);
-    if (computerInfo.ipv6Address) addressSet.add(computerInfo.ipv6Address);
+    const addIfValid = (addr: string | undefined) => {
+      if (addr && !isLoopbackIPv4(addr)) addressSet.add(addr);
+    };
+    addIfValid(computerInfo.manualAddress);
+    addIfValid(computerInfo.address);
+    addIfValid(computerInfo.localAddress);
+    addIfValid(computerInfo.remoteAddress);
+    addIfValid(computerInfo.ipv6Address);
     const addresses = Array.from(addressSet);
 
     if (addresses.length === 0) {
@@ -515,10 +519,11 @@ export class PcListActions {
 
     const addressLines: string[] = [];
     const info = computer.toComputerInfo();
-    if (info.manualAddress) { addressLines.push(`手动地址: ${info.manualAddress}`); }
-    if (info.localAddress) { addressLines.push(`本地地址: ${info.localAddress}`); }
-    if (info.remoteAddress) { addressLines.push(`远程地址: ${info.remoteAddress}`); }
-    if (info.address && info.address !== info.localAddress && info.address !== info.remoteAddress && info.address !== info.manualAddress) {
+    const notLoopback = (a: string | undefined) => a && !isLoopbackIPv4(a);
+    if (notLoopback(info.manualAddress)) { addressLines.push(`手动地址: ${info.manualAddress}`); }
+    if (notLoopback(info.localAddress)) { addressLines.push(`本地地址: ${info.localAddress}`); }
+    if (notLoopback(info.remoteAddress)) { addressLines.push(`远程地址: ${info.remoteAddress}`); }
+    if (notLoopback(info.address) && info.address !== info.localAddress && info.address !== info.remoteAddress && info.address !== info.manualAddress) {
       addressLines.push(`当前地址: ${info.address}`);
     }
     if (addressLines.length === 0) { addressLines.push(`地址: 未知`); }

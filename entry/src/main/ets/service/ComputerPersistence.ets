@@ -17,6 +17,7 @@
 import { ComputerInfo, ComputerState, PairState, ComputerInfoBuilder } from '../model/ComputerInfo';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { NvHttp } from './NvHttp';
+import { isLoopbackIPv4 } from '../utils/NetHelper';
 import { MAX_PORT } from '../common/NetworkConstants';
 import { SettingsBackupService } from './SettingsBackupService';
 
@@ -187,11 +188,14 @@ export class ComputerPersistence {
 
         console.info(`ComputerPersistence: 加载 ${saved.name} (pairState=${pairState}, httpPort=${httpPort}, cert=${saved.serverCert ? '有' : '无'})`);
 
+        // 过滤持久化中遗留的 127.x 回环地址（对齐 Android GS IPv6 Forwarder 保护）
+        const cleanLocalAddr = (saved.localAddress && !isLoopbackIPv4(saved.localAddress))
+          ? saved.localAddress : '';
         const computer = new ComputerInfoBuilder()
           .setUuid(saved.uuid)
           .setName(saved.name)
           .setAddress(addressHost)
-          .setLocalAddress(saved.localAddress || addressHost)
+          .setLocalAddress(cleanLocalAddr || addressHost)
           .setRemoteAddress(saved.remoteAddress || '')
           .setManualAddress(saved.manualAddress)
           .setIpv6Address(saved.ipv6Address)
