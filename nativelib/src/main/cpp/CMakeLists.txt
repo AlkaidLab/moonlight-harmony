@@ -49,7 +49,24 @@ include_directories(
     ${MOONLIGHT_COMMON_PATH}/nanors
     ${MOONLIGHT_COMMON_PATH}/nanors/deps
     ${MOONLIGHT_COMMON_PATH}/nanors/deps/obl
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
+
+# ---- GLSL 着色器 → C++ 字符串常量头文件 ----
+set(SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+set(SHADER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/generated/shader_strings.h)
+file(GLOB SHADER_SOURCES ${SHADER_DIR}/*.vert ${SHADER_DIR}/*.frag)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(NOT Python3_FOUND)
+    find_program(Python3_EXECUTABLE NAMES python3 python)
+endif()
+add_custom_command(
+    OUTPUT ${SHADER_HEADER}
+    COMMAND ${Python3_EXECUTABLE} ${SHADER_DIR}/embed_shaders.py ${SHADER_DIR} ${SHADER_HEADER}
+    DEPENDS ${SHADER_SOURCES} ${SHADER_DIR}/embed_shaders.py
+    COMMENT "Embedding GLSL shaders into shader_strings.h"
+)
+add_custom_target(generate_shader_header DEPENDS ${SHADER_HEADER})
 
 # 主要源文件 - NAPI 桥接层
 set(SOURCE_FILES
@@ -157,6 +174,7 @@ add_library(moonlight_nativelib SHARED
     ${MOONLIGHT_COMMON_SOURCES}
     ${ENET_SOURCES}
 )
+add_dependencies(moonlight_nativelib generate_shader_header)
 
 # rswrapper.c 需要优化标志以获得最佳 Reed-Solomon 性能
 # 使用 ohos_shim/assert.h 避免 OHOS assert.h 的 __assert_fail 与 Clang target

@@ -172,9 +172,6 @@ private:
     bool InitNativeImage();
     void ReleaseNativeImage();
 
-    // 蓝噪声纹理
-    bool InitBlueNoiseTexture();
-
     // FBO (用于 OES → TEXTURE_2D 转换)
     bool InitFBO();
     void ReleaseFBO();
@@ -226,7 +223,6 @@ private:
 
     // Uniform locations
     int locTexture_ = -1;
-    int locBlueNoise_ = -1;
     int locTexelSize_ = -1;
     int locTimePhase_ = -1;
     int locEnableFilter_ = -1;
@@ -237,9 +233,6 @@ private:
     int locSdrPeakNits_ = -1;
     int locSdrSaturation_ = -1;
     int locSdrContrast_ = -1;
-
-    // 蓝噪声纹理
-    GLuint blueNoiseTexture_ = 0;
 
     // FBO (OES → TEXTURE_2D 转换)
     GLuint fbo_ = 0;
