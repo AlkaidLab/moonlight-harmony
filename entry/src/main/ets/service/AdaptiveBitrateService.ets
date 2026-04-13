@@ -45,6 +45,12 @@ export class AdaptiveBitrateService {
   private tickInterval: number = -1;
   private getStatsFn: (() => StreamStats) | null = null;
 
+  // 服务端启用重试（每 RETRY_INTERVAL 秒一次，最多 MAX_RETRIES 次）
+  private serverEnableRetries: number = 0;
+  private serverRetryTickCounter: number = 0;
+  private static readonly MAX_SERVER_ENABLE_RETRIES = 10;
+  private static readonly SERVER_RETRY_INTERVAL_TICKS = 5;
+
   constructor(nvHttp: NvHttp) {
     this.nvHttp = nvHttp;
   }
@@ -80,19 +86,9 @@ export class AdaptiveBitrateService {
     // 设置模式参数
     this.applyModePreset(mode);
 
-    // 通知服务端
+    // 服务端启用由 tick 惰性重试（避免会话未就绪导致立即降级）
     if (this.serverSupported) {
-      const config: AbrConfig = {
-        enabled: true,
-        minBitrate: this.minBitrate,
-        maxBitrate: this.maxBitrate,
-        mode: this.mode,
-      };
-      const ok = await this.nvHttp.setAbrMode(config);
-      console.info(`${TAG} 服务端 ABR 启用: ${ok ? '成功' : '不支持，使用本地控制器'}`);
-      if (!ok) {
-        this.serverSupported = false;
-      }
+      this.serverEnableRetries = 1;
     }
 
     this.enabled = true;
@@ -153,7 +149,14 @@ export class AdaptiveBitrateService {
    */
   getStatusText(): string {
     if (!this.enabled) return '';
-    const mode = this.serverSupported ? 'server' : 'local';
+    let mode: string;
+    if (this.serverSupported && this.serverEnableRetries === 0) {
+      mode = 'server';
+    } else if (this.serverSupported && this.serverEnableRetries > 0) {
+      mode = 'connecting';
+    } else {
+      mode = 'local';
+    }
     return `ABR:${mode} ${Math.round(this.currentBitrate / 1000)}M`;
   }
 
@@ -185,14 +188,47 @@ export class AdaptiveBitrateService {
     this.lossStreak = 0;
     this.lastAdjustTime = 0;
     this.lastDirection = 'none';
+    this.serverEnableRetries = 0;
+    this.serverRetryTickCounter = 0;
+  }
+
+  /**
+   * 尝试在服务端启用 ABR，返回是否成功
+   */
+  private async tryEnableServer(): Promise<boolean> {
+    const config: AbrConfig = {
+      enabled: true,
+      minBitrate: this.minBitrate,
+      maxBitrate: this.maxBitrate,
+      mode: this.mode,
+    };
+    const ok = await this.nvHttp.setAbrMode(config);
+    console.info(`${TAG} 服务端 ABR 启用: ${ok ? '成功' : '失败'}`);
+    return ok;
   }
 
   private async tick(): Promise<void> {
     if (!this.enabled || !this.getStatsFn || !this.onBitrateChange) return;
 
+    // 惰性重试：每 5 秒尝试一次服务端启用，最多 10 次
+    if (this.serverSupported && this.serverEnableRetries > 0) {
+      if (++this.serverRetryTickCounter >= AdaptiveBitrateService.SERVER_RETRY_INTERVAL_TICKS) {
+        this.serverRetryTickCounter = 0;
+        const retryNum = this.serverEnableRetries;
+        const ok = await this.tryEnableServer();
+        if (ok) {
+          this.serverEnableRetries = 0;
+          console.info(`${TAG} 服务端 ABR 启用成功（第 ${retryNum} 次）`);
+        } else if (++this.serverEnableRetries > AdaptiveBitrateService.MAX_SERVER_ENABLE_RETRIES) {
+          this.serverSupported = false;
+          console.warn(`${TAG} 服务端 ABR 重试 ${AdaptiveBitrateService.MAX_SERVER_ENABLE_RETRIES} 次均失败，降级到本地控制器`);
+        }
+      }
+    }
+
     const stats = this.getStatsFn();
 
-    if (this.serverSupported) {
+    if (this.serverSupported && this.serverEnableRetries === 0) {
       await this.tickServer(stats);
     } else {
       await this.tickLocal(stats);
