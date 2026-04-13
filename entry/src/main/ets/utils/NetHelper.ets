@@ -428,6 +428,14 @@ function stripPort(addressStr: string): string {
 // =============================================================================
 
 /**
+ * 地址解析结果
+ */
+export interface AddressPort {
+  host: string;
+  port?: number;
+}
+
+/**
  * 解析地址字符串，提取主机和可选端口
  *
  * 支持格式：
@@ -437,7 +445,7 @@ function stripPort(addressStr: string): string {
  *   - "[::1]:47989"          → { host: "::1", port: 47989 }
  *   - "hostname:47989"       → { host: "hostname", port: 47989 }
  */
-export function parseAddressAndPort(input: string): { host: string; port?: number } {
+export function parseAddressAndPort(input: string): AddressPort {
   const trimmed = input.trim();
 
   // [IPv6]:port 格式
@@ -448,16 +456,19 @@ export function parseAddressAndPort(input: string): { host: string; port?: numbe
       if (closeBracket < trimmed.length - 1 && trimmed.charAt(closeBracket + 1) === ':') {
         const port = parseInt(trimmed.substring(closeBracket + 2));
         if (port > 0 && port <= 65535) {
-          return { host, port };
+          const result: AddressPort = { host, port };
+          return result;
         }
       }
-      return { host };
+      const result: AddressPort = { host };
+      return result;
     }
   }
 
   // 裸 IPv6 地址（多个冒号），无法分离端口
   if (isIPv6Address(trimmed)) {
-    return { host: trimmed };
+    const result: AddressPort = { host: trimmed };
+    return result;
   }
 
   // IPv4 或主机名，最多一个冒号作为端口分隔符
@@ -466,11 +477,13 @@ export function parseAddressAndPort(input: string): { host: string; port?: numbe
     const host = trimmed.substring(0, colonIndex);
     const port = parseInt(trimmed.substring(colonIndex + 1));
     if (port > 0 && port <= 65535) {
-      return { host, port };
+      const result: AddressPort = { host, port };
+      return result;
     }
   }
 
-  return { host: trimmed };
+  const result: AddressPort = { host: trimmed };
+  return result;
 }
 
 /**

@@ -114,7 +114,6 @@ interface SettingItem {
 interface SettingGroup {
   id: string;      // 分组唯一标识
   icon: Resource;  // 分组图标
-  useSymbol?: boolean;  // 是否使用 HarmonyOS Symbol，默认 true
   title: string;
   items: SettingItem[];
 }
@@ -126,7 +125,6 @@ interface SidebarGroupMeta {
   id: string;
   icon: Resource;
   title: string;
-  useSymbol: boolean;
 }
 
 /**
@@ -266,19 +264,19 @@ struct SettingsPageV2 {
   
   // 侧边栏分组元数据
   private sidebarGroups: SidebarGroupMeta[] = [
-    { id: 'video', icon: $r('sys.symbol.video_fill'), title: '视频', useSymbol: true } as SidebarGroupMeta,
-    { id: 'audio', icon: $r('sys.symbol.speaker_wave_2_fill'), title: '音频', useSymbol: true } as SidebarGroupMeta,
-    { id: 'gamepad', icon: $r('sys.symbol.gamecontroller_fill'), title: '手柄', useSymbol: true } as SidebarGroupMeta,
-    { id: 'usb_driver', icon: $r('app.media.ic_controller'), title: 'USB 驱动', useSymbol: false } as SidebarGroupMeta,
-    { id: 'osc', icon: $r('sys.symbol.gamecontroller'), title: '屏幕控制器', useSymbol: true } as SidebarGroupMeta,
-    { id: 'mouse', icon: $r('app.media.ic_mouse'), title: '鼠标触控', useSymbol: false } as SidebarGroupMeta,
-    { id: 'enhanced_touch', icon: $r('sys.symbol.bolt_fill'), title: '增强触控', useSymbol: true } as SidebarGroupMeta,
-    { id: 'host', icon: $r('app.media.ic_host'), title: '主机', useSymbol: false } as SidebarGroupMeta,
-    { id: 'post_process', icon: $r('app.media.ic_enhance'), title: '后处理', useSymbol: false } as SidebarGroupMeta,
-    { id: 'performance', icon: $r('app.media.ic_advanced'), title: '性能与调试', useSymbol: false } as SidebarGroupMeta,
-    { id: 'ui', icon: $r('sys.symbol.display'), title: '界面', useSymbol: true } as SidebarGroupMeta,
-    { id: 'backup', icon: $r('sys.symbol.share'), title: '备份', useSymbol: true } as SidebarGroupMeta,
-    { id: 'about', icon: $r('sys.symbol.info_circle_fill'), title: '关于', useSymbol: true } as SidebarGroupMeta,
+    { id: 'video', icon: $r('sys.symbol.video_fill'), title: '视频' },
+    { id: 'audio', icon: $r('sys.symbol.speaker_wave_2_fill'), title: '音频' },
+    { id: 'gamepad', icon: $r('sys.symbol.gamecontroller_fill'), title: '手柄' },
+    { id: 'usb_driver', icon: $r('sys.symbol.charg_cable'), title: 'USB 驱动' },
+    { id: 'osc', icon: $r('sys.symbol.gamecontroller'), title: '屏幕控制器' },
+    { id: 'mouse', icon: $r('sys.symbol.mouse'), title: '鼠标触控' },
+    { id: 'enhanced_touch', icon: $r('sys.symbol.bolt_fill'), title: '增强触控' },
+    { id: 'host', icon: $r('sys.symbol.computer_host_fill'), title: '主机' },
+    { id: 'post_process', icon: $r('sys.symbol.wand_and_stars'), title: '后处理' },
+    { id: 'performance', icon: $r('sys.symbol.slider_horizontal_2'), title: '性能与调试' },
+    { id: 'ui', icon: $r('sys.symbol.display'), title: '界面' },
+    { id: 'backup', icon: $r('sys.symbol.share'), title: '备份' },
+    { id: 'about', icon: $r('sys.symbol.info_circle_fill'), title: '关于' },
   ];
   
   // 解码器能力
@@ -1440,8 +1438,7 @@ struct SettingsPageV2 {
           // USB 手柄驱动
           this.SettingsGroup({
             id: 'usb_driver',
-            icon: $r('app.media.ic_controller'),
-            useSymbol: false,
+            icon: $r('sys.symbol.charg_cable'),
             title: 'USB 驱动',
             items: [
               {
@@ -1595,8 +1592,7 @@ struct SettingsPageV2 {
           // 鼠标和触控设置
           this.SettingsGroup({
             id: 'mouse',
-            icon: $r('app.media.ic_mouse'),
-            useSymbol: false,
+            icon: $r('sys.symbol.mouse'),
             title: '鼠标和触控',
             items: [
               {
@@ -1747,8 +1743,7 @@ struct SettingsPageV2 {
           // 主机设置
           this.SettingsGroup({
             id: 'host',
-            icon: $r('app.media.ic_host'),
-            useSymbol: false,
+            icon: $r('sys.symbol.computer_host_fill'),
             title: '主机',
             items: [
               {
@@ -1809,8 +1804,7 @@ struct SettingsPageV2 {
           // 后处理
           this.SettingsGroup({
             id: 'post_process',
-            icon: $r('app.media.ic_enhance'),
-            useSymbol: false,
+            icon: $r('sys.symbol.wand_and_stars'),
             title: '后处理',
             items: [
               {
@@ -1910,8 +1904,7 @@ struct SettingsPageV2 {
           // 性能与调试
           this.SettingsGroup({
             id: 'performance',
-            icon: $r('app.media.ic_advanced'),
-            useSymbol: false,
+            icon: $r('sys.symbol.slider_horizontal_2'),
             title: '性能与调试',
             items: [
               {
@@ -2175,6 +2168,14 @@ struct SettingsPageV2 {
                 action: () => {
                   SettingsBackupService.importFromFile();
                 }
+              } as SettingItem,
+              {
+                title: '还原默认设置',
+                subtitle: '清除所有自定义设置，恢复出厂默认值',
+                type: 'action',
+                action: () => {
+                  this.confirmResetSettings();
+                }
               } as SettingItem
             ]
           })
@@ -2245,6 +2246,7 @@ struct SettingsPageV2 {
               }
             ]
           })
+
           
           // 底部间距
           Column()
@@ -2333,17 +2335,10 @@ struct SettingsPageV2 {
           Row() {
             // 分组图标
             Column() {
-              if (meta.useSymbol) {
-                SymbolGlyph(meta.icon)
-                  .fontSize(16)
-                  .fontColor([this.expandedGroup === meta.id ? AppColors.Primary : AppColors.TextSecondary])
-                  .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-              } else {
-                Image(meta.icon)
-                  .width(16)
-                  .height(16)
-                  .fillColor(this.expandedGroup === meta.id ? AppColors.Primary : AppColors.TextSecondary)
-              }
+              SymbolGlyph(meta.icon)
+                .fontSize(16)
+                .fontColor([this.expandedGroup === meta.id ? AppColors.Primary : AppColors.TextSecondary])
+                .renderingStrategy(SymbolRenderingStrategy.SINGLE)
             }
             .width(24)
             .height(24)
@@ -2413,17 +2408,10 @@ struct SettingsPageV2 {
         Row() {
           // 分组图标
           Column() {
-            if (group.useSymbol !== false) {
-              SymbolGlyph(group.icon)
-                .fontSize(18)
-                .fontColor([AppColors.Primary])
-                .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-            } else {
-              Image(group.icon)
-                .width(18)
-                .height(18)
-                .fillColor(AppColors.Primary)
-            }
+            SymbolGlyph(group.icon)
+              .fontSize(18)
+              .fontColor([AppColors.Primary])
+              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
           }
           .width(28)
           .height(28)
@@ -3074,6 +3062,31 @@ struct SettingsPageV2 {
         this.customResolutions = [];
         this.saveCustomResolutions();
         this.showToast('已清空所有自定义分辨率');
+      }
+    });
+  }
+
+  /**
+   * 确认还原默认设置
+   */
+  private confirmResetSettings(): void {
+    promptAction.showDialog({
+      title: '还原默认设置',
+      message: '确定要将所有设置恢复为默认值吗？此操作不可撤销。\n\n已添加的电脑和配对信息不会受到影响。',
+      buttons: [
+        { text: '还原', color: AppColors.Error },
+        { text: '取消', color: AppColors.TextSecondary }
+      ]
+    }).then(async (result) => {
+      if (result.index === 0) {
+        try {
+          const context = getContext(this) as common.UIAbilityContext;
+          await PreferencesUtil.clear(context);
+          this.loadSettings();
+          this.showToast('已还原默认设置');
+        } catch (e) {
+          this.showToast('还原失败，请重试');
+        }
       }
     });
   }
