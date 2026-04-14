@@ -23,6 +23,7 @@ import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem as DialogOptio
 import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem as DialogMultiOptionItem } from '../components/dialogs/MultiOptionPickerDialog';
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { InputInterceptorService } from '../service/input/InputInterceptorService';
+import { GamepadManager } from '../service/input/GamepadManager';
 import { SettingsKeys } from '../service/SettingsService';
 import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
@@ -3204,9 +3205,7 @@ struct SettingsPageV2 {
         this.gcButtonHomeMapping = value;
         this.saveSetting(SettingsKeys.GC_BUTTON_HOME_MAPPING, value);
         // 通知 GamepadManager 更新映射
-        import('../service/GamepadManager').then(module => {
-          module.GamepadManager.getInstance().updateGCButton2313Action(value as 'guide' | 'select' | 'toggle_mouse' | 'toggle_perf' | 'show_menu' | 'none');
-        });
+        GamepadManager.getInstance().updateGCButton2313Action(value as 'guide' | 'select' | 'toggle_mouse' | 'toggle_perf' | 'show_menu' | 'none');
       }
     };
     this.showPicker(config);
