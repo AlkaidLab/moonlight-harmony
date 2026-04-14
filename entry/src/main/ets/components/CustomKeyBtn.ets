@@ -21,7 +21,7 @@ import {
   CustomKeyDef,
   KeyAction,
   createDefaultKeyDef,
-} from '../service/CustomKeyTypes';
+} from '../service/customkey/CustomKeyTypes';
 import { OV_TEXT_WHITE } from '../common/OverlayConstants';
 import {
   EDIT_BORDER_COLOR,

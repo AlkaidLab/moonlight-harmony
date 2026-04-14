@@ -13,10 +13,10 @@
  * 用于测试蓝牙/系统手柄的输入（非 USB 直连模式）
  */
 
-import { gameControllerService, GameControllerService, ButtonCode } from '../../service/GameControllerService';
-import { GamepadManager } from '../../service/GamepadManager';
+import { gameControllerService, GameControllerService, ButtonCode } from '../../service/input/GameControllerService';
+import { GamepadManager } from '../../service/input/GamepadManager';
 import { UsbDriverService } from '../../service/usbdriver';
-import { gcButtonMap, AXIS_MAX, TRIGGER_MAX } from '../../service/GamepadTypes';
+import { gcButtonMap, AXIS_MAX, TRIGGER_MAX } from '../../service/input/GamepadTypes';
 import { AppColors } from '../../common/Theme';
 
 // @Builder 按引用传参接口

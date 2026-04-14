@@ -11,7 +11,7 @@
 import { mdns } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { NvHttp } from './NvHttp';
+import { NvHttp } from '../streaming/NvHttp';
 
 /**
  * 发现的计算机信息

@@ -8,18 +8,18 @@
  * (at your option) any later version.
  */
 
-import { StreamConfig, HdrMode, getSurroundAudioInfo } from '../model/StreamConfig';
-import { InputEvent, InputType, ControllerButtonEvent, ControllerAxisEvent, ControllerButton } from '../model/InputEvent';
-import { ComputerManager } from './ComputerManager';
-import { ComputerInfo, selectBestAddress } from '../model/ComputerInfo';
+import { StreamConfig, HdrMode, getSurroundAudioInfo } from '../../model/StreamConfig';
+import { InputEvent, InputType, ControllerButtonEvent, ControllerAxisEvent, ControllerButton } from '../../model/InputEvent';
+import { ComputerManager } from '../ComputerManager';
+import { ComputerInfo, selectBestAddress } from '../../model/ComputerInfo';
 import { NvHttp, LaunchConfig } from './NvHttp';
-import { CryptoUtil } from '../utils/CryptoUtil';
+import { CryptoUtil } from '../../utils/CryptoUtil';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
-import { GamepadManager } from './GamepadManager';
-import { MoonlightButton } from './GamepadTypes';
-import { MicrophoneStream } from './microphone/MicrophoneStream';
-import { AudioVibrationService } from './AudioVibrationService';
+import { GamepadManager } from '../input/GamepadManager';
+import { MoonlightButton } from '../input/GamepadTypes';
+import { MicrophoneStream } from '../microphone/MicrophoneStream';
+import { AudioVibrationService } from '../AudioVibrationService';
 import { AdaptiveBitrateService } from './AdaptiveBitrateService';
 import {
   MoonBridge,

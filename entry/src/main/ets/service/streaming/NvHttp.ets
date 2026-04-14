@@ -13,12 +13,12 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { HttpClient } from '../utils/HttpClient';
-import { XmlUtil } from '../utils/XmlUtil';
-import { StringUtil } from '../utils/StringUtil';
-import { CryptoUtil } from '../utils/CryptoUtil';
-import { DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT } from '../common/NetworkConstants';
-import { parseAddressAndPort, formatAddressForUrl } from '../utils/NetHelper';
+import { HttpClient } from '../../utils/HttpClient';
+import { XmlUtil } from '../../utils/XmlUtil';
+import { StringUtil } from '../../utils/StringUtil';
+import { CryptoUtil } from '../../utils/CryptoUtil';
+import { DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT } from '../../common/NetworkConstants';
+import { parseAddressAndPort, formatAddressForUrl } from '../../utils/NetHelper';
 
 /**
  * NvHTTP - 与 NVIDIA GameStream / Sunshine 服务器通信

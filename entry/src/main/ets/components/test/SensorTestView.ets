@@ -14,7 +14,7 @@
  * 验证设备传感器回退机制是否正常工作
  */
 
-import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from '../../service/DeviceSensorService';
+import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from '../../service/input/DeviceSensorService';
 import { AppColors } from '../../common/Theme';
 
 // @Builder 按引用传参接口

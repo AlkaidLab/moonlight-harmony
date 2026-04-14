@@ -15,9 +15,9 @@
  * 从 StreamPage 中解耦以降低单文件复杂度。
  */
 import { display, promptAction } from '@kit.ArkUI';
-import { StreamViewModel } from '../viewmodel/StreamViewModel';
+import { StreamViewModel } from '../../viewmodel/StreamViewModel';
 import { StreamWindowManager } from './StreamWindowManager';
-import { AppStateService, AppState } from './AppStateService';
+import { AppStateService, AppState } from '../AppStateService';
 import { BackgroundStreamService, BroadcastControlCallbacks } from './BackgroundStreamService';
 import { common } from '@kit.AbilityKit';
 import { MoonBridge, ML_TEST_RESULT_INCONCLUSIVE, CONNECTION_TEST_SERVER } from './MoonBridge';

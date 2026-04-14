@@ -19,7 +19,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, UsbClass, ControllerType, ControllerCapabilities } from './ControllerConstants';
-import { AXIS_MAX, TRIGGER_MAX, RUMBLE_MAX } from '../GamepadTypes';
+import { AXIS_MAX, TRIGGER_MAX, RUMBLE_MAX } from '../input/GamepadTypes';
 import { NativeHidParserService, NativeGamepadState, NativeGamepadType, NativeButtonFlags } from './NativeHidParserService';
 import { createUsbError, UsbError } from './UsbErrorCodes';
 

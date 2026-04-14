@@ -9,13 +9,13 @@
  */
 
 import { ComputerInfo, ComputerState, PairState, ComputerInfoBuilder, selectBestAddress } from '../model/ComputerInfo';
-import { NvHttp, ServerInfo } from './NvHttp';
-import { PairingManager, PairState as PMPairState } from './PairingManager';
-import { MdnsDiscovery, DiscoveredComputer } from './MdnsDiscovery';
+import { NvHttp, ServerInfo } from './streaming/NvHttp';
+import { PairingManager, PairState as PMPairState } from './network/PairingManager';
+import { MdnsDiscovery, DiscoveredComputer } from './network/MdnsDiscovery';
 import { ComputerPersistence } from './ComputerPersistence';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
-import { WakeOnLan } from './WakeOnLan';
+import { WakeOnLan } from './network/WakeOnLan';
 import { isLanAddress, getBestIpv6Address, isIPv6Address, isLoopbackIPv4, parseAddressAndPort } from '../utils/NetHelper';
 import { connection } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';

@@ -18,7 +18,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, SwitchPro, UsbClass, ControllerType, ControllerCapabilities, MotionType } from './ControllerConstants';
-import { readShortLE } from '../GamepadTypes';
+import { readShortLE } from '../input/GamepadTypes';
 import { UsbError } from './UsbErrorCodes';
 
 const TAG = '[USB-SWITCH]';

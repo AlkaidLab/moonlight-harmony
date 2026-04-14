@@ -12,12 +12,12 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { CryptoUtil } from '../utils/CryptoUtil';
+import { CryptoUtil } from '../../utils/CryptoUtil';
 import { common } from '@kit.AbilityKit';
-import { HttpClient } from '../utils/HttpClient';
-import { XmlUtil } from '../utils/XmlUtil';
-import { NvHttp } from './NvHttp';
-import { parseAddressAndPort, formatAddressForUrl } from '../utils/NetHelper';
+import { HttpClient } from '../../utils/HttpClient';
+import { XmlUtil } from '../../utils/XmlUtil';
+import { NvHttp } from '../streaming/NvHttp';
+import { parseAddressAndPort, formatAddressForUrl } from '../../utils/NetHelper';
 
 /**
  * 配对状态

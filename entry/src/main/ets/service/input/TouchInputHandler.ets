@@ -34,7 +34,7 @@ import {
   LI_PEN_BUTTON_SECONDARY,
   LI_TILT_UNKNOWN,
   LI_ROT_UNKNOWN
-} from './MoonBridge';
+} from '../streaming/MoonBridge';
 
 /**
  * 触摸输入模式

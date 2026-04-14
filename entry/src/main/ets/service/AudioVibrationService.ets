@@ -29,8 +29,8 @@
  */
 
 import { vibrator } from '@kit.SensorServiceKit';
-import { GamepadManager } from './GamepadManager';
-import { RUMBLE_MAX } from './GamepadTypes';
+import { GamepadManager } from './input/GamepadManager';
+import { RUMBLE_MAX } from './input/GamepadTypes';
 
 export class AudioVibrationService {
   private enabled: boolean = false;

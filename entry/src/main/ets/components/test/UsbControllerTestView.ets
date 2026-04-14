@@ -15,8 +15,8 @@
 
 import { usbManager } from '@kit.BasicServicesKit';
 import { UsbDriverService, UsbDriverListener, ControllerType, AbstractController, ButtonFlags } from '../../service/usbdriver';
-import { GamepadManager } from '../../service/GamepadManager';
-import { AXIS_MAX } from '../../service/GamepadTypes';
+import { GamepadManager } from '../../service/input/GamepadManager';
+import { AXIS_MAX } from '../../service/input/GamepadTypes';
 import { AppColors } from '../../common/Theme';
 
 // 手柄状态类

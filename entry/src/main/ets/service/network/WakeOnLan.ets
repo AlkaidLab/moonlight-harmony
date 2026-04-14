@@ -10,8 +10,8 @@
 
 import socket from '@ohos.net.socket';
 import connection from '@ohos.net.connection';
-import { NvHttp } from './NvHttp';
-import { isIPv6Address, isIPv4Address } from '../utils/NetHelper';
+import { NvHttp } from '../streaming/NvHttp';
+import { isIPv6Address, isIPv4Address } from '../../utils/NetHelper';
 
 /**
  * Wake-on-LAN 魔术包发送器

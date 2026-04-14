@@ -11,7 +11,7 @@
 import { router, promptAction } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { ComputerManager } from '../service/ComputerManager';
-import { NvHttp, AppEntry, DisplayInfo } from '../service/NvHttp';
+import { NvHttp, AppEntry, DisplayInfo } from '../service/streaming/NvHttp';
 import { AppCard } from '../components/AppCard';
 import { AppListViewModel, ObservableApp } from '../viewmodel/AppViewModel';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';

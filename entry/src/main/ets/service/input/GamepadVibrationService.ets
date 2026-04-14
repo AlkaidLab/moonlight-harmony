@@ -18,7 +18,7 @@
  */
 
 import { vibrator } from '@kit.SensorServiceKit';
-import { UsbDriverService, AbstractController } from './usbdriver/index';
+import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { RUMBLE_MAX } from './GamepadTypes';
 
 // ==================== 震动服务 ====================

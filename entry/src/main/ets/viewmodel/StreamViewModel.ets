@@ -15,10 +15,10 @@
  */
 import { StreamConfig, getDefaultStreamConfig } from '../model/StreamConfig';
 import { SettingsService, InputSettings, DisplaySettings, SettingsKeys } from '../service/SettingsService';
-import { StreamingSession, StreamStats } from '../service/StreamingSession';
+import { StreamingSession, StreamStats } from '../service/streaming/StreamingSession';
 import { InputEvent } from '../model/InputEvent';
-import { OverlayConfig, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/GamepadManager';
-import { CONTROLLER_TYPE_XBOX, CONN_STATUS_POOR, CONN_STATUS_OKAY } from '../service/MoonBridge';
+import { OverlayConfig, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/input/GamepadManager';
+import { CONTROLLER_TYPE_XBOX, CONN_STATUS_POOR, CONN_STATUS_OKAY } from '../service/streaming/MoonBridge';
 import { common } from '@kit.AbilityKit';
 import { inputDevice } from '@kit.InputKit';
 

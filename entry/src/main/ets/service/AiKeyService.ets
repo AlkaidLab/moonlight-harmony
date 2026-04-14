@@ -8,13 +8,13 @@
  * (at your option) any later version.
  */
 
-import { NvHttp, AiMessage } from './NvHttp';
+import { NvHttp, AiMessage } from './streaming/NvHttp';
 import {
   CustomKeyDef,
   KeyAction,
   AnalogStickAction,
   createDefaultKeyDef,
-} from './CustomKeyTypes';
+} from './customkey/CustomKeyTypes';
 
 /**
  * AI 按键布局推荐结果

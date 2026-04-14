@@ -8,7 +8,7 @@
  * (at your option) any later version.
  */
 
-import { AppEntry, NvHttp, SuperCmd } from '../service/NvHttp';
+import { AppEntry, NvHttp, SuperCmd } from '../service/streaming/NvHttp';
 
 /**
  * 可观察的应用数据类

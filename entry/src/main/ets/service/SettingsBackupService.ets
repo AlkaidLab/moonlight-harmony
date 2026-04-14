@@ -29,7 +29,7 @@ import { preferences } from '@kit.ArkData';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { promptAction } from '@kit.ArkUI';
 import { CryptoService } from './CryptoService';
-import { NvHttp } from './NvHttp';
+import { NvHttp } from './streaming/NvHttp';
 import { ComputerManager } from './ComputerManager';
 
 const TAG = '[SettingsBackup]';

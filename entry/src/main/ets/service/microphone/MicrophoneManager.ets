@@ -13,7 +13,7 @@
  * 负责管理麦克风的权限、状态和生命周期
  */
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
-import { MoonBridge, MoonBridgeClass } from '../MoonBridge';
+import { MoonBridge, MoonBridgeClass } from '../streaming/MoonBridge';
 import { MicrophoneConfig, MicrophoneState, MicrophoneStateListener } from './MicrophoneConfig';
 import { MicrophoneStream } from './MicrophoneStream';
 

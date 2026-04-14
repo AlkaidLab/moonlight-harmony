@@ -16,7 +16,7 @@
  */
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { VirtualKey, VK_DISPLAY_NAMES, getVkDisplayName } from '../service/CustomKeyTypes';
+import { VirtualKey, VK_DISPLAY_NAMES, getVkDisplayName } from '../service/customkey/CustomKeyTypes';
 import { SettingsBackupService } from '../service/SettingsBackupService';
 
 /**

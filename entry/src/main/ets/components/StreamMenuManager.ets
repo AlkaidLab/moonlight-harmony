@@ -15,13 +15,13 @@
  * 与 Android GameMenu 功能对齐
  */
 import { promptAction } from '@kit.ArkUI';
-import { StreamingSession } from '../service/StreamingSession';
+import { StreamingSession } from '../service/streaming/StreamingSession';
 import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { OptionPickerDialogConfig, OptionItem } from './dialogs/OptionPickerDialog';
 
 // VirtualKey 统一定义在 CustomKeyTypes 中，此处 re-export 保持向后兼容
-import { VirtualKey } from '../service/CustomKeyTypes';
-export { VirtualKey } from '../service/CustomKeyTypes';
+import { VirtualKey } from '../service/customkey/CustomKeyTypes';
+export { VirtualKey } from '../service/customkey/CustomKeyTypes';
 
 /**
  * 菜单操作回调

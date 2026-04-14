@@ -18,7 +18,7 @@ import { UsbControllerTestView } from '../components/test/UsbControllerTestView'
 import { GameControllerTestView } from '../components/test/GameControllerTestView';
 import { SensorTestView } from '../components/test/SensorTestView';
 import { AppColors, AppSizes, AppSpacing } from '../common/Theme';
-import { GamepadManager } from '../service/GamepadManager';
+import { GamepadManager } from '../service/input/GamepadManager';
 
 @Entry
 @Component

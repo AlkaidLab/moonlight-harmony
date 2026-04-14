@@ -18,7 +18,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractDualSenseController } from './AbstractDualSenseController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, DualSense, DPadDirection, ControllerCapabilities } from './ControllerConstants';
-import { readShortLE, TRIGGER_MAX } from '../GamepadTypes';
+import { readShortLE, TRIGGER_MAX } from '../input/GamepadTypes';
 
 const TAG = '[USB-DS5]';
 

@@ -16,7 +16,7 @@
  */
 import { ComputerInfo, ComputerState, PairState, ComputerInfoBuilder } from '../model/ComputerInfo';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
-import { NvHttp } from './NvHttp';
+import { NvHttp } from './streaming/NvHttp';
 import { isLoopbackIPv4, parseAddressAndPort } from '../utils/NetHelper';
 import { SettingsBackupService } from './SettingsBackupService';
 

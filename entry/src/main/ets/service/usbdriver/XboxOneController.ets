@@ -18,7 +18,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractXboxController } from './AbstractXboxController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, XboxOne, UsbClass, ControllerCapabilities } from './ControllerConstants';
-import { readShortLE, AXIS_MAX } from '../GamepadTypes';
+import { readShortLE, AXIS_MAX } from '../input/GamepadTypes';
 
 const TAG = '[USB-XONE]';
 

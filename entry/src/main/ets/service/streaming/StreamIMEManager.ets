@@ -16,7 +16,7 @@
  */
 import { window } from '@kit.ArkUI';
 import { inputMethod } from '@kit.IMEKit';
-import { StreamViewModel } from '../viewmodel/StreamViewModel';
+import { StreamViewModel } from '../../viewmodel/StreamViewModel';
 
 /**
  * StreamPage 需要实现的 IME 回调接口

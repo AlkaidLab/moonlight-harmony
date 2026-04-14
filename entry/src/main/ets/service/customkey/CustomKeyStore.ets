@@ -19,9 +19,9 @@
  *   custom_key_active_profile: string (当前活跃配置名称)
  */
 
-import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { display } from '@kit.ArkUI';
-import { SettingsBackupService } from './SettingsBackupService';
+import { SettingsBackupService } from '../SettingsBackupService';
 import {
   CustomKeyProfile,
   CustomKeyDef,

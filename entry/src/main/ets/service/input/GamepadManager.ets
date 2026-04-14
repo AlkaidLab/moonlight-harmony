@@ -9,16 +9,16 @@
  */
 
 import { inputDevice } from '@kit.InputKit';
-import { UsbDriverService, UsbDriverListener, AbstractController, ButtonFlags } from './usbdriver/index';
+import { UsbDriverService, UsbDriverListener, AbstractController, ButtonFlags } from '../usbdriver/index';
 import { 
   gameControllerService, 
   AxisType, 
   GameControllerDeviceInfo 
 } from './GameControllerService';
-import { SettingsService, SettingsKeys } from './SettingsService';
-import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { SettingsService, SettingsKeys } from '../SettingsService';
+import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
-import { MoonBridge } from './MoonBridge';
+import { MoonBridge } from '../streaming/MoonBridge';
 import { MouseEmulationService, MouseEmulationCallback } from './MouseEmulationService';
 import { GamepadVibrationService } from './GamepadVibrationService';
 import {

@@ -15,7 +15,7 @@
  * 使用 OHAudio C API 的 FAST 低时延模式，
  * 在 native 回调线程中直接完成 PCM 帧累积、Opus 编码和网络发送。
  */
-import { MoonBridge, MoonBridgeClass } from '../MoonBridge';
+import { MoonBridge, MoonBridgeClass } from '../streaming/MoonBridge';
 import { MicrophoneConfig, MicrophoneState, MicrophoneStateListener } from './MicrophoneConfig';
 
 const TAG = '[MicStream]';

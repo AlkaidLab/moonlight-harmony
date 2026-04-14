@@ -24,7 +24,7 @@ import {
   BUTTON_ACTION_RELEASE,
   BUTTON_LEFT,
   BUTTON_RIGHT,
-} from './MoonBridge';
+} from '../streaming/MoonBridge';
 
 /** 发送输入事件所需的最小接口 */
 export interface TrackpadInputSink {

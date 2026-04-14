@@ -37,9 +37,9 @@ import {
   KEY_PRESET_CATEGORIES,
   KeyPreset,
   KeyPresetCategory,
-} from '../service/CustomKeyTypes';
-import { CustomKeyStore } from '../service/CustomKeyStore';
-import { QrShareService } from '../service/QrShareService';
+} from '../service/customkey/CustomKeyTypes';
+import { CustomKeyStore } from '../service/customkey/CustomKeyStore';
+import { QrShareService } from '../service/network/QrShareService';
 import { VirtualJoystick } from './virtual/VirtualJoystick';
 import { VirtualDPad } from './virtual/VirtualDPad';
 import { VirtualWheelPad } from './virtual/VirtualWheelPad';
@@ -64,7 +64,7 @@ import {
   ColorTheme, COLOR_THEMES, RGBPixel,
   parseHexRGB, toHexARGB, generateThemeFromAccent,
   kMeansPlusPlus, pickAccentFromClusters,
-} from '../service/CustomKeyTheme';
+} from '../service/customkey/CustomKeyTheme';
 import { CustomKeyBtn } from './CustomKeyBtn';
 import { AiKeyRecommendation } from '../service/AiKeyService';
 

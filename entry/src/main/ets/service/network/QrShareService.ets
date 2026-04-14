@@ -46,7 +46,7 @@ import {
   SpecialAction,
   SpecialActionId,
   generateKeyId,
-} from './CustomKeyTypes';
+} from '../customkey/CustomKeyTypes';
 
 export interface QrCodeResult {
   pixelMap: image.PixelMap | null;

@@ -18,7 +18,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractXboxController } from './AbstractXboxController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, Xbox360, UsbClass } from './ControllerConstants';
-import { readShortLE, AXIS_MAX, TRIGGER_MAX } from '../GamepadTypes';
+import { readShortLE, AXIS_MAX, TRIGGER_MAX } from '../input/GamepadTypes';
 
 const TAG = '[USB-X360]';
 
