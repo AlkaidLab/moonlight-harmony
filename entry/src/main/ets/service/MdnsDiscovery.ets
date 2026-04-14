@@ -227,6 +227,8 @@ export class MdnsDiscovery {
       this.discoveryService.stopSearchingMDNS();
       this.discoveryService.off('serviceFound');
       this.discoveryService.off('serviceLost');
+      this.discoveryService.off('discoveryStart');
+      this.discoveryService.off('discoveryStop');
     } catch (err) {
       console.error('MdnsDiscovery: 停止发现失败', err);
     }

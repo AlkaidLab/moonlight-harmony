@@ -1775,6 +1775,12 @@ export class GamepadManager implements UsbDriverListener {
     }
     this.gcAxisFlushPending.clear();
 
+    // 取消所有待执行的设备移除防抖定时器
+    this.pendingRemovalTimers.forEach((timerId) => clearTimeout(timerId));
+    this.pendingRemovalTimers.clear();
+    this.pendingUsbRemovalTimers.forEach((timerId) => clearTimeout(timerId));
+    this.pendingUsbRemovalTimers.clear();
+
     // 重置槽位管理状态
     this.slotOccupied = [false, false, false, false];
     this.deviceKeyToSlot.clear();
@@ -1817,6 +1823,12 @@ export class GamepadManager implements UsbDriverListener {
       this.gcAxisFlushTimerId = -1;
     }
     this.gcAxisFlushPending.clear();
+
+    // 取消所有待执行的设备移除防抖定时器
+    this.pendingRemovalTimers.forEach((timerId) => clearTimeout(timerId));
+    this.pendingRemovalTimers.clear();
+    this.pendingUsbRemovalTimers.forEach((timerId) => clearTimeout(timerId));
+    this.pendingUsbRemovalTimers.clear();
 
     // 清理 Game Controller Kit
     if (this.useGameControllerKit) {

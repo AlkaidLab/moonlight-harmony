@@ -20,6 +20,7 @@ const DOMAIN = 0x0000;
 export default class EntryAbility extends UIAbility {
   private isDarkMode: boolean = false;
   private appStateCallback: ApplicationStateChangeCallback | null = null;
+  private mainWindow: window.Window | null = null;
   
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onCreate');
@@ -136,6 +137,7 @@ export default class EntryAbility extends UIAbility {
 
     // 设置窗口属性
     windowStage.getMainWindow().then((win) => {
+      this.mainWindow = win;
       // 设置全屏布局（内容延伸到系统栏区域）
       win.setWindowLayoutFullScreen(true);
 
@@ -197,6 +199,15 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageDestroy(): void {
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onWindowStageDestroy');
+    // 注销 avoidAreaChange 监听，避免内存泄漏
+    if (this.mainWindow) {
+      try {
+        this.mainWindow.off('avoidAreaChange');
+      } catch (e) {
+        hilog.warn(DOMAIN, TAG, 'Failed to unregister avoidAreaChange: %{public}s', String(e));
+      }
+      this.mainWindow = null;
+    }
   }
 
   onForeground(): void {

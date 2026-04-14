@@ -207,6 +207,13 @@ export struct GameMenuDialog {
     .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
   }
 
+  aboutToDisappear(): void {
+    if (this.bitrateDebounceTimer !== -1) {
+      clearTimeout(this.bitrateDebounceTimer);
+      this.bitrateDebounceTimer = -1;
+    }
+  }
+
   aboutToAppear(): void {
     this.shortcuts = this.shortcutManager.getShortcuts();
     this.currentBitrate = this.viewModel.getCurrentBitrate();
