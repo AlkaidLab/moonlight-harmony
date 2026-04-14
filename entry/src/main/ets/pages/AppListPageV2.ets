@@ -63,6 +63,31 @@ struct AppListPageV2 {
   // 空列表重试常量（匹配 Android EMPTY_LIST_THRESHOLD）
   private static readonly EMPTY_LIST_THRESHOLD = 3;
   private static readonly EMPTY_LIST_RETRY_DELAY_MS = 2000;
+
+  /**
+   * 带重试的应用列表获取（服务端可能因瞬时原因返回空列表）
+   */
+  private async getAppListWithRetry(label: string): Promise<AppEntry[]> {
+    let apps: AppEntry[] = [];
+    for (let attempt = 0; attempt < AppListPageV2.EMPTY_LIST_THRESHOLD; attempt++) {
+      apps = await this.nvHttp!.getAppList();
+      if (apps.length > 0) break;
+      console.warn(`AppListPageV2: ${label}收到空列表 (${attempt + 1}/${AppListPageV2.EMPTY_LIST_THRESHOLD})`);
+      if (attempt < AppListPageV2.EMPTY_LIST_THRESHOLD - 1) {
+        await new Promise<void>(resolve => setTimeout(resolve, AppListPageV2.EMPTY_LIST_RETRY_DELAY_MS));
+      }
+    }
+    return apps;
+  }
+
+  /**
+   * 标记正在运行的应用
+   */
+  private markRunningApps(apps: AppEntry[], runningGameId: number): void {
+    for (const app of apps) {
+      app.isRunning = runningGameId > 0 && app.id === runningGameId;
+    }
+  }
   
   // CustomDialogController 配置
   private optionPickerDialogConfig: OptionPickerDialogConfig = {
@@ -208,27 +233,10 @@ struct AppListPageV2 {
       const context = getContext(this) as common.UIAbilityContext;
       this.nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert, context, computer.httpPort);
 
-      // 空列表重试机制（匹配 Android ApplistPoller 的 EMPTY_LIST_THRESHOLD 逻辑）
-      // 服务端可能因瞬时原因返回空列表，连续多次为空才认定真的为空
-      let apps: AppEntry[] = [];
-      for (let attempt = 0; attempt < AppListPageV2.EMPTY_LIST_THRESHOLD; attempt++) {
-        apps = await this.nvHttp.getAppList();
-        if (apps.length > 0) {
-          break;
-        }
-        console.warn(`AppListPageV2: 收到空列表 (${attempt + 1}/${AppListPageV2.EMPTY_LIST_THRESHOLD})`);
-        if (attempt < AppListPageV2.EMPTY_LIST_THRESHOLD - 1) {
-          await new Promise<void>(resolve => setTimeout(resolve, AppListPageV2.EMPTY_LIST_RETRY_DELAY_MS));
-        }
-      }
+      const apps = await this.getAppListWithRetry('加载');
 
       // 标记正在运行的应用
-      const runningGameId = computer.runningGameId;
-      if (runningGameId > 0) {
-        for (const app of apps) {
-          app.isRunning = (app.id === runningGameId);
-        }
-      }
+      this.markRunningApps(apps, computer.runningGameId);
 
       this.viewModel.setApps(apps, this.nvHttp);
       this.calculateOptimalRowCount();
@@ -318,24 +326,10 @@ struct AppListPageV2 {
           // 忽略服务器状态获取失败
         }
         
-        // 空列表重试机制
-        let apps: AppEntry[] = [];
-        for (let attempt = 0; attempt < AppListPageV2.EMPTY_LIST_THRESHOLD; attempt++) {
-          apps = await this.nvHttp.getAppList();
-          if (apps.length > 0) {
-            break;
-          }
-          console.warn(`AppListPageV2: 刷新收到空列表 (${attempt + 1}/${AppListPageV2.EMPTY_LIST_THRESHOLD})`);
-          if (attempt < AppListPageV2.EMPTY_LIST_THRESHOLD - 1) {
-            await new Promise<void>(resolve => setTimeout(resolve, AppListPageV2.EMPTY_LIST_RETRY_DELAY_MS));
-          }
-        }
+        const apps = await this.getAppListWithRetry('刷新');
 
         // 标记正在运行的应用
-        const runningGameId = computer?.runningGameId || 0;
-        for (const app of apps) {
-          app.isRunning = runningGameId > 0 && app.id === runningGameId;
-        }
+        this.markRunningApps(apps, computer?.runningGameId || 0);
 
         this.viewModel.setApps(apps, this.nvHttp);
         this.calculateOptimalRowCount();

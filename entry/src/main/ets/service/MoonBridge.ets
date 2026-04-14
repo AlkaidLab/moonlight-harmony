@@ -528,37 +528,6 @@ class MoonBridgeClass {
   // ==========================================================================
   // Opus 编码器
   // ==========================================================================
-
-  /**
-   * 创建 Opus 编码器实例
-   * @param sampleRate 采样率 (默认 48000)
-   * @param channels 通道数 (默认 1)
-   * @param bitrate 比特率 (默认 64000)
-   * @returns 编码器句柄 (>0 成功, <=0 失败)
-   */
-  opusEncoderCreate(sampleRate: number = 48000, channels: number = 1, bitrate: number = 64000): number {
-    return nativeLib.opusEncoderCreate(sampleRate, channels, bitrate);
-  }
-
-  /**
-   * 使用指定编码器编码 PCM 数据为 Opus
-   * @param handle 编码器句柄
-   * @param pcmData PCM 数据 (16位有符号整数, 小端序)
-   * @returns 编码后的 Opus 数据，或 undefined 如果失败/暂无数据
-   */
-  opusEncoderEncode(handle: number, pcmData: ArrayBuffer): ArrayBuffer | undefined {
-    return nativeLib.opusEncoderEncode(handle, pcmData);
-  }
-
-  /**
-   * 销毁 Opus 编码器实例
-   * @param handle 编码器句柄
-   */
-  opusEncoderDestroy(handle: number): void {
-    nativeLib.opusEncoderDestroy(handle);
-  }
-
-  // ==========================================================================
   // Native 低时延麦克风
   // ==========================================================================
 
@@ -666,10 +635,6 @@ class MoonBridgeClass {
 
   getHostFeatureFlags(): number {
     return nativeLib.getHostFeatureFlags();
-  }
-
-  getLaunchUrlQueryParameters(): string | null {
-    return nativeLib.getLaunchUrlQueryParameters();
   }
 
   // ==========================================================================

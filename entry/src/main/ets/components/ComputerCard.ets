@@ -160,14 +160,9 @@ export struct ComputerCard {
     .height(this.AVATAR_SIZE)
   }
 
-  /**
-   * 获取状态文本颜色
-   */
+  /** 状态文本颜色复用状态指示点颜色 */
   private getStatusTextColor(): string {
-    if (!this.computer.isOnline) return StatusColors.OfflineDark;
-    if (!this.computer.isPaired) return StatusColors.UnpairedDark;
-    if (this.computer.isGaming) return StatusColors.GamingDark;
-    return StatusColors.OnlineDark;
+    return this.getStatusDotColor();
   }
 
   /**
