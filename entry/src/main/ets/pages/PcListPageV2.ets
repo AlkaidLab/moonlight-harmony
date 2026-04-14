@@ -19,8 +19,8 @@ import { buffer } from '@kit.ArkTS';
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { BackgroundImage } from '../components/BackgroundImage';
 import { sensor } from '@kit.SensorServiceKit';
-import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/OptionPickerDialog';
-import { ConfirmDialog, ConfirmDialogConfig, InfoDialog, InfoDialogConfig } from '../components/ConfirmDialog';
+import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
+import { ConfirmDialog, ConfirmDialogConfig, InfoDialog, InfoDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -30,7 +30,7 @@ import { PairingManager, PairState as PMPairState } from '../service/PairingMana
 import { QrShareService } from '../service/QrShareService';
 import { CustomKeyStore } from '../service/CustomKeyStore';
 import { PcListTitleBar, TitleBarConfig } from '../components/PcListTitleBar';
-import { PinDialogView, AboutDialogView } from '../components/PcListDialogs';
+import { PinDialogView, AboutDialogView } from '../components/dialogs/PcListDialogs';
 import { SettingsBackupService } from '../service/SettingsBackupService';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 

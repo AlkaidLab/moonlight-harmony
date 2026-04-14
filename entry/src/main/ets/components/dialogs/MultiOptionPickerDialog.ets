@@ -13,7 +13,7 @@
  * 
  * 使用 CustomDialogController 实现的底部弹窗多选选择器
  */
-import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../common/Theme';
+import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../../common/Theme';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 
 /**

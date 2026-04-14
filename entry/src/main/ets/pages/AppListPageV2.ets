@@ -17,8 +17,8 @@ import { AppListViewModel, ObservableApp } from '../viewmodel/AppViewModel';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { common } from '@kit.AbilityKit';
 import { PairState, selectBestAddress } from '../model/ComputerInfo';
-import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/OptionPickerDialog';
-import { ConfirmDialog, ConfirmDialogConfig } from '../components/ConfirmDialog';
+import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
+import { ConfirmDialog, ConfirmDialogConfig } from '../components/dialogs/ConfirmDialog';
 
 interface AppListPageParams {
   computerId: string;

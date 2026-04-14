@@ -17,7 +17,7 @@
 import { promptAction } from '@kit.ArkUI';
 import { StreamingSession } from '../service/StreamingSession';
 import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
-import { OptionPickerDialogConfig, OptionItem } from './OptionPickerDialog';
+import { OptionPickerDialogConfig, OptionItem } from './dialogs/OptionPickerDialog';
 
 // VirtualKey 统一定义在 CustomKeyTypes 中，此处 re-export 保持向后兼容
 import { VirtualKey } from '../service/CustomKeyTypes';

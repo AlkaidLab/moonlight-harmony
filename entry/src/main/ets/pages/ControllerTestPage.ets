@@ -14,9 +14,9 @@
  */
 
 import { router } from '@kit.ArkUI';
-import { UsbControllerTestView } from '../components/UsbControllerTestView';
-import { GameControllerTestView } from '../components/GameControllerTestView';
-import { SensorTestView } from '../components/SensorTestView';
+import { UsbControllerTestView } from '../components/test/UsbControllerTestView';
+import { GameControllerTestView } from '../components/test/GameControllerTestView';
+import { SensorTestView } from '../components/test/SensorTestView';
 import { AppColors, AppSizes, AppSpacing } from '../common/Theme';
 import { GamepadManager } from '../service/GamepadManager';
 

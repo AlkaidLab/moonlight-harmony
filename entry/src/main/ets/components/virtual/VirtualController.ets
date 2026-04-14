@@ -12,10 +12,10 @@
  * 虚拟控制器组件
  * 现代化设计，支持完整的游戏手柄功能
  */
-import { InputEvent, InputType, ControllerButton, ControllerButtonEvent, ControllerAxis, ControllerAxisEvent } from '../model/InputEvent';
+import { InputEvent, InputType, ControllerButton, ControllerButtonEvent, ControllerAxis, ControllerAxisEvent } from '../../model/InputEvent';
 import { AnalogStick, AnalogStickConfig } from './AnalogStick';
 import { vibrator } from '@kit.SensorServiceKit';
-import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { display } from '@kit.ArkUI';
 
 const SCALE_KEY = 'virtual_controller_scale';

@@ -25,7 +25,7 @@
 
 import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { vibrator } from '@kit.SensorServiceKit';
 import { display } from '@kit.ArkUI';
 

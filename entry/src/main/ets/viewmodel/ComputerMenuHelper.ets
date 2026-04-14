@@ -13,7 +13,7 @@
  * 
  * 负责生成电脑操作菜单的配置
  */
-import { OptionItem } from '../components/OptionPickerDialog';
+import { OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ObservableComputer } from './ComputerViewModel';
 
 /**

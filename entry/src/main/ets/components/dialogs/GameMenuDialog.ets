@@ -15,16 +15,16 @@ import { display, promptAction } from '@kit.ArkUI';
 import { ConfigurationConstant } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
-import { StreamViewModel } from '../viewmodel/StreamViewModel';
-import { VirtualKey, sendShortcutKeys } from '../service/CustomKeyTypes';
-import { CustomKeyStore } from '../service/CustomKeyStore';
-import { ShortcutManager, Shortcut } from './ShortcutManager';
-import { ActionDialog, ActionDialogConfig, ConfirmDialog, ConfirmDialogConfig } from './ConfirmDialog';
-import { SuperCmd } from '../service/NvHttp';
-import { GyroAssistService, GYRO_ACTIVATION_ALWAYS, GYRO_ACTIVATION_LT, GYRO_ACTIVATION_RT } from '../service/GyroAssistService';
-import { SettingsKeys } from '../service/SettingsService';
-import { PreferencesUtil } from '../utils/PreferencesUtil';
-import { DeviceSensorService } from '../service/DeviceSensorService';
+import { StreamViewModel } from '../../viewmodel/StreamViewModel';
+import { VirtualKey, sendShortcutKeys } from '../../service/CustomKeyTypes';
+import { CustomKeyStore } from '../../service/CustomKeyStore';
+import { ShortcutManager, Shortcut } from '../ShortcutManager';
+import { ActionDialog, ActionDialogConfig, ConfirmDialog, ConfirmDialogConfig } from './dialogs/ConfirmDialog';
+import { SuperCmd } from '../../service/NvHttp';
+import { GyroAssistService, GYRO_ACTIVATION_ALWAYS, GYRO_ACTIVATION_LT, GYRO_ACTIVATION_RT } from '../../service/GyroAssistService';
+import { SettingsKeys } from '../../service/SettingsService';
+import { PreferencesUtil } from '../../utils/PreferencesUtil';
+import { DeviceSensorService } from '../../service/DeviceSensorService';
 import {
   OV_ACCENT_BLUE, OV_ACCENT_PINK, OV_ACCENT_RED,
   OV_TEXT_BRIGHT, OV_TEXT_MEDIUM, OV_TEXT_DIM, OV_TEXT_FAINT, OV_TEXT_WHITE, OV_TEXT_ULTRA,
@@ -33,7 +33,7 @@ import {
   OV_BLUE_40, OV_BLUE_50,
   OV_FONT_XS, OV_FONT_SM, OV_FONT_MD, OV_FONT_LG,
   OV_CARD_WIDTH, OV_CARD_RADIUS, OV_CARD_BLUR,
-} from '../common/OverlayConstants';
+} from '../../common/OverlayConstants';
 
 /** 菜单回调接口 */
 export interface GameMenuCallbacks {

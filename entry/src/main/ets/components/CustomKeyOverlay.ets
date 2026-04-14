@@ -40,9 +40,9 @@ import {
 } from '../service/CustomKeyTypes';
 import { CustomKeyStore } from '../service/CustomKeyStore';
 import { QrShareService } from '../service/QrShareService';
-import { VirtualJoystick } from './VirtualJoystick';
-import { VirtualDPad } from './VirtualDPad';
-import { VirtualWheelPad } from './VirtualWheelPad';
+import { VirtualJoystick } from './virtual/VirtualJoystick';
+import { VirtualDPad } from './virtual/VirtualDPad';
+import { VirtualWheelPad } from './virtual/VirtualWheelPad';
 import { image } from '@kit.ImageKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { systemShare } from '@kit.ShareKit';

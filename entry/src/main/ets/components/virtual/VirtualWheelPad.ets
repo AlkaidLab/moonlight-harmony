@@ -18,7 +18,7 @@
  * - 使用 Canvas 绘制扇形分区 + 分割线 + 文字标签
  */
 
-import { KeyAction, WheelPadSegment } from '../service/CustomKeyTypes';
+import { KeyAction, WheelPadSegment } from '../../service/CustomKeyTypes';
 
 /** 分区动作回调 */
 export type WheelSegmentActionCallback = (action: KeyAction, isDown: boolean) => void;

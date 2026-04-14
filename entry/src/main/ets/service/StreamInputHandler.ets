@@ -17,7 +17,7 @@
 import { display, window, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
-import { GamepadManager } from '../service/GamepadManager';
+import { GamepadManager } from './GamepadManager';
 
 import {
   MoonBridge,
@@ -34,9 +34,9 @@ import {
   MODIFIER_CTRL,
   MODIFIER_ALT,
   MODIFIER_META
-} from '../service/MoonBridge';
-import { KeyboardTranslator } from '../service/KeyboardTranslator';
-import { InputInterceptorService, MouseInterceptorService } from '../service/InputInterceptorService';
+} from './MoonBridge';
+import { KeyboardTranslator } from './KeyboardTranslator';
+import { InputInterceptorService, MouseInterceptorService } from './InputInterceptorService';
 
 export class StreamInputHandler {
   // ── 键盘修饰键状态追踪（位掩码：Shift=0x01, Ctrl=0x02, Alt=0x04, Meta=0x08）──

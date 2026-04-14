@@ -13,7 +13,7 @@
  * 
  * 使用 CustomDialogController 实现的弹窗
  */
-import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../common/Theme';
+import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../../common/Theme';
 
 /**
  * 确认弹窗按钮配置

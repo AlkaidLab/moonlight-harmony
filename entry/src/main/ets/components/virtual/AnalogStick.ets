@@ -12,7 +12,7 @@
  * 模拟摇杆组件
  * 支持 360 度方向输入和 L3/R3 点击
  */
-import { ControllerAxis, ControllerAxisEvent, InputType, ControllerButton, ControllerButtonEvent, InputEvent } from '../model/InputEvent';
+import { ControllerAxis, ControllerAxisEvent, InputType, ControllerButton, ControllerButtonEvent, InputEvent } from '../../model/InputEvent';
 
 /**
  * 摇杆配置

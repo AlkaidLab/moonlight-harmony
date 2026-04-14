@@ -13,8 +13,8 @@
  *
  * 用于添加或编辑自定义快捷键
  */
-import { ShortcutManager, Shortcut, KeyOption } from './ShortcutManager';
-import { AppAnimation } from '../common/Theme';
+import { ShortcutManager, Shortcut, KeyOption } from '../ShortcutManager';
+import { AppAnimation } from '../../common/Theme';
 
 /**
  * 快捷键编辑数据（不包含 id 和 isBuiltin）

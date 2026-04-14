@@ -16,7 +16,7 @@
  */
 import { promptAction } from '@kit.ArkUI';
 import { batteryInfo } from '@kit.BasicServicesKit';
-import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './OptionPickerDialog';
+import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './dialogs/OptionPickerDialog';
 import {
   PerformanceItem, PerformanceData, PerfLabels, PerfSymbols,
   getMoonPhaseIcon, formatDataRate, getDecoderString,

@@ -22,7 +22,7 @@ import { ComputerManager } from '../service/ComputerManager';
 import { PairingManager, PairState as PMPairState } from '../service/PairingManager';
 import { NvHttp, ServerInfo } from '../service/NvHttp';
 import { PairState, ComputerState, selectBestAddress, ComputerInfo } from '../model/ComputerInfo';
-import { ConfirmDialogConfig, InfoDialogConfig } from '../components/ConfirmDialog';
+import { ConfirmDialogConfig, InfoDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { AppColors } from '../common/Theme';
 import { isLoopbackIPv4 } from '../utils/NetHelper';
 

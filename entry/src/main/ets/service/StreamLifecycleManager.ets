@@ -16,11 +16,11 @@
  */
 import { display, promptAction } from '@kit.ArkUI';
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
-import { StreamWindowManager } from '../service/StreamWindowManager';
-import { AppStateService, AppState } from '../service/AppStateService';
-import { BackgroundStreamService, BroadcastControlCallbacks } from '../service/BackgroundStreamService';
+import { StreamWindowManager } from './StreamWindowManager';
+import { AppStateService, AppState } from './AppStateService';
+import { BackgroundStreamService, BroadcastControlCallbacks } from './BackgroundStreamService';
 import { common } from '@kit.AbilityKit';
-import { MoonBridge, ML_TEST_RESULT_INCONCLUSIVE, CONNECTION_TEST_SERVER } from '../service/MoonBridge';
+import { MoonBridge, ML_TEST_RESULT_INCONCLUSIVE, CONNECTION_TEST_SERVER } from './MoonBridge';
 
 /**
  * StreamPage 需要实现的回调接口

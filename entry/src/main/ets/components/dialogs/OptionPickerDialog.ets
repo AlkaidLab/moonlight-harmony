@@ -14,7 +14,7 @@
  * 使用 CustomDialogController 实现的底部弹窗选择器
  * 选项高度更大，更易于点击
  */
-import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../common/Theme';
+import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../../common/Theme';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 
 /**
