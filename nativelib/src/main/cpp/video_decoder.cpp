@@ -846,10 +846,18 @@ int VideoDecoder::Stop() {
     }
     
     // 参考官方文档：使用 unique_lock 保护 Stop 操作
+    // Flush/Stop/Reset/Destroy 期间不应操作之前回调获取到的 buffer
     {
         std::unique_lock<std::shared_mutex> codecLock(codecMutex_);
         if (decoder_ != nullptr) {
             OH_VideoDecoder_Stop(decoder_);
+        }
+        
+        // 在 unique_lock 保护下清空异步输入队列，确保不会有线程正在使用这些 buffer
+        {
+            std::lock_guard<std::mutex> lock(inputMutex_);
+            while (!inputIndexQueue_.empty()) inputIndexQueue_.pop();
+            while (!inputBufferQueue_.empty()) inputBufferQueue_.pop();
         }
     }
     
@@ -1146,6 +1154,16 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
         inputBufferQueue_.pop();
     }
     
+    // 参考官方文档：使用 shared_lock 保护 buffer 操作，防止 Flush/Stop 期间访问已失效的 buffer
+    // Flush/Stop 持有 unique_lock 时会等待此 shared_lock 释放，确保 buffer 操作完整性
+    std::shared_lock<std::shared_mutex> codecLock(codecMutex_);
+    
+    // Flush/Stop 可能在等待 inputMutex_ 释放后、获取 codecMutex_ 前已经执行，
+    // 此时之前回调传入的 buffer 已失效，需检查解码器状态
+    if (!running_ || decoder_ == nullptr) {
+        return -1;
+    }
+    
     uint8_t* bufferAddr = OH_AVBuffer_GetAddr(inputBuffer);
     if (bufferAddr == nullptr) {
         OH_LOG_ERROR(LOG_APP, "Failed to get input buffer address");
@@ -1282,9 +1300,16 @@ void VideoDecoder::OnError(OH_AVCodec* codec, int32_t errorCode, void* userData)
 }
 
 void VideoDecoder::OnOutputFormatChanged(OH_AVCodec* codec, OH_AVFormat* format, void* userData) {
+    // 参考官方文档：从 OnStreamChanged 回调的 format 中获取输出侧的视频宽高
+    // 使用 OH_MD_KEY_VIDEO_PIC_WIDTH/HEIGHT（实际图像尺寸），
+    // 而不是 OH_MD_KEY_WIDTH/HEIGHT（编码参数尺寸，可能包含对齐填充）
     int32_t width = 0, height = 0;
-    OH_AVFormat_GetIntValue(format, OH_MD_KEY_WIDTH, &width);
-    OH_AVFormat_GetIntValue(format, OH_MD_KEY_HEIGHT, &height);
+    if (!OH_AVFormat_GetIntValue(format, OH_MD_KEY_VIDEO_PIC_WIDTH, &width) ||
+        !OH_AVFormat_GetIntValue(format, OH_MD_KEY_VIDEO_PIC_HEIGHT, &height)) {
+        // 回退：如果输出侧字段不可用（旧版本 API），使用编码参数尺寸
+        OH_AVFormat_GetIntValue(format, OH_MD_KEY_WIDTH, &width);
+        OH_AVFormat_GetIntValue(format, OH_MD_KEY_HEIGHT, &height);
+    }
     OH_LOG_INFO(LOG_APP, "Output format changed: %{public}dx%{public}d", width, height);
 }
 
