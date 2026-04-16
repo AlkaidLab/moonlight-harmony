@@ -645,6 +645,7 @@ export class SettingsService {
 
       // 音频设置
       audioEnabled: !controlOnly,
+      controlOnly: controlOnly,
       microphoneEnabled: enableMic,
       micBitrate: micBitrate,
       audioConfig: this.parseAudioConfig(audioConfigStr),

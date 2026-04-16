@@ -28,6 +28,7 @@ export interface StreamConfig {
 
   // 音频设置
   audioEnabled: boolean;
+  controlOnly: boolean;  // 仅控制模式：不建立音视频流
   microphoneEnabled: boolean;
   micBitrate: number;  // Kbps
   audioConfig: AudioConfiguration;
@@ -209,6 +210,7 @@ export function getDefaultStreamConfig(): StreamConfig {
 
     // 音频设置
     audioEnabled: true,
+    controlOnly: false,
     microphoneEnabled: false,
     micBitrate: 64,
     audioConfig: AudioConfiguration.STEREO,

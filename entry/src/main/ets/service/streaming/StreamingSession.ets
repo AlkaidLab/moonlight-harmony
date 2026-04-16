@@ -1205,7 +1205,7 @@ export class StreamingSession {
       this.config.colorRange,
       this.config.hdr ? this.config.hdrMode : HdrMode.SDR,
       this.config.microphoneEnabled,
-      false // controlOnly
+      this.config.controlOnly    // controlOnly
     );
 
     if (result !== 0) {
