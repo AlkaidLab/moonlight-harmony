@@ -185,6 +185,9 @@ private:
     void BlitOESToFBO();
     void ApplyUpscale();
 
+    // 运行时降级：XEngine 连续错误时回退到 FSR1 或 OFF
+    void FallbackFromXEngine();
+
 private:
     static GLPostProcessor* instance_;
     static std::mutex instanceMutex_;
@@ -244,6 +247,12 @@ private:
     UpscaleMode activeUpscale_ = UpscaleMode::OFF;  // 实际使用的超分模式
     float upscaleSharpness_ = 0.5f;
     bool xengineAvailable_ = false;
+
+    // 运行时熔断：连续 GL 错误计数
+    static constexpr uint32_t kXEngineErrorThreshold = 5;   // 连续错误帧数阈值
+    static constexpr uint32_t kSwapFailureThreshold = 3;    // eglSwapBuffers 连续失败阈值
+    uint32_t xengineConsecutiveErrors_ = 0;
+    uint32_t swapConsecutiveFailures_ = 0;
 
     // FSR 1 着色器（回退方案）
     GLuint fsrEasuProgram_ = 0;

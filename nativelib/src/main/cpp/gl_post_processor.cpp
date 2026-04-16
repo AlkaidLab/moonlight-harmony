@@ -987,6 +987,32 @@ void GLPostProcessor::ReleaseUpscale() {
     xengineAvailable_ = false;
 }
 
+void GLPostProcessor::FallbackFromXEngine() {
+    // 运行时从 XEngine 降级：尝试初始化 FSR1，失败则关闭超分
+    // 注意：只修改 activeUpscale_，不修改 upscaleMode_（保留用户意图，允许后续恢复）
+    OH_LOG_WARN(LOG_APP, "FallbackFromXEngine: disabling XEngine, attempting FSR1 fallback");
+    activeUpscale_ = UpscaleMode::OFF;
+    xengineAvailable_ = false;
+    xengineConsecutiveErrors_ = 0;
+
+    // 清空 GL 错误队列（XEngine 残留错误可能污染 FSR1 初始化）
+    while (g_api.glGetError() != 0) {}
+
+    // 尝试初始化 FSR1（FBO 已存在，只需编译 FSR 着色器）
+    // 临时修改 upscaleMode_ 以让 InitUpscale() 尝试 FSR1
+    UpscaleMode savedMode = upscaleMode_;
+    upscaleMode_ = UpscaleMode::FSR1;
+    if (InitUpscale() && activeUpscale_ == UpscaleMode::FSR1) {
+        OH_LOG_INFO(LOG_APP, "FallbackFromXEngine: FSR1 initialized successfully");
+        // FSR1 成功，保持 upscaleMode_=FSR1 以示已降级
+    } else {
+        // FSR1 也失败，恢复原 upscaleMode_（保留用户意图）并关闭活动超分
+        OH_LOG_WARN(LOG_APP, "FallbackFromXEngine: FSR1 init failed, upscale fully disabled");
+        upscaleMode_ = savedMode;
+        activeUpscale_ = UpscaleMode::OFF;
+    }
+}
+
 void GLPostProcessor::BlitOESToFBO() {
     // 将 OES 纹理渲染到 FBO 的 TEXTURE_2D（输入分辨率）
     // 如果启用了 SDR→HDR 或暗区增强，使用后处理 shader 而非直通 shader
@@ -1047,14 +1073,37 @@ void GLPostProcessor::ApplyUpscale() {
         g_api.glViewport(renderX_, renderY_, renderWidth_, renderHeight_);
         g_api.xegRenderSpatialUpscale(fboTexture_);
 
-        if (frameCount_ < 3) {
+        // 周期检查 GL 错误（避免每帧 GPU 同步开销），连续错误达到阈值时熔断降级
+        // 每 30 帧采样一次
+        if (frameCount_ % 30 == 0) {
             unsigned int err = g_api.glGetError();
+            if (err != 0) {
+                xengineConsecutiveErrors_++;
+                OH_LOG_WARN(LOG_APP, "XEngine sampled glErr=0x%{public}x (consecutive=%{public}u/%{public}u) at frame %{public}u",
+                            err, xengineConsecutiveErrors_, kXEngineErrorThreshold, frameCount_);
+                if (xengineConsecutiveErrors_ >= kXEngineErrorThreshold) {
+                    OH_LOG_ERROR(LOG_APP, "XEngine consecutive errors reached threshold, falling back");
+                    FallbackFromXEngine();
+                    // 本帧已损坏，若降级到 FSR1 则下一帧生效；
+                    // 若完全关闭超分，用 OES 直通输出避免黑屏
+                    if (activeUpscale_ == UpscaleMode::OFF) {
+                        g_api.glBindFramebuffer(MY_GL_FRAMEBUFFER, 0);
+                        DrawFullscreenQuad();
+                    }
+                    return;
+                }
+            } else {
+                // 成功采样（无错误），重置计数
+                xengineConsecutiveErrors_ = 0;
+            }
+        }
+
+        if (frameCount_ < 3) {
             OH_LOG_INFO(LOG_APP, "XEngine frame %{public}u: tex=%{public}u input=%{public}ux%{public}u "
-                        "output=%{public}ux%{public}u render=%{public}ux%{public}u+%{public}u+%{public}u "
-                        "glErr=0x%{public}x",
+                        "output=%{public}ux%{public}u render=%{public}ux%{public}u+%{public}u+%{public}u",
                         frameCount_, fboTexture_, inputWidth_, inputHeight_,
                         outputWidth_, outputHeight_, renderWidth_, renderHeight_,
-                        renderX_, renderY_, err);
+                        renderX_, renderY_);
         }
     } else if (activeUpscale_ == UpscaleMode::FSR1) {
         // FSR1 Pass 1: EASU（边缘自适应上采样） — 渲染到 fsrFbo_（renderWidth_ × renderHeight_）
@@ -1151,7 +1200,23 @@ void GLPostProcessor::ProcessFrame() {
     }
 
     // 提交到显示
-    g_api.eglSwapBuffers(eglDisplay_, eglSurface_);
+    unsigned int swapOk = g_api.eglSwapBuffers(eglDisplay_, eglSurface_);
+    if (!swapOk) {
+        swapConsecutiveFailures_++;
+        OH_LOG_WARN(LOG_APP, "eglSwapBuffers failed (consecutive=%{public}u/%{public}u)",
+                    swapConsecutiveFailures_, kSwapFailureThreshold);
+        if (swapConsecutiveFailures_ >= kSwapFailureThreshold && activeUpscale_ != UpscaleMode::OFF) {
+            // 关闭活动超分以降低管线复杂度，保留基础后处理管线（OES → 屏幕）
+            // 仅修改 activeUpscale_，不修改 upscaleMode_（允许用户后续恢复）
+            OH_LOG_ERROR(LOG_APP, "eglSwapBuffers consecutive failures, disabling active upscale");
+            ReleaseUpscale();
+            ReleaseFBO();
+            activeUpscale_ = UpscaleMode::OFF;
+            swapConsecutiveFailures_ = 0;
+        }
+    } else {
+        swapConsecutiveFailures_ = 0;
+    }
 
     frameCount_++;
 }
