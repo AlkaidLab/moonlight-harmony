@@ -13,6 +13,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window, display } from '@kit.ArkUI';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppStateService } from '../service/AppStateService';
+import { UiSettings } from '../service/SettingsService';
 
 const TAG = 'EntryAbility';
 const DOMAIN = 0x0000;
@@ -27,6 +28,9 @@ export default class EntryAbility extends UIAbility {
     
     // 初始化 PreferencesUtil
     PreferencesUtil.init(this.context);
+
+    // 预加载 UI 偏好到 AppStorage（供 @StorageLink('smallIconMode') 使用）
+    UiSettings.init();
 
     // 将当前颜色模式写入 AppStorage，供全局 @StorageProp('colorMode') 使用
     AppStorage.setOrCreate('colorMode', this.context.config.colorMode);

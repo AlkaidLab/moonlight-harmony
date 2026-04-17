@@ -13,6 +13,7 @@ import { display } from '@kit.ArkUI';
 import { ComputerManager } from '../service/ComputerManager';
 import { NvHttp, AppEntry, DisplayInfo } from '../service/streaming/NvHttp';
 import { AppCard } from '../components/AppCard';
+import { AppListItem } from '../components/AppListItem';
 import { AppListViewModel, ObservableApp } from '../viewmodel/AppViewModel';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { common } from '@kit.AbilityKit';
@@ -20,8 +21,7 @@ import { PairState, selectBestAddress } from '../model/ComputerInfo';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { ToastQueue } from '../utils/ToastQueue';
-import { PreferencesUtil } from '../utils/PreferencesUtil';
-import { SettingsKeys } from '../service/SettingsService';
+import { UiSettings } from '../service/SettingsService';
 
 interface AppListPageParams {
   computerId: string;
@@ -56,7 +56,7 @@ struct AppListPageV2 {
   @State selectedDisplayIndex: number = -1; // -1 表示使用默认显示器
   @State useVirtualDisplay: boolean = false; // 是否使用虚拟显示器
   @State supportsDisplayApi: boolean = false; // 服务器是否支持 displays API
-  @State smallIconMode: boolean = false; // 小图标模式
+  @StorageLink('smallIconMode') smallIconMode: boolean = false; // UI偏好：小图标/列表模式
   
   private computerId: string = '';
   private computerManager: ComputerManager = ComputerManager.getInstance();
@@ -67,24 +67,6 @@ struct AppListPageV2 {
   // 空列表重试常量（匹配 Android EMPTY_LIST_THRESHOLD）
   private static readonly EMPTY_LIST_THRESHOLD = 3;
   private static readonly EMPTY_LIST_RETRY_DELAY_MS = 2000;
-
-  private async loadSmallIconMode(): Promise<void> {
-    try {
-      this.smallIconMode = await PreferencesUtil.get<boolean>(SettingsKeys.SMALL_ICON_MODE, false);
-    } catch (_) {
-      this.smallIconMode = false;
-    }
-  }
-
-  private async toggleLayoutMode(): Promise<void> {
-    const next: boolean = !this.smallIconMode;
-    this.smallIconMode = next;
-    try {
-      await PreferencesUtil.put(SettingsKeys.SMALL_ICON_MODE, next);
-    } catch (_) {
-      // 持久化失败时保留内存态，下次进入会回退到上一设置
-    }
-  }
 
   /**
    * 带重试的应用列表获取（服务端可能因瞬时原因返回空列表）
@@ -145,7 +127,6 @@ struct AppListPageV2 {
 
   aboutToAppear(): void {
     this.updateLayoutConfig();
-    this.loadSmallIconMode();
     
     const params = router.getParams() as AppListPageParams;
     if (params?.computerId) {
@@ -180,7 +161,6 @@ struct AppListPageV2 {
    */
   onPageShow(): void {
     this.updateLayoutConfig();
-    this.loadSmallIconMode();
     
     if (!this.nvHttp && this.computerId) {
       this.loadApps();
@@ -530,7 +510,7 @@ struct AppListPageV2 {
       .margin({ left: AppSpacing.Small })
       .onClick(() => {
         animateTo({ duration: AppAnimation.Normal, curve: AppAnimation.EaseOut }, () => {
-          this.toggleLayoutMode();
+          UiSettings.toggleSmallIconMode();
         });
       })
 
@@ -776,147 +756,29 @@ struct AppListPageV2 {
   }
 
   @Builder
-  AppListItemRow(app: ObservableApp) {
-    Row() {
-      Stack({ alignContent: Alignment.Center }) {
-        if (app.localIconPath) {
-          Image('file://' + app.localIconPath)
-            .width(48)
-            .height(48)
-            .objectFit(ImageFit.Cover)
-            .borderRadius(8)
-            .draggable(false)
-        } else if (!app.iconLoaded && app.iconUrl) {
-          LoadingProgress()
-            .width(20)
-            .height(20)
-            .color(AppColors.TextSecondary)
-        } else {
-          SymbolGlyph($r('sys.symbol.gamecontroller_fill'))
-            .fontSize(28)
-            .fontColor([AppColors.TextSecondary])
-        }
-      }
-      .width(48)
-      .height(48)
-      .backgroundColor(AppColors.SurfaceDark)
-      .borderRadius(8)
-      .clip(true)
-
-      Column() {
-        Row() {
-          Text(app.name)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(AppColors.TextPrimary)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-          if (app.isHdrSupported) {
-            Text('HDR')
-              .fontSize(9)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(AppColors.Accent)
-              .borderWidth(1)
-              .borderColor(AppColors.Accent)
-              .borderRadius(4)
-              .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-              .margin({ left: 6 })
-          }
-        }
-        .width('100%')
-        if (app.isRunning) {
-          Row() {
-            Circle()
-              .width(6)
-              .height(6)
-              .fill(AppColors.Online)
-            Text('运行中')
-              .fontSize(11)
-              .fontColor(AppColors.Online)
-              .margin({ left: 4 })
-          }
-          .margin({ top: 2 })
-        }
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-      .margin({ left: AppSpacing.Medium, right: AppSpacing.Small })
-
-      // 快捷操作区
-      Row({ space: AppSpacing.Small }) {
-        if (app.isRunning) {
-          // 停止（退出）
-          this.ListActionButton($r('sys.symbol.xmark'), AppColors.Error, () => {
-            this.quitApp();
-          })
-        } else {
-          // 启动
-          this.ListActionButton($r('sys.symbol.play_fill'), AppColors.Accent, () => {
-            this.launchApp(app);
-          })
-        }
-        // 更多
-        Button({ type: ButtonType.Circle }) {
-          Text('⋯')
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(AppColors.TextSecondary)
-        }
-        .width(36)
-        .height(36)
-        .backgroundColor(AppColors.Surface)
-        .borderWidth(1)
-        .borderColor(AppColors.CardBorder)
-        .onClick(() => this.openAppMenu(app))
-      }
-    }
-    .width('100%')
-    .padding({
-      left: AppSpacing.Medium,
-      right: AppSpacing.Medium,
-      top: AppSpacing.Small,
-      bottom: AppSpacing.Small
-    })
-    .backgroundColor(AppColors.CardBackground)
-    .borderRadius(AppSizes.RadiusMedium)
-    .borderWidth(app.isRunning ? 2 : 1)
-    .borderColor(app.isRunning ? AppColors.Online : AppColors.CardBorder)
-  }
-
-  @Builder
-  ListActionButton(icon: Resource, color: ResourceColor, onTap: () => void) {
-    Button({ type: ButtonType.Circle }) {
-      SymbolGlyph(icon)
-        .fontSize(16)
-        .fontColor([color])
-    }
-    .width(36)
-    .height(36)
-    .backgroundColor(AppColors.Surface)
-    .borderWidth(1)
-    .borderColor(AppColors.CardBorder)
-    .onClick(() => {
-      onTap();
-    })
-  }
-
-  @Builder
   AppList() {
     Refresh({ refreshing: $$this.isRefreshing }) {
       List({ space: AppSpacing.Small }) {
         ForEach(this.viewModel.filteredApps, (app: ObservableApp) => {
           ListItem() {
-            this.AppListItemRow(app)
+            AppListItem({
+              app: app,
+              onTap: () => {
+                this.updateBackgroundForApp(app);
+                this.launchApp(app);
+              },
+              onLongPress: () => this.openAppMenu(app),
+              onPrimaryAction: () => {
+                if (app.isRunning) {
+                  this.quitApp();
+                } else {
+                  this.updateBackgroundForApp(app);
+                  this.launchApp(app);
+                }
+              },
+              onMoreAction: () => this.openAppMenu(app)
+            })
           }
-          .onClick(() => {
-            this.updateBackgroundForApp(app);
-            this.launchApp(app);
-          })
-          .gesture(
-            LongPressGesture({ repeat: false, duration: 500 })
-              .onAction(() => this.openAppMenu(app))
-          )
         }, (app: ObservableApp) => `${app.id}_${app.isRunning}_${app.iconLoaded}`)
       }
       .width('100%')
@@ -945,7 +807,6 @@ struct AppListPageV2 {
               ForEach(rowApps, (app: ObservableApp) => {
                 AppCard({
                   app: app,
-                  smallMode: this.smallIconMode,
                   onTap: () => this.launchApp(app),
                   onLongPress: () => this.openAppMenu(app),
                   onSelect: () => {

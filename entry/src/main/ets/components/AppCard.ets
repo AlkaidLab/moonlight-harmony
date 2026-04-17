@@ -16,10 +16,6 @@ import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 const CARD_WIDTH = 160;
 const CARD_ICON_HEIGHT = 120;
 const CARD_TITLE_HEIGHT = 40;
-// 小图标模式尺寸（约 65%）
-const CARD_WIDTH_SMALL = 104;
-const CARD_ICON_HEIGHT_SMALL = 78;
-const CARD_TITLE_HEIGHT_SMALL = 32;
 
 /**
  * 应用卡片组件 - 简洁现代风格
@@ -27,7 +23,6 @@ const CARD_TITLE_HEIGHT_SMALL = 32;
 @Component
 export struct AppCard {
   @ObjectLink app: ObservableApp;
-  @Prop smallMode: boolean = false;
   onTap: () => void = () => {};
   onLongPress: () => void = () => {};
   onSelect: () => void = () => {}; // 选中回调（用于更新背景图）
@@ -36,10 +31,6 @@ export struct AppCard {
   @State private isFocused: boolean = false;
   @State private imageLoadFailed: boolean = false;
 
-  private sizeCardWidth(): number { return this.smallMode ? CARD_WIDTH_SMALL : CARD_WIDTH; }
-  private sizeIconHeight(): number { return this.smallMode ? CARD_ICON_HEIGHT_SMALL : CARD_ICON_HEIGHT; }
-  private sizeTitleHeight(): number { return this.smallMode ? CARD_TITLE_HEIGHT_SMALL : CARD_TITLE_HEIGHT; }
-
   build() {
     Column() {
       // 图标区域
@@ -47,7 +38,7 @@ export struct AppCard {
         if (this.app.localIconPath && !this.imageLoadFailed) {
           Image('file://' + this.app.localIconPath)
             .width('100%')
-            .height(this.sizeIconHeight())
+            .height(CARD_ICON_HEIGHT)
             .objectFit(ImageFit.Cover)
             .borderRadius({ topLeft: AppSizes.RadiusMedium, topRight: AppSizes.RadiusMedium })
             .draggable(false)
@@ -57,23 +48,23 @@ export struct AppCard {
         } else if (!this.app.iconLoaded && this.app.iconUrl) {
           Column() {
             LoadingProgress()
-              .width(this.smallMode ? 22 : 32)
-              .height(this.smallMode ? 22 : 32)
+              .width(32)
+              .height(32)
               .color(AppColors.TextSecondary)
           }
           .width('100%')
-          .height(this.sizeIconHeight())
+          .height(CARD_ICON_HEIGHT)
           .justifyContent(FlexAlign.Center)
           .backgroundColor(AppColors.SurfaceDark)
           .borderRadius({ topLeft: AppSizes.RadiusMedium, topRight: AppSizes.RadiusMedium })
         } else {
           Column() {
             SymbolGlyph($r('sys.symbol.gamecontroller_fill'))
-              .fontSize(this.smallMode ? 32 : 48)
+              .fontSize(48)
               .fontColor([AppColors.TextSecondary])
           }
           .width('100%')
-          .height(this.sizeIconHeight())
+          .height(CARD_ICON_HEIGHT)
           .justifyContent(FlexAlign.Center)
           .backgroundColor(AppColors.SurfaceDark)
           .borderRadius({ topLeft: AppSizes.RadiusMedium, topRight: AppSizes.RadiusMedium })
@@ -99,22 +90,22 @@ export struct AppCard {
         }
       }
       .width('100%')
-      .height(this.sizeIconHeight())
+      .height(CARD_ICON_HEIGHT)
 
       // 应用名称
       Text(this.app.name)
-        .fontSize(this.smallMode ? 10 : 12)
+        .fontSize(12)
         .fontWeight(FontWeight.Medium)
         .fontColor(AppColors.TextPrimary)
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .textAlign(TextAlign.Center)
-        .lineHeight(this.smallMode ? 13 : 16)
+        .lineHeight(16)
         .width('100%')
-        .height(this.sizeTitleHeight())
+        .height(CARD_TITLE_HEIGHT)
         .padding({ left: 6, right: 6, top: 4, bottom: 4 })
     }
-    .width(this.sizeCardWidth())
+    .width(CARD_WIDTH)
     .backgroundColor(AppColors.CardBackground)
     .borderRadius(AppSizes.RadiusMedium)
     .borderWidth(this.app.isRunning ? 2 : 1)

@@ -870,3 +870,46 @@ export class SettingsService {
   }
 
 }
+
+/**
+ * UI 偏好（跨页面响应式同步）
+ *
+ * 设计：持久化层 PreferencesUtil + 运行时层 AppStorage
+ * - `init()` 在 EntryAbility 启动时调用一次，把磁盘值灌入 AppStorage
+ * - 各页面用 `@StorageLink('smallIconMode')` 订阅，任意一处写入立即广播
+ * - `setSmallIconMode(v)` 同步更新 AppStorage + 磁盘
+ */
+export class UiSettings {
+  /** AppStorage 键名（需与 @StorageLink('smallIconMode') 保持一致） */
+  static readonly SMALL_ICON_MODE_KEY: string = 'smallIconMode';
+
+  static async init(): Promise<void> {
+    let value = false;
+    try {
+      value = await PreferencesUtil.get<boolean>(SettingsKeys.SMALL_ICON_MODE, false);
+    } catch (_) {
+      value = false;
+    }
+    AppStorage.setOrCreate<boolean>(UiSettings.SMALL_ICON_MODE_KEY, value);
+  }
+
+  static getSmallIconMode(): boolean {
+    const v = AppStorage.get<boolean>(UiSettings.SMALL_ICON_MODE_KEY);
+    return v === true;
+  }
+
+  static async setSmallIconMode(next: boolean): Promise<void> {
+    AppStorage.setOrCreate<boolean>(UiSettings.SMALL_ICON_MODE_KEY, next);
+    try {
+      await PreferencesUtil.put(SettingsKeys.SMALL_ICON_MODE, next);
+    } catch (_) {
+      // 持久化失败不回滚内存态：保持 UI 反馈一致
+    }
+  }
+
+  static async toggleSmallIconMode(): Promise<boolean> {
+    const next = !UiSettings.getSmallIconMode();
+    await UiSettings.setSmallIconMode(next);
+    return next;
+  }
+}
