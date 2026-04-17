@@ -377,14 +377,13 @@ napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info) {
     return result;
 }
 
-napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info) {
-    OH_LOG_INFO(LOG_APP, "MoonBridge_StopConnection");
-    
+// 执行停止连接的核心清理逻辑（可在主线程或工作线程调用）
+static void DoStopConnectionCleanup() {
     LiStopConnection();
-    
+
     // 重置 HDR 配置 - 在会话完全结束时重置
     VideoDecoderInstance::ResetHdrConfig();
-    
+
     // 清理服务器信息
     if (g_serverInfo.address) {
         free((void*)g_serverInfo.address);
@@ -402,8 +401,54 @@ napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info) {
         free((void*)g_serverInfo.rtspSessionUrl);
         g_serverInfo.rtspSessionUrl = nullptr;
     }
-    
+}
+
+napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info) {
+    OH_LOG_INFO(LOG_APP, "MoonBridge_StopConnection (sync)");
+    DoStopConnectionCleanup();
     return GetUndefined(env);
+}
+
+// 异步停止上下文
+struct StopConnectionAsyncContext {
+    napi_async_work work;
+    napi_deferred deferred;
+};
+
+static void StopConnectionAsyncExecute(napi_env /*env*/, void* /*data*/) {
+    // 工作线程：执行所有重量级清理（含 LiStopConnection / GL 析构 / eglDestroySurface）
+    OH_LOG_INFO(LOG_APP, "StopConnectionAsyncExecute begin");
+    DoStopConnectionCleanup();
+    OH_LOG_INFO(LOG_APP, "StopConnectionAsyncExecute end");
+}
+
+static void StopConnectionAsyncComplete(napi_env env, napi_status /*status*/, void* data) {
+    auto* ctx = static_cast<StopConnectionAsyncContext*>(data);
+    napi_value undef;
+    napi_get_undefined(env, &undef);
+    napi_resolve_deferred(env, ctx->deferred, undef);
+    napi_delete_async_work(env, ctx->work);
+    delete ctx;
+}
+
+napi_value MoonBridge_StopConnectionAsync(napi_env env, napi_callback_info /*info*/) {
+    OH_LOG_INFO(LOG_APP, "MoonBridge_StopConnectionAsync");
+
+    napi_value promise;
+    napi_deferred deferred;
+    napi_create_promise(env, &deferred, &promise);
+
+    auto* ctx = new StopConnectionAsyncContext{nullptr, deferred};
+
+    napi_value resourceName;
+    napi_create_string_utf8(env, "MoonBridge_StopConnectionAsync", NAPI_AUTO_LENGTH, &resourceName);
+    napi_create_async_work(
+        env, nullptr, resourceName,
+        StopConnectionAsyncExecute, StopConnectionAsyncComplete,
+        ctx, &ctx->work);
+    napi_queue_async_work(env, ctx->work);
+
+    return promise;
 }
 
 napi_value MoonBridge_InterruptConnection(napi_env env, napi_callback_info info) {

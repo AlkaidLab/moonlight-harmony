@@ -334,6 +334,15 @@ class MoonBridgeClass {
   }
 
   /**
+   * 停止连接（异步版本）
+   * 底层使用 napi_async_work 将 LiStopConnection / GL 析构放到工作线程
+   * 避免模拟器 / 弱设备上 eglDestroySurface 阻塞主线程触发 ANR
+   */
+  stopConnectionAsync(): Promise<void> {
+    return nativeLib.stopConnectionAsync();
+  }
+
+  /**
    * 中断连接
    */
   interruptConnection(): void {
