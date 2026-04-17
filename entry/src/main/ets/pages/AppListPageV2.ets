@@ -20,6 +20,8 @@ import { PairState, selectBestAddress } from '../model/ComputerInfo';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { ToastQueue } from '../utils/ToastQueue';
+import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { SettingsKeys } from '../service/SettingsService';
 
 interface AppListPageParams {
   computerId: string;
@@ -54,6 +56,7 @@ struct AppListPageV2 {
   @State selectedDisplayIndex: number = -1; // -1 表示使用默认显示器
   @State useVirtualDisplay: boolean = false; // 是否使用虚拟显示器
   @State supportsDisplayApi: boolean = false; // 服务器是否支持 displays API
+  @State smallIconMode: boolean = false; // 小图标模式
   
   private computerId: string = '';
   private computerManager: ComputerManager = ComputerManager.getInstance();
@@ -64,6 +67,14 @@ struct AppListPageV2 {
   // 空列表重试常量（匹配 Android EMPTY_LIST_THRESHOLD）
   private static readonly EMPTY_LIST_THRESHOLD = 3;
   private static readonly EMPTY_LIST_RETRY_DELAY_MS = 2000;
+
+  private async loadSmallIconMode(): Promise<void> {
+    try {
+      this.smallIconMode = await PreferencesUtil.get<boolean>(SettingsKeys.SMALL_ICON_MODE, false);
+    } catch (_) {
+      this.smallIconMode = false;
+    }
+  }
 
   /**
    * 带重试的应用列表获取（服务端可能因瞬时原因返回空列表）
@@ -124,6 +135,7 @@ struct AppListPageV2 {
 
   aboutToAppear(): void {
     this.updateLayoutConfig();
+    this.loadSmallIconMode();
     
     const params = router.getParams() as AppListPageParams;
     if (params?.computerId) {
@@ -158,6 +170,7 @@ struct AppListPageV2 {
    */
   onPageShow(): void {
     this.updateLayoutConfig();
+    this.loadSmallIconMode();
     
     if (!this.nvHttp && this.computerId) {
       this.loadApps();
@@ -742,6 +755,7 @@ struct AppListPageV2 {
               ForEach(rowApps, (app: ObservableApp) => {
                 AppCard({
                   app: app,
+                  smallMode: this.smallIconMode,
                   onTap: () => this.launchApp(app),
                   onLongPress: () => this.openAppMenu(app),
                   onSelect: () => {
