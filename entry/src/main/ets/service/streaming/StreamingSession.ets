@@ -113,6 +113,7 @@ interface NativeModule {
     enableMic: boolean, controlOnly: boolean
   ): number;
   stopConnection(): void;
+  stopConnectionAsync(): Promise<void>;
   interruptConnection(): void;
   resumeDecoder(): void;
   setVideoSurface(surfaceId: string): boolean;
@@ -1392,7 +1393,7 @@ export class StreamingSession {
     await this.stopAbr();
     this.nativeModule.setPerformanceModeEnabled(false);
     try {
-      this.nativeModule.stopConnection();
+      await this.nativeModule.stopConnectionAsync();
       this.nativeModule.releaseVideoSurface();
     } catch (err) {
       console.error('清理资源失败:', err);

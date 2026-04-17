@@ -51,6 +51,12 @@ napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info);
 napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info);
 
 /**
+ * 停止连接（异步版本，返回 Promise）
+ * 将重量级的 LiStopConnection / GL 析构移到工作线程执行，避免主线程 ANR
+ */
+napi_value MoonBridge_StopConnectionAsync(napi_env env, napi_callback_info info);
+
+/**
  * 中断连接
  */
 napi_value MoonBridge_InterruptConnection(napi_env env, napi_callback_info info);
