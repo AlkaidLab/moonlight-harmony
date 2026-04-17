@@ -416,7 +416,11 @@ struct AppListPageV2 {
                 this.SearchBar()
               }
               
-              this.AppGrid()
+              if (this.smallIconMode) {
+                this.AppList()
+              } else {
+                this.AppGrid()
+              }
             }
             .width('100%')
             .height('100%')
@@ -741,6 +745,105 @@ struct AppListPageV2 {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  AppListItemRow(app: ObservableApp) {
+    Row() {
+      Stack({ alignContent: Alignment.Center }) {
+        if (app.localIconPath) {
+          Image('file://' + app.localIconPath)
+            .width(48)
+            .height(48)
+            .objectFit(ImageFit.Cover)
+            .borderRadius(8)
+            .draggable(false)
+        } else if (!app.iconLoaded && app.iconUrl) {
+          LoadingProgress()
+            .width(20)
+            .height(20)
+            .color(AppColors.TextSecondary)
+        } else {
+          SymbolGlyph($r('sys.symbol.gamecontroller_fill'))
+            .fontSize(28)
+            .fontColor([AppColors.TextSecondary])
+        }
+      }
+      .width(48)
+      .height(48)
+      .backgroundColor(AppColors.SurfaceDark)
+      .borderRadius(8)
+      .clip(true)
+
+      Column() {
+        Text(app.name)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppColors.TextPrimary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        if (app.isRunning) {
+          Row() {
+            Circle()
+              .width(6)
+              .height(6)
+              .fill(AppColors.Online)
+            Text('运行中')
+              .fontSize(11)
+              .fontColor(AppColors.Online)
+              .margin({ left: 4 })
+          }
+          .margin({ top: 2 })
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: AppSpacing.Medium })
+    }
+    .width('100%')
+    .padding({
+      left: AppSpacing.Medium,
+      right: AppSpacing.Medium,
+      top: AppSpacing.Small,
+      bottom: AppSpacing.Small
+    })
+    .backgroundColor(AppColors.CardBackground)
+    .borderRadius(AppSizes.RadiusMedium)
+    .borderWidth(app.isRunning ? 2 : 1)
+    .borderColor(app.isRunning ? AppColors.Online : AppColors.CardBorder)
+  }
+
+  @Builder
+  AppList() {
+    Refresh({ refreshing: $$this.isRefreshing }) {
+      List({ space: AppSpacing.Small }) {
+        ForEach(this.viewModel.filteredApps, (app: ObservableApp) => {
+          ListItem() {
+            this.AppListItemRow(app)
+          }
+          .onClick(() => {
+            this.updateBackgroundForApp(app);
+            this.launchApp(app);
+          })
+          .gesture(
+            LongPressGesture({ repeat: false, duration: 500 })
+              .onAction(() => this.openAppMenu(app))
+          )
+        }, (app: ObservableApp) => `${app.id}_${app.isRunning}_${app.iconLoaded}`)
+      }
+      .width('100%')
+      .height('100%')
+      .padding({
+        left: AppSpacing.Large,
+        right: AppSpacing.Large,
+        top: AppSpacing.Small,
+        bottom: AppSpacing.XLarge
+      })
+      .scrollBar(BarState.Auto)
+      .edgeEffect(EdgeEffect.Spring)
+    }
+    .onRefreshing(() => this.refreshApps())
   }
 
   @Builder
