@@ -17,6 +17,7 @@
 import { promptAction } from '@kit.ArkUI';
 import { batteryInfo } from '@kit.BasicServicesKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './dialogs/OptionPickerDialog';
+import { ToastQueue } from '../utils/ToastQueue';
 import {
   PerformanceItem, PerformanceData, PerfLabels, PerfSymbols,
   getMoonPhaseIcon, formatDataRate, getDecoderString,
@@ -235,19 +236,17 @@ export struct PerformanceOverlay {
         }
         if (!this.aprilFoolsToastShown) {
           this.aprilFoolsToastShown = true;
-          promptAction.showToast({
+          ToastQueue.show({
             message: '🔮 负延迟串流™ 已激活\n画面将在你操作之前到达',
             duration: 5000
           });
         }
       }
 
-      // 延迟查询超分引擎（解码器初始化后才有值）
-      if (this.perfUpscaleMode === 0) {
-        const mode = session.getActiveUpscaleMode();
-        if (mode > 0) {
-          this.perfUpscaleMode = mode;
-        }
+      // 每次都查超分引擎状态（native 侧熔断关闭超分时 UI 能立即同步）
+      const mode = session.getActiveUpscaleMode();
+      if (mode !== this.perfUpscaleMode) {
+        this.perfUpscaleMode = mode;
       }
     } catch (e) {
       // 防止 native 调用异常中断定时器回调
@@ -446,7 +445,7 @@ export struct PerformanceOverlay {
           PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, true);
           this.playLockFlash();
           try {
-            promptAction.showToast({ message: '� 已锁定，触摸将透传至游戏', duration: 1500 });
+            ToastQueue.show({ message: '� 已锁定，触摸将透传至游戏', duration: 1500 });
           } catch (_) {}
         })
     )
@@ -934,7 +933,7 @@ export struct PerformanceOverlay {
     this.viewModel.overlayState.config.isVertical = this.isVertical;
     
     try {
-      promptAction.showToast({
+      ToastQueue.show({
         message: this.isVertical ? '已切换为垂直布局' : '已切换为水平布局',
         duration: 1500
       });

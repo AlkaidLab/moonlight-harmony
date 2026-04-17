@@ -28,6 +28,7 @@ import { SettingsKeys } from '../service/SettingsService';
 import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
 import { DevKeyVerifier } from '../utils/DevKeyVerifier';
+import { ToastQueue } from '../utils/ToastQueue';
 
 /**
  * 选择器选项接口
@@ -376,7 +377,7 @@ struct SettingsPageV2 {
    * @param duration 持续时间（毫秒），默认 2000ms
    */
   private showToast(message: string, duration: number = 2000): void {
-    promptAction.showToast({
+    ToastQueue.show({
       message: message,
       duration: duration
     });
@@ -1455,7 +1456,7 @@ struct SettingsPageV2 {
                     this.forceUsbDriverOnly = false;
                     this.saveSetting(SettingsKeys.FORCE_USB_DRIVER_ONLY, false);
                   }
-                  promptAction.showToast({
+                  ToastQueue.show({
                     message: '下次串流时生效',
                     duration: 2500
                   });
@@ -1470,7 +1471,7 @@ struct SettingsPageV2 {
                 action: () => {
                   this.forceUsbDriverOnly = !this.forceUsbDriverOnly;
                   this.saveSetting(SettingsKeys.FORCE_USB_DRIVER_ONLY, this.forceUsbDriverOnly);
-                  promptAction.showToast({
+                  ToastQueue.show({
                     message: '下次串流时生效',
                     duration: 2500
                   });
@@ -1485,7 +1486,7 @@ struct SettingsPageV2 {
                 action: () => {
                   this.ddkHighSpeedPolling = !this.ddkHighSpeedPolling;
                   this.saveSetting(SettingsKeys.DDK_HIGH_SPEED_POLLING, this.ddkHighSpeedPolling);
-                  promptAction.showToast({
+                  ToastQueue.show({
                     message: '下次串流时生效',
                     duration: 2500
                   });
@@ -3327,7 +3328,7 @@ struct SettingsPageV2 {
         if (value === 'H.264' && this.enableHdr) {
           this.enableHdr = false;
           this.saveSetting(SettingsKeys.ENABLE_HDR, false);
-          promptAction.showToast({
+          ToastQueue.show({
             message: 'H.264 不支持 HDR，已自动关闭',
             duration: 2000
           });
@@ -3419,7 +3420,7 @@ struct SettingsPageV2 {
       context.startAbility(want);
     } catch (err) {
       console.error('打开链接失败:', err);
-      promptAction.showToast({ message: '打开链接失败', duration: 2000 });
+      ToastQueue.show({ message: '打开链接失败', duration: 2000 });
     }
   }
 
@@ -3653,7 +3654,7 @@ struct SettingsPageV2 {
     const deviceId = DevKeyVerifier.getDeviceId(context);
     if (!deviceId) {
       this.developerMode = false;
-      promptAction.showToast({ message: '无法获取设备 ID，请先连接一次服务器', duration: 3000 });
+      ToastQueue.show({ message: '无法获取设备 ID，请先连接一次服务器', duration: 3000 });
       return;
     }
     const displayId = deviceId.toUpperCase();
@@ -3675,10 +3676,10 @@ struct SettingsPageV2 {
         this.devKeyActivated = true;
         this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
         this.saveSetting(SettingsKeys.DEV_KEY_ACTIVATED, true);
-        promptAction.showToast({ message: '开发者模式已激活', duration: 2000 });
+        ToastQueue.show({ message: '开发者模式已激活', duration: 2000 });
       } else {
         this.developerMode = false;
-        promptAction.showToast({ message: '激活码无效', duration: 2000 });
+        ToastQueue.show({ message: '激活码无效', duration: 2000 });
       }
     };
     // 弹窗被取消/滑动关闭时回退 Toggle

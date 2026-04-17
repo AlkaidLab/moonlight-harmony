@@ -26,6 +26,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../streaming/MoonBridge';
 import { CustomKeyStore } from './CustomKeyStore';
+import { ToastQueue } from '../../utils/ToastQueue';
 import {
   KeyAction,
   KeyboardAction,
@@ -360,11 +361,11 @@ export class CustomKeyManager {
         const file = fileIo.openSync(uris[0], fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
         fileIo.writeSync(file.fd, json);
         fileIo.closeSync(file);
-        promptAction.showToast({ message: `配置 "${profileName}" 已导出`, duration: 2000 });
+        ToastQueue.show({ message: `配置 "${profileName}" 已导出`, duration: 2000 });
       }
     } catch (e) {
       console.error('[CustomKeyManager] 导出失败:', JSON.stringify(e));
-      promptAction.showToast({ message: '导出失败', duration: 2000 });
+      ToastQueue.show({ message: '导出失败', duration: 2000 });
     }
   }
 
@@ -392,16 +393,16 @@ export class CustomKeyManager {
 
         if (success) {
           const name = await CustomKeyStore.getActiveProfileName();
-          promptAction.showToast({ message: `配置 "${name}" 已导入`, duration: 2000 });
+          ToastQueue.show({ message: `配置 "${name}" 已导入`, duration: 2000 });
           this.host.onCustomKeysImported();
           return true;
         } else {
-          promptAction.showToast({ message: '导入失败：配置文件格式无效', duration: 2000 });
+          ToastQueue.show({ message: '导入失败：配置文件格式无效', duration: 2000 });
         }
       }
     } catch (e) {
       console.error('[CustomKeyManager] 导入失败:', JSON.stringify(e));
-      promptAction.showToast({ message: '导入失败', duration: 2000 });
+      ToastQueue.show({ message: '导入失败', duration: 2000 });
     }
     return false;
   }

@@ -21,6 +21,7 @@ import { AppStateService, AppState } from '../AppStateService';
 import { BackgroundStreamService, BroadcastControlCallbacks } from './BackgroundStreamService';
 import { common } from '@kit.AbilityKit';
 import { MoonBridge, ML_TEST_RESULT_INCONCLUSIVE, CONNECTION_TEST_SERVER } from './MoonBridge';
+import { ToastQueue } from '../../utils/ToastQueue';
 
 /**
  * StreamPage 需要实现的回调接口
@@ -366,7 +367,7 @@ export class StreamLifecycleManager {
     }
 
     const message = parts.length > 0 ? parts.join(' | ') : '串流已结束';
-    promptAction.showToast({
+    ToastQueue.show({
       message: message,
       duration: 3500
     });

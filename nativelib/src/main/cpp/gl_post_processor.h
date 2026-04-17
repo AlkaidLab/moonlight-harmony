@@ -250,7 +250,8 @@ private:
 
     // 运行时熔断：连续 GL 错误计数
     static constexpr uint32_t kXEngineErrorThreshold = 5;   // 连续错误帧数阈值
-    static constexpr uint32_t kSwapFailureThreshold = 3;    // eglSwapBuffers 连续失败阈值
+    static constexpr uint32_t kSwapFailureThreshold = 10;   // eglSwapBuffers 连续失败阈值
+    static constexpr uint32_t kSwapGracePeriodFrames = 60;   // 初始化宽限期（帧数），期间不触发熔断
     uint32_t xengineConsecutiveErrors_ = 0;
     uint32_t swapConsecutiveFailures_ = 0;
 

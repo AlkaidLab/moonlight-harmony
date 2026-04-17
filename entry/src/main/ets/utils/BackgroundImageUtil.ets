@@ -13,12 +13,13 @@
  * 提供背景图加载和管理功能
  */
 import { PreferencesUtil } from './PreferencesUtil';
-import { display, promptAction } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { http } from '@kit.NetworkKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
+import { ToastQueue } from './ToastQueue';
 
 const BACKGROUND_IMAGE_URL_KEY = 'settings_background_image_url';
 const BACKGROUND_IMAGE_TYPE_KEY = 'settings_background_image_type';
@@ -637,7 +638,7 @@ export class BackgroundImageUtil {
    */
   async saveLocalCacheToGallery(context: common.UIAbilityContext): Promise<boolean> {
     if (!this.localCachePath) {
-      promptAction.showToast({ message: '没有可保存的图片' });
+      ToastQueue.show({ message: '没有可保存的图片' });
       return false;
     }
     
@@ -645,11 +646,11 @@ export class BackgroundImageUtil {
       // 检查缓存文件是否存在
       const stat = fileIo.statSync(this.localCachePath);
       if (!stat || stat.size === 0) {
-        promptAction.showToast({ message: '缓存图片不存在' });
+        ToastQueue.show({ message: '缓存图片不存在' });
         return false;
       }
       
-      promptAction.showToast({ message: '正在保存图片...' });
+      ToastQueue.show({ message: '正在保存图片...' });
       
       // 读取本地缓存文件
       const file = fileIo.openSync(this.localCachePath, fileIo.OpenMode.READ_ONLY);
@@ -677,15 +678,15 @@ export class BackgroundImageUtil {
       fileIo.writeSync(photoFile.fd, imageData);
       fileIo.closeSync(photoFile.fd);
       
-      promptAction.showToast({ message: '图片已保存到相册' });
+      ToastQueue.show({ message: '图片已保存到相册' });
       return true;
     } catch (err) {
       console.error('BackgroundImageUtil: 保存本地缓存到相册失败', err);
       const error = err as Error;
       if (error.message?.includes('permission')) {
-        promptAction.showToast({ message: '没有保存图片的权限，请在设置中授权' });
+        ToastQueue.show({ message: '没有保存图片的权限，请在设置中授权' });
       } else {
-        promptAction.showToast({ message: `保存失败: ${error.message || '未知错误'}` });
+        ToastQueue.show({ message: `保存失败: ${error.message || '未知错误'}` });
       }
       return false;
     }
@@ -699,12 +700,12 @@ export class BackgroundImageUtil {
    */
   async saveImageToGallery(imageUrl: string, context: common.UIAbilityContext): Promise<boolean> {
     if (!imageUrl || imageUrl.length === 0) {
-      promptAction.showToast({ message: '没有可保存的图片' });
+      ToastQueue.show({ message: '没有可保存的图片' });
       return false;
     }
 
     try {
-      promptAction.showToast({ message: '正在保存图片...' });
+      ToastQueue.show({ message: '正在保存图片...' });
       
       let imageData: ArrayBuffer | null = null;
       
@@ -732,12 +733,12 @@ export class BackgroundImageUtil {
       
       // 3. 如果缓存数据也没有，重新下载
       if (!imageData && !imageUrl.startsWith('file://')) {
-        promptAction.showToast({ message: '正在下载图片...' });
+        ToastQueue.show({ message: '正在下载图片...' });
         imageData = await this.downloadImage(imageUrl);
       }
       
       if (!imageData) {
-        promptAction.showToast({ message: '图片数据获取失败' });
+        ToastQueue.show({ message: '图片数据获取失败' });
         return false;
       }
       
@@ -761,15 +762,15 @@ export class BackgroundImageUtil {
       fileIo.writeSync(file.fd, imageData);
       fileIo.closeSync(file.fd);
       
-      promptAction.showToast({ message: '图片已保存到相册' });
+      ToastQueue.show({ message: '图片已保存到相册' });
       return true;
     } catch (err) {
       console.error('BackgroundImageUtil: 保存图片失败', err);
       const error = err as Error;
       if (error.message?.includes('permission')) {
-        promptAction.showToast({ message: '没有保存图片的权限，请在设置中授权' });
+        ToastQueue.show({ message: '没有保存图片的权限，请在设置中授权' });
       } else {
-        promptAction.showToast({ message: `保存失败: ${error.message || '未知错误'}` });
+        ToastQueue.show({ message: `保存失败: ${error.message || '未知错误'}` });
       }
       return false;
     }

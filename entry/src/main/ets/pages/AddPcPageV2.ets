@@ -8,10 +8,11 @@
  * (at your option) any later version.
  */
 
-import { router, promptAction } from '@kit.ArkUI';
+import { router } from '@kit.ArkUI';
 import { ComputerManager } from '../service/ComputerManager';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { parseAddressAndPort } from '../utils/NetHelper';
+import { ToastQueue } from '../utils/ToastQueue';
 
 /**
  * 添加电脑页面 - 清新风格
@@ -584,7 +585,7 @@ struct AddPcPageV2 {
           this.isAdding = false;
         });
 
-        promptAction.showToast({
+        ToastQueue.show({
           message: '主机添加成功',
           duration: 1500
         });

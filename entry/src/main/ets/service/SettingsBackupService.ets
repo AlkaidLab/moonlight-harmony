@@ -31,6 +31,7 @@ import { promptAction } from '@kit.ArkUI';
 import { CryptoService } from './CryptoService';
 import { NvHttp } from './streaming/NvHttp';
 import { ComputerManager } from './ComputerManager';
+import { ToastQueue } from '../utils/ToastQueue';
 
 const TAG = '[SettingsBackup]';
 
@@ -264,12 +265,12 @@ export class SettingsBackupService {
 
         const parsed = JSON.parse(json) as BackupData;
         const settingsCount = Object.keys(parsed.settings).length;
-        promptAction.showToast({ message: `已导出 ${settingsCount} 项设置（已加密）`, duration: 2000 });
+        ToastQueue.show({ message: `已导出 ${settingsCount} 项设置（已加密）`, duration: 2000 });
         return true;
       }
     } catch (e) {
       console.error(`${TAG} 导出到文件失败: ${JSON.stringify(e)}`);
-      promptAction.showToast({ message: '导出失败', duration: 2000 });
+      ToastQueue.show({ message: '导出失败', duration: 2000 });
     }
     return false;
   }
@@ -303,7 +304,7 @@ export class SettingsBackupService {
             const hint = version === 1
               ? '解密失败：该备份使用旧版加密（设备绑定密钥），卸载重装后无法恢复'
               : '解密失败：密钥不匹配或文件损坏';
-            promptAction.showToast({ message: hint, duration: 4000 });
+            ToastQueue.show({ message: hint, duration: 4000 });
             return false;
           }
         } else {
@@ -314,15 +315,15 @@ export class SettingsBackupService {
         if (count >= 0) {
           // 重新加载内存状态，避免 ComputerManager 轮询覆盖已恢复的数据
           await SettingsBackupService.reloadInMemoryState();
-          promptAction.showToast({ message: `已导入 ${count} 项设置`, duration: 2000 });
+          ToastQueue.show({ message: `已导入 ${count} 项设置`, duration: 2000 });
           return true;
         } else {
-          promptAction.showToast({ message: '导入失败：文件格式无效', duration: 2000 });
+          ToastQueue.show({ message: '导入失败：文件格式无效', duration: 2000 });
         }
       }
     } catch (e) {
       console.error(`${TAG} 从文件导入失败: ${JSON.stringify(e)}`);
-      promptAction.showToast({ message: '导入失败', duration: 2000 });
+      ToastQueue.show({ message: '导入失败', duration: 2000 });
     }
     return false;
   }
@@ -365,12 +366,12 @@ export class SettingsBackupService {
 
         // 保存 URI 到 Preferences
         await PreferencesUtil.put(AUTO_BACKUP_URI_KEY, uri);
-        promptAction.showToast({ message: '自动备份已启用', duration: 2000 });
+        ToastQueue.show({ message: '自动备份已启用', duration: 2000 });
         return true;
       }
     } catch (e) {
       console.error(`${TAG} 启用自动备份失败: ${JSON.stringify(e)}`);
-      promptAction.showToast({ message: '启用失败', duration: 2000 });
+      ToastQueue.show({ message: '启用失败', duration: 2000 });
     }
     return false;
   }
@@ -391,7 +392,7 @@ export class SettingsBackupService {
       }
     }
     await PreferencesUtil.put(AUTO_BACKUP_URI_KEY, '');
-    promptAction.showToast({ message: '自动备份已关闭', duration: 2000 });
+    ToastQueue.show({ message: '自动备份已关闭', duration: 2000 });
   }
 
   /**

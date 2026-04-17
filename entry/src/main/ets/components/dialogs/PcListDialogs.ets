@@ -19,6 +19,7 @@ import { promptAction } from '@kit.ArkUI';
 import { common, bundleManager, Want } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../../common/Theme';
+import { ToastQueue } from '../../utils/ToastQueue';
 
 const GITHUB_URL = 'https://github.com/AlkaidLab/moonlight-harmony';
 const QQ_GROUP_NUMBER = '103206957';
@@ -205,13 +206,13 @@ export struct AboutDialogView {
       const want: Want = { action: 'ohos.want.action.viewData', uri: url };
       context.startAbility(want);
     } catch (_e) {
-      promptAction.showToast({ message: '无法打开链接' });
+      ToastQueue.show({ message: '无法打开链接' });
     }
   }
 
   static copyQQGroupNumber(): void {
     const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, QQ_GROUP_NUMBER);
     pasteboard.getSystemPasteboard().setDataSync(pasteData);
-    promptAction.showToast({ message: `群号 ${QQ_GROUP_NUMBER} 已复制，请在 QQ 中搜索加入` });
+    ToastQueue.show({ message: `群号 ${QQ_GROUP_NUMBER} 已复制，请在 QQ 中搜索加入` });
   }
 }

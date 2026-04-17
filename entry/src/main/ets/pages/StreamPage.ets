@@ -13,7 +13,7 @@
  * 
  * 显示远程游戏画面并处理用户输入
  */
-import { router, promptAction, LengthMetrics } from '@kit.ArkUI';
+import { router, LengthMetrics } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { displaySync } from '@kit.ArkGraphics2D';
@@ -47,6 +47,7 @@ import { PanZoomHandler, PanZoomState, PointXY } from '../service/input/PanZoomH
 import { AiKeyService, AiKeyRecommendation } from '../service/AiKeyService';
 import { selectBestAddress } from '../model/ComputerInfo';
 import { ComputerManager } from '../service/ComputerManager';
+import { ToastQueue } from '../utils/ToastQueue';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -258,7 +259,7 @@ struct StreamPage {
           nvHttp.checkAiAvailable().then((available: boolean) => {
             if (available) {
               setTimeout(() => {
-                promptAction.showToast({
+                ToastQueue.show({
                   message: '✨ AI LLM 已连接，可使用 AIV+ 功能',
                   duration: 2500
                 });
@@ -390,12 +391,12 @@ struct StreamPage {
       onGamepadConnected: (deviceId: number, name: string, controllerType: number) => {
         console.info(`手柄已连接: ${name} (ID: ${deviceId}, Type: ${controllerType})`);
         this.controllerTypes.set(deviceId, controllerType);
-        promptAction.showToast({ message: `手柄已连接: ${name}` });
+        ToastQueue.show({ message: `手柄已连接: ${name}` });
       },
       onGamepadDisconnected: (deviceId: number) => {
         console.info(`手柄已断开: ID ${deviceId}`);
         this.controllerTypes.delete(deviceId);
-        promptAction.showToast({ message: '手柄已断开' });
+        ToastQueue.show({ message: '手柄已断开' });
       },
       onGamepadInput: (deviceId: number, state: GamepadState) => {
         this.handleGamepadInput(deviceId, state);
@@ -635,7 +636,7 @@ struct StreamPage {
         setTimeout(() => this.showShortcutEditor(shortcut), 300);
       },
       onDeleteShortcut: (shortcut) => {
-        promptAction.showToast({ message: `快捷键 "${shortcut.name}" 已删除` });
+        ToastQueue.show({ message: `快捷键 "${shortcut.name}" 已删除` });
       },
       onSendSuperCmd: (cmdId: string) => {
         this.sendSuperCmd(cmdId);
@@ -672,7 +673,7 @@ struct StreamPage {
       onToggleMouseEmulation: () => {
         this.gamepadManager.toggleMouseEmulation();
         const active = this.gamepadManager.isMouseEmulationActive();
-        promptAction.showToast({
+        ToastQueue.show({
           message: active ? '手柄鼠标模拟已开启' : '手柄鼠标模拟已关闭',
           duration: 2000
         });
@@ -700,7 +701,7 @@ struct StreamPage {
         this.viewModel.overlayState.configVersion++;
         AppStorage.setOrCreate('perf_overlay_locked', false);
         PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, false);
-        promptAction.showToast({ message: '已解锁覆盖层', duration: 1500 });
+        ToastQueue.show({ message: '已解锁覆盖层', duration: 1500 });
         this.gameMenuDialogController?.close();
       },
       onToggleWindowMode: async () => {
@@ -709,14 +710,14 @@ struct StreamPage {
       },
       onTogglePanZoom: () => {
         this.isTouchOverrideEnabled = !this.isTouchOverrideEnabled;
-        promptAction.showToast({
+        ToastQueue.show({
           message: this.isTouchOverrideEnabled ? '画面缩放已开启，双指捏合缩放画面' : '画面缩放已关闭',
           duration: 2000
         });
       },
       onResetPanZoom: () => {
         this.panZoomHandler.reset();
-        promptAction.showToast({ message: '缩放已重置', duration: 1500 });
+        ToastQueue.show({ message: '缩放已重置', duration: 1500 });
       },
       onSwitchCustomKeyProfile: async (name: string) => {
         this.customKeyManager?.reset();
@@ -921,10 +922,10 @@ struct StreamPage {
                 data.color,
                 data.keySequence
               );
-              promptAction.showToast({ message: `快捷键 "${data.name}" 已更新` });
+              ToastQueue.show({ message: `快捷键 "${data.name}" 已更新` });
             } else {
               await this.shortcutManager.addShortcut(data.name, data.keys, data.icon, data.color, data.keySequence);
-              promptAction.showToast({ message: `快捷键 "${data.name}" 已添加` });
+              ToastQueue.show({ message: `快捷键 "${data.name}" 已添加` });
             }
             this.resumeMouseInterceptor();
           },
@@ -952,9 +953,9 @@ struct StreamPage {
       if (this.appId > 0) {
         CustomKeyStore.setGameProfile(this.appId, profile.name);
       }
-      promptAction.showToast({ message: `已切换到: ${profile.name}`, duration: 1500 });
+      ToastQueue.show({ message: `已切换到: ${profile.name}`, duration: 1500 });
     } else {
-      promptAction.showToast({ message: '仅有一个配置', duration: 1500 });
+      ToastQueue.show({ message: '仅有一个配置', duration: 1500 });
     }
   }
 
@@ -1042,12 +1043,12 @@ struct StreamPage {
       const modeName = activeNames[this.viewModel.activeUpscaleMode] ?? '超分辨率';
 
       if (streamW < outW || streamH < outH) {
-        promptAction.showToast({
+        ToastQueue.show({
           message: `${modeName} 超分已启用: ${streamW}×${streamH} → ${outW}×${outH}`,
           duration: 2500
         });
       } else {
-        promptAction.showToast({
+        ToastQueue.show({
           message: `超分辨率未生效: 串流 ${streamW}×${streamH} ≥ 屏幕 ${outW}×${outH}`,
           duration: 2500
         });
@@ -1237,10 +1238,10 @@ struct StreamPage {
       await this.launchStream();
       console.info('[StreamPage] 重连串流成功');
 
-      promptAction.showToast({ message: '已重新连接' });
+      ToastQueue.show({ message: '已重新连接' });
     } catch (err) {
       console.error('[StreamPage] 重连串流失败:', err);
-      promptAction.showToast({ message: '重连失败，请手动重试' });
+      ToastQueue.show({ message: '重连失败，请手动重试' });
     }
   }
   
@@ -1251,12 +1252,12 @@ struct StreamPage {
     try {
       const success = await this.viewModel.sendSuperCmd(cmdId);
       if (success) {
-        promptAction.showToast({ message: '指令已发送' });
+        ToastQueue.show({ message: '指令已发送' });
       } else {
-        promptAction.showToast({ message: '指令发送失败' });
+        ToastQueue.show({ message: '指令发送失败' });
       }
     } catch (err) {
-      promptAction.showToast({ message: `指令发送失败: ${(err as Error).message}` });
+      ToastQueue.show({ message: `指令发送失败: ${(err as Error).message}` });
     }
   }
 
@@ -1317,20 +1318,20 @@ struct StreamPage {
       const success = await this.gamepadManager.forceUsbDriverMode();
       if (success) {
         const modeDesc = this.gamepadManager.getInputModeDescription();
-        promptAction.showToast({ 
+        ToastQueue.show({ 
           message: `已切换到: ${modeDesc}`,
           duration: 3000
         });
         console.info(`StreamPage: 已切换输入模式 -> ${modeDesc}`);
       } else {
-        promptAction.showToast({ 
+        ToastQueue.show({ 
           message: '切换失败，请重试',
           duration: 2000
         });
       }
     } catch (err) {
       console.error('强制 USB 驱动模式切换失败:', err);
-      promptAction.showToast({ 
+      ToastQueue.show({ 
         message: '切换失败: ' + (err as Error).message,
         duration: 2000
       });

@@ -25,6 +25,7 @@ import { PairState, ComputerState, selectBestAddress, ComputerInfo } from '../mo
 import { ConfirmDialogConfig, InfoDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { AppColors } from '../common/Theme';
 import { isLoopbackIPv4 } from '../utils/NetHelper';
+import { ToastQueue } from '../utils/ToastQueue';
 
 /** 单地址网络测试结果 */
 interface AddressTestResult {
@@ -73,14 +74,14 @@ export class PcListActions {
   /** 快速串流 */
   async handleQuickStream(computer: ObservableComputer): Promise<void> {
     if (!computer.isOnline || !computer.isPaired) {
-      promptAction.showToast({ message: '设备未就绪' });
+      ToastQueue.show({ message: '设备未就绪' });
       return;
     }
     try {
-      promptAction.showToast({ message: '正在准备串流...', duration: 1000 });
+      ToastQueue.show({ message: '正在准备串流...', duration: 1000 });
       const computerInfo = this.computerManager.getComputer(computer.uuid);
       if (!computerInfo || computerInfo.pairState !== PairState.PAIRED) {
-        promptAction.showToast({ message: '设备未配对' });
+        ToastQueue.show({ message: '设备未配对' });
         return;
       }
       const context = getContext() as common.UIAbilityContext;
@@ -102,7 +103,7 @@ export class PcListActions {
         return;
       }
       if (apps.length === 0) {
-        promptAction.showToast({ message: '没有可用的应用' });
+        ToastQueue.show({ message: '没有可用的应用' });
         return;
       }
       const firstApp = apps[0];
@@ -117,14 +118,14 @@ export class PcListActions {
         }
       });
     } catch (err) {
-      promptAction.showToast({ message: `启动失败: ${(err as Error).message}` });
+      ToastQueue.show({ message: `启动失败: ${(err as Error).message}` });
     }
   }
 
   /** 配对 */
   async pairWithComputer(computer: ObservableComputer): Promise<void> {
     if (!computer.isOnline) {
-      promptAction.showToast({ message: '电脑离线，无法配对' });
+      ToastQueue.show({ message: '电脑离线，无法配对' });
       return;
     }
     const pin = PairingManager.generatePin();
@@ -146,47 +147,47 @@ export class PcListActions {
           pairName: result.pairName || ''
         });
         this.ui.syncViewModel();
-        promptAction.showToast({ message: '配对成功！' });
+        ToastQueue.show({ message: '配对成功！' });
         router.pushUrl({ url: 'pages/AppListPageV2', params: { computerId: computer.uuid } });
       } else if (result.state === PMPairState.PIN_WRONG) {
-        promptAction.showToast({ message: 'PIN 码错误，请重试' });
+        ToastQueue.show({ message: 'PIN 码错误，请重试' });
       } else if (result.state === PMPairState.ALREADY_IN_PROGRESS) {
-        promptAction.showToast({ message: '另一个设备正在配对中' });
+        ToastQueue.show({ message: '另一个设备正在配对中' });
       } else {
-        promptAction.showToast({ message: `配对失败: ${result.state}` });
+        ToastQueue.show({ message: `配对失败: ${result.state}` });
       }
     } catch (error) {
       this.ui.hidePinDialog();
-      promptAction.showToast({ message: `配对失败: ${(error as Error).message}` });
+      ToastQueue.show({ message: `配对失败: ${(error as Error).message}` });
     }
   }
 
   /** 唤醒 */
   async wakeComputer(computer: ObservableComputer): Promise<void> {
     if (!computer.macAddress || computer.macAddress === '00:00:00:00:00:00') {
-      promptAction.showToast({ message: '缺少有效的 MAC 地址。请先在电脑在线时配对，以获取 MAC 地址。' });
+      ToastQueue.show({ message: '缺少有效的 MAC 地址。请先在电脑在线时配对，以获取 MAC 地址。' });
       return;
     }
     try {
       await this.computerManager.wakeComputer(computer.uuid);
-      promptAction.showToast({ message: '唤醒包已发送' });
+      ToastQueue.show({ message: '唤醒包已发送' });
     } catch (err) {
-      promptAction.showToast({ message: `发送失败: ${err instanceof Error ? err.message : String(err)}` });
+      ToastQueue.show({ message: `发送失败: ${err instanceof Error ? err.message : String(err)}` });
     }
   }
 
   /** 退出游戏 */
   quitGame(computer: ObservableComputer): void {
     if (!computer.isOnline) {
-      promptAction.showToast({ message: '电脑离线，无法退出游戏' });
+      ToastQueue.show({ message: '电脑离线，无法退出游戏' });
       return;
     }
     if (!computer.isPaired) {
-      promptAction.showToast({ message: '未配对，无法退出游戏' });
+      ToastQueue.show({ message: '未配对，无法退出游戏' });
       return;
     }
     if (!computer.runningGameId || computer.runningGameId <= 0) {
-      promptAction.showToast({ message: '没有正在运行的游戏' });
+      ToastQueue.show({ message: '没有正在运行的游戏' });
       return;
     }
     this.ui.showConfirmDialog({
@@ -197,19 +198,19 @@ export class PcListActions {
         color: AppColors.Error,
         onClick: async () => {
           try {
-            promptAction.showToast({ message: '正在退出游戏...' });
+            ToastQueue.show({ message: '正在退出游戏...' });
             const context = getContext() as common.UIAbilityContext;
             const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, context, computer.httpPort);
             const success = await nvHttp.quitApp();
             if (success) {
-              promptAction.showToast({ message: '游戏已退出' });
+              ToastQueue.show({ message: '游戏已退出' });
               await this.computerManager.pollComputer(computer.toComputerInfo());
               this.ui.syncViewModel();
             } else {
-              promptAction.showToast({ message: '退出游戏失败' });
+              ToastQueue.show({ message: '退出游戏失败' });
             }
           } catch (error) {
-            promptAction.showToast({ message: `退出游戏失败: ${(error as Error).message}` });
+            ToastQueue.show({ message: `退出游戏失败: ${(error as Error).message}` });
           }
         }
       }
@@ -219,11 +220,11 @@ export class PcListActions {
   /** 休眠 */
   sleepComputer(computer: ObservableComputer): void {
     if (!computer.isOnline) {
-      promptAction.showToast({ message: '电脑离线，无法休眠' });
+      ToastQueue.show({ message: '电脑离线，无法休眠' });
       return;
     }
     if (!computer.isPaired) {
-      promptAction.showToast({ message: '未配对，无法发送休眠命令' });
+      ToastQueue.show({ message: '未配对，无法发送休眠命令' });
       return;
     }
     this.ui.showConfirmDialog({
@@ -233,19 +234,19 @@ export class PcListActions {
         text: '休眠',
         onClick: async () => {
           try {
-            promptAction.showToast({ message: '正在发送休眠命令...' });
+            ToastQueue.show({ message: '正在发送休眠命令...' });
             const context = getContext() as common.UIAbilityContext;
             const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, context, computer.httpPort);
             const success = await nvHttp.pcSleep();
             if (success) {
-              promptAction.showToast({ message: '睡眠命令已发送' });
+              ToastQueue.show({ message: '睡眠命令已发送' });
               computer.state = ComputerState.OFFLINE;
               this.ui.syncViewModel();
             } else {
-              promptAction.showToast({ message: '发送睡眠命令失败' });
+              ToastQueue.show({ message: '发送睡眠命令失败' });
             }
           } catch (error) {
-            promptAction.showToast({ message: `发送睡眠命令失败: ${(error as Error).message}` });
+            ToastQueue.show({ message: `发送睡眠命令失败: ${(error as Error).message}` });
           }
         }
       }
@@ -295,10 +296,10 @@ export class PcListActions {
         onClick: async () => {
           try {
             await this.computerManager.unpairComputer(computer.uuid);
-            promptAction.showToast({ message: '已取消配对' });
+            ToastQueue.show({ message: '已取消配对' });
             this.ui.syncViewModel();
           } catch (_e) {
-            promptAction.showToast({ message: '操作失败' });
+            ToastQueue.show({ message: '操作失败' });
           }
         }
       }
@@ -316,10 +317,10 @@ export class PcListActions {
         onClick: async () => {
           try {
             await this.computerManager.removeComputer(computer.uuid);
-            promptAction.showToast({ message: '已删除' });
+            ToastQueue.show({ message: '已删除' });
             this.ui.syncViewModel();
           } catch (_e) {
-            promptAction.showToast({ message: '删除失败' });
+            ToastQueue.show({ message: '删除失败' });
           }
         }
       }
@@ -328,7 +329,7 @@ export class PcListActions {
 
   /** 测试网络 */
   async testNetwork(computer: ObservableComputer): Promise<void> {
-    promptAction.showToast({ message: '正在检测网络…' });
+    ToastQueue.show({ message: '正在检测网络…' });
     const computerInfo = computer.toComputerInfo();
 
     // 收集所有可用地址（过滤 127.x 回环地址）
@@ -491,11 +492,11 @@ export class PcListActions {
       if (action === 'unlock') {
         this.computerManager.updateComputer(computer.uuid, { preferredAddress: '' });
         computer.preferredAddress = '';
-        promptAction.showToast({ message: '已解除地址锁定' });
+        ToastQueue.show({ message: '已解除地址锁定' });
       } else if (action) {
         this.computerManager.updateComputer(computer.uuid, { preferredAddress: action });
         computer.preferredAddress = action;
-        promptAction.showToast({ message: `已锁定: ${action}` });
+        ToastQueue.show({ message: `已锁定: ${action}` });
       }
     }).catch(() => {
       // 用户取消
