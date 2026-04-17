@@ -26,6 +26,7 @@ import { SettingsKeys } from '../../service/SettingsService';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService } from '../../service/input/DeviceSensorService';
 import {
+import { ToastQueue } from '../../utils/ToastQueue';
   OV_ACCENT_BLUE, OV_ACCENT_PINK, OV_ACCENT_RED,
   OV_TEXT_BRIGHT, OV_TEXT_MEDIUM, OV_TEXT_DIM, OV_TEXT_FAINT, OV_TEXT_WHITE, OV_TEXT_ULTRA,
   OV_BG_TRACK, OV_BG_CARD_LIGHT, OV_BG_CARD_LIGHTER, OV_BG_DIVIDER,
@@ -370,14 +371,14 @@ export struct GameMenuDialog {
         const success = await this.viewModel.setBitrate(newBitrate);
         if (success) {
           this.currentBitrate = newBitrate;
-          promptAction.showToast({ message: `码率已调整为 ${this.formatBitrate(newBitrate)}`, duration: 2000 });
+          ToastQueue.show({ message: `码率已调整为 ${this.formatBitrate(newBitrate)}`, duration: 2000 });
         } else {
           this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
-          promptAction.showToast({ message: '码率调整失败', duration: 2000 });
+          ToastQueue.show({ message: '码率调整失败', duration: 2000 });
         }
       } catch (err) {
         this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
-        promptAction.showToast({ message: `码率调整失败: ${(err as Error).message}`, duration: 2000 });
+        ToastQueue.show({ message: `码率调整失败: ${(err as Error).message}`, duration: 2000 });
       } finally {
         this.isAdjustingBitrate = false;
         this.bitrateDebounceTimer = -1;
@@ -508,7 +509,7 @@ export struct GameMenuDialog {
         break;
       case 1:
         if (this.isUsbDriverMode) {
-          promptAction.showToast({ message: '当前已是 USB 驱动模式', duration: 2000 });
+          ToastQueue.show({ message: '当前已是 USB 驱动模式', duration: 2000 });
         } else {
           this.showUsbDriverDialog();
         }
@@ -842,12 +843,12 @@ export struct GameMenuDialog {
       this.recordCardUsage(CARD_MIC);
       const session = this.viewModel.getSession();
       if (!session?.hasMicrophoneStream()) {
-        promptAction.showToast({ message: '主机未请求麦克风', duration: 1500 });
+        ToastQueue.show({ message: '主机未请求麦克风', duration: 1500 });
         return;
       }
       session.toggleMicrophone().then((active: boolean) => {
         this.micActive = active;
-        promptAction.showToast({
+        ToastQueue.show({
           message: active ? '麦克风已开启' : '麦克风已关闭',
           duration: 1500
         });
@@ -1232,10 +1233,10 @@ export struct GameMenuDialog {
             this.abrEnabled = isOn;
             if (isOn) {
               await this.viewModel.startAbr('balanced');
-              promptAction.showToast({ message: '智能码率已启用', duration: 2000 });
+              ToastQueue.show({ message: '智能码率已启用', duration: 2000 });
             } else {
               await this.viewModel.stopAbr();
-              promptAction.showToast({ message: '智能码率已关闭，恢复手动设置', duration: 2000 });
+              ToastQueue.show({ message: '智能码率已关闭，恢复手动设置', duration: 2000 });
               this.currentBitrate = this.viewModel.getCurrentBitrate();
               this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
             }

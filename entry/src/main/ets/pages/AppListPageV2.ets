@@ -19,6 +19,7 @@ import { common } from '@kit.AbilityKit';
 import { PairState, selectBestAddress } from '../model/ComputerInfo';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig } from '../components/dialogs/ConfirmDialog';
+import { ToastQueue } from '../utils/ToastQueue';
 
 interface AppListPageParams {
   computerId: string;
@@ -217,13 +218,13 @@ struct AppListPageV2 {
     try {
       const computer = this.computerManager.getComputer(this.computerId);
       if (!computer) {
-        promptAction.showToast({ message: '找不到电脑' });
+        ToastQueue.show({ message: '找不到电脑' });
         router.back();
         return;
       }
       
       if (computer.pairState !== PairState.PAIRED) {
-        promptAction.showToast({ message: '设备未配对，请重新配对' });
+        ToastQueue.show({ message: '设备未配对，请重新配对' });
         router.back();
         return;
       }
@@ -243,7 +244,7 @@ struct AppListPageV2 {
       this.loadDisplays();
       this.waitForFirstAppIcon();
     } catch (err) {
-      promptAction.showToast({ message: `加载失败: ${(err as Error).message}` });
+      ToastQueue.show({ message: `加载失败: ${(err as Error).message}` });
     } finally {
       this.isLoading = false;
     }
@@ -310,7 +311,7 @@ struct AppListPageV2 {
     try {
       const computer = this.computerManager.getComputer(this.computerId);
       if (computer && computer.pairState !== PairState.PAIRED) {
-        promptAction.showToast({ message: '配对已失效，请重新配对' });
+        ToastQueue.show({ message: '配对已失效，请重新配对' });
         router.back();
         return;
       }
@@ -337,14 +338,14 @@ struct AppListPageV2 {
     } catch (err) {
       const errMsg = (err as Error).message || '';
       if (errMsg.includes('401') || errMsg.includes('not authorized') || errMsg.includes('Certificate verification')) {
-        promptAction.showToast({ message: '配对已失效，请重新配对' });
+        ToastQueue.show({ message: '配对已失效，请重新配对' });
         router.back();
         return;
       }
       // 静默刷新（如 onPageShow 自动触发的后台刷新）不弹 toast
       // 已有数据时也不弹——用户仍能看到之前的列表
       if (!silent && this.viewModel.appCount === 0) {
-        promptAction.showToast({ message: '刷新失败' });
+        ToastQueue.show({ message: '刷新失败' });
       } else {
         console.warn('AppListPageV2: 刷新失败（静默）:', errMsg);
       }
@@ -991,13 +992,13 @@ struct AppListPageV2 {
     
     try {
       if (await this.nvHttp.quitApp()) {
-        promptAction.showToast({ message: '正在启动新应用...' });
+        ToastQueue.show({ message: '正在启动新应用...' });
         setTimeout(() => this.doLaunchApp(app), 500);
       } else {
-        promptAction.showToast({ message: '退出失败' });
+        ToastQueue.show({ message: '退出失败' });
       }
     } catch {
-      promptAction.showToast({ message: '退出失败' });
+      ToastQueue.show({ message: '退出失败' });
     }
   }
 
@@ -1048,13 +1049,13 @@ struct AppListPageV2 {
     
     try {
       if (await this.nvHttp.quitApp()) {
-        promptAction.showToast({ message: '应用已退出' });
+        ToastQueue.show({ message: '应用已退出' });
         await this.refreshApps();
       } else {
-        promptAction.showToast({ message: '退出失败' });
+        ToastQueue.show({ message: '退出失败' });
       }
     } catch {
-      promptAction.showToast({ message: '退出失败' });
+      ToastQueue.show({ message: '退出失败' });
     }
   }
 }

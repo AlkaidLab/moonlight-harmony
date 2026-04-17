@@ -18,6 +18,7 @@ import { promptAction } from '@kit.ArkUI';
 import { StreamingSession } from '../service/streaming/StreamingSession';
 import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { OptionPickerDialogConfig, OptionItem } from './dialogs/OptionPickerDialog';
+import { ToastQueue } from '../utils/ToastQueue';
 
 // VirtualKey 统一定义在 CustomKeyTypes 中，此处 re-export 保持向后兼容
 import { VirtualKey } from '../service/customkey/CustomKeyTypes';
@@ -58,7 +59,7 @@ export class StreamMenuManager {
    */
   private showToast(message: string): void {
     try {
-      promptAction.showToast({
+      ToastQueue.show({
         message: message,
         duration: 1500
       });

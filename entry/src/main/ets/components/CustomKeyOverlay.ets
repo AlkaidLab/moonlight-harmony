@@ -20,6 +20,7 @@
 
 import { componentSnapshot, display, LengthMetrics, promptAction, window } from '@kit.ArkUI';
 import {
+import { ToastQueue } from '../utils/ToastQueue';
   CustomKeyDef,
   KeyAction,
   KeyBehavior,
@@ -1109,7 +1110,7 @@ export struct CustomKeyOverlay {
       }
       this.keys = newArr;
       await CustomKeyStore.saveKeys(this.keys);
-      promptAction.showToast({ message: `已复制整组（${groupKeys.length}个键）`, duration: 1200 });
+      ToastQueue.show({ message: `已复制整组（${groupKeys.length}个键）`, duration: 1200 });
     } else {
       const cloned = cloneKeyDef(src);
       cloned.id = generateKeyId();
@@ -1120,7 +1121,7 @@ export struct CustomKeyOverlay {
       this.keys = newArr;
       await CustomKeyStore.saveKeys(this.keys);
       this.selectedKeyId = cloned.id;
-      promptAction.showToast({ message: '已复制按键', duration: 1200 });
+      ToastQueue.show({ message: '已复制按键', duration: 1200 });
     }
   }
 
@@ -1218,7 +1219,7 @@ export struct CustomKeyOverlay {
 
     const countMap: Record<string, number> = { 'hex7': 7, 'row3': 3, 'grid2x3': 5 };
     const count = countMap[layout] ?? cells.length;
-    promptAction.showToast({ message: `已添加蜂窝群组（${count}个键）`, duration: 1500 });
+    ToastQueue.show({ message: `已添加蜂窝群组（${count}个键）`, duration: 1500 });
   }
 
   /** 微调选中按键位置，单位 vp */
@@ -1377,7 +1378,7 @@ export struct CustomKeyOverlay {
     this.aiPreviewKeys = [];
     this.aiDescription = '';
 
-    promptAction.showToast({ message: toastMsg, duration: 2000 });
+    ToastQueue.show({ message: toastMsg, duration: 2000 });
   }
 
   enterEditMode(): void {
@@ -1394,7 +1395,7 @@ export struct CustomKeyOverlay {
     this.canUndo = false;
     this.canRedo = false;
     this.onEditModeChanged(true);
-    promptAction.showToast({
+    ToastQueue.show({
       message: '单击选中 | 长按属性 | 拖拽移动',
       duration: 2500,
     });
@@ -1436,7 +1437,7 @@ export struct CustomKeyOverlay {
     this.keys = newKeys;
     await CustomKeyStore.saveKeys(this.keys);
     this.showThemePanel = false;
-    promptAction.showToast({ message: `已应用「${theme.name}」配色`, duration: 1500 });
+    ToastQueue.show({ message: `已应用「${theme.name}」配色`, duration: 1500 });
   }
 
   /**
@@ -1497,7 +1498,7 @@ export struct CustomKeyOverlay {
       }
 
       if (samples.length < 10) {
-        promptAction.showToast({ message: '画面过暗，建议手动选择主题', duration: 2000 });
+        ToastQueue.show({ message: '画面过暗，建议手动选择主题', duration: 2000 });
         this.themeExtracting = false;
         return;
       }
@@ -1558,7 +1559,7 @@ export struct CustomKeyOverlay {
       this.hidingForCapture = false;
       this.showThemePanel = true;
       console.error('[CustomKeyOverlay] 屏幕取色失败:', JSON.stringify(e));
-      promptAction.showToast({ message: '屏幕取色失败，请手动选择主题', duration: 2000 });
+      ToastQueue.show({ message: '屏幕取色失败，请手动选择主题', duration: 2000 });
     }
     this.themeExtracting = false;
   }
@@ -1605,7 +1606,7 @@ export struct CustomKeyOverlay {
       this.canUndo = false;
       this.canRedo = false;
       this.onProfileSwitched();
-      promptAction.showToast({ message: `已切换到: ${name}`, duration: 1500 });
+      ToastQueue.show({ message: `已切换到: ${name}`, duration: 1500 });
     }
   }
 
@@ -1630,7 +1631,7 @@ export struct CustomKeyOverlay {
       this.canUndo = false;
       this.canRedo = false;
       this.onProfileSwitched();
-      promptAction.showToast({ message: `已创建: ${name}`, duration: 1500 });
+      ToastQueue.show({ message: `已创建: ${name}`, duration: 1500 });
     }
   }
 
@@ -1654,14 +1655,14 @@ export struct CustomKeyOverlay {
       this.canUndo = false;
       this.canRedo = false;
       this.onProfileSwitched();
-      promptAction.showToast({ message: `已复制为: ${name}`, duration: 1500 });
+      ToastQueue.show({ message: `已复制为: ${name}`, duration: 1500 });
     }
   }
 
   /** 删除指定配置 */
   private async deleteProfileByName(name: string): Promise<void> {
     if (this.profileNames.length <= 1) {
-      promptAction.showToast({ message: '至少保留一个配置', duration: 1500 });
+      ToastQueue.show({ message: '至少保留一个配置', duration: 1500 });
       return;
     }
     const ok = await CustomKeyStore.deleteProfile(name);
@@ -1675,7 +1676,7 @@ export struct CustomKeyOverlay {
       this.canUndo = false;
       this.canRedo = false;
       this.onProfileSwitched();
-      promptAction.showToast({ message: `已删除: ${name}`, duration: 1500 });
+      ToastQueue.show({ message: `已删除: ${name}`, duration: 1500 });
     }
   }
 
@@ -1686,7 +1687,7 @@ export struct CustomKeyOverlay {
     this.editingProfileNewName = '';
     if (!newName || newName === oldName) return;
     if (this.profileNames.includes(newName)) {
-      promptAction.showToast({ message: '配置名已存在', duration: 1500 });
+      ToastQueue.show({ message: '配置名已存在', duration: 1500 });
       return;
     }
     const ok = await CustomKeyStore.renameProfile(oldName, newName);
@@ -1700,7 +1701,7 @@ export struct CustomKeyOverlay {
   async cycleNextProfile(): Promise<void> {
     const names = await CustomKeyStore.getProfileNames();
     if (names.length <= 1) {
-      promptAction.showToast({ message: '仅有一个配置', duration: 1500 });
+      ToastQueue.show({ message: '仅有一个配置', duration: 1500 });
       return;
     }
     const currentName = await CustomKeyStore.getActiveProfileName();
@@ -1884,9 +1885,9 @@ export struct CustomKeyOverlay {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.shareJson);
       const sysBoard = pasteboard.getSystemPasteboard();
       await sysBoard.setData(pasteData);
-      promptAction.showToast({ message: '已复制到剪贴板', duration: 1500 });
+      ToastQueue.show({ message: '已复制到剪贴板', duration: 1500 });
     } catch (_e) {
-      promptAction.showToast({ message: '复制失败', duration: 1500 });
+      ToastQueue.show({ message: '复制失败', duration: 1500 });
     }
   }
 
@@ -1939,7 +1940,7 @@ export struct CustomKeyOverlay {
       });
     } catch (e) {
       console.error('[CustomKeyOverlay] 分享失败:', JSON.stringify(e));
-      promptAction.showToast({ message: '分享失败', duration: 1500 });
+      ToastQueue.show({ message: '分享失败', duration: 1500 });
     }
   }
 
@@ -2057,12 +2058,12 @@ export struct CustomKeyOverlay {
       const pasteData = await sysBoard.getData();
       const text = pasteData.getPrimaryText();
       if (!text) {
-        promptAction.showToast({ message: '剪贴板为空', duration: 1500 });
+        ToastQueue.show({ message: '剪贴板为空', duration: 1500 });
         return;
       }
       await this.handleImportJson(text);
     } catch (_e) {
-      promptAction.showToast({ message: '读取剪贴板失败', duration: 1500 });
+      ToastQueue.show({ message: '读取剪贴板失败', duration: 1500 });
     }
   }
 
@@ -2070,7 +2071,7 @@ export struct CustomKeyOverlay {
   private async scanAndImport(): Promise<void> {
     const result = await QrShareService.scanQrCode();
     if (!result) {
-      promptAction.showToast({ message: '扫码取消或失败', duration: 1500 });
+      ToastQueue.show({ message: '扫码取消或失败', duration: 1500 });
       return;
     }
     await this.handleImportJson(result);
@@ -2080,7 +2081,7 @@ export struct CustomKeyOverlay {
   private async handleImportJson(json: string): Promise<void> {
     const parsed = await QrShareService.deserialize(json);
     if (!parsed) {
-      promptAction.showToast({ message: '无效的配置数据', duration: 2000 });
+      ToastQueue.show({ message: '无效的配置数据', duration: 2000 });
       return;
     }
     this.importPreviewName = parsed[0];
@@ -2096,7 +2097,7 @@ export struct CustomKeyOverlay {
     await CustomKeyStore.saveKeys(this.keys);
     this.showImportConfirm = false;
     this.showSharePanel = false;
-    promptAction.showToast({
+    ToastQueue.show({
       message: `已导入 "${this.importPreviewName}" (${this.importPreviewCount} 个按键)`,
       duration: 2000,
     });
@@ -2113,7 +2114,7 @@ export struct CustomKeyOverlay {
     await CustomKeyStore.saveKeys(this.keys);
     this.showImportConfirm = false;
     this.showSharePanel = false;
-    promptAction.showToast({
+    ToastQueue.show({
       message: `已合并 ${this.importPreviewCount} 个按键`,
       duration: 2000,
     });

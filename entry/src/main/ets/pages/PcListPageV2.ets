@@ -33,6 +33,7 @@ import { PcListTitleBar, TitleBarConfig } from '../components/PcListTitleBar';
 import { PinDialogView, AboutDialogView } from '../components/dialogs/PcListDialogs';
 import { SettingsBackupService } from '../service/SettingsBackupService';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { ToastQueue } from '../utils/ToastQueue';
 
 /**
  * 电脑列表页面 (现代化版本)
@@ -752,17 +753,17 @@ struct PcListPageV2 {
   // 刷新壁纸（获取新的随机图片）- 由摇一摇触发
   private async refreshWallpaper(): Promise<void> {
     try {
-      promptAction.showToast({ message: '正在刷新壁纸...' });
+      ToastQueue.show({ message: '正在刷新壁纸...' });
       const localPath = await this.backgroundUtil.downloadToLocalCache(true); // forceRefresh = true
       if (localPath) {
         // 添加时间戳参数强制 Image 组件重新加载（绕过缓存）
         this.backgroundImageUrl = 'file://' + localPath + '?t=' + Date.now();
-        promptAction.showToast({ message: '壁纸已刷新' });
+        ToastQueue.show({ message: '壁纸已刷新' });
       } else {
-        promptAction.showToast({ message: '刷新失败' });
+        ToastQueue.show({ message: '刷新失败' });
       }
     } catch (err) {
-      promptAction.showToast({ message: '刷新壁纸失败' });
+      ToastQueue.show({ message: '刷新壁纸失败' });
     }
   }
   
@@ -778,18 +779,18 @@ struct PcListPageV2 {
     if (result === SaveButtonOnClickResult.SUCCESS) {
       const localPath = this.backgroundUtil.getLocalCachePath();
       if (!localPath) {
-        promptAction.showToast({ message: '没有可下载的壁纸' });
+        ToastQueue.show({ message: '没有可下载的壁纸' });
         return;
       }
       
       try {
         const context = getContext(this) as common.UIAbilityContext;
-        promptAction.showToast({ message: '正在保存壁纸...' });
+        ToastQueue.show({ message: '正在保存壁纸...' });
         
         // 读取本地缓存文件
         const stat = fileIo.statSync(localPath);
         if (!stat || stat.size === 0) {
-          promptAction.showToast({ message: '缓存图片不存在' });
+          ToastQueue.show({ message: '缓存图片不存在' });
           return;
         }
         
@@ -807,15 +808,15 @@ struct PcListPageV2 {
         await fileIo.write(photoFile.fd, imageData);
         await fileIo.close(photoFile.fd);
         
-        promptAction.showToast({ message: '壁纸已保存到相册' });
+        ToastQueue.show({ message: '壁纸已保存到相册' });
       } catch (err) {
         console.error('下载壁纸失败', err);
         const e = err as BusinessError;
-        promptAction.showToast({ message: `保存失败: ${e.message || '未知错误'}` });
+        ToastQueue.show({ message: `保存失败: ${e.message || '未知错误'}` });
       }
     } else if (result === SaveButtonOnClickResult.TEMPORARY_AUTHORIZATION_FAILED) {
       console.error('保存授权失败', error);
-      promptAction.showToast({ message: '保存授权失败' });
+      ToastQueue.show({ message: '保存授权失败' });
     }
   };
 
@@ -837,7 +838,7 @@ struct PcListPageV2 {
   private async scanAndImportKeys(): Promise<void> {
     const result = await QrShareService.scanQrCode();
     if (!result) {
-      promptAction.showToast({ message: '扫码取消或失败', duration: 1500 });
+      ToastQueue.show({ message: '扫码取消或失败', duration: 1500 });
       return;
     }
 
@@ -851,7 +852,7 @@ struct PcListPageV2 {
 
     const parsed = await QrShareService.deserialize(trimmed);
     if (!parsed) {
-      promptAction.showToast({ message: '无法识别的二维码内容', duration: 2000 });
+      ToastQueue.show({ message: '无法识别的二维码内容', duration: 2000 });
       return;
     }
     const name = parsed[0];
@@ -867,11 +868,11 @@ struct PcListPageV2 {
       onSelect: async (option: OptionItem) => {
         if (option.value === 'replace') {
           await CustomKeyStore.saveKeys(keys);
-          promptAction.showToast({ message: `已导入 "${name}" (${keys.length} 个按键)`, duration: 2000 });
+          ToastQueue.show({ message: `已导入 "${name}" (${keys.length} 个按键)`, duration: 2000 });
         } else {
           const existing = await CustomKeyStore.getKeys();
           await CustomKeyStore.saveKeys(existing.concat(keys));
-          promptAction.showToast({ message: `已合并 ${keys.length} 个按键`, duration: 2000 });
+          ToastQueue.show({ message: `已合并 ${keys.length} 个按键`, duration: 2000 });
         }
       }
     };
@@ -904,12 +905,12 @@ struct PcListPageV2 {
     const serverName = params.get('name') ?? host;
 
     if (!host || !pin) {
-      promptAction.showToast({ message: '二维码缺少必要信息', duration: 2000 });
+      ToastQueue.show({ message: '二维码缺少必要信息', duration: 2000 });
       return;
     }
 
     const address = portStr ? `${host}:${portStr}` : host;
-    promptAction.showToast({ message: `正在连接 ${serverName}...`, duration: 2000 });
+    ToastQueue.show({ message: `正在连接 ${serverName}...`, duration: 2000 });
 
     try {
       // 1. 添加电脑
@@ -917,12 +918,12 @@ struct PcListPageV2 {
       this.syncViewModelFromManager();
 
       if (computer.pairState === PairState.PAIRED) {
-        promptAction.showToast({ message: `${serverName} 已配对`, duration: 2000 });
+        ToastQueue.show({ message: `${serverName} 已配对`, duration: 2000 });
         return;
       }
 
       // 2. 使用 QR 码中的 PIN 自动配对（服务端已 preset，无需用户输入）
-      promptAction.showToast({ message: `正在与 ${serverName} 配对...`, duration: 2000 });
+      ToastQueue.show({ message: `正在与 ${serverName} 配对...`, duration: 2000 });
       const context = getContext() as common.UIAbilityContext;
       const pairingManager = new PairingManager(
         selectBestAddress(computer), computer.uuid, context, computer.httpPort
@@ -940,17 +941,17 @@ struct PcListPageV2 {
           pairName: result.pairName || ''
         });
         this.syncViewModelFromManager();
-        promptAction.showToast({ message: `已成功配对 ${serverName}！` });
+        ToastQueue.show({ message: `已成功配对 ${serverName}！` });
         router.pushUrl({ url: 'pages/AppListPageV2', params: { computerId: computer.uuid } });
       } else if (result.state === PMPairState.PIN_WRONG) {
-        promptAction.showToast({ message: '二维码已过期，请在 Sunshine 重新生成', duration: 3000 });
+        ToastQueue.show({ message: '二维码已过期，请在 Sunshine 重新生成', duration: 3000 });
       } else if (result.state === PMPairState.ALREADY_IN_PROGRESS) {
-        promptAction.showToast({ message: '另一个设备正在配对中', duration: 2000 });
+        ToastQueue.show({ message: '另一个设备正在配对中', duration: 2000 });
       } else {
-        promptAction.showToast({ message: `配对失败: ${result.state}`, duration: 2000 });
+        ToastQueue.show({ message: `配对失败: ${result.state}`, duration: 2000 });
       }
     } catch (error) {
-      promptAction.showToast({ message: `连接失败: ${(error as Error).message}`, duration: 3000 });
+      ToastQueue.show({ message: `连接失败: ${(error as Error).message}`, duration: 3000 });
     }
   }
 
@@ -959,10 +960,10 @@ struct PcListPageV2 {
     try {
       await this.computerManager.scanNetwork();
       this.syncViewModelFromManager();
-      promptAction.showToast({ message: '扫描完成' });
+      ToastQueue.show({ message: '扫描完成' });
     } catch (err) {
       console.error('扫描失败', err);
-      promptAction.showToast({ message: '扫描失败' });
+      ToastQueue.show({ message: '扫描失败' });
     } finally {
       this.isScanning = false;
     }

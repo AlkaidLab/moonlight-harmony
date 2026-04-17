@@ -18,6 +18,7 @@ import { display, window, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { StreamViewModel } from '../../viewmodel/StreamViewModel';
 import { GamepadManager } from '../input/GamepadManager';
+import { ToastQueue } from '../../utils/ToastQueue';
 
 import {
   MoonBridge,
@@ -509,7 +510,7 @@ export class StreamInputHandler {
     });
     if (result !== 0) {
       console.warn(`StreamPage: 按键拦截器启动失败 (${result})，手柄 Home 键可能被系统劫持`);
-      promptAction.showToast({
+      ToastQueue.show({
         message: '按键反劫持启动失败：蓝牙手柄 Home 键可能导致退出（需系统级签名）',
         duration: 3500
       });
@@ -618,7 +619,7 @@ export class StreamInputHandler {
     this.lastEscUpTime = now;
     this.hasShownEscHint = true;
     const keyLabel = this.getMenuKeyLabel();
-    promptAction.showToast({ message: `再次按 ${keyLabel} 打开串流菜单`, duration: 1500 });
+    ToastQueue.show({ message: `再次按 ${keyLabel} 打开串流菜单`, duration: 1500 });
     return false;
   }
 
@@ -663,7 +664,7 @@ export class StreamInputHandler {
     session.setAudioVolume(this.appVolume);
 
     const percent = Math.round(this.appVolume * 100);
-    promptAction.showToast({
+    ToastQueue.show({
       message: `音量 ${percent}%`,
       duration: 1000
     });

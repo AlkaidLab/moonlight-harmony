@@ -20,6 +20,7 @@ import { promptAction } from '@kit.ArkUI';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { ToastQueue } from '../utils/ToastQueue';
 
 /**
  * 背景图组件属性
@@ -55,7 +56,7 @@ export struct BackgroundImage {
     if (result === SaveButtonOnClickResult.SUCCESS) {
       try {
         const context = getContext(this) as common.UIAbilityContext;
-        promptAction.showToast({ message: '正在保存图片...' });
+        ToastQueue.show({ message: '正在保存图片...' });
         
         // 获取图片数据
         let imageData = this.backgroundUtil.getCachedImageData();
@@ -65,7 +66,7 @@ export struct BackgroundImage {
         }
         
         if (!imageData) {
-          promptAction.showToast({ message: '图片数据获取失败' });
+          ToastQueue.show({ message: '图片数据获取失败' });
           this.showSaveDialog = false;
           return;
         }
@@ -79,15 +80,15 @@ export struct BackgroundImage {
         await fileIo.write(file.fd, imageData);
         await fileIo.close(file.fd);
         
-        promptAction.showToast({ message: '图片已保存到相册' });
+        ToastQueue.show({ message: '图片已保存到相册' });
       } catch (err) {
         console.error('BackgroundImage: 保存图片失败', err);
         const e = err as BusinessError;
-        promptAction.showToast({ message: `保存失败: ${e.message || '未知错误'}` });
+        ToastQueue.show({ message: `保存失败: ${e.message || '未知错误'}` });
       }
     } else if (result === SaveButtonOnClickResult.TEMPORARY_AUTHORIZATION_FAILED) {
       console.error('BackgroundImage: 授权失败', error);
-      promptAction.showToast({ message: '保存授权失败' });
+      ToastQueue.show({ message: '保存授权失败' });
     }
     this.showSaveDialog = false;
   };
