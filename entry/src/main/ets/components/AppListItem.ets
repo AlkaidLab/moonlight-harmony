@@ -58,24 +58,6 @@ export struct AppListItem {
   }
 
   @Builder
-  private HdrBadge() {
-    Text('HDR')
-      .fontSize(9)
-      .fontWeight(FontWeight.Bold)
-      .fontColor(AppColors.Accent)
-      .borderWidth(1)
-      .borderColor(AppColors.Accent)
-      .borderRadius(AppSizes.RadiusSmall)
-      .padding({
-        left: AppSpacing.XSmall,
-        right: AppSpacing.XSmall,
-        top: 1,
-        bottom: 1
-      })
-      .margin({ left: AppSpacing.Small })
-  }
-
-  @Builder
   private RunningIndicator() {
     Row() {
       Circle()
@@ -126,19 +108,13 @@ export struct AppListItem {
       this.Icon()
 
       Column() {
-        Row() {
-          Text(this.app.name)
-            .fontSize(AppSizes.FontBody)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(AppColors.TextPrimary)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-          if (this.app.isHdrSupported) {
-            this.HdrBadge()
-          }
-        }
-        .width('100%')
+        Text(this.app.name)
+          .fontSize(AppSizes.FontBody)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppColors.TextPrimary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
         if (this.app.isRunning) {
           this.RunningIndicator()
         }
