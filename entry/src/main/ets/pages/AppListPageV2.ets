@@ -76,6 +76,16 @@ struct AppListPageV2 {
     }
   }
 
+  private async toggleLayoutMode(): Promise<void> {
+    const next: boolean = !this.smallIconMode;
+    this.smallIconMode = next;
+    try {
+      await PreferencesUtil.put(SettingsKeys.SMALL_ICON_MODE, next);
+    } catch (_) {
+      // 持久化失败时保留内存态，下次进入会回退到上一设置
+    }
+  }
+
   /**
    * 带重试的应用列表获取（服务端可能因瞬时原因返回空列表）
    */
@@ -506,6 +516,24 @@ struct AppListPageV2 {
         });
       })
       
+      // 布局切换按钮（网格 / 列表）
+      Button({ type: ButtonType.Circle }) {
+        SymbolGlyph($r(this.smallIconMode ? 'sys.symbol.list_bullet' : 'sys.symbol.square_grid_2x2'))
+          .fontSize(20)
+          .fontColor([AppColors.Accent])
+      }
+      .width(40)
+      .height(40)
+      .backgroundColor(AppColors.Surface)
+      .borderWidth(1)
+      .borderColor(AppColors.CardBorder)
+      .margin({ left: AppSpacing.Small })
+      .onClick(() => {
+        animateTo({ duration: AppAnimation.Normal, curve: AppAnimation.EaseOut }, () => {
+          this.toggleLayoutMode();
+        });
+      })
+
       // 刷新按钮 - 霓虹风格
       Button({ type: ButtonType.Circle }) {
         if (this.isRefreshing) {
