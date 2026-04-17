@@ -804,13 +804,27 @@ struct AppListPageV2 {
       .clip(true)
 
       Column() {
-        Text(app.name)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(AppColors.TextPrimary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
+        Row() {
+          Text(app.name)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(AppColors.TextPrimary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          if (app.isHdrSupported) {
+            Text('HDR')
+              .fontSize(9)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColors.Accent)
+              .borderWidth(1)
+              .borderColor(AppColors.Accent)
+              .borderRadius(4)
+              .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+              .margin({ left: 6 })
+          }
+        }
+        .width('100%')
         if (app.isRunning) {
           Row() {
             Circle()
@@ -827,7 +841,35 @@ struct AppListPageV2 {
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
-      .margin({ left: AppSpacing.Medium })
+      .margin({ left: AppSpacing.Medium, right: AppSpacing.Small })
+
+      // 快捷操作区
+      Row({ space: AppSpacing.Small }) {
+        if (app.isRunning) {
+          // 停止（退出）
+          this.ListActionButton($r('sys.symbol.xmark'), AppColors.Error, () => {
+            this.quitApp();
+          })
+        } else {
+          // 启动
+          this.ListActionButton($r('sys.symbol.play_fill'), AppColors.Accent, () => {
+            this.launchApp(app);
+          })
+        }
+        // 更多
+        Button({ type: ButtonType.Circle }) {
+          Text('⋯')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(AppColors.TextSecondary)
+        }
+        .width(36)
+        .height(36)
+        .backgroundColor(AppColors.Surface)
+        .borderWidth(1)
+        .borderColor(AppColors.CardBorder)
+        .onClick(() => this.openAppMenu(app))
+      }
     }
     .width('100%')
     .padding({
@@ -840,6 +882,23 @@ struct AppListPageV2 {
     .borderRadius(AppSizes.RadiusMedium)
     .borderWidth(app.isRunning ? 2 : 1)
     .borderColor(app.isRunning ? AppColors.Online : AppColors.CardBorder)
+  }
+
+  @Builder
+  ListActionButton(icon: Resource, color: ResourceColor, onTap: () => void) {
+    Button({ type: ButtonType.Circle }) {
+      SymbolGlyph(icon)
+        .fontSize(16)
+        .fontColor([color])
+    }
+    .width(36)
+    .height(36)
+    .backgroundColor(AppColors.Surface)
+    .borderWidth(1)
+    .borderColor(AppColors.CardBorder)
+    .onClick(() => {
+      onTap();
+    })
   }
 
   @Builder
