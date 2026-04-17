@@ -18,9 +18,9 @@
  *   - 父层使用 hitTestReady 延迟刷新命中测试区域
  */
 
-import { componentSnapshot, display, LengthMetrics, promptAction, window } from '@kit.ArkUI';
-import {
+import { componentSnapshot, display, LengthMetrics, window } from '@kit.ArkUI';
 import { ToastQueue } from '../utils/ToastQueue';
+import {
   CustomKeyDef,
   KeyAction,
   KeyBehavior,

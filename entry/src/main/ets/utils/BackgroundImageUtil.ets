@@ -13,7 +13,7 @@
  * 提供背景图加载和管理功能
  */
 import { PreferencesUtil } from './PreferencesUtil';
-import { display, promptAction } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { http } from '@kit.NetworkKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { image } from '@kit.ImageKit';

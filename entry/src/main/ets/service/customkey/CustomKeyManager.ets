@@ -26,8 +26,8 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../streaming/MoonBridge';
 import { CustomKeyStore } from './CustomKeyStore';
-import {
 import { ToastQueue } from '../../utils/ToastQueue';
+import {
   KeyAction,
   KeyboardAction,
   MouseButtonAction,

@@ -8,7 +8,7 @@
  * (at your option) any later version.
  */
 
-import { router, promptAction } from '@kit.ArkUI';
+import { router } from '@kit.ArkUI';
 import { ComputerManager } from '../service/ComputerManager';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { parseAddressAndPort } from '../utils/NetHelper';

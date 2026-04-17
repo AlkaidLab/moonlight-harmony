@@ -25,8 +25,8 @@ import { GyroAssistService, GYRO_ACTIVATION_ALWAYS, GYRO_ACTIVATION_LT, GYRO_ACT
 import { SettingsKeys } from '../../service/SettingsService';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService } from '../../service/input/DeviceSensorService';
-import {
 import { ToastQueue } from '../../utils/ToastQueue';
+import {
   OV_ACCENT_BLUE, OV_ACCENT_PINK, OV_ACCENT_RED,
   OV_TEXT_BRIGHT, OV_TEXT_MEDIUM, OV_TEXT_DIM, OV_TEXT_FAINT, OV_TEXT_WHITE, OV_TEXT_ULTRA,
   OV_BG_TRACK, OV_BG_CARD_LIGHT, OV_BG_CARD_LIGHTER, OV_BG_DIVIDER,

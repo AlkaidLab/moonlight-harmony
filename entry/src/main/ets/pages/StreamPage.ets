@@ -13,7 +13,7 @@
  * 
  * 显示远程游戏画面并处理用户输入
  */
-import { router, promptAction, LengthMetrics } from '@kit.ArkUI';
+import { router, LengthMetrics } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { displaySync } from '@kit.ArkGraphics2D';

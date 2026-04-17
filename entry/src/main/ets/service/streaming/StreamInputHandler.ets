@@ -14,7 +14,7 @@
  * 封装键盘、鼠标、滚轮、音量键、按键拦截器等所有输入处理逻辑，
  * 从 StreamPage 中解耦以降低单文件复杂度。
  */
-import { display, window, promptAction } from '@kit.ArkUI';
+import { display, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { StreamViewModel } from '../../viewmodel/StreamViewModel';
 import { GamepadManager } from '../input/GamepadManager';

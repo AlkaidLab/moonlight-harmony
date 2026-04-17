@@ -17,8 +17,8 @@
 import { promptAction } from '@kit.ArkUI';
 import { batteryInfo } from '@kit.BasicServicesKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './dialogs/OptionPickerDialog';
-import {
 import { ToastQueue } from '../utils/ToastQueue';
+import {
   PerformanceItem, PerformanceData, PerfLabels, PerfSymbols,
   getMoonPhaseIcon, formatDataRate, getDecoderString,
   getPacketLossColor, getLatencyColor, getBatteryColor, getBatteryIcon,

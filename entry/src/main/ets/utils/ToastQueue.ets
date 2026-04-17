@@ -17,6 +17,11 @@ import { promptAction } from '@kit.ArkUI';
  * 用法：ToastQueue.show({ message: 'xxx', duration: 2000 });
  */
 
+export interface ToastOptions {
+  message: string;
+  duration?: number;
+}
+
 interface QueuedToast {
   message: string;
   duration: number;
@@ -30,7 +35,7 @@ export class ToastQueue {
   /** 队列最大长度，防止极端场景无限堆积 */
   private static readonly MAX_QUEUE: number = 8;
 
-  static show(options: { message: string; duration?: number }): void {
+  static show(options: ToastOptions): void {
     const message = options.message;
     if (!message) return;
     const duration = options.duration && options.duration > 0 ? options.duration : 1500;
