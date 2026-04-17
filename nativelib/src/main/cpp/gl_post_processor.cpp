@@ -1203,14 +1203,15 @@ void GLPostProcessor::ProcessFrame() {
     unsigned int swapOk = g_api.eglSwapBuffers(eglDisplay_, eglSurface_);
     if (!swapOk) {
         swapConsecutiveFailures_++;
-        OH_LOG_WARN(LOG_APP, "eglSwapBuffers failed (consecutive=%{public}u/%{public}u)",
-                    swapConsecutiveFailures_, kSwapFailureThreshold);
-        if (swapConsecutiveFailures_ >= kSwapFailureThreshold && activeUpscale_ != UpscaleMode::OFF) {
-            // 关闭活动超分以降低管线复杂度，保留基础后处理管线（OES → 屏幕）
+        OH_LOG_WARN(LOG_APP, "eglSwapBuffers failed (consecutive=%{public}u/%{public}u, frame=%{public}u)",
+                    swapConsecutiveFailures_, kSwapFailureThreshold, frameCount_);
+        // 宽限期内忽略 swap 失败（Surface 初始化阶段可能短暂失败）
+        if (frameCount_ >= kSwapGracePeriodFrames &&
+            swapConsecutiveFailures_ >= kSwapFailureThreshold &&
+            activeUpscale_ != UpscaleMode::OFF) {
+            // 关闭活动超分以降低管线复杂度，保留 FBO 管线（不释放，方便恢复）
             // 仅修改 activeUpscale_，不修改 upscaleMode_（允许用户后续恢复）
-            OH_LOG_ERROR(LOG_APP, "eglSwapBuffers consecutive failures, disabling active upscale");
-            ReleaseUpscale();
-            ReleaseFBO();
+            OH_LOG_ERROR(LOG_APP, "eglSwapBuffers consecutive failures after grace period, disabling active upscale");
             activeUpscale_ = UpscaleMode::OFF;
             swapConsecutiveFailures_ = 0;
         }
