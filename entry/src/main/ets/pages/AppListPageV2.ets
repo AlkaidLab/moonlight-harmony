@@ -993,20 +993,6 @@ struct AppListPageV2 {
       });
     }
     
-    // HDR 选项（如果支持）
-    if (app.isHdrSupported && !app.isRunning) {
-      const hdrKey = `action_${actionIndex++}`;
-      actionMap.set(hdrKey, () => {
-        // TODO: 以 HDR 模式启动
-        this.doLaunchApp(app);
-      });
-      options.push({
-        title: '启动 (HDR)',
-        subtitle: '以 HDR 模式启动',
-        value: hdrKey
-      });
-    }
-    
     // 查看详情
     const detailsKey = `action_${actionIndex++}`;
     actionMap.set(detailsKey, () => this.showAppDetails(app));
