@@ -377,14 +377,13 @@ napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info) {
     return result;
 }
 
-napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info) {
-    OH_LOG_INFO(LOG_APP, "MoonBridge_StopConnection");
-    
+// 执行停止连接的核心清理逻辑
+static void DoStopConnectionCleanup() {
     LiStopConnection();
-    
+
     // 重置 HDR 配置 - 在会话完全结束时重置
     VideoDecoderInstance::ResetHdrConfig();
-    
+
     // 清理服务器信息
     if (g_serverInfo.address) {
         free((void*)g_serverInfo.address);
@@ -402,7 +401,11 @@ napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info) {
         free((void*)g_serverInfo.rtspSessionUrl);
         g_serverInfo.rtspSessionUrl = nullptr;
     }
-    
+}
+
+napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info) {
+    OH_LOG_INFO(LOG_APP, "MoonBridge_StopConnection");
+    DoStopConnectionCleanup();
     return GetUndefined(env);
 }
 

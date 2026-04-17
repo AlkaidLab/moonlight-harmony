@@ -13,6 +13,7 @@ import { display } from '@kit.ArkUI';
 import { ComputerManager } from '../service/ComputerManager';
 import { NvHttp, AppEntry, DisplayInfo } from '../service/streaming/NvHttp';
 import { AppCard } from '../components/AppCard';
+import { AppListItem } from '../components/AppListItem';
 import { AppListViewModel, ObservableApp } from '../viewmodel/AppViewModel';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { common } from '@kit.AbilityKit';
@@ -20,6 +21,7 @@ import { PairState, selectBestAddress } from '../model/ComputerInfo';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { ToastQueue } from '../utils/ToastQueue';
+import { UiSettings } from '../service/SettingsService';
 
 interface AppListPageParams {
   computerId: string;
@@ -54,6 +56,7 @@ struct AppListPageV2 {
   @State selectedDisplayIndex: number = -1; // -1 表示使用默认显示器
   @State useVirtualDisplay: boolean = false; // 是否使用虚拟显示器
   @State supportsDisplayApi: boolean = false; // 服务器是否支持 displays API
+  @StorageLink('smallIconMode') smallIconMode: boolean = false; // UI偏好：小图标/列表模式
   
   private computerId: string = '';
   private computerManager: ComputerManager = ComputerManager.getInstance();
@@ -403,7 +406,11 @@ struct AppListPageV2 {
                 this.SearchBar()
               }
               
-              this.AppGrid()
+              if (this.smallIconMode) {
+                this.AppList()
+              } else {
+                this.AppGrid()
+              }
             }
             .width('100%')
             .height('100%')
@@ -489,6 +496,24 @@ struct AppListPageV2 {
         });
       })
       
+      // 布局切换按钮（网格 / 列表）
+      Button({ type: ButtonType.Circle }) {
+        SymbolGlyph($r(this.smallIconMode ? 'sys.symbol.list_bullet' : 'sys.symbol.square_grid_2x2'))
+          .fontSize(20)
+          .fontColor([AppColors.Accent])
+      }
+      .width(40)
+      .height(40)
+      .backgroundColor(AppColors.Surface)
+      .borderWidth(1)
+      .borderColor(AppColors.CardBorder)
+      .margin({ left: AppSpacing.Small })
+      .onClick(() => {
+        animateTo({ duration: AppAnimation.Normal, curve: AppAnimation.EaseOut }, () => {
+          UiSettings.toggleSmallIconMode();
+        });
+      })
+
       // 刷新按钮 - 霓虹风格
       Button({ type: ButtonType.Circle }) {
         if (this.isRefreshing) {
@@ -731,6 +756,46 @@ struct AppListPageV2 {
   }
 
   @Builder
+  AppList() {
+    Refresh({ refreshing: $$this.isRefreshing }) {
+      List({ space: AppSpacing.Small }) {
+        ForEach(this.viewModel.filteredApps, (app: ObservableApp) => {
+          ListItem() {
+            AppListItem({
+              app: app,
+              onTap: () => {
+                this.updateBackgroundForApp(app);
+                this.launchApp(app);
+              },
+              onLongPress: () => this.openAppMenu(app),
+              onPrimaryAction: () => {
+                if (app.isRunning) {
+                  this.quitApp();
+                } else {
+                  this.updateBackgroundForApp(app);
+                  this.launchApp(app);
+                }
+              },
+              onMoreAction: () => this.openAppMenu(app)
+            })
+          }
+        }, (app: ObservableApp) => `${app.id}_${app.isRunning}_${app.iconLoaded}`)
+      }
+      .width('100%')
+      .height('100%')
+      .padding({
+        left: AppSpacing.Large,
+        right: AppSpacing.Large,
+        top: AppSpacing.Small,
+        bottom: AppSpacing.XLarge
+      })
+      .scrollBar(BarState.Auto)
+      .edgeEffect(EdgeEffect.Spring)
+    }
+    .onRefreshing(() => this.refreshApps())
+  }
+
+  @Builder
   AppGrid() {
     Refresh({ refreshing: $$this.isRefreshing }) {
       // 横向滚动的布局（参考Android项目的布局方式）
@@ -925,20 +990,6 @@ struct AppListPageV2 {
         title: '启动',
         subtitle: '开始串流',
         value: launchKey
-      });
-    }
-    
-    // HDR 选项（如果支持）
-    if (app.isHdrSupported && !app.isRunning) {
-      const hdrKey = `action_${actionIndex++}`;
-      actionMap.set(hdrKey, () => {
-        // TODO: 以 HDR 模式启动
-        this.doLaunchApp(app);
-      });
-      options.push({
-        title: '启动 (HDR)',
-        subtitle: '以 HDR 模式启动',
-        value: hdrKey
       });
     }
     

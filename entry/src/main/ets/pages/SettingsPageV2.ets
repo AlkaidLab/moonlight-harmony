@@ -24,7 +24,7 @@ import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { InputInterceptorService } from '../service/input/InputInterceptorService';
 import { GamepadManager } from '../service/input/GamepadManager';
-import { SettingsKeys } from '../service/SettingsService';
+import { SettingsKeys, UiSettings } from '../service/SettingsService';
 import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
 import { DevKeyVerifier } from '../utils/DevKeyVerifier';
@@ -244,7 +244,7 @@ struct SettingsPageV2 {
   @State autoBackupEnabled: boolean = false;
   
   // UI 设置
-  @State smallIconMode: boolean = false;
+  @StorageLink('smallIconMode') smallIconMode: boolean = false;
   @State backgroundImageType: string = 'default';
   @State backgroundImageUrl: string = '';
   @State resumeStream: boolean = false;
@@ -568,7 +568,7 @@ struct SettingsPageV2 {
       this.enableBackgroundTask = await this.loadBoolean(SettingsKeys.ENABLE_BACKGROUND_TASK, true);
       
       // UI 设置
-      this.smallIconMode = await this.loadBoolean(SettingsKeys.SMALL_ICON_MODE, false);
+      // smallIconMode 由 UiSettings 统一管理（由 EntryAbility 在启动时预加载到 AppStorage）
       this.backgroundImageType = await PreferencesUtil.get<string>(SettingsKeys.BACKGROUND_IMAGE_TYPE, 'default');
       this.backgroundImageUrl = await PreferencesUtil.get<string>(SettingsKeys.BACKGROUND_IMAGE_URL, '');
       this.resumeStream = await this.loadBoolean(SettingsKeys.RESUME_STREAM, false);
@@ -2074,8 +2074,7 @@ struct SettingsPageV2 {
                 type: 'toggle',
                 value: this.smallIconMode,
                 action: () => {
-                  this.smallIconMode = !this.smallIconMode;
-                  this.saveSetting(SettingsKeys.SMALL_ICON_MODE, this.smallIconMode);
+                  UiSettings.setSmallIconMode(!this.smallIconMode);
                 }
               },
               {
