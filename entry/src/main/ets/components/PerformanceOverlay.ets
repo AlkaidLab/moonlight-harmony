@@ -242,15 +242,10 @@ export struct PerformanceOverlay {
         }
       }
 
-      // 延迟查询超分引擎（解码器初始化后才有值）
-      if (this.perfUpscaleMode === 0) {
-        // 优先从 ViewModel 缓存读取（连接成功时已查询），避免 NAPI 调用异常
-        const mode = this.viewModel.activeUpscaleMode > 0
-          ? this.viewModel.activeUpscaleMode
-          : session.getActiveUpscaleMode();
-        if (mode > 0) {
-          this.perfUpscaleMode = mode;
-        }
+      // 每次都查超分引擎状态（native 侧熔断关闭超分时 UI 能立即同步）
+      const mode = session.getActiveUpscaleMode();
+      if (mode !== this.perfUpscaleMode) {
+        this.perfUpscaleMode = mode;
       }
     } catch (e) {
       // 防止 native 调用异常中断定时器回调
