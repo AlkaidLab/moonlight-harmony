@@ -47,14 +47,13 @@ napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info);
 
 /**
  * 停止连接
+ *
+ * 注意：必须在主线程调用。曾尝试用 napi_async_work 放到工作线程以缓解模拟器
+ * eglDestroySurface 慢导致的 ANR，但会和 moonlight-common-c 内部的终止回调
+ * （Connection.c 中 ML_CONNECTION_TERMINATION_CALLBACK 也会调用 LiStopConnection）
+ * 产生 pthread_join 竞态，导致 SEGV。真机上同步执行正常，仅模拟器偶发卡顿。
  */
 napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info);
-
-/**
- * 停止连接（异步版本，返回 Promise）
- * 将重量级的 LiStopConnection / GL 析构移到工作线程执行，避免主线程 ANR
- */
-napi_value MoonBridge_StopConnectionAsync(napi_env env, napi_callback_info info);
 
 /**
  * 中断连接
