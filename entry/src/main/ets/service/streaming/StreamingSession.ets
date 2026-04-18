@@ -11,7 +11,7 @@
 import { StreamConfig, HdrMode, getSurroundAudioInfo } from '../../model/StreamConfig';
 import { InputEvent, InputType, ControllerButtonEvent, ControllerAxisEvent, ControllerButton } from '../../model/InputEvent';
 import { ComputerManager } from '../ComputerManager';
-import { ComputerInfo, selectBestAddress } from '../../model/ComputerInfo';
+import { ComputerInfo } from '../../model/ComputerInfo';
 import { NvHttp, LaunchConfig } from './NvHttp';
 import { CryptoUtil } from '../../utils/CryptoUtil';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
@@ -329,6 +329,7 @@ export class StreamingSession {
   private serverAppVersion: string = '';
   private serverGfeVersion: string = '';
   private serverCodecModeSupport: number = 0;
+  private cachedCurrentGame: number = 0;
   private rtspSessionUrl: string = '';
 
   // ---------------------------------------------------------------------------
@@ -475,7 +476,7 @@ export class StreamingSession {
       if (this.stageProgressCallback) {
         this.stageProgressCallback(0, '正在启动应用...');
       }
-      const cachedCurrentGame = await this.getCachedCurrentGame();
+      const cachedCurrentGame = this.getCachedCurrentGame();
       await this.launchApp(cachedCurrentGame);
       await this.connectToServer();
       this.applyPostConnectionSettings(config);
@@ -873,9 +874,7 @@ export class StreamingSession {
     const computerResult = computerManager.getComputer(computerId);
     if (!computerResult) throw new Error(`找不到电脑: ${computerId}`);
     this.computer = computerResult;
-    this.nvHttp = new NvHttp(
-      selectBestAddress(this.computer), this.computer.serverCert, context, this.computer.httpPort
-    );
+    this.nvHttp = NvHttp.fromComputer(this.computer, context);
   }
 
   private async fetchServerInfo(): Promise<void> {
@@ -884,18 +883,17 @@ export class StreamingSession {
     this.serverAppVersion = serverInfo.appVersion || '';
     this.serverGfeVersion = serverInfo.gfeVersion || '';
     this.serverCodecModeSupport = serverInfo.serverCodecModeSupport || 0;
+    this.cachedCurrentGame = serverInfo.currentGame || 0;
     console.info(`服务器版本: app=${this.serverAppVersion}, gfe=${this.serverGfeVersion}, ` +
-      `codecSupport=${this.serverCodecModeSupport}`);
+      `codecSupport=${this.serverCodecModeSupport}, currentGame=${this.cachedCurrentGame}`);
 
     if (this.stageProgressCallback) {
       this.stageProgressCallback(0, '正在初始化...');
     }
   }
 
-  private async getCachedCurrentGame(): Promise<number> {
-    if (!this.nvHttp) return 0;
-    const serverInfo = await this.nvHttp.getServerInfo();
-    return serverInfo.currentGame || 0;
+  private getCachedCurrentGame(): number {
+    return this.cachedCurrentGame;
   }
 
   private generateInputKey(): void {

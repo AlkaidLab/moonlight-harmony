@@ -45,7 +45,6 @@ import { CustomKeyManager, CustomKeyManagerHost, SessionLike } from '../service/
 import { CustomKeyStore } from '../service/customkey/CustomKeyStore';
 import { PanZoomHandler, PanZoomState, PointXY } from '../service/input/PanZoomHandler';
 import { AiKeyService, AiKeyRecommendation } from '../service/AiKeyService';
-import { selectBestAddress } from '../model/ComputerInfo';
 import { ComputerManager } from '../service/ComputerManager';
 import { ToastQueue } from '../utils/ToastQueue';
 
@@ -252,7 +251,7 @@ struct StreamPage {
       try {
         const computer = ComputerManager.getInstance().getComputer(this.computerId);
         if (computer) {
-          const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert, this.context, computer.httpPort);
+          const nvHttp = NvHttp.fromComputer(computer, this.context);
           this.aiKeyService = new AiKeyService(nvHttp);
 
           // 异步探测 AI 可用性，延迟显示避免与手柄连接等 toast 冲突

@@ -42,6 +42,7 @@ interface SavedComputerData {
   runningGameId: number;
   boxArtUrl?: string;
   httpPort?: number;
+  httpsPort?: number;
 }
 
 /** 持久化存储键名 */
@@ -91,7 +92,8 @@ export class ComputerPersistence {
       },
       isNvidiaSoftware: computer.isNvidiaSoftware,
       boxArtUrl: computer.boxArtUrl,
-      httpPort: computer.httpPort
+      httpPort: computer.httpPort,
+      httpsPort: computer.httpsPort
     };
   }
 
@@ -129,7 +131,8 @@ export class ComputerPersistence {
           pairState: pairStateStr,
           runningGameId: computer.runningGameId,
           boxArtUrl: computer.boxArtUrl || '',
-          httpPort: computer.httpPort
+          httpPort: computer.httpPort,
+          httpsPort: computer.httpsPort
         };
         computerList.push(savedData);
       });
@@ -198,6 +201,7 @@ export class ComputerPersistence {
           .setRunningGameId(saved.runningGameId || 0)
           .setBoxArtUrl(saved.boxArtUrl || '')
           .setHttpPort(httpPort)
+          .setHttpsPort(saved.httpsPort)
           .build();
 
         computers.set(computer.uuid, computer);

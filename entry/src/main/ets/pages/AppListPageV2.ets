@@ -17,7 +17,7 @@ import { AppListItem } from '../components/AppListItem';
 import { AppListViewModel, ObservableApp } from '../viewmodel/AppViewModel';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { common } from '@kit.AbilityKit';
-import { PairState, selectBestAddress } from '../model/ComputerInfo';
+import { PairState } from '../model/ComputerInfo';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { ToastQueue } from '../utils/ToastQueue';
@@ -57,16 +57,24 @@ struct AppListPageV2 {
   @State useVirtualDisplay: boolean = false; // 是否使用虚拟显示器
   @State supportsDisplayApi: boolean = false; // 服务器是否支持 displays API
   @StorageLink('smallIconMode') smallIconMode: boolean = false; // UI偏好：小图标/列表模式
+  // 加载失败 - 错误态
+  @State loadError: string = '';
+  @State retryCountdown: number = 0;
   
   private computerId: string = '';
   private computerManager: ComputerManager = ComputerManager.getInstance();
   private nvHttp: NvHttp | null = null;
   private searchDebounceTimer: number = -1; // 搜索防抖定时器
   private iconPollIntervalId: number = -1; // 图标轮询定时器ID
+  private retryTimerId: number = -1; // 自动重试定时器
+  private loadAttempt: number = 0; // 当前加载尝试次数
 
   // 空列表重试常量（匹配 Android EMPTY_LIST_THRESHOLD）
   private static readonly EMPTY_LIST_THRESHOLD = 3;
   private static readonly EMPTY_LIST_RETRY_DELAY_MS = 2000;
+  // 自动重试常量
+  private static readonly MAX_AUTO_RETRY = 2;
+  private static readonly RETRY_COUNTDOWN_SEC = 3;
 
   /**
    * 带重试的应用列表获取（服务端可能因瞬时原因返回空列表）
@@ -149,6 +157,8 @@ struct AppListPageV2 {
       clearTimeout(this.searchDebounceTimer);
       this.searchDebounceTimer = -1;
     }
+    // 清理自动重试定时器
+    this.cancelRetryTimer();
   }
 
   onBackPress(): boolean {
@@ -217,6 +227,8 @@ struct AppListPageV2 {
 
   private async loadApps(): Promise<void> {
     this.isLoading = true;
+    this.loadError = '';
+    this.cancelRetryTimer();
     
     try {
       const computer = this.computerManager.getComputer(this.computerId);
@@ -235,7 +247,7 @@ struct AppListPageV2 {
       this.computerName = computer.name;
       
       const context = getContext(this) as common.UIAbilityContext;
-      this.nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert, context, computer.httpPort);
+      this.nvHttp = NvHttp.fromComputer(computer, context);
 
       const apps = await this.getAppListWithRetry('加载');
 
@@ -246,11 +258,64 @@ struct AppListPageV2 {
       this.calculateOptimalRowCount();
       this.loadDisplays();
       this.waitForFirstAppIcon();
+      // 成功 → 重置计数
+      this.loadAttempt = 0;
     } catch (err) {
-      ToastQueue.show({ message: `加载失败: ${(err as Error).message}` });
+      const errMsg = (err as Error).message || '未知错误';
+      this.loadError = this.diagnoseError(errMsg);
+      this.loadAttempt++;
+      // 自动重试（最多 MAX_AUTO_RETRY 次）
+      if (this.loadAttempt <= AppListPageV2.MAX_AUTO_RETRY) {
+        this.startRetryCountdown();
+      }
     } finally {
       this.isLoading = false;
     }
+  }
+
+  /**
+   * 诊断错误类型，返回用户友好的描述
+   */
+  private diagnoseError(errMsg: string): string {
+    const lower = errMsg.toLowerCase();
+    if (lower.includes('timeout') || lower.includes('timed out')) {
+      return '连接超时，主机可能已离线或网络不可达';
+    }
+    if (lower.includes('refused') || lower.includes('unreachable')) {
+      return '连接被拒绝，主机可能未运行串流服务';
+    }
+    if (lower.includes('401') || lower.includes('not authorized') || lower.includes('certificate')) {
+      return '配对已失效，请返回重新配对';
+    }
+    if (lower.includes('dns') || lower.includes('getaddrinfo')) {
+      return '无法解析主机地址，请检查网络连接';
+    }
+    return `加载失败: ${errMsg}`;
+  }
+
+  /**
+   * 启动自动重试倒计时
+   */
+  private startRetryCountdown(): void {
+    this.retryCountdown = AppListPageV2.RETRY_COUNTDOWN_SEC;
+    this.retryTimerId = setInterval(() => {
+      this.retryCountdown--;
+      if (this.retryCountdown <= 0) {
+        this.cancelRetryTimer();
+        this.loadApps();
+      }
+    }, 1000);
+  }
+
+  /**
+   * 取消自动重试定时器
+   */
+  private cancelRetryTimer(): void {
+    if (this.retryTimerId !== -1) {
+      clearInterval(this.retryTimerId);
+      this.retryTimerId = -1;
+    }
+    this.retryCountdown = 0;
   }
   
   /**
@@ -397,6 +462,8 @@ struct AppListPageV2 {
         Stack() {
           if (this.isLoading) {
             this.LoadingState()
+          } else if (this.loadError.length > 0 && this.viewModel.isEmpty) {
+            this.ErrorState()
           } else if (this.viewModel.isEmpty) {
             this.EmptyState()
           } else {
@@ -749,6 +816,75 @@ struct AppListPageV2 {
           .margin({ top: AppSpacing.Medium })
           .onClick(() => this.refreshApps())
       }
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  ErrorState() {
+    Column() {
+      // 错误图标
+      Column() {
+        Image($r('app.media.ic_error'))
+          .width(36)
+          .height(36)
+          .fillColor(AppColors.TextSecondary)
+      }
+      .width(72)
+      .height(72)
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(36)
+      .backgroundColor(AppColors.CardBackground)
+      .borderWidth(1)
+      .borderColor(AppColors.CardBorder)
+
+      // 错误描述
+      Text(this.loadError)
+        .fontSize(AppSizes.FontBody)
+        .fontColor(AppColors.TextSecondary)
+        .textAlign(TextAlign.Center)
+        .maxLines(3)
+        .margin({ top: AppSpacing.Large })
+        .padding({ left: AppSpacing.XLarge, right: AppSpacing.XLarge })
+
+      // 自动重试倒计时
+      if (this.retryCountdown > 0) {
+        Text(`${this.retryCountdown}s 后自动重试...`)
+          .fontSize(AppSizes.FontCaption)
+          .fontColor(AppColors.TextTertiary)
+          .margin({ top: AppSpacing.Small })
+      }
+
+      // 操作按钮
+      Row({ space: AppSpacing.Medium }) {
+        Button('重试')
+          .type(ButtonType.Normal)
+          .fontSize(AppSizes.FontCaption)
+          .fontColor(AppColors.Primary)
+          .backgroundColor(AppColors.Surface)
+          .borderWidth(1)
+          .borderColor(AppColors.Primary)
+          .borderRadius(AppSizes.RadiusSmall)
+          .height(36)
+          .onClick(() => {
+            this.loadAttempt = 0;
+            this.loadApps();
+          })
+
+        Button('返回')
+          .type(ButtonType.Normal)
+          .fontSize(AppSizes.FontCaption)
+          .fontColor(AppColors.TextSecondary)
+          .backgroundColor(AppColors.Surface)
+          .borderWidth(1)
+          .borderColor(AppColors.CardBorder)
+          .borderRadius(AppSizes.RadiusSmall)
+          .height(36)
+          .onClick(() => router.back())
+      }
+      .margin({ top: AppSpacing.Large })
     }
     .width('100%')
     .height('100%')

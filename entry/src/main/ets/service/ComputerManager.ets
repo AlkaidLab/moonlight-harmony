@@ -177,7 +177,7 @@ export class ComputerManager {
    */
   private async verifyOrPollComputer(computer: ComputerInfo, address: string): Promise<void> {
     try {
-      const nvHttp = new NvHttp(address, computer.serverCert, this.context || undefined, computer.httpPort);
+      const nvHttp = NvHttp.fromAddress(address, computer, this.context || undefined);
       const serverInfo = await nvHttp.getServerInfo();
 
       // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
@@ -365,6 +365,9 @@ export class ComputerManager {
         if (httpPort) {
           existing.httpPort = httpPort;
         }
+        if (serverInfo.httpsPort > 0) {
+          existing.httpsPort = serverInfo.httpsPort;
+        }
         // 关键：保留 serverCert 和 pairState（如已配对）
         // 只有服务器明确返回 paired=true 时才更新配对状态
         if (serverInfo.paired) {
@@ -398,6 +401,7 @@ export class ComputerManager {
         .setPairState(serverInfo.paired ? PairState.PAIRED : PairState.NOT_PAIRED)
         .setRunningGameId(serverInfo.currentGame || 0)
         .setHttpPort(httpPort) // 保存自定义端口
+        .setHttpsPort(serverInfo.httpsPort > 0 ? serverInfo.httpsPort : undefined)
         .build();
 
       this.computers.set(computer.uuid, computer);
@@ -635,7 +639,7 @@ export class ComputerManager {
    */
   private async tryPollAddress(address: string, computer: ComputerInfo): Promise<PollResult> {
     try {
-      const nvHttp = new NvHttp(address, computer.serverCert, this.context || undefined, computer.httpPort);
+      const nvHttp = NvHttp.fromAddress(address, computer, this.context || undefined);
       const serverInfo = await nvHttp.getServerInfo();
       return { address, serverInfo };
     } catch (err) {
@@ -734,6 +738,11 @@ export class ComputerManager {
     target.address = result.address;
     target.runningGameId = info.currentGame;
     
+    // 缓存 HTTPS 端口（对齐 Android ComputerDetails.update()）
+    if (info.httpsPort > 0) {
+      target.httpsPort = info.httpsPort;
+    }
+    
     // 更新 MAC 地址
     if (info.macAddress && info.macAddress !== '00:00:00:00:00:00') {
       target.macAddress = info.macAddress;
@@ -830,7 +839,7 @@ export class ComputerManager {
   private async loadFirstAppBoxArt(computer: ComputerInfo, address: string): Promise<void> {
     try {
       // 使用保存的自定义端口（如果有）
-      const nvHttp = new NvHttp(address, computer.serverCert, this.context || undefined, computer.httpPort);
+      const nvHttp = NvHttp.fromAddress(address, computer, this.context || undefined);
       const apps = await nvHttp.getAppList();
       if (apps.length > 0) {
         // 下载并缓存第一个应用的 boxArt，使用本地文件路径
@@ -950,7 +959,7 @@ export class ComputerManager {
       throw new Error('电脑不存在');
     }
 
-    const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert, this.context || undefined, computer.httpPort);
+    const nvHttp = NvHttp.fromComputer(computer, this.context || undefined);
     await nvHttp.unpair();
     
     computer.pairState = PairState.NOT_PAIRED;
