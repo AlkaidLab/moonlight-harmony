@@ -85,3 +85,53 @@ export function doKeyHaptic(level: string): void {
     vibrator.startVibration({ type: 'time', duration }, { id: 0, usage: 'touch' });
   } catch (_e) { /* ignore */ }
 }
+
+// =============================================================================
+// 按钮图标预设（Phosphor Bold SVG）
+// =============================================================================
+
+/** 按钮图标预设项 */
+export interface ButtonIconPreset {
+  /** 存储标识 */
+  key: string;
+  /** 显示名称 */
+  label: string;
+  /** 资源引用 */
+  resource: Resource;
+}
+
+/** 按钮图标预设列表 */
+export const BUTTON_ICON_PRESETS: ButtonIconPreset[] = [
+  { key: 'crosshair', label: '准星', resource: $r('app.media.ic_crosshair') },
+  { key: 'sword', label: '武器', resource: $r('app.media.ic_sword') },
+  { key: 'shield', label: '盾牌', resource: $r('app.media.ic_shield') },
+  { key: 'heart', label: '血量', resource: $r('app.media.ic_heart') },
+  { key: 'star', label: '技能', resource: $r('app.media.ic_star') },
+  { key: 'lightning', label: '闪电', resource: $r('app.media.ic_lightning') },
+  { key: 'eye', label: '视野', resource: $r('app.media.ic_eye') },
+  { key: 'map_pin', label: '标记', resource: $r('app.media.ic_map_pin') },
+  { key: 'bag', label: '背包', resource: $r('app.media.ic_bag') },
+  { key: 'crown', label: '王冠', resource: $r('app.media.ic_crown') },
+  { key: 'gamepad', label: '手柄', resource: $r('app.media.ic_gamepad') },
+  { key: 'keyboard', label: '键盘', resource: $r('app.media.ic_keyboard') },
+  { key: 'mouse', label: '鼠标', resource: $r('app.media.ic_mouse') },
+  { key: 'touch', label: '触控', resource: $r('app.media.ic_touch') },
+  { key: 'settings', label: '设置', resource: $r('app.media.ic_settings') },
+  { key: 'play', label: '播放', resource: $r('app.media.ic_play') },
+  { key: 'refresh', label: '刷新', resource: $r('app.media.ic_refresh') },
+  { key: 'arrow_clockwise', label: '循环', resource: $r('app.media.ic_arrow_clockwise') },
+  { key: 'list', label: '列表', resource: $r('app.media.ic_list') },
+  { key: 'visibility_off', label: '隐藏', resource: $r('app.media.ic_visibility_off') },
+  { key: 'lightbulb', label: '灯泡', resource: $r('app.media.ic_lightbulb') },
+  { key: 'scan', label: '扫描', resource: $r('app.media.ic_scan') },
+  { key: 'microphone', label: '麦克风', resource: $r('app.media.ic_microphone') },
+  { key: 'audio', label: '音频', resource: $r('app.media.ic_audio') },
+];
+
+/** 按 key 查找图标资源（返回 undefined 表示不是预设图标） */
+export function getButtonIconResource(key: string): Resource | undefined {
+  for (const preset of BUTTON_ICON_PRESETS) {
+    if (preset.key === key) return preset.resource;
+  }
+  return undefined;
+}

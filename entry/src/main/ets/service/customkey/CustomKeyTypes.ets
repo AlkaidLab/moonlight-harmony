@@ -254,6 +254,8 @@ export interface CustomKeyDef {
   haptic: string;
   /** 按键组 ID — 同一 groupId 的按键在编辑模式下整组拖动 */
   groupId?: string;
+  /** 图标（emoji 或文字图标），优先于 label 渲染 */
+  icon?: string;
 }
 
 // =============================================================================
@@ -300,6 +302,7 @@ export function cloneKeyDef(src: CustomKeyDef): CustomKeyDef {
     borderWidth: src.borderWidth ?? 1,
     haptic: src.haptic ?? 'light',
     groupId: src.groupId,
+    icon: src.icon,
   };
   return dst;
 }
@@ -348,6 +351,7 @@ export function createDefaultKeyDef(partial?: Partial<CustomKeyDef>): CustomKeyD
     if (partial.borderWidth !== undefined) def.borderWidth = partial.borderWidth;
     if (partial.haptic !== undefined) def.haptic = partial.haptic;
     if (partial.groupId !== undefined) def.groupId = partial.groupId;
+    if (partial.icon !== undefined) def.icon = partial.icon;
   }
   return def;
 }
