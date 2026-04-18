@@ -2857,7 +2857,7 @@ export struct CustomKeyOverlay {
             Row({ space: 6 }) {
               Text('图标').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(36)
               if (this.getSelectedKey()?.icon && getButtonIconResource(this.getSelectedKey()!.icon!)) {
-                Image(getButtonIconResource(this.getSelectedKey()!.icon!))
+                Image(getButtonIconResource(this.getSelectedKey()!.icon!)!)
                   .width(22).height(22)
                   .fillColor(OV_TEXT_WHITE)
                   .objectFit(ImageFit.Contain)

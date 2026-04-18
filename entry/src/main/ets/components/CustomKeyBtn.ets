@@ -89,7 +89,7 @@ export struct CustomKeyBtn {
   NormalBtn() {
     Stack() {
       if (this.getIconRes()) {
-        Image(this.getIconRes())
+        Image(this.getIconRes()!)
           .width(this.keyDef.fontSize + 6)
           .height(this.keyDef.fontSize + 6)
           .fillColor(this.fgColor)
@@ -160,7 +160,7 @@ export struct CustomKeyBtn {
 
       // 标签/图标
       if (this.getIconRes()) {
-        Image(this.getIconRes())
+        Image(this.getIconRes()!)
           .width(this.keyDef.fontSize + 6)
           .height(this.keyDef.fontSize + 6)
           .fillColor(this.fgColor)
