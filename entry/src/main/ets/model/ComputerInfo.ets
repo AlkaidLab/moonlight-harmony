@@ -45,22 +45,31 @@ export interface AddressHolder {
   preferredAddress?: string;
 }
 
-export interface ComputerInfo extends AddressHolder {
+/**
+ * NvHttp 连接所需的最小主机信息
+ * ComputerInfo 和 ObservableComputer 均满足此接口
+ */
+export interface NvHttpHost extends AddressHolder {
+  serverCert: string;
+  /** 自定义 HTTP 端口（默认 47989） */
+  httpPort?: number;
+  /** 缓存的 HTTPS 端口（轮询/连接时从 serverinfo 获取） */
+  httpsPort?: number;
+}
+
+export interface ComputerInfo extends NvHttpHost {
   uuid: string;
   name: string;
   macAddress: string;
   state: ComputerState;
   pairState: PairState;
   runningGameId: number;
-  serverCert: string;
   pairName: string;  // 配对时服务器返回的名称
   gpuType: string;
   maxSupportedResolution: Resolution;
   isNvidiaSoftware: boolean;
   // 主机头像 - 第一个应用的 boxArt URL
   boxArtUrl?: string;
-  // 自定义 HTTP 端口（默认 47989）
-  httpPort?: number;
 }
 
 /**
@@ -157,7 +166,8 @@ export class ComputerInfoBuilder {
       maxSupportedResolution: { width: 1920, height: 1080 },
       isNvidiaSoftware: false,
       boxArtUrl: '',
-      httpPort: undefined
+      httpPort: undefined,
+      httpsPort: undefined
     };
   }
 
@@ -256,6 +266,11 @@ export class ComputerInfoBuilder {
     return this;
   }
 
+  setHttpsPort(port: number | undefined): ComputerInfoBuilder {
+    this.info.httpsPort = port;
+    return this;
+  }
+
   build(): ComputerInfo {
     const result: ComputerInfo = {
       uuid: this.info.uuid,
@@ -279,7 +294,8 @@ export class ComputerInfoBuilder {
       },
       isNvidiaSoftware: this.info.isNvidiaSoftware,
       boxArtUrl: this.info.boxArtUrl,
-      httpPort: this.info.httpPort
+      httpPort: this.info.httpPort,
+      httpsPort: this.info.httpsPort
     };
     return result;
   }

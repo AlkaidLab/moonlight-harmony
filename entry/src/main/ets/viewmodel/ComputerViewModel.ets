@@ -8,7 +8,7 @@
  * (at your option) any later version.
  */
 
-import { ComputerInfo, ComputerState, PairState, AddressHolder } from '../model/ComputerInfo';
+import { ComputerInfo, ComputerState, PairState, NvHttpHost } from '../model/ComputerInfo';
 import { ComputerManager } from '../service/ComputerManager';
 
 /**
@@ -17,7 +17,7 @@ import { ComputerManager } from '../service/ComputerManager';
  * 注意：避免在 @Observed 类中使用 getter，会导致性能问题
  */
 @Observed
-export class ObservableComputer implements AddressHolder {
+export class ObservableComputer implements NvHttpHost {
   uuid: string = '';
   name: string = '';
   address: string = '';
@@ -38,6 +38,8 @@ export class ObservableComputer implements AddressHolder {
   boxArtUrl: string = '';
   // 自定义 HTTP 端口
   httpPort: number | undefined = undefined;
+  // 缓存的 HTTPS 端口
+  httpsPort: number | undefined = undefined;
   
   // 缓存的状态值 - 避免使用 getter 引起的性能问题
   isOnline: boolean = false;
@@ -70,6 +72,7 @@ export class ObservableComputer implements AddressHolder {
     this.isNvidiaSoftware = info.isNvidiaSoftware;
     this.boxArtUrl = info.boxArtUrl || '';
     this.httpPort = info.httpPort;
+    this.httpsPort = info.httpsPort;
     
     // 更新缓存的计算值
     this.updateCachedValues();
@@ -112,7 +115,8 @@ export class ObservableComputer implements AddressHolder {
       maxSupportedResolution: { width: 1920, height: 1080 },
       isNvidiaSoftware: this.isNvidiaSoftware,
       boxArtUrl: this.boxArtUrl,
-      httpPort: this.httpPort
+      httpPort: this.httpPort,
+      httpsPort: this.httpsPort
     };
     return info;
   }

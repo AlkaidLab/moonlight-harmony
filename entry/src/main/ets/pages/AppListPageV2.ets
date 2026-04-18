@@ -17,7 +17,7 @@ import { AppListItem } from '../components/AppListItem';
 import { AppListViewModel, ObservableApp } from '../viewmodel/AppViewModel';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { common } from '@kit.AbilityKit';
-import { PairState, selectBestAddress } from '../model/ComputerInfo';
+import { PairState } from '../model/ComputerInfo';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { ToastQueue } from '../utils/ToastQueue';
@@ -235,7 +235,7 @@ struct AppListPageV2 {
       this.computerName = computer.name;
       
       const context = getContext(this) as common.UIAbilityContext;
-      this.nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert, context, computer.httpPort);
+      this.nvHttp = NvHttp.fromComputer(computer, context);
 
       const apps = await this.getAppListWithRetry('加载');
 

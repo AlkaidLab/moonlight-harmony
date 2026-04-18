@@ -85,7 +85,7 @@ export class PcListActions {
         return;
       }
       const context = getContext() as common.UIAbilityContext;
-      const nvHttp = new NvHttp(selectBestAddress(computerInfo), computerInfo.serverCert, context, computerInfo.httpPort);
+      const nvHttp = NvHttp.fromComputer(computerInfo, context);
       const apps = await nvHttp.getAppList();
       if (computer.runningGameId > 0) {
         const runningApp = apps.find(a => a.id === computer.runningGameId);
@@ -200,7 +200,7 @@ export class PcListActions {
           try {
             ToastQueue.show({ message: '正在退出游戏...' });
             const context = getContext() as common.UIAbilityContext;
-            const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, context, computer.httpPort);
+            const nvHttp = NvHttp.fromComputer(computer, context);
             const success = await nvHttp.quitApp();
             if (success) {
               ToastQueue.show({ message: '游戏已退出' });
@@ -236,7 +236,7 @@ export class PcListActions {
           try {
             ToastQueue.show({ message: '正在发送休眠命令...' });
             const context = getContext() as common.UIAbilityContext;
-            const nvHttp = new NvHttp(selectBestAddress(computer), computer.serverCert || null, context, computer.httpPort);
+            const nvHttp = NvHttp.fromComputer(computer, context);
             const success = await nvHttp.pcSleep();
             if (success) {
               ToastQueue.show({ message: '睡眠命令已发送' });
@@ -260,7 +260,7 @@ export class PcListActions {
       const computerInfo = this.computerManager.getComputer(computer.uuid);
       if (computerInfo) {
         const context = getContext() as common.UIAbilityContext;
-        const nvHttp = new NvHttp(selectBestAddress(computerInfo), computerInfo.serverCert, context, computerInfo.httpPort);
+        const nvHttp = NvHttp.fromComputer(computerInfo, context);
         const apps = await nvHttp.getAppList();
         const runningApp = apps.find(a => a.id === computer.runningGameId);
         const cmdList = runningApp?.cmdList;
@@ -361,7 +361,7 @@ export class PcListActions {
       for (let i = 0; i < TEST_ROUNDS; i++) {
         const startMs = Date.now();
         try {
-          const nvHttp = new NvHttp(addr, computerInfo.serverCert, undefined, computerInfo.httpPort);
+          const nvHttp = NvHttp.fromAddress(addr, computerInfo);
           const info = await nvHttp.getServerInfo();
           const elapsed = Date.now() - startMs;
           roundLatencies.push(elapsed);
