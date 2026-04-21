@@ -60,6 +60,7 @@ import {
   EDIT_BORDER_COLOR, SELECT_BORDER_COLOR, EDIT_TOOLBAR_HEIGHT, DRAG_THRESHOLD,
   BG_COLOR_PRESETS, TEXT_COLOR_PRESETS, PRESSED_COLOR_PRESETS, HAPTIC_OPTIONS,
   doKeyHaptic,
+  BUTTON_ICON_PRESETS, ButtonIconPreset, getButtonIconResource,
 } from './CustomKeyConstants';
 import {
   ColorTheme, COLOR_THEMES, RGBPixel,
@@ -99,6 +100,12 @@ export struct CustomKeyOverlay {
   @State private segmentPickerIndex: number = -1;
   /** 分区按键选择器的分类索引 */
   @State private segmentPickerCategoryIdx: number = 0;
+  /** 属性面板：是否展开 action 选择器 */
+  @State private propActionPickerOpen: boolean = false;
+  /** 属性面板：action 选择器的分类索引 */
+  @State private propActionCategoryIdx: number = 0;
+  /** 属性面板：是否展开图标选择器 */
+  @State private propIconPickerOpen: boolean = false;
 
   /**
    * 命中测试刷新触发器（参照 VirtualControllerOverlay）。
@@ -420,6 +427,8 @@ export struct CustomKeyOverlay {
                 onLongPress: (keyId: string): void => {
                   this.selectedKeyId = keyId;
                   this.showPropertyPanel = true;
+                  this.propActionPickerOpen = false;
+                  this.propIconPickerOpen = false;
                 },
               })
             }
@@ -626,7 +635,7 @@ export struct CustomKeyOverlay {
           .borderRadius(16).backgroundColor('#6098C0')
           .justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
           .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-          .onClick(() => { if (this.selectedKeyId) { this.showPropertyPanel = true; } })
+          .onClick(() => { if (this.selectedKeyId) { this.showPropertyPanel = true; this.propActionPickerOpen = false; this.propIconPickerOpen = false; } })
 
           Row({ space: 4 }) {
             Text('⊞')
@@ -1260,6 +1269,8 @@ export struct CustomKeyOverlay {
       case 'haptic': updated.haptic = value as string; break;
       case 'layer': updated.layer = value as number; break;
       case 'borderWidth': updated.borderWidth = value as number; break;
+      case 'icon': updated.icon = (value as string) || undefined; break;
+      case 'action': updated.action = value as KeyAction; break;
       default: break;
     }
     const newKeys: CustomKeyDef[] = this.keys.slice();
@@ -2822,7 +2833,7 @@ export struct CustomKeyOverlay {
         Text('✕').fontSize(14).fontColor('#99FFFFFF')
           .width(28).height(28).textAlign(TextAlign.Center)
           .borderRadius(14).backgroundColor(OV_BG_TRACK)
-          .onClick(() => { this.showPropertyPanel = false; })
+          .onClick(() => { this.showPropertyPanel = false; this.propActionPickerOpen = false; this.propIconPickerOpen = false; })
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 8 })
@@ -2838,6 +2849,68 @@ export struct CustomKeyOverlay {
               .borderRadius(8).padding({ left: 8, right: 8 })
               .maxLength(8)
               .onChange((value: string) => { this.updateSelectedKeyProp('label', value); })
+          }
+          .width('100%').padding({ left: 4, right: 4 })
+
+          // 图标编辑（可选，设置后优先于标签显示）
+          Column({ space: 4 }) {
+            Row({ space: 6 }) {
+              Text('图标').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(36)
+              if (this.getSelectedKey()?.icon && getButtonIconResource(this.getSelectedKey()!.icon!)) {
+                Image(getButtonIconResource(this.getSelectedKey()!.icon!)!)
+                  .width(22).height(22)
+                  .fillColor(OV_TEXT_WHITE)
+                  .objectFit(ImageFit.Contain)
+                  .padding(3)
+                  .borderRadius(6).backgroundColor(OV_BG_CARD_LIGHTER)
+              }
+              Text(this.getSelectedKey()?.icon ? '更换' : '设置图标')
+                .fontSize(11).fontColor(OV_ACCENT_BLUE).fontWeight(FontWeight.Medium)
+                .padding({ left: 8, right: 8 }).height(28)
+                .borderRadius(14).backgroundColor('#15FFFFFF')
+                .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
+                .onClick(() => { this.propIconPickerOpen = !this.propIconPickerOpen; })
+              if (this.getSelectedKey()?.icon) {
+                Text('清除')
+                  .fontSize(11).fontColor('#FF8080').fontWeight(FontWeight.Medium)
+                  .padding({ left: 8, right: 8 }).height(28)
+                  .borderRadius(14).backgroundColor('#15FFFFFF')
+                  .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
+                  .onClick(() => { this.updateSelectedKeyProp('icon', ''); })
+              }
+            }
+            .width('100%')
+
+            if (this.propIconPickerOpen) {
+              this.IconPicker()
+            }
+          }
+          .width('100%').padding({ left: 4, right: 4 })
+
+          // 键值编辑（变更按键绑定的动作）
+          Column({ space: 4 }) {
+            Row() {
+              Text('键值').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(36)
+              Text(getActionDisplayName(this.getSelectedKey()?.action ?? { type: 'keyboard', vk: 0 } as KeyboardAction))
+                .fontSize(12).fontColor(OV_ACCENT_BLUE).fontWeight(FontWeight.Medium)
+                .layoutWeight(1).maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(this.propActionPickerOpen ? '收起' : '更改')
+                .fontSize(11).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+                .padding({ left: 8, right: 8 }).height(28)
+                .borderRadius(14).backgroundColor(OV_BG_TRACK)
+                .border({ width: 1, color: '#20FFFFFF' })
+                .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
+                .onClick(() => {
+                  this.propActionPickerOpen = !this.propActionPickerOpen;
+                  this.propActionCategoryIdx = 0;
+                })
+            }
+            .width('100%')
+
+            if (this.propActionPickerOpen) {
+              this.PropActionPicker()
+            }
           }
           .width('100%').padding({ left: 4, right: 4 })
 
@@ -3222,6 +3295,109 @@ export struct CustomKeyOverlay {
       }
     }
     return [];
+  }
+
+  /** 属性面板用的 action 分类（复用添加面板的分类，排除按键组/数字摇杆等复合类型） */
+  private static readonly PROP_ACTION_CATEGORIES: string[] = [
+    '常用键', '功能键', '鼠标', '手柄', '方向键', '字母', '数字', '符号', '特殊功能', '快捷键',
+  ];
+
+  /** 获取属性面板 action 选择器当前分类下的预设 */
+  private getPropActionPresets(): KeyPreset[] {
+    const catName = CustomKeyOverlay.PROP_ACTION_CATEGORIES[this.propActionCategoryIdx];
+    if (!catName) return [];
+    for (let i = 0; i < KEY_PRESET_CATEGORIES.length; i++) {
+      if (KEY_PRESET_CATEGORIES[i].name === catName) {
+        return KEY_PRESET_CATEGORIES[i].presets;
+      }
+    }
+    return [];
+  }
+
+  /** 属性面板：键值选择器（复用 KEY_PRESET_CATEGORIES） */
+  @Builder
+  PropActionPicker() {
+    Column({ space: 4 }) {
+      // 分类选择
+      Scroll() {
+        Row({ space: 4 }) {
+          ForEach(CustomKeyOverlay.PROP_ACTION_CATEGORIES, (catName: string, catIdx?: number) => {
+            Text(catName)
+              .fontSize(10)
+              .fontColor(this.propActionCategoryIdx === (catIdx ?? 0) ? OV_TEXT_WHITE : OV_TEXT_DIM)
+              .fontWeight(FontWeight.Medium)
+              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+              .borderRadius(10)
+              .backgroundColor(this.propActionCategoryIdx === (catIdx ?? 0) ? OV_ACCENT_BLUE : '#15FFFFFF')
+              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
+              .onClick(() => { this.propActionCategoryIdx = catIdx ?? 0; })
+          }, (catName: string) => catName)
+        }
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('100%')
+
+      // 按键列表
+      Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(4), cross: LengthMetrics.vp(4) } }) {
+        ForEach(this.getPropActionPresets(), (preset: KeyPreset) => {
+          Text(preset.label)
+            .fontSize(10).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .borderRadius(8)
+            .backgroundColor(OV_BG_TRACK)
+            .border({ width: 1, color: '#20FFFFFF' })
+            .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+            .onClick(() => {
+              this.updateSelectedKeyProp('action', preset.action);
+              this.propActionPickerOpen = false;
+            })
+        }, (preset: KeyPreset) => `prop_${preset.label}_${preset.action.type}`)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(6)
+    .backgroundColor('#15FFFFFF')
+    .borderRadius(6)
+  }
+
+  /** 属性面板：图标选择器（Phosphor Bold SVG） */
+  @Builder
+  IconPicker() {
+    Column({ space: 4 }) {
+      Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(4), cross: LengthMetrics.vp(4) } }) {
+        ForEach(BUTTON_ICON_PRESETS, (preset: ButtonIconPreset) => {
+          Column() {
+            Image(preset.resource)
+              .width(20).height(20)
+              .fillColor(this.getSelectedKey()?.icon === preset.key ? OV_TEXT_WHITE : '#B0FFFFFF')
+              .objectFit(ImageFit.Contain)
+            Text(preset.label)
+              .fontSize(9).fontColor(this.getSelectedKey()?.icon === preset.key ? OV_TEXT_WHITE : OV_TEXT_DIM)
+              .maxLines(1)
+          }
+          .width(44).height(42)
+          .justifyContent(FlexAlign.Center)
+          .borderRadius(8)
+          .backgroundColor(this.getSelectedKey()?.icon === preset.key ? '#50A8D8EA' : '#15FFFFFF')
+          .border({
+            width: 1,
+            color: this.getSelectedKey()?.icon === preset.key ? '#80A8D8EA' : '#10FFFFFF',
+          })
+          .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+          .onClick(() => {
+            this.updateSelectedKeyProp('icon', preset.key);
+            this.propIconPickerOpen = false;
+          })
+        }, (preset: ButtonIconPreset) => preset.key)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(6)
+    .backgroundColor('#15FFFFFF')
+    .borderRadius(6)
   }
 
   @Builder

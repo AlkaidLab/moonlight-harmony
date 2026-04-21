@@ -29,6 +29,7 @@ import {
   DRAG_THRESHOLD,
   SnapResult,
   doKeyHaptic,
+  getButtonIconResource,
 } from './CustomKeyConstants';
 
 @Component
@@ -74,46 +75,66 @@ export struct CustomKeyBtn {
     }
   }
 
+  /** 获取 SVG 图标资源（缓存友好：仅在有 icon 时查找） */
+  private getIconRes(): Resource | undefined {
+    return this.keyDef.icon ? getButtonIconResource(this.keyDef.icon) : undefined;
+  }
+
+  /** 按下/切换态的前景色 */
+  private get fgColor(): ResourceColor {
+    return this.isPressed || this.isToggled ? OV_TEXT_WHITE : this.keyDef.textColor;
+  }
+
   @Builder
   NormalBtn() {
-    Text(this.keyDef.label)
-      .fontSize(this.keyDef.fontSize)
-      .fontColor(this.isPressed || this.isToggled ? OV_TEXT_WHITE : this.keyDef.textColor)
-      .fontWeight(FontWeight.Bold)
-      .textAlign(TextAlign.Center)
-      .width(this.keyDef.width)
-      .height(this.keyDef.height)
-      .borderRadius(this.keyDef.shape === 'circle'
-        ? this.keyDef.width / 2
-        : this.keyDef.borderRadius)
-      .backgroundColor(this.isPressed || this.isToggled
-        ? this.keyDef.pressedColor
-        : this.keyDef.bgColor)
-      .border({
-        width: this.editMode ? 2 : (this.keyDef.borderWidth ?? 1),
-        color: this.editMode
-          ? (this.isSelected ? SELECT_BORDER_COLOR : EDIT_BORDER_COLOR)
-          : (this.isPressed || this.isToggled
-              ? this.keyDef.pressedColor
-              : this.keyDef.normalColor),
-        style: this.editMode ? BorderStyle.Dashed : BorderStyle.Solid,
-      })
-      .shadow({
-        radius: this.isPressed || this.isToggled ? 8 : 3,
-        color: this.isPressed || this.isToggled ? '#40A8D8EA' : '#20000000',
-        offsetY: 1,
-      })
-      .opacity(this.keyDef.opacity / 100)
-      .translate({ x: this.dragOffsetX, y: this.dragOffsetY })
-      .hitTestBehavior(HitTestMode.Block)
-      .onTouch((event: TouchEvent) => {
-        event.stopPropagation();
-        if (this.editMode) {
-          this.handleEditTouch(event);
-        } else {
-          this.handlePlayTouch(event);
-        }
-      })
+    Stack() {
+      if (this.getIconRes()) {
+        Image(this.getIconRes()!)
+          .width(this.keyDef.fontSize + 6)
+          .height(this.keyDef.fontSize + 6)
+          .fillColor(this.fgColor)
+          .objectFit(ImageFit.Contain)
+      } else {
+        Text(this.keyDef.label)
+          .fontSize(this.keyDef.fontSize)
+          .fontColor(this.fgColor)
+          .fontWeight(FontWeight.Bold)
+          .textAlign(TextAlign.Center)
+      }
+    }
+    .width(this.keyDef.width)
+    .height(this.keyDef.height)
+    .borderRadius(this.keyDef.shape === 'circle'
+      ? this.keyDef.width / 2
+      : this.keyDef.borderRadius)
+    .backgroundColor(this.isPressed || this.isToggled
+      ? this.keyDef.pressedColor
+      : this.keyDef.bgColor)
+    .border({
+      width: this.editMode ? 2 : (this.keyDef.borderWidth ?? 1),
+      color: this.editMode
+        ? (this.isSelected ? SELECT_BORDER_COLOR : EDIT_BORDER_COLOR)
+        : (this.isPressed || this.isToggled
+            ? this.keyDef.pressedColor
+            : this.keyDef.normalColor),
+      style: this.editMode ? BorderStyle.Dashed : BorderStyle.Solid,
+    })
+    .shadow({
+      radius: this.isPressed || this.isToggled ? 8 : 3,
+      color: this.isPressed || this.isToggled ? '#40A8D8EA' : '#20000000',
+      offsetY: 1,
+    })
+    .opacity(this.keyDef.opacity / 100)
+    .translate({ x: this.dragOffsetX, y: this.dragOffsetY })
+    .hitTestBehavior(HitTestMode.Block)
+    .onTouch((event: TouchEvent) => {
+      event.stopPropagation();
+      if (this.editMode) {
+        this.handleEditTouch(event);
+      } else {
+        this.handlePlayTouch(event);
+      }
+    })
   }
 
   /** 六边形按键（flat-top 平顶六边形） */
@@ -137,12 +158,20 @@ export struct CustomKeyBtn {
         .width(this.keyDef.width)
         .height(this.keyDef.height)
 
-      // 标签文字
-      Text(this.keyDef.label)
-        .fontSize(this.keyDef.fontSize)
-        .fontColor(this.isPressed || this.isToggled ? OV_TEXT_WHITE : this.keyDef.textColor)
-        .fontWeight(FontWeight.Bold)
-        .textAlign(TextAlign.Center)
+      // 标签/图标
+      if (this.getIconRes()) {
+        Image(this.getIconRes()!)
+          .width(this.keyDef.fontSize + 6)
+          .height(this.keyDef.fontSize + 6)
+          .fillColor(this.fgColor)
+          .objectFit(ImageFit.Contain)
+      } else {
+        Text(this.keyDef.label)
+          .fontSize(this.keyDef.fontSize)
+          .fontColor(this.fgColor)
+          .fontWeight(FontWeight.Bold)
+          .textAlign(TextAlign.Center)
+      }
     }
     .width(this.keyDef.width)
     .height(this.keyDef.height)
