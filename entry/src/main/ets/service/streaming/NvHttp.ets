@@ -375,17 +375,17 @@ export class NvHttp {
       const errMsg = String(err);
       // 仅对「超时 + 自定义 HTTP 端口」做 frp 推算重试
       if (!this.isTimeoutError(errMsg) || this.httpPort === NvHttp.DEFAULT_HTTP_PORT) {
-        throw err;
+        throw err instanceof Error ? err : new Error(errMsg);
       }
       const guessedPort = this.httpPort - 5;
       if (guessedPort <= 0 || guessedPort === this.httpsPort) {
-        throw err;
+        throw err instanceof Error ? err : new Error(errMsg);
       }
       // 避免重复请求：getHttpsBaseUrl 在自定义端口未缓存时已直接返回 httpPort-5，
       // 此时 baseUrl 端口与 guessedPort 相同，重试无意义
       const usedPort = parseAddressAndPort(baseUrl.replace(/^https?:\/\//, '')).port;
       if (usedPort === guessedPort) {
-        throw err;
+        throw err instanceof Error ? err : new Error(errMsg);
       }
       console.info(`NvHttp: ${path} HTTPS 超时，尝试推算端口 ${guessedPort} (httpPort=${this.httpPort} - 5)`);
       const retryBaseUrl = `https://${formatAddressForUrl(this.address)}:${guessedPort}`;
