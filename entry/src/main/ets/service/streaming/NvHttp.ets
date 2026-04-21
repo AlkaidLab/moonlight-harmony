@@ -123,9 +123,19 @@ export class NvHttp {
 
   /**
    * 从指定地址 + 电脑信息创建 NvHttp（用于轮询/测试指定地址）
+   *
+   * 对齐 Android `tryPollIp` 的 `portMatchesActiveAddress` 逻辑：
+   * 仅当指定 address 的端口与 computer.address 缓存端口一致时，才复用缓存的 httpsPort；
+   * 否则置 0，让 NvHttp 在 HTTPS 请求时通过 HTTP serverinfo 重新探测。
+   *
+   * 这避免了切换网络（如 LAN→公网/frp）时使用 stale 的 httpsPort 导致 getAppList 超时。
    */
   static fromAddress(address: string, computer: NvHttpHost, context?: common.UIAbilityContext): NvHttp {
-    return new NvHttp(address, computer.serverCert || null, context, computer.httpPort, computer.httpsPort);
+    const targetPort = parseAddressAndPort(address).port || computer.httpPort || NvHttp.DEFAULT_HTTP_PORT;
+    const activePort = computer.address ? (parseAddressAndPort(computer.address).port || computer.httpPort || NvHttp.DEFAULT_HTTP_PORT) : 0;
+    const portMatches = activePort > 0 && activePort === targetPort;
+    const reusedHttpsPort = portMatches ? computer.httpsPort : undefined;
+    return new NvHttp(address, computer.serverCert || null, context, computer.httpPort, reusedHttpsPort);
   }
 
   constructor(address: string, serverCert: string | null, context?: common.UIAbilityContext, httpPort?: number, httpsPort?: number) {
@@ -330,6 +340,49 @@ export class NvHttp {
   }
 
   /**
+   * 判断错误是否为超时错误
+   */
+  private isTimeoutError(errMsg: string): boolean {
+    const lower = errMsg.toLowerCase();
+    return lower.includes('timeout') || lower.includes('timed out');
+  }
+
+  /**
+   * 执行 HTTPS 请求，超时且使用自定义端口时按 Sunshine 规则（httpPort - 5）重试
+   *
+   * 适用场景：frp/端口转发下，缓存的 httpsPort 是服务端本地端口，与外部转发端口不同
+   * 应用范围：getAppList / launchApp / resumeApp / quitApp 等仅 HTTPS 的请求
+   *
+   * @param path API 路径（如 'applist', 'launch'）
+   * @param query 可选查询参数
+   * @param timeout 超时时间
+   */
+  private async doHttpsRequestWithFrpRetry(path: string, query?: string, timeout: number = NvHttp.READ_TIMEOUT): Promise<string> {
+    const url = this.buildUrl(await this.getHttpsBaseUrl(), path, query);
+    try {
+      return await this.doRequest(url, timeout, true);
+    } catch (err) {
+      const errMsg = String(err);
+      // 仅对「超时 + 自定义 HTTP 端口」做 frp 推算重试
+      if (!this.isTimeoutError(errMsg) || this.httpPort === NvHttp.DEFAULT_HTTP_PORT) {
+        throw err;
+      }
+      const guessedPort = this.httpPort - 5;
+      if (guessedPort <= 0 || guessedPort === this.httpsPort) {
+        throw err;
+      }
+      console.info(`NvHttp: ${path} HTTPS 超时，尝试推算端口 ${guessedPort} (httpPort=${this.httpPort} - 5)`);
+      const retryBaseUrl = `https://${formatAddressForUrl(this.address)}:${guessedPort}`;
+      const retryUrl = this.buildUrl(retryBaseUrl, path, query);
+      const response = await this.doRequest(retryUrl, timeout, true);
+      // 推算端口成功，缓存（后续请求自动使用）
+      this.httpsPort = guessedPort;
+      console.info(`NvHttp: ${path} 推算 HTTPS 端口 ${guessedPort} 连接成功，已缓存`);
+      return response;
+    }
+  }
+
+  /**
    * 获取服务器信息
    * 优先使用 HTTPS（如果已配对），失败后尝试 HTTP
    */
@@ -348,8 +401,8 @@ export class NvHttp {
           // 对齐 Android：SSLHandshakeException+CertificateException 或 HTTP 401 才降级
           // 注意：HarmonyOS 错误为英文消息（即使中文设备），无中文误判风险
           // 排除明确的非证书错误（超时/拒绝/DNS）以避免错误降级
-          const isTimeoutError = errMsg.includes('timeout') || errMsg.includes('timed out');
-          const isTransientError = isTimeoutError ||
+          const timeoutError = this.isTimeoutError(errMsg);
+          const isTransientError = timeoutError ||
             errMsg.includes('refused') ||
             errMsg.includes('unreachable') ||
             errMsg.includes('dns') ||
@@ -366,7 +419,7 @@ export class NvHttp {
             console.warn(`NvHttp: HTTPS serverinfo 证书错误: ${err}, 降级到 HTTP`);
             const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
             response = await this.doRequest(url);
-          } else if (isTimeoutError && this.httpPort !== NvHttp.DEFAULT_HTTP_PORT) {
+          } else if (timeoutError && this.httpPort !== NvHttp.DEFAULT_HTTP_PORT) {
             // frp/端口转发场景：serverInfo 报告的 HTTPS 端口是服务端本地端口，
             // 可能与外部转发端口不同。用 Sunshine 端口规则（httpPort - 5）重试一次
             const guessedPort = this.httpPort - 5;
@@ -414,14 +467,12 @@ export class NvHttp {
 
   /**
    * 获取应用列表（仅 HTTPS，匹配 Android 行为）
-   * HTTPS 端口通过 getHttpsBaseUrl() 自动解析
+   * HTTPS 端口通过 getHttpsBaseUrl() 自动解析；超时时按 frp 规则重试
    */
   async getAppList(): Promise<AppEntry[]> {
-    const url = this.buildUrl(await this.getHttpsBaseUrl(), 'applist');
-    console.info(`NvHttp.getAppList: url=${url}, serverCert=${this.serverCert ? '有(长度' + this.serverCert.length + ')' : '无'}, hasCertFiles=${this.hasCertificateFiles()}`);
-
+    console.info(`NvHttp.getAppList: serverCert=${this.serverCert ? '有(长度' + this.serverCert.length + ')' : '无'}, hasCertFiles=${this.hasCertificateFiles()}`);
     // 与 Android 一致：只使用 HTTPS + 客户端证书，不 fallback 到 HTTP
-    const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+    const response = await this.doHttpsRequestWithFrpRetry('applist');
     console.info(`NvHttp.getAppList: HTTPS 请求成功`);
     return this.parseAppList(response);
   }
