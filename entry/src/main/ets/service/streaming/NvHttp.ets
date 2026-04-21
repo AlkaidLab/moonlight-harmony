@@ -136,8 +136,8 @@ export class NvHttp {
     const activePort = computer.address ? NvHttp.resolveHttpPort(computer.address, httpFallback) : 0;
     const portMatches = activePort > 0 && activePort === targetPort;
     const reusedHttpsPort = portMatches ? computer.httpsPort : undefined;
-    // 必须传 targetPort 而非 computer.httpPort：address 中显式端口（如 frp 'host:30000'）应优先于电脑缓存端口
-    return new NvHttp(address, computer.serverCert || null, context, targetPort, reusedHttpsPort);
+    // 构造函数已优先 address 中解析的端口，传 computer.httpPort 仅作为 address 无端口时的回退
+    return new NvHttp(address, computer.serverCert || null, context, computer.httpPort, reusedHttpsPort);
   }
 
   /** 解析地址中的端口，缺省时回退 fallback */
