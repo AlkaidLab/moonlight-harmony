@@ -150,8 +150,10 @@ export class NvHttp {
     const parsed = parseAddressAndPort(address);
     this.address = parsed.host;
     this.serverCert = serverCert;
-    // 优先使用显式传入的端口，其次使用地址中解析的端口，最后使用默认端口
-    this.httpPort = httpPort || parsed.port || NvHttp.DEFAULT_HTTP_PORT;
+    // 端口优先级：address 中显式端口 > 显式传入 httpPort > 默认
+    // address 端口优先：避免 fromComputer(computer) 中 selectBestAddress 返回 'host:30000'
+    //   被陈旧的 computer.httpPort（如 LAN 47989）覆盖的 bug
+    this.httpPort = parsed.port || httpPort || NvHttp.DEFAULT_HTTP_PORT;
     // 使用缓存的 HTTPS 端口（轮询阶段从 serverinfo 获取）
     this.httpsPort = httpsPort || 0;
     if (context) {
