@@ -136,7 +136,8 @@ export class NvHttp {
     const activePort = computer.address ? NvHttp.resolveHttpPort(computer.address, httpFallback) : 0;
     const portMatches = activePort > 0 && activePort === targetPort;
     const reusedHttpsPort = portMatches ? computer.httpsPort : undefined;
-    return new NvHttp(address, computer.serverCert || null, context, computer.httpPort, reusedHttpsPort);
+    // 必须传 targetPort 而非 computer.httpPort：address 中显式端口（如 frp 'host:30000'）应优先于电脑缓存端口
+    return new NvHttp(address, computer.serverCert || null, context, targetPort, reusedHttpsPort);
   }
 
   /** 解析地址中的端口，缺省时回退 fallback */
@@ -364,7 +365,8 @@ export class NvHttp {
    * @param timeout 超时时间
    */
   private async doHttpsRequestWithFrpRetry(path: string, query?: string, timeout: number = NvHttp.READ_TIMEOUT): Promise<string> {
-    const url = this.buildUrl(await this.getHttpsBaseUrl(), path, query);
+    const baseUrl = await this.getHttpsBaseUrl();
+    const url = this.buildUrl(baseUrl, path, query);
     try {
       return await this.doRequest(url, timeout, true);
     } catch (err) {
@@ -375,6 +377,12 @@ export class NvHttp {
       }
       const guessedPort = this.httpPort - 5;
       if (guessedPort <= 0 || guessedPort === this.httpsPort) {
+        throw err;
+      }
+      // 避免重复请求：getHttpsBaseUrl 在自定义端口未缓存时已直接返回 httpPort-5，
+      // 此时 baseUrl 端口与 guessedPort 相同，重试无意义
+      const usedPort = parseAddressAndPort(baseUrl.replace(/^https?:\/\//, '')).port;
+      if (usedPort === guessedPort) {
         throw err;
       }
       console.info(`NvHttp: ${path} HTTPS 超时，尝试推算端口 ${guessedPort} (httpPort=${this.httpPort} - 5)`);
