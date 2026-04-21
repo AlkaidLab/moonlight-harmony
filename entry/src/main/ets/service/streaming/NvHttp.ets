@@ -131,11 +131,17 @@ export class NvHttp {
    * 这避免了切换网络（如 LAN→公网/frp）时使用 stale 的 httpsPort 导致 getAppList 超时。
    */
   static fromAddress(address: string, computer: NvHttpHost, context?: common.UIAbilityContext): NvHttp {
-    const targetPort = parseAddressAndPort(address).port || computer.httpPort || NvHttp.DEFAULT_HTTP_PORT;
-    const activePort = computer.address ? (parseAddressAndPort(computer.address).port || computer.httpPort || NvHttp.DEFAULT_HTTP_PORT) : 0;
+    const httpFallback = computer.httpPort || NvHttp.DEFAULT_HTTP_PORT;
+    const targetPort = NvHttp.resolveHttpPort(address, httpFallback);
+    const activePort = computer.address ? NvHttp.resolveHttpPort(computer.address, httpFallback) : 0;
     const portMatches = activePort > 0 && activePort === targetPort;
     const reusedHttpsPort = portMatches ? computer.httpsPort : undefined;
     return new NvHttp(address, computer.serverCert || null, context, computer.httpPort, reusedHttpsPort);
+  }
+
+  /** 解析地址中的端口，缺省时回退 fallback */
+  private static resolveHttpPort(address: string, fallback: number): number {
+    return parseAddressAndPort(address).port || fallback;
   }
 
   constructor(address: string, serverCert: string | null, context?: common.UIAbilityContext, httpPort?: number, httpsPort?: number) {
@@ -393,16 +399,15 @@ export class NvHttp {
       // 如果有服务器证书且客户端证书文件存在（已配对），尝试 HTTPS 并使用客户端证书
       if (this.serverCert && this.hasCertificateFiles()) {
         try {
-          console.debug(`NvHttp: getServerInfo 尝试 HTTPS + 客户端证书`);
-          const url = this.buildUrl(await this.getHttpsBaseUrl(), 'serverinfo');
-          response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+          console.debug(`NvHttp: getServerInfo 尝试 HTTPS + 客户端证书（含 frp 重试）`);
+          // 复用通用 helper：超时 + 自定义端口会按 Sunshine 规则 (httpPort - 5) 重试
+          response = await this.doHttpsRequestWithFrpRetry('serverinfo');
         } catch (err) {
           const errMsg = String(err).toLowerCase();
           // 对齐 Android：SSLHandshakeException+CertificateException 或 HTTP 401 才降级
           // 注意：HarmonyOS 错误为英文消息（即使中文设备），无中文误判风险
           // 排除明确的非证书错误（超时/拒绝/DNS）以避免错误降级
-          const timeoutError = this.isTimeoutError(errMsg);
-          const isTransientError = timeoutError ||
+          const isTransientError = this.isTimeoutError(errMsg) ||
             errMsg.includes('refused') ||
             errMsg.includes('unreachable') ||
             errMsg.includes('dns') ||
@@ -419,26 +424,6 @@ export class NvHttp {
             console.warn(`NvHttp: HTTPS serverinfo 证书错误: ${err}, 降级到 HTTP`);
             const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
             response = await this.doRequest(url);
-          } else if (timeoutError && this.httpPort !== NvHttp.DEFAULT_HTTP_PORT) {
-            // frp/端口转发场景：serverInfo 报告的 HTTPS 端口是服务端本地端口，
-            // 可能与外部转发端口不同。用 Sunshine 端口规则（httpPort - 5）重试一次
-            const guessedPort = this.httpPort - 5;
-            if (guessedPort > 0 && guessedPort !== this.httpsPort) {
-              console.info(`NvHttp: HTTPS 超时，尝试推算端口 ${guessedPort} (httpPort=${this.httpPort} - 5)`);
-              try {
-                const retryBaseUrl = `https://${formatAddressForUrl(this.address)}:${guessedPort}`;
-                const retryUrl = this.buildUrl(retryBaseUrl, 'serverinfo');
-                response = await this.doRequest(retryUrl, NvHttp.READ_TIMEOUT, true);
-                // 推算端口成功，缓存
-                this.httpsPort = guessedPort;
-                console.info(`NvHttp: 推算 HTTPS 端口 ${guessedPort} 连接成功`);
-              } catch {
-                console.warn(`NvHttp: 推算端口 ${guessedPort} 也失败，放弃 HTTPS`);
-                throw new Error(`HTTPS serverinfo 失败: ${err}`);
-              }
-            } else {
-              throw new Error(`HTTPS serverinfo 失败: ${err}`);
-            }
           } else {
             console.warn(`NvHttp: HTTPS serverinfo 失败 (非证书错误，不降级): ${err}`);
             throw new Error(`HTTPS serverinfo 失败: ${err}`);
