@@ -418,6 +418,13 @@ struct SettingsPageV2 {
       case '1080p': width = 1920; height = 1080; break;
       case '1440p': width = 2560; height = 1440; break;
       case '4K': width = 3840; height = 2160; break;
+      case 'native':
+        // 本机分辨率：始终横屏方向
+        if (this.nativeWidth > 0 && this.nativeHeight > 0) {
+          width = Math.max(this.nativeWidth, this.nativeHeight);
+          height = Math.min(this.nativeWidth, this.nativeHeight);
+        }
+        break;
       default:
         // 尝试解析自定义分辨率格式 WIDTHxHEIGHT
         const match = this.resolution.match(/^(\d+)x(\d+)$/);
