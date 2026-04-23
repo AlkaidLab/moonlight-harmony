@@ -9,7 +9,7 @@
  */
 
 import { inputDevice } from '@kit.InputKit';
-import { UsbDriverService, UsbDriverListener, AbstractController, ButtonFlags } from '../usbdriver/index';
+import { UsbDriverService, UsbDriverListener, AbstractController, ButtonFlags, KnownUsbGamepadInfo } from '../usbdriver/index';
 import { 
   gameControllerService, 
   AxisType, 
@@ -566,6 +566,67 @@ export class GamepadManager implements UsbDriverListener {
     } else {
       return 'USB 驱动 (直接设备控制)';
     }
+  }
+
+  // ==================== 未识别 USB 手柄检测 ====================
+
+  /** 上次检测时间（节流） */
+  private lastUnhandledDetectAt: number = 0;
+  /** 检测节流窗口（ms） */
+  private static readonly UNHANDLED_DETECT_THROTTLE_MS: number = 30000;
+
+  /**
+   * 检测 USB 已插入但系统未识别的手柄
+   * 判定原则（保守）：
+   *   - 必须不在纯 USB 驱动模式（USB 驱动模式下手柄已被我们直接接管，无需提示）
+   *   - 注意：混合模式下 USB 驱动仅接管震动，输入仍依赖 GCK，故仍需检测
+   *   - 仅当存在已知 USB 手柄 (N>=1)，且系统当前活跃手柄数 (M)=0 时报告
+   *     （M = GCK 槽位 + InputKit 已注册）
+   *   - 蓝牙手柄不在 usbManager.getDevices() 中，自动排除（不导致误报）
+   * @returns 未识别 USB 手柄列表，空数组表示无需提示
+   */
+  detectUnhandledUsbGamepads(): KnownUsbGamepadInfo[] {
+    // 已是纯 USB 驱动模式：跳过（USB 驱动直接处理输入）
+    if (!this.useGameControllerKit && this.useUsbDriverMode) {
+      return [];
+    }
+    // 模式还未确定：跳过（避免与 GCK 初始化竞争）
+    if (!this.modeInitialized) {
+      return [];
+    }
+
+    const knownUsb = UsbDriverService.listKnownUsbGamepads();
+    if (knownUsb.length === 0) {
+      return [];
+    }
+
+    // 系统当前已识别的手柄数
+    // 注意：混合模式下 USB 驱动只处理震动，不计入"系统已识别输入"
+    const activeSystemCount =
+      this.gcDeviceIdToSlot.size +
+      this.connectedDevices.size;
+
+    // 系统已识别 >= 1 → 视为正常工作（保守，不报告漏识别的另一只手柄以避免误报）
+    if (activeSystemCount > 0) {
+      return [];
+    }
+
+    return knownUsb;
+  }
+
+  /**
+   * 节流版本的检测：30 秒内只返回一次结果
+   */
+  detectUnhandledUsbGamepadsThrottled(): KnownUsbGamepadInfo[] {
+    const now = Date.now();
+    if (now - this.lastUnhandledDetectAt < GamepadManager.UNHANDLED_DETECT_THROTTLE_MS) {
+      return [];
+    }
+    const result = this.detectUnhandledUsbGamepads();
+    if (result.length > 0) {
+      this.lastUnhandledDetectAt = now;
+    }
+    return result;
   }
   
   /**

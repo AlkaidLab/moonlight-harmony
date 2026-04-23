@@ -49,6 +49,16 @@ const USB_DEVICE_ATTACHED = 'usual.event.hardware.usb.action.USB_DEVICE_ATTACHED
 const USB_DEVICE_DETACHED = 'usual.event.hardware.usb.action.USB_DEVICE_DETACHED';
 
 /**
+ * 已识别的 USB 手柄简要信息（仅用于检测，无副作用）
+ */
+export interface KnownUsbGamepadInfo {
+  name: string;
+  vendorId: number;
+  productId: number;
+  deviceKey: string;
+}
+
+/**
  * USB 驱动服务
  * 管理所有 USB 控制器设备
  */
@@ -635,12 +645,59 @@ export class UsbDriverService implements UsbDriverListener {
    * 检查是否应该驱动该设备
    */
   private shouldClaimDevice(device: usbManager.USBDevice): boolean {
-    return XboxOneController.canClaimDevice(device) ||
-           Xbox360Controller.canClaimDevice(device) ||
-           SwitchProController.canClaimDevice(device) ||
-           DualSenseController.canClaimDevice(device) ||
-           Dualshock4Controller.canClaimDevice(device) ||
-           NativeHidController.canClaimDevice(device);
+    return UsbDriverService.identifyKnownGamepad(device) !== null;
+  }
+
+  /**
+   * 识别已知 USB 手柄类型（不副作用，仅 VID/PID/接口判定）
+   * @returns 友好名称（如 "Xbox One Controller"），不识别时返回 null
+   */
+  static identifyKnownGamepad(device: usbManager.USBDevice): string | null {
+    if (XboxOneController.canClaimDevice(device)) return 'Xbox One Controller';
+    if (Xbox360Controller.canClaimDevice(device)) return 'Xbox 360 Controller';
+    if (SwitchProController.canClaimDevice(device)) return 'Switch Pro Controller';
+    if (DualSenseController.canClaimDevice(device)) return 'DualSense Controller';
+    if (Dualshock4Controller.canClaimDevice(device)) return 'DualShock 4 Controller';
+    if (NativeHidController.canClaimDevice(device)) return device.name || 'HID Controller';
+    return null;
+  }
+
+  /**
+   * 列出所有可识别的 USB 手柄（不修改服务状态）
+   */
+  static listKnownUsbGamepads(): KnownUsbGamepadInfo[] {
+    const result: KnownUsbGamepadInfo[] = [];
+    try {
+      const devices: usbManager.USBDevice[] = usbManager.getDevices();
+      for (let i = 0; i < devices.length; i++) {
+        const d = devices[i];
+        const name = UsbDriverService.identifyKnownGamepad(d);
+        if (name !== null) {
+          result.push({
+            name,
+            vendorId: d.vendorId,
+            productId: d.productId,
+            deviceKey: `${d.vendorId}:${d.productId}:${d.busNum}:${d.devAddress}`,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn(`${TAG} listKnownUsbGamepads 异常:`, err);
+    }
+    return result;
+  }
+
+  /**
+   * 当前已驱动控制器的 deviceKey 集合
+   */
+  getActiveDeviceKeys(): Set<string> {
+    const keys = new Set<string>();
+    for (const c of this.controllers) {
+      if (c.isConnected()) {
+        keys.add(c.getDeviceKey());
+      }
+    }
+    return keys;
   }
   
   /**

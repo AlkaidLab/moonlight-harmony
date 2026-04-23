@@ -15,6 +15,7 @@
 export { AbstractController } from './AbstractController';
 export { UsbDriverListener, UsbDriverStateListener } from './UsbDriverListener';
 export { UsbDriverService } from './UsbDriverService';
+export type { KnownUsbGamepadInfo } from './UsbDriverService';
 export { Xbox360Controller } from './Xbox360Controller';
 export { XboxOneController } from './XboxOneController';
 export { Dualshock4Controller } from './Dualshock4Controller';

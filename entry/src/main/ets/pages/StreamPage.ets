@@ -15,6 +15,7 @@
  */
 import { router, LengthMetrics } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { displaySync } from '@kit.ArkGraphics2D';
 import { VirtualControllerOverlay } from '../components/virtual/VirtualController';
@@ -416,6 +417,79 @@ struct StreamPage {
     });
   }
   
+  // 未识别 USB 手柄检测：本次串流是否已弹过提示
+  private unhandledUsbHintShownThisSession: boolean = false;
+  // 已调度的检测定时器
+  private unhandledUsbDetectTimer: number | null = null;
+  // 重新检测周期（首次延迟，覆盖热插拔的简单场景）
+  private static readonly UNHANDLED_USB_DETECT_DELAY_MS: number = 5000;
+  private static readonly UNHANDLED_USB_DETECT_REPEAT_MS: number = 10000;
+
+  /**
+   * 调度未识别 USB 手柄检测：
+   * - 串流连接成功后延时执行（让 GCK 充分扫描）
+   * - 周期性重新检测（捕捉热插拔事件，无需挂订阅）
+   * - 一旦弹过提示或用户选择不再提示，立即停止
+   */
+  private scheduleUnhandledUsbDetection(): void {
+    if (this.unhandledUsbDetectTimer !== null) {
+      return;
+    }
+    const tick = (): void => {
+      this.unhandledUsbDetectTimer = null;
+      // 串流已断开/页面销毁/已弹过 → 停止
+      if (!this.viewModel.isConnected || this.unhandledUsbHintShownThisSession) {
+        return;
+      }
+      this.runUnhandledUsbCheck().then(() => {
+        if (!this.viewModel.isConnected || this.unhandledUsbHintShownThisSession) {
+          return;
+        }
+        // 继续轮询（捕捉后续热插拔）
+        this.unhandledUsbDetectTimer = setTimeout(
+          tick,
+          StreamPage.UNHANDLED_USB_DETECT_REPEAT_MS
+        );
+      });
+    };
+    this.unhandledUsbDetectTimer = setTimeout(tick, StreamPage.UNHANDLED_USB_DETECT_DELAY_MS);
+  }
+
+  private cancelUnhandledUsbDetection(): void {
+    if (this.unhandledUsbDetectTimer !== null) {
+      clearTimeout(this.unhandledUsbDetectTimer);
+      this.unhandledUsbDetectTimer = null;
+    }
+  }
+
+  private async runUnhandledUsbCheck(): Promise<void> {
+    try {
+      const list = this.gamepadManager.detectUnhandledUsbGamepadsThrottled();
+      if (list.length === 0) {
+        return;
+      }
+      const first = list[0];
+      const extra = list.length > 1 ? `（共 ${list.length} 个）` : '';
+      this.unhandledUsbHintShownThisSession = true;
+      promptAction.showDialog({
+        title: '检测到未识别的 USB 手柄',
+        message: `已识别为 ${first.name}${extra}，但系统未将其注册为手柄，可能导致按键无响应。\n\n是否切换到 USB 驱动模式？`,
+        buttons: [
+          { text: '本次跳过', color: '#888888' },
+          { text: '启用 USB 驱动', color: '#1F8AFF' }
+        ]
+      }).then((res: promptAction.ShowDialogSuccessResponse) => {
+        if (res.index === 1) {
+          this.forceUsbDriverMode();
+        }
+      }).catch((err: Error) => {
+        console.warn('[StreamPage] 未识别 USB 手柄提示对话框关闭异常:', err);
+      });
+    } catch (err) {
+      console.warn('[StreamPage] runUnhandledUsbCheck 异常:', err);
+    }
+  }
+  
   /**
    * 初始化体感助手
    * 从设置加载配置，如果已启用则自动开始监听陀螺仪
@@ -529,6 +603,9 @@ struct StreamPage {
   
   aboutToDisappear(): void {
     console.info('StreamPage aboutToDisappear - cleaning up');
+    
+    // 取消未识别 USB 手柄检测定时器
+    this.cancelUnhandledUsbDetection();
     
     // 取消生命周期监听
     this.lifecycleManager.unregisterAppStateListener();
@@ -1077,6 +1154,9 @@ struct StreamPage {
     }
 
     await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+
+    // 串流启动后调度未识别 USB 手柄检测（延迟内 GCK 完成扫描）
+    this.scheduleUnhandledUsbDetection();
   }
 
   async startStreaming(): Promise<void> {
