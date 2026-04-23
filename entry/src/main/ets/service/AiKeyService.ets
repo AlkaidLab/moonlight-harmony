@@ -8,6 +8,8 @@
  * (at your option) any later version.
  */
 
+import { common } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
 import { NvHttp, AiMessage } from './streaming/NvHttp';
 import {
   CustomKeyDef,
@@ -41,47 +43,41 @@ interface AiRawKey {
 interface AiLayoutResponse {
   keys: AiRawKey[];
   description?: string;
+  /** v2 schema：内部推理（仅日志使用，不展示） */
+  _thinking?: string;
+  /** v2 schema：游戏品类，例 FPS / 动作 / MOBA */
+  genre?: string;
+  /** v2 schema：控制方案，例 键鼠 / 手柄 / 混合 */
+  scheme?: string;
 }
 
-// 系统 prompt：指导 AI 生成按键布局 JSON
-const SYSTEM_PROMPT = `你是一个游戏触屏按键布局专家。用户会提供游戏名称，你需要为手机触屏串流生成推荐的虚拟按键布局。
-
-规则：
-1. 返回纯 JSON，不要 markdown 代码块，不要额外解释
-2. JSON 格式: { "keys": [...], "description": "简要说明" }
-3. 每个按键包含: label, action, xPercent (0-1), yPercent (0-1)
-4. 坐标系: xPercent=0 左边, xPercent=1 右边, yPercent=0 上方, yPercent=1 下方。坐标代表按键中心点
-5. 手机横屏模式 (约 720×360 vp)，左侧放移动控制，右侧放视角/动作按键
-6. action 类型:
-   - 键盘: { "type": "keyboard", "vk": <Windows VK code> }
-   - 鼠标: { "type": "mouse", "button": 1|2|3 }
-   - 手柄: { "type": "gamepadButton", "mask": <bitmask> }
-   - 摇杆: { "type": "analogStick", "stick": "left"|"right" }
-   - 隐形摇杆(大触摸区,按下才显示): { "type": "analogStick", "stick": "left"|"right", "invisible": true }
-   - 十字键: { "type": "dpad" }
-   - 扳机: { "type": "gamepadTrigger", "trigger": "left"|"right" }
-   - 快捷键: { "type": "shortcut", "keys": [vk1, vk2] }
-7. 常用 VK: W=0x57 A=0x41 S=0x53 D=0x44 Space=0x20 Shift=0xA0 Ctrl=0xA2 E=0x45 R=0x52 F=0x46 Q=0x51 Tab=0x09 ESC=0x1B 1-9=0x31-0x39
-8. 手柄 mask: A=0x1000 B=0x2000 X=0x4000 Y=0x8000 LB=0x0100 RB=0x0200 Start=0x0010 Back=0x0020
-9. 尽可能多生成按键(12-16个)，完整覆盖游戏常用操作，包含移动、视角、主要动作和辅助功能键
-10. FPS 游戏优先用键鼠布局（WASD + 鼠标按键），动作/平台游戏用手柄布局
-11. 布局间距要求：
-    - 普通按键(60vp)占屏幕约 8%宽 17%高，相邻按键中心距至少 10%
-    - 摇杆(120vp)占约 17%宽 33%高，周围留足空间
-    - 坐标范围安全区: xPercent [0.05, 0.95], yPercent [0.08, 0.92]
-    - 右侧摇杆推荐用隐形摇杆(invisible=true)作为视角，不与动作键区域重叠
-12. 键鼠 FPS 推荐布局：左侧隐形左摇杆(移动)，右侧隐形右摇杆(视角)，动作键放右侧边缘避开摇杆区域`;
+// System prompt 存放在 resources/rawfile/ai_key_prompt.md
+const PROMPT_RAWFILE = 'ai_key_prompt.md';
+/** 进程级缓存：prompt 是不变的纯文本，加载一次即可 */
+let cachedPrompt: string | null = null;
 
 /**
  * AI 按键布局推荐服务
  *
- * 通过 Sunshine 的 LLM 代理端点获取游戏按键布局推荐
+ * 通过 Sunshine 的 LLM 代理端点获取游戏按键布局推荐。
+ * System prompt 从 rawfile/ai_key_prompt.md 加载（首次调用时同步读取并缓存）。
  */
 export class AiKeyService {
   private nvHttp: NvHttp;
+  private context: common.Context;
 
-  constructor(nvHttp: NvHttp) {
+  constructor(nvHttp: NvHttp, context: common.Context) {
     this.nvHttp = nvHttp;
+    this.context = context;
+  }
+
+  /** 加载并缓存 system prompt */
+  private loadSystemPrompt(): string {
+    if (cachedPrompt !== null) return cachedPrompt;
+    const raw: Uint8Array = this.context.resourceManager.getRawFileContentSync(PROMPT_RAWFILE);
+    const decoder = util.TextDecoder.create('utf-8');
+    cachedPrompt = decoder.decodeToString(raw);
+    return cachedPrompt;
   }
 
   /**
@@ -91,7 +87,7 @@ export class AiKeyService {
    */
   async getRecommendation(gameName: string): Promise<AiKeyRecommendation> {
     const messages: AiMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: this.loadSystemPrompt() },
       { role: 'user', content: `为游戏「${gameName}」生成触屏按键布局` },
     ];
 
@@ -107,7 +103,7 @@ export class AiKeyService {
    */
   async getRecommendationByPrompt(prompt: string): Promise<AiKeyRecommendation> {
     const messages: AiMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: this.loadSystemPrompt() },
       { role: 'user', content: prompt },
     ];
 
@@ -119,6 +115,9 @@ export class AiKeyService {
   private parseResponse(responseText: string): AiKeyRecommendation {
     // 尝试提取 JSON（AI 可能返回 markdown 代码块包裹或夹杂解释文字）
     let jsonStr = responseText.trim();
+
+    // 0. 剥掉 reasoning 模型可能输出的 <think>...</think> 推理标签
+    jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
     // 1. 尝试 markdown 代码块
     const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -133,6 +132,11 @@ export class AiKeyService {
         jsonStr = jsonObjMatch[1].trim();
       }
     }
+
+    // 3. 容错：JSON 不支持 0x 十六进制字面量；若 LLM 误输出 0xABCD，
+    //    转换成十进制再解析。仅替换 :/[/, 后紧跟的 0x... 数值，避免误伤字符串内容。
+    jsonStr = jsonStr.replace(/([:\[,]\s*)(0x[0-9A-Fa-f]+)/g,
+      (_match, prefix: string, hex: string) => `${prefix}${parseInt(hex, 16)}`);
 
     const parsed = JSON.parse(jsonStr) as AiLayoutResponse;
 
@@ -172,9 +176,22 @@ export class AiKeyService {
     // 防重叠后处理：检测并推开过近的按键
     resolveOverlaps(keys);
 
+    // 拼装最终展示给用户的 description：优先 description，
+    // 否则用 v2 schema 的 genre/scheme 兜底；_thinking 仅打印到日志（这里直接丢弃）
+    let description = parsed.description ?? '';
+    if (!description && (parsed.genre || parsed.scheme)) {
+      const parts: string[] = [];
+      if (parsed.genre) parts.push(parsed.genre);
+      if (parsed.scheme) parts.push(parsed.scheme);
+      description = parts.join(' · ');
+    }
+    if (parsed._thinking) {
+      console.info(`[AiKeyService] LLM thinking: ${parsed._thinking}`);
+    }
+
     return {
       keys,
-      description: parsed.description ?? '',
+      description,
     };
   }
 }

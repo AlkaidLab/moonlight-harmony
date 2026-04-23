@@ -252,7 +252,7 @@ struct StreamPage {
         const computer = ComputerManager.getInstance().getComputer(this.computerId);
         if (computer) {
           const nvHttp = NvHttp.fromComputer(computer, this.context);
-          this.aiKeyService = new AiKeyService(nvHttp);
+          this.aiKeyService = new AiKeyService(nvHttp, this.context);
 
           // 异步探测 AI 可用性，延迟显示避免与手柄连接等 toast 冲突
           nvHttp.checkAiAvailable().then((available: boolean) => {
