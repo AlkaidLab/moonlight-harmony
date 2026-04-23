@@ -282,10 +282,47 @@ export class TouchInputHandler {
    */
   /**
    * 设置触摸模式
+   *
+   * 切换模式时主动清理 MOUSE 模式遗留状态并释放可能卡住的左/右键，
+   * 避免 Cancel 事件丢失或 ArkUI 命中测试抖动导致的"左键卡按下"
+   * 进而让后续自定义右键等动作在主机端被忽略。
+   * 对于目标端本就松开的按键，多发一次 RELEASE 是无副作用的 no-op。
    */
   setMode(mode: TouchInputMode): void {
+    if (this.mode === TouchInputMode.MOUSE && mode !== TouchInputMode.MOUSE) {
+      this.resetMouseState(true);
+    }
     this.mode = mode;
     console.info(`TouchInputHandler: 模式切换为 ${mode}`);
+  }
+
+  /**
+   * 重置 MOUSE 模式状态 + 释放可能卡住的鼠标键
+   * @param releaseButtons 是否向主机发送 LEFT/RIGHT RELEASE（防御性释放）
+   */
+  private resetMouseState(releaseButtons: boolean): void {
+    // 取消所有定时器
+    this.cancelMouseLongPressTimer();
+    this.cancelMouseTapDownTimer();
+    if (this.mouseLeftButtonUpTimer !== -1) {
+      clearTimeout(this.mouseLeftButtonUpTimer);
+      this.mouseLeftButtonUpTimer = -1;
+    }
+    // 释放可能卡在主机端的鼠标键
+    if (releaseButtons) {
+      if (this.mouseConfirmedLongPress) {
+        this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
+      }
+      if (this.mouseConfirmedTap) {
+        this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+      }
+    }
+    // 清空手指 / 标志位
+    this.mousePrimaryFingerId = -1;
+    this.mouseSecondFingerId = -1;
+    this.mouseCancelled = false;
+    this.mouseConfirmedTap = false;
+    this.mouseConfirmedLongPress = false;
   }
   
   /**
@@ -538,118 +575,160 @@ export class TouchInputHandler {
   }
 
   /**
-   * 处理鼠标模式触摸事件（对齐 Android AbsoluteTouchContext）
+   * 处理鼠标模式触摸事件（对齐 Android AbsoluteTouchContext，但以 event.touches 为权威状态）
+   *
+   * 每次事件先做"对账"：若 primary / second 手指不在 event.touches 中，
+   * 说明手指已抬起，无论是否有对应的 Up/Cancel / changedTouches 是否包含该手指，
+   * 一律走 release 流程。这样根治 ArkUI 下 Cancel 丢 primary、命中测试抖动、
+   * overlay 插入、返回手势中断等导致的手指状态残留。
+   *
    * - 主手指：绝对定位 + 死区 + 长按右键
-   * - 第二根手指：滚轮
-   * - 第二根手指出现时取消主手指手势
+   * - 第二根手指：垂直滚轮 + 取消主手指手势
    */
   private handleMouseEvent(event: TouchEvent): void {
-    // 缓存组件尺寸
     this.mouseAreaWidth = event.target.area.width as number;
     this.mouseAreaHeight = event.target.area.height as number;
 
-    const changedTouches = event.changedTouches;
+    // 1. 对账：以 event.touches 为权威，清理已消失的手指
+    this.reconcileMouseFingers(event);
 
+    // 2. 按事件类型分发 changedTouches（抬起路径已在对账阶段处理）
+    const changedTouches = event.changedTouches;
     switch (event.type) {
-      case TouchType.Down: {
+      case TouchType.Down:
         for (const touch of changedTouches) {
           if (this.mousePrimaryFingerId === -1) {
-            // 第一根手指：设为主手指
-            this.mousePrimaryFingerId = touch.id;
-            this.mouseDownX = this.mouseLastX = touch.x;
-            this.mouseDownY = this.mouseLastY = touch.y;
-            this.mouseDownTime = Date.now();
-            this.mouseCancelled = false;
-            this.mouseConfirmedTap = false;
-            this.mouseConfirmedLongPress = false;
-
-            // 启动定时器
-            this.startMouseTapDownTimer();
-            this.startMouseLongPressTimer();
-          } else if (this.mouseSecondFingerId === -1) {
-            // 第二根手指：用于滚轮，同时取消主手指手势
-            this.mouseSecondFingerId = touch.id;
-            this.mouseSecondFingerLastY = touch.y;
-            this.mouseCancelTouch();
+            this.onMousePrimaryDown(touch);
+          } else if (this.mouseSecondFingerId === -1 && touch.id !== this.mousePrimaryFingerId) {
+            this.onMouseSecondDown(touch);
           }
-          // 忽略更多手指
+          // 第三根及以上：忽略
         }
         break;
-      }
 
-      case TouchType.Move: {
+      case TouchType.Move:
         for (const touch of changedTouches) {
           if (touch.id === this.mousePrimaryFingerId && !this.mouseCancelled) {
-            // 主手指移动：绝对定位
-            if (this.mouseDistanceExceeds(
-              touch.x - this.mouseDownX, touch.y - this.mouseDownY,
-              TouchInputHandler.MOUSE_LONG_PRESS_DISTANCE)) {
-              // 移动过远，取消长按
-              this.cancelMouseLongPressTimer();
-            }
-
-            // 死区内忽略移动，死区外确认点击并更新位置
-            if (this.mouseConfirmedTap ||
-                this.mouseDistanceExceeds(
-                  touch.x - this.mouseDownX, touch.y - this.mouseDownY,
-                  TouchInputHandler.MOUSE_DEADZONE_DISTANCE)) {
-              this.mouseTapConfirmed();
-              this.mouseUpdatePosition(touch.x, touch.y);
-            }
-
-            this.mouseLastX = touch.x;
-            this.mouseLastY = touch.y;
+            this.onMousePrimaryMove(touch);
           } else if (touch.id === this.mouseSecondFingerId) {
-            // 第二根手指移动：滚轮
-            const deltaY = touch.y - this.mouseSecondFingerLastY;
-            this.nativeInput.sendMouseHighResScroll(
-              Math.round(deltaY * TouchInputHandler.MOUSE_SCROLL_SPEED_FACTOR)
-            );
-            this.mouseSecondFingerLastY = touch.y;
+            this.onMouseSecondMove(touch);
           }
         }
         break;
-      }
 
       case TouchType.Up:
-      case TouchType.Cancel: {
-        for (const touch of changedTouches) {
-          if (touch.id === this.mousePrimaryFingerId) {
-            // 主手指抬起
-            this.mousePrimaryFingerId = -1;
-
-            if (!this.mouseCancelled) {
-              this.cancelMouseLongPressTimer();
-              this.cancelMouseTapDownTimer();
-
-              if (this.mouseConfirmedLongPress) {
-                this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
-              } else if (this.mouseConfirmedTap) {
-                this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
-              } else {
-                // 在死区时间内完成的快速点击：立即按下，延迟 100ms 释放
-                this.mouseTapConfirmed();
-                if (this.mouseLeftButtonUpTimer !== -1) {
-                  clearTimeout(this.mouseLeftButtonUpTimer);
-                }
-                this.mouseLeftButtonUpTimer = setTimeout(() => {
-                  this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
-                  this.mouseLeftButtonUpTimer = -1;
-                }, 100);
-              }
-            }
-
-            this.mouseLastUpX = touch.x;
-            this.mouseLastUpY = touch.y;
-            this.mouseLastUpTime = Date.now();
-          } else if (touch.id === this.mouseSecondFingerId) {
-            // 第二根手指抬起
-            this.mouseSecondFingerId = -1;
-          }
-        }
+      case TouchType.Cancel:
+        // 已在对账阶段处理
         break;
+    }
+  }
+
+  /**
+   * 对账：若 primary / second 不在 event.touches 中，视为已抬起并释放。
+   *
+   * ArkUI 在 Up/Cancel 事件里 event.touches 是否包含正在抬起的手指行为不一致，
+   * 这里统一把 changedTouches（仅对 Up/Cancel）当作"正在抬起"从 active 中剔除，
+   * 两种约定都能正确收敛。
+   */
+  private reconcileMouseFingers(event: TouchEvent): void {
+    const isLiftEvent = event.type === TouchType.Up || event.type === TouchType.Cancel;
+    const liftingIds: Set<number> = new Set<number>();
+    if (isLiftEvent) {
+      for (const t of event.changedTouches) liftingIds.add(t.id);
+    }
+    const activeIds: Set<number> = new Set<number>();
+    for (const t of event.touches) {
+      if (!liftingIds.has(t.id)) activeIds.add(t.id);
+    }
+
+    if (this.mousePrimaryFingerId !== -1 && !activeIds.has(this.mousePrimaryFingerId)) {
+      const final = event.changedTouches.find((t: TouchObject) => t.id === this.mousePrimaryFingerId);
+      const x = final ? final.x : this.mouseLastX;
+      const y = final ? final.y : this.mouseLastY;
+      this.onMousePrimaryRelease(x, y);
+    }
+
+    if (this.mouseSecondFingerId !== -1 && !activeIds.has(this.mouseSecondFingerId)) {
+      this.mouseSecondFingerId = -1;
+    }
+  }
+
+  private onMousePrimaryDown(touch: TouchObject): void {
+    this.mousePrimaryFingerId = touch.id;
+    this.mouseDownX = this.mouseLastX = touch.x;
+    this.mouseDownY = this.mouseLastY = touch.y;
+    this.mouseDownTime = Date.now();
+    this.mouseCancelled = false;
+    this.mouseConfirmedTap = false;
+    this.mouseConfirmedLongPress = false;
+
+    this.startMouseTapDownTimer();
+    this.startMouseLongPressTimer();
+  }
+
+  private onMouseSecondDown(touch: TouchObject): void {
+    this.mouseSecondFingerId = touch.id;
+    this.mouseSecondFingerLastY = touch.y;
+    this.mouseCancelTouch();
+  }
+
+  private onMousePrimaryMove(touch: TouchObject): void {
+    // 移动过远 → 取消长按
+    if (this.mouseDistanceExceeds(
+      touch.x - this.mouseDownX, touch.y - this.mouseDownY,
+      TouchInputHandler.MOUSE_LONG_PRESS_DISTANCE)) {
+      this.cancelMouseLongPressTimer();
+    }
+    // 死区外 → 确认点击并更新绝对位置
+    if (this.mouseConfirmedTap
+        || this.mouseDistanceExceeds(
+          touch.x - this.mouseDownX, touch.y - this.mouseDownY,
+          TouchInputHandler.MOUSE_DEADZONE_DISTANCE)) {
+      this.mouseTapConfirmed();
+      this.mouseUpdatePosition(touch.x, touch.y);
+    }
+    this.mouseLastX = touch.x;
+    this.mouseLastY = touch.y;
+  }
+
+  private onMouseSecondMove(touch: TouchObject): void {
+    const deltaY = touch.y - this.mouseSecondFingerLastY;
+    this.nativeInput.sendMouseHighResScroll(
+      Math.round(deltaY * TouchInputHandler.MOUSE_SCROLL_SPEED_FACTOR)
+    );
+    this.mouseSecondFingerLastY = touch.y;
+  }
+
+  /**
+   * primary 手指释放的统一路径（对账 + 正常 Up/Cancel 共享）
+   */
+  private onMousePrimaryRelease(finalX: number, finalY: number): void {
+    this.mousePrimaryFingerId = -1;
+
+    if (!this.mouseCancelled) {
+      this.cancelMouseLongPressTimer();
+      this.cancelMouseTapDownTimer();
+
+      if (this.mouseConfirmedLongPress) {
+        this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
+      } else if (this.mouseConfirmedTap) {
+        this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+      } else {
+        // 死区时间内完成的快速点击：立即按下，延迟 100ms 释放
+        this.mouseTapConfirmed();
+        if (this.mouseLeftButtonUpTimer !== -1) {
+          clearTimeout(this.mouseLeftButtonUpTimer);
+        }
+        this.mouseLeftButtonUpTimer = setTimeout(() => {
+          this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+          this.mouseLeftButtonUpTimer = -1;
+        }, 100);
       }
     }
+
+    this.mouseLastUpX = finalX;
+    this.mouseLastUpY = finalY;
+    this.mouseLastUpTime = Date.now();
   }
   
   /**
@@ -954,6 +1033,7 @@ export class TouchInputHandler {
    */
   dispose(): void {
     this.trackpad.dispose();
+    this.resetMouseState(false);
     this.touchStates.clear();
     this.lastForce.clear();
     this.lastSize.clear();
