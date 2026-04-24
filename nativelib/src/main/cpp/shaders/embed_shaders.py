@@ -55,9 +55,9 @@ def main():
             content = f.read()
 
         lines.append(f'// {filename}')
-        lines.append(f'static const char* {varname} = R"(')
-        lines.append(content.rstrip())
-        lines.append(')";')
+        # 注意：R"( 与 shader 第一行之间不能插入 \n，否则 #version 会被推到第 2 行
+        # 触发 GLSL ES 严格错误："P0005: #version must be on the first line"
+        lines.append(f'static const char* {varname} = R"(' + content.rstrip() + ')";')
         lines.append('')
 
     # 写入前检查内容是否变化，避免不必要的重编译

@@ -1116,16 +1116,25 @@ struct StreamPage {
       }
 
       const activeNames: Record<number, string> = { 1: 'XEngine', 2: 'FSR 1' };
-      const modeName = activeNames[this.viewModel.activeUpscaleMode] ?? '超分辨率';
+      const activeMode = this.viewModel.activeUpscaleMode;
+      const needsUpscale = (streamW < outW || streamH < outH);
 
-      if (streamW < outW || streamH < outH) {
+      if (activeMode > 0 && needsUpscale) {
+        // native 真正启用了超分引擎
         ToastQueue.show({
-          message: `${modeName} 超分已启用: ${streamW}×${streamH} → ${outW}×${outH}`,
+          message: `${activeNames[activeMode]} 超分已启用: ${streamW}×${streamH} → ${outW}×${outH}`,
+          duration: 2500
+        });
+      } else if (!needsUpscale) {
+        // 串流分辨率 >= 屏幕，无需超分
+        ToastQueue.show({
+          message: `超分辨率未生效: 串流 ${streamW}×${streamH} ≥ 屏幕 ${outW}×${outH}`,
           duration: 2500
         });
       } else {
+        // 用户开启了超分但 native 未激活（扩展不可用 / 初始化失败 / 运行时熔断）
         ToastQueue.show({
-          message: `超分辨率未生效: 串流 ${streamW}×${streamH} ≥ 屏幕 ${outW}×${outH}`,
+          message: `超分辨率初始化失败，已自动关闭 (${streamW}×${streamH} → ${outW}×${outH})`,
           duration: 2500
         });
       }
