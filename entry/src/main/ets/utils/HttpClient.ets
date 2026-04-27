@@ -127,18 +127,23 @@ export class HttpClient {
   /**
    * 判断是否连接级错误（应 invalidate session）
    * 协议级错误（401/4xx/5xx）不应丢 session，因为连接本身是好的
+   *
+   * 重要：timeout 不在其中。timeout 仅意味单次请求慢/对端暂不响应，
+   * session 本身可能还能用，rcp 内部 ConnectionPool 会自行重建坏 TCP。
+   * 主动 session.close() 会同步取消同 session 上所有 in-flight 请求（HTTP/2 RST_STREAM 雪崩），
+   * 且该 RST/GOAWAY 会触发 Sunshine (Simple-Web-Server) 一侧 SSL state machine 异常，
+   * 让 HTTPS listener 进入 wedged 状态。只在明确丢连接错误时才 invalidate。
    */
   private static isConnectionError(msg: string): boolean {
     if (!msg) return false;
     const lower = msg.toLowerCase();
-    return lower.includes('timeout') ||
-      lower.includes('refused') ||
-      lower.includes('reset') ||
+    return lower.includes('refused') ||
+      lower.includes('connection reset') ||
+      lower.includes('econnreset') ||
+      lower.includes('reset by peer') ||
       lower.includes('unreachable') ||
-      lower.includes('ssl') ||
       lower.includes('handshake') ||
       lower.includes('1007900007') || // Couldn't connect
-      lower.includes('1007900028') || // Timeout
       lower.includes('1007900035') || // SSL connection
       lower.includes('1007900016');   // HTTP2 framing
   }

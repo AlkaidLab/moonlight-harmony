@@ -406,7 +406,11 @@ export class NvHttp {
       lower.includes('connect failed') ||
       lower.includes('connection reset') ||
       lower.includes('econnreset') ||
-      lower.includes('reset by peer');
+      lower.includes('reset by peer') ||
+      // 被 session.close() 级联取消的 in-flight 请求（并发超时场景常见）
+      lower.includes('canceled') ||
+      lower.includes('cancelled') ||
+      lower.includes('1007900003');
   }
 
   /**
