@@ -909,11 +909,20 @@ export class StreamingSession {
         if (!isTransient || attempt === MAX_ATTEMPTS) {
           throw lastErr;
         }
+        // 用户已主动取消（StreamViewModel.stop() 设置 userInitiatedStop=true）→ 不再重试，
+        // 立即抛出，避免取消响应被等待循环拖延 1.5s + 下次 HTTP 超时（最长 ~9.5s）
+        if (this.userInitiatedStop) {
+          throw lastErr;
+        }
         console.warn(`fetchServerInfo: 第 ${attempt} 次失败（瞬时错误），${RETRY_DELAY_MS}ms 后重试: ${lastErr.message}`);
         if (this.stageProgressCallback) {
           this.stageProgressCallback(0, `连接重试中 (${attempt}/${MAX_ATTEMPTS - 1})...`);
         }
         await new Promise<void>(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        // 等待结束后再次检查取消（用户在 1.5s sleep 期间按取消的常见情况）
+        if (this.userInitiatedStop) {
+          throw lastErr;
+        }
       }
     }
     if (!serverInfo) {
