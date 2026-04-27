@@ -12,7 +12,7 @@ import { StreamConfig, HdrMode, getSurroundAudioInfo } from '../../model/StreamC
 import { InputEvent, InputType, ControllerButtonEvent, ControllerAxisEvent, ControllerButton } from '../../model/InputEvent';
 import { ComputerManager } from '../ComputerManager';
 import { ComputerInfo } from '../../model/ComputerInfo';
-import { NvHttp, LaunchConfig, ServerInfo } from './NvHttp';
+import { NvHttp, LaunchConfig } from './NvHttp';
 import { CryptoUtil } from '../../utils/CryptoUtil';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
@@ -880,54 +880,17 @@ export class StreamingSession {
   private async fetchServerInfo(): Promise<void> {
     if (!this.nvHttp) throw new Error('nvHttp 未初始化');
 
-    // 对"瞬时网络错误"做有限重试：覆盖主机/Sunshine 刚重启窗口
-    // （此时 mDNS/ICMP 已恢复但 HTTPS 监听尚未 ready，原本会单次 timeout 抛错）
-    // 仅重试 timeout/refused/unreachable/dns 等可能在几秒内自愈的错误，
-    // 不重试证书/401/HTTP 4xx 等硬错误（避免掩盖真实问题）
-    const MAX_ATTEMPTS = 3;
-    const RETRY_DELAY_MS = 1500;
-    let lastErr: Error | null = null;
-    let serverInfo: ServerInfo | null = null;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        serverInfo = await this.nvHttp.getServerInfo();
-        if (attempt > 1) {
-          console.info(`fetchServerInfo: 第 ${attempt} 次尝试成功`);
-        }
-        break;
-      } catch (err) {
-        lastErr = err instanceof Error ? err : new Error(String(err));
-        const lower = lastErr.message.toLowerCase();
-        const isTransient = lower.includes('timeout') ||
-          lower.includes('timed out') ||
-          lower.includes('refused') ||
-          lower.includes('unreachable') ||
-          lower.includes('dns') ||
-          lower.includes('getaddrinfo') ||
-          lower.includes('connect failed') ||
-          lower.includes('reset');
-        if (!isTransient || attempt === MAX_ATTEMPTS) {
-          throw lastErr;
-        }
-        // 用户已主动取消（StreamViewModel.stop() 设置 userInitiatedStop=true）→ 不再重试，
-        // 立即抛出，避免取消响应被等待循环拖延 1.5s + 下次 HTTP 超时（最长 ~9.5s）
-        if (this.userInitiatedStop) {
-          throw lastErr;
-        }
-        console.warn(`fetchServerInfo: 第 ${attempt} 次失败（瞬时错误），${RETRY_DELAY_MS}ms 后重试: ${lastErr.message}`);
+    // 主机/Sunshine 重启窗口（mDNS/ICMP 已恢复但 HTTPS 监听尚未 ready）会让单次 ServerInfo
+    // 请求必败。委托给 NvHttp.getServerInfoRobust 处理瞬时错误重试 + 取消响应，
+    // 避免在业务层重复维护错误识别 / 重试 / 取消的细节。
+    const serverInfo = await this.nvHttp.getServerInfoRobust({
+      isCancelled: (): boolean => this.userInitiatedStop,
+      onRetry: (attempt: number, maxAttempts: number): void => {
         if (this.stageProgressCallback) {
-          this.stageProgressCallback(0, `连接重试中 (${attempt}/${MAX_ATTEMPTS - 1})...`);
+          this.stageProgressCallback(0, `连接重试中 (${attempt}/${maxAttempts - 1})...`);
         }
-        await new Promise<void>(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-        // 等待结束后再次检查取消（用户在 1.5s sleep 期间按取消的常见情况）
-        if (this.userInitiatedStop) {
-          throw lastErr;
-        }
-      }
-    }
-    if (!serverInfo) {
-      throw lastErr ?? new Error('获取服务器信息失败');
-    }
+      },
+    });
 
     this.serverAppVersion = serverInfo.appVersion || '';
     this.serverGfeVersion = serverInfo.gfeVersion || '';
