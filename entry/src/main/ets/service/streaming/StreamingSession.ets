@@ -12,7 +12,7 @@ import { StreamConfig, HdrMode, getSurroundAudioInfo } from '../../model/StreamC
 import { InputEvent, InputType, ControllerButtonEvent, ControllerAxisEvent, ControllerButton } from '../../model/InputEvent';
 import { ComputerManager } from '../ComputerManager';
 import { ComputerInfo } from '../../model/ComputerInfo';
-import { NvHttp, LaunchConfig } from './NvHttp';
+import { NvHttp, LaunchConfig, ServerInfo } from './NvHttp';
 import { CryptoUtil } from '../../utils/CryptoUtil';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
@@ -879,7 +879,47 @@ export class StreamingSession {
 
   private async fetchServerInfo(): Promise<void> {
     if (!this.nvHttp) throw new Error('nvHttp 未初始化');
-    const serverInfo = await this.nvHttp.getServerInfo();
+
+    // 对"瞬时网络错误"做有限重试：覆盖主机/Sunshine 刚重启窗口
+    // （此时 mDNS/ICMP 已恢复但 HTTPS 监听尚未 ready，原本会单次 timeout 抛错）
+    // 仅重试 timeout/refused/unreachable/dns 等可能在几秒内自愈的错误，
+    // 不重试证书/401/HTTP 4xx 等硬错误（避免掩盖真实问题）
+    const MAX_ATTEMPTS = 3;
+    const RETRY_DELAY_MS = 1500;
+    let lastErr: Error | null = null;
+    let serverInfo: ServerInfo | null = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        serverInfo = await this.nvHttp.getServerInfo();
+        if (attempt > 1) {
+          console.info(`fetchServerInfo: 第 ${attempt} 次尝试成功`);
+        }
+        break;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        const lower = lastErr.message.toLowerCase();
+        const isTransient = lower.includes('timeout') ||
+          lower.includes('timed out') ||
+          lower.includes('refused') ||
+          lower.includes('unreachable') ||
+          lower.includes('dns') ||
+          lower.includes('getaddrinfo') ||
+          lower.includes('connect failed') ||
+          lower.includes('reset');
+        if (!isTransient || attempt === MAX_ATTEMPTS) {
+          throw lastErr;
+        }
+        console.warn(`fetchServerInfo: 第 ${attempt} 次失败（瞬时错误），${RETRY_DELAY_MS}ms 后重试: ${lastErr.message}`);
+        if (this.stageProgressCallback) {
+          this.stageProgressCallback(0, `连接重试中 (${attempt}/${MAX_ATTEMPTS - 1})...`);
+        }
+        await new Promise<void>(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+      }
+    }
+    if (!serverInfo) {
+      throw lastErr ?? new Error('获取服务器信息失败');
+    }
+
     this.serverAppVersion = serverInfo.appVersion || '';
     this.serverGfeVersion = serverInfo.gfeVersion || '';
     this.serverCodecModeSupport = serverInfo.serverCodecModeSupport || 0;
