@@ -879,7 +879,20 @@ export class StreamingSession {
 
   private async fetchServerInfo(): Promise<void> {
     if (!this.nvHttp) throw new Error('nvHttp 未初始化');
-    const serverInfo = await this.nvHttp.getServerInfo();
+
+    // 主机/Sunshine 重启窗口（mDNS/ICMP 已恢复但 HTTPS 监听尚未 ready）会让单次 ServerInfo
+    // 请求必败。委托给 NvHttp.getServerInfoRobust 处理瞬时错误重试 + 取消响应，
+    // 避免在业务层重复维护错误识别 / 重试 / 取消的细节。
+    const serverInfo = await this.nvHttp.getServerInfoRobust({
+      isCancelled: (): boolean => this.userInitiatedStop,
+      // 注意：onRetry 仅在还有后续重试时触发，maxAttempts === 1 时不会被调用
+      onRetry: (attempt: number, maxAttempts: number): void => {
+        if (this.stageProgressCallback) {
+          this.stageProgressCallback(0, `连接重试中 (${attempt}/${Math.max(1, maxAttempts - 1)})...`);
+        }
+      },
+    });
+
     this.serverAppVersion = serverInfo.appVersion || '';
     this.serverGfeVersion = serverInfo.gfeVersion || '';
     this.serverCodecModeSupport = serverInfo.serverCodecModeSupport || 0;

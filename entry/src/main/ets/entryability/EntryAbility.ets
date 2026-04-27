@@ -14,6 +14,7 @@ import { window, display } from '@kit.ArkUI';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppStateService } from '../service/AppStateService';
 import { UiSettings } from '../service/SettingsService';
+import { RcpSessionPool } from '../utils/RcpSessionPool';
 
 const TAG = 'EntryAbility';
 const DOMAIN = 0x0000;
@@ -49,6 +50,13 @@ export default class EntryAbility extends UIAbility {
     
     // 取消应用状态监听
     this.unregisterAppStateCallback();
+
+    // 关闭 rcp Session 池，显式释放底层 socket/TLS 资源
+    try {
+      RcpSessionPool.disposeAll();
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'RcpSessionPool.disposeAll failed: %{public}s', String(e));
+    }
   }
   
   /**

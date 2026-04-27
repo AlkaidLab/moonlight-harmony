@@ -78,6 +78,25 @@ interface RotateDisplayResponse {
   success?: boolean;
 }
 
+/**
+ * getServerInfoRobust 选项
+ */
+export interface GetServerInfoRobustOptions {
+  /** 最大尝试次数（含首次），默认 3 */
+  maxAttempts?: number;
+  /** 重试间隔（毫秒），默认 1500 */
+  delayMs?: number;
+  /** 取消检查回调；返回 true 时立即抛出最近一次错误 */
+  isCancelled?: () => boolean;
+  /** 每次重试触发的回调（可用于上报进度/UI 文案） */
+  onRetry?: (attempt: number, maxAttempts: number, err: Error) => void;
+}
+
+/** 取消错误：name='CanceledError'，便于调用方与真实网络错误区分 */
+export interface CanceledError extends Error {
+  isCanceled: boolean;
+}
+
 export class NvHttp {
   private address: string;
   private serverCert: string | null;
@@ -90,10 +109,16 @@ export class NvHttp {
   // 端口常量（来源于 NetworkConstants）
   static readonly DEFAULT_HTTPS_PORT = DEFAULT_HTTPS_PORT;
   static readonly DEFAULT_HTTP_PORT = DEFAULT_HTTP_PORT;
-  // 缩短超时时间以加快离线主机的检测（从 5 秒减少到 3 秒）
+  // 超时时间（对齐 Android 版 NvHTTP 的 SHORT_CONNECTION_TIMEOUT/LONG_CONNECTION_TIMEOUT/READ_TIMEOUT）
+  // 注意：HarmonyOS rcp 当前没有连接复用（每次 createSession+close），每次请求都要走完整 TCP+TLS handshake
+  // 所以 connect 阶段比 Android OkHttp 慢 1.5~3 RTT，这里给的 timeout 已经考虑此差异
   static readonly CONNECTION_TIMEOUT = 3000;
   static readonly LONG_CONNECTION_TIMEOUT = 5000;
-  static readonly READ_TIMEOUT = 5000;
+  static readonly READ_TIMEOUT = 7000;
+
+  // getServerInfoRobust 默认参数（启动链路使用）
+  static readonly DEFAULT_ROBUST_MAX_ATTEMPTS = 3;
+  static readonly DEFAULT_ROBUST_DELAY_MS = 1500;
 
   // 缓存的 HTTPS 端口
   private httpsPort: number = 0;
@@ -352,8 +377,48 @@ export class NvHttp {
    * 判断错误是否为超时错误
    */
   private isTimeoutError(errMsg: string): boolean {
+    return NvHttp.isTimeoutError(errMsg);
+  }
+
+  /**
+   * 判断错误是否为超时错误（静态，供外部复用）
+   */
+  static isTimeoutError(errMsg: string): boolean {
     const lower = errMsg.toLowerCase();
     return lower.includes('timeout') || lower.includes('timed out');
+  }
+
+  /**
+   * 判断错误是否属于「可重试的矬时网络错误」
+   * 覆盖：超时 / 连接拒绝 / 不可达 / DNS 解析失败 / TCP RST
+   * 不覆盖：证书错误 / 401 / 4xx / 其它协议类错误（避免掩盖真实问题）
+   *
+   * 实现上 HarmonyOS 错误消息始终为英文（即使中文设备），
+   * 不需担心本地化误判
+   */
+  static isTransientNetworkError(err: Error | string): boolean {
+    const lower = (typeof err === 'string' ? err : err.message).toLowerCase();
+    return NvHttp.isTimeoutError(lower) ||
+      lower.includes('refused') ||
+      lower.includes('unreachable') ||
+      lower.includes('dns') ||
+      lower.includes('getaddrinfo') ||
+      lower.includes('connect failed') ||
+      lower.includes('connection reset') ||
+      lower.includes('econnreset') ||
+      lower.includes('reset by peer');
+  }
+
+  /**
+   * 构造取消错误：name='CanceledError'，调用方可用 err.name === 'CanceledError'
+   * 或 (err as { isCanceled?: boolean }).isCanceled 区分用户取消与真实网络错误
+   */
+  static makeCanceledError(cause?: Error): Error {
+    const msg = cause ? `操作已取消: ${cause.message}` : '操作已取消';
+    const e: CanceledError = new Error(msg) as CanceledError;
+    e.name = 'CanceledError';
+    e.isCanceled = true;
+    return e;
   }
 
   /**
@@ -414,15 +479,8 @@ export class NvHttp {
           response = await this.doHttpsRequestWithFrpRetry('serverinfo');
         } catch (err) {
           const errMsg = String(err).toLowerCase();
-          // 对齐 Android：SSLHandshakeException+CertificateException 或 HTTP 401 才降级
-          // 注意：HarmonyOS 错误为英文消息（即使中文设备），无中文误判风险
-          // 排除明确的非证书错误（超时/拒绝/DNS）以避免错误降级
-          const isTransientError = this.isTimeoutError(errMsg) ||
-            errMsg.includes('refused') ||
-            errMsg.includes('unreachable') ||
-            errMsg.includes('dns') ||
-            errMsg.includes('getaddrinfo');
-          const isCertError = !isTransientError && (
+          // 存在 cert 错误才降级 HTTP（超时/拒绝/DNS 等矬时错误不降级，避免错误决策）
+          const isCertError = !NvHttp.isTransientNetworkError(errMsg) && (
             errMsg.includes('401') ||
             errMsg.includes('certificate') ||
             errMsg.includes('handshake') ||
@@ -458,6 +516,62 @@ export class NvHttp {
     }
 
     return serverInfo;
+  }
+
+  /**
+   * 获取服务器信息（带瞬时错误重试）
+   *
+   * 使用场景：串流启动等"对单次失败容忍度低"的链路。
+   * 普通轮询（ComputerManager polling）不应使用此方法，否则会拖延状态判定。
+   *
+   * 重试策略：
+   * - 仅对瞬时网络错误（NvHttp.isTransientNetworkError）重试
+   * - 硬错误（cert/401/协议错误）立即抛出，避免掩盖真实问题
+   * - 每次重试前/sleep 后检查 isCancelled，及时响应取消
+   *
+   * @param opts.maxAttempts 最大尝试次数，默认 3
+   * @param opts.delayMs 重试间隔（ms），默认 1500
+   * @param opts.isCancelled 取消检查回调，返回 true 时立即抛出 lastErr
+   * @param opts.onRetry (attempt, maxAttempts, err) → 业务层可上报进度/UI 文案
+   */
+  async getServerInfoRobust(opts?: GetServerInfoRobustOptions): Promise<ServerInfo> {
+    const maxAttempts = opts?.maxAttempts ?? NvHttp.DEFAULT_ROBUST_MAX_ATTEMPTS;
+    const delayMs = opts?.delayMs ?? NvHttp.DEFAULT_ROBUST_DELAY_MS;
+    const isCancelled = opts?.isCancelled ?? ((): boolean => false);
+    const onRetry = opts?.onRetry;
+
+    let lastErr: Error | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const result = await this.getServerInfo();
+        if (attempt > 1) {
+          console.info(`NvHttp.getServerInfoRobust: 第 ${attempt} 次尝试成功`);
+        }
+        return result;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        const transient = NvHttp.isTransientNetworkError(lastErr);
+        // 用户取消 → 抛出独立的取消错误，调用方可与网络错误区分
+        if (isCancelled()) {
+          throw NvHttp.makeCanceledError(lastErr);
+        }
+        // 硬错误 / 已达上限 → 抛出原错误
+        if (!transient || attempt === maxAttempts) {
+          throw lastErr;
+        }
+        console.warn(`NvHttp.getServerInfoRobust: 第 ${attempt}/${maxAttempts} 次失败（瞬时错误），${delayMs}ms 后重试: ${lastErr.message}`);
+        if (onRetry) {
+          onRetry(attempt, maxAttempts, lastErr);
+        }
+        await new Promise<void>(resolve => setTimeout(resolve, delayMs));
+        // sleep 期间被取消的常见情况
+        if (isCancelled()) {
+          throw NvHttp.makeCanceledError(lastErr);
+        }
+      }
+    }
+    // 不可达：循环要么 return 要么 throw，但保留作为类型守卫
+    throw lastErr ?? new Error('获取服务器信息失败');
   }
 
   /**
