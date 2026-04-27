@@ -486,15 +486,35 @@ export class ComputerManager {
       console.info(`ComputerManager: 成功添加电脑 ${computer.name} (${computer.uuid}), localAddr=${computer.localAddress}, remoteAddr=${computer.remoteAddress}`);
       return computer;
     } catch (err) {
-      // 如果无法获取服务器信息，仍然添加但标记为离线
+      // 如果无法获取服务器信息，仍然添加但标记为未确认
       if (discoveredName) {
+        // 临时 UUID 按 discoveredName 派生：同一发现名重复发现（如 IP 变化）会复用同一条目，
+        // 避免堆积多个“发现了但连不上”的残留条目，然后被后续 saveComputers 一起持久化
+        const tempUuid = `discovered-${discoveredName}`;
+        const reused = this.computers.get(tempUuid);
+        if (reused) {
+          reused.address = address;
+          if (!isLoopbackIPv4(address)) {
+            reused.localAddress = address;
+          }
+          if (httpPort) {
+            reused.httpPort = httpPort;
+          }
+          if (discoveredIpv6) {
+            reused.ipv6Address = discoveredIpv6;
+          }
+          console.info(`ComputerManager: 复用未确认条目 ${reused.name} (${tempUuid})`);
+          return reused;
+        }
         const computer = new ComputerInfoBuilder()
-          .setUuid(`discovered-${Date.now()}`)
+          .setUuid(tempUuid)
           .setName(discoveredName)
           .setAddress(address)
           .setLocalAddress(address)
           .setState(ComputerState.UNKNOWN)
           .setPairState(PairState.NOT_PAIRED)
+          .setHttpPort(httpPort)
+          .setIpv6Address(discoveredIpv6 || '')
           .build();
 
         this.computers.set(computer.uuid, computer);
@@ -543,9 +563,11 @@ export class ComputerManager {
       );
     } catch (err) {
       console.error('ComputerManager: refreshAllComputers 异常:', err);
+      // 如果 Promise.all 外层走了 catch（实际几乎不会跳到这里，内层已兑了一层），
+      // 走 handlePollFailure 走阈值，避免绕过 INITIAL_POLL_TRIES 让所有 UNKNOWN 闪 OFFLINE
       this.computers.forEach(computer => {
         if (computer.state === ComputerState.UNKNOWN) {
-          computer.state = ComputerState.OFFLINE;
+          this.handlePollFailure(computer);
         }
       });
       this.notifyListChanged();
@@ -609,6 +631,8 @@ export class ComputerManager {
       this.netConnection.on('netLost', () => {
         console.info('ComputerManager: 网络丢失，标记所有 PC 为离线');
         this.computers.forEach(c => { c.state = ComputerState.OFFLINE; });
+        // 已强制 OFFLINE，计数不再被读取；同时避免网络恢复后“旧数”干扰阈值判定
+        this.offlineCount.clear();
         this.notifyListChanged();
       });
 
@@ -695,6 +719,12 @@ export class ComputerManager {
    * 处理一次轮询失败：累计失败次数，达到阈值后才标 OFFLINE
    */
   private handlePollFailure(computer: ComputerInfo): void {
+    // 避免在轮询 in-flight 期间 PC 被 removeComputer 删掉后，这里又把计数写回 offlineCount
+    // （孤儿条目会一直留到下次 startPolling 才被清理）
+    if (!this.computers.has(computer.uuid)) {
+      this.offlineCount.delete(computer.uuid);
+      return;
+    }
     const next = (this.offlineCount.get(computer.uuid) ?? 0) + 1;
     this.offlineCount.set(computer.uuid, next);
 
