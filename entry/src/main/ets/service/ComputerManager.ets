@@ -36,6 +36,17 @@ interface PollResult {
 /** 轮询间隔（毫秒），参照 Android ComputerManagerService */
 const SERVERINFO_POLLING_PERIOD_MS = 5000;
 
+/** 全 0 MAC：远程响应或 HTTP 未配对响应中的占位值，不能用它覆盖已发现的真实 MAC */
+const ZERO_MAC = '00:00:00:00:00:00';
+
+/**
+ * 标记 OFFLINE 前允许的连续失败次数（对齐 Android ComputerManagerService）
+ * - 状态为 UNKNOWN 时（首次轮询）：失败 2 次后标 OFFLINE
+ * - 已经 ONLINE 的 PC：失败 3 次后才标 OFFLINE，避免短暂网络抖动 / Sunshine 重启时的误报
+ */
+const INITIAL_POLL_TRIES = 2;
+const OFFLINE_POLL_TRIES = 3;
+
 /**
  * 电脑管理器 - 管理所有已发现和手动添加的电脑
  */
@@ -49,8 +60,8 @@ export class ComputerManager {
   private pollingTimerId: number = -1;
   private isPollingActive: boolean = false;
   private netConnection: connection.NetConnection | null = null;
-  /** 离线轮询退避：记录连续离线次数，每 N 轮才真正轮询一次离线主机 */
-  private offlineStreak: Map<string, number> = new Map();
+  /** 离线轮询计数：连续失败次数，达到 INITIAL_POLL_TRIES/OFFLINE_POLL_TRIES 阈值后才标 OFFLINE */
+  private offlineCount: Map<string, number> = new Map();
 
   // ═══════════════════════════════════════════════════════════
   // 初始化 & 单例
@@ -181,18 +192,17 @@ export class ComputerManager {
       const serverInfo = await nvHttp.getServerInfo();
 
       // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
+      let target = computer;
       if (serverInfo.uniqueId && computer.uuid !== serverInfo.uniqueId) {
-        this.reconcileUuid(computer, serverInfo.uniqueId);
+        target = this.reconcileUuid(computer, serverInfo.uniqueId);
       }
 
-      computer.state = ComputerState.ONLINE;
-      if (!computer.address) computer.address = address;
-      computer.runningGameId = serverInfo.currentGame;
-      if (serverInfo.hostname) computer.name = serverInfo.hostname;
+      // 走单一合并入口，保证与轮询/添加路径使用同一套守卫规则
+      this.mergeServerInfo(target, serverInfo, address);
 
       // 如果仍缺少 IPv6 全局地址，异步补充
-      if (!computer.ipv6Address && serverInfo.hostname) {
-        this.lookupAndSetIpv6(computer, serverInfo.hostname);
+      if (!target.ipv6Address && serverInfo.hostname) {
+        this.lookupAndSetIpv6(target, serverInfo.hostname);
       }
 
       this.saveComputers();
@@ -209,6 +219,10 @@ export class ComputerManager {
    */
   private reconcileUuid(computer: ComputerInfo, realUuid: string): ComputerInfo {
     const existingReal = this.computers.get(realUuid);
+    // 临时 UUID 上可能已累积了轮询失败计数（如 mDNS 后 verifyOrPollComputer 首次失败），
+    // 需要随 UUID 一起迁移，避免独立计数孤在旧 UUID 上、新 UUID 从 0 重新起算
+    const carriedCount = this.offlineCount.get(computer.uuid);
+    this.offlineCount.delete(computer.uuid);
 
     if (existingReal) {
       // 真实 UUID 条目已存在 → 合并到已有条目，删除临时条目
@@ -216,6 +230,11 @@ export class ComputerManager {
       this.computers.delete(computer.uuid);
       if (computer.manualAddress && !existingReal.manualAddress) {
         existingReal.manualAddress = computer.manualAddress;
+      }
+      // 两边计数取较大值：任一条目达到阈值就该被视为离线
+      if (carriedCount !== undefined) {
+        const realCount = this.offlineCount.get(realUuid) ?? 0;
+        this.offlineCount.set(realUuid, Math.max(realCount, carriedCount));
       }
       return existingReal;
     }
@@ -225,6 +244,9 @@ export class ComputerManager {
     this.computers.delete(computer.uuid);
     computer.uuid = realUuid;
     this.computers.set(realUuid, computer);
+    if (carriedCount !== undefined) {
+      this.offlineCount.set(realUuid, carriedCount);
+    }
     return computer;
   }
 
@@ -235,6 +257,95 @@ export class ComputerManager {
     if (this.onComputerListChanged) {
       this.onComputerListChanged();
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 合并入口（mergeServerInfo）
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * 把 ServerInfo 合并到一个已存在的 ComputerInfo 中。
+   *
+   * 这是**唯一**的服务器信息合并入口，对齐 Android `ComputerDetails.update()`：
+   * - mDNS 发现已存在 PC（addComputerInternal 已有分支）
+   * - mDNS 快速验证（verifyOrPollComputer）
+   * - 周期性轮询（updateComputerFromPoll）
+   *
+   * 所有"新值什么时候才能覆盖旧值"的守卫规则都集中在这里，避免三处实现各写各的、漏掉一处就出 bug
+   * （历史 bug：addComputerInternal 漏了 ZERO_MAC 守卫导致 WAN 连接抹掉真实 MAC）。
+   *
+   * 调用方负责：UUID 归一、saveComputers、IPv6 异步补充、boxArt 加载等副作用。
+   */
+  private mergeServerInfo(
+    target: ComputerInfo,
+    info: ServerInfo,
+    address: string,
+    httpPort?: number,
+    discoveredIpv6?: string
+  ): void {
+    // 名称：仅在新值非空时覆盖
+    if (info.hostname) {
+      target.name = info.hostname;
+    }
+
+    // 当前活动地址：始终更新为本次成功连接的地址
+    target.address = address;
+
+    // 本地地址：过滤 127.x 回环（对齐 Android GS IPv6 Forwarder 保护）
+    if (info.localAddress && !isLoopbackIPv4(info.localAddress)) {
+      target.localAddress = info.localAddress;
+    } else if (target.localAddress && isLoopbackIPv4(target.localAddress)) {
+      // 清理历史遗留的 127.x 回环地址，回退到本次连接的地址
+      target.localAddress = address;
+    }
+
+    // 远程地址：仅在服务器返回时覆盖
+    if (info.externalAddress) {
+      target.remoteAddress = info.externalAddress;
+    }
+
+    // IPv6 地址：连接地址本身是 IPv6，或调用方传入了 mDNS 发现的 IPv6
+    if (isIPv6Address(address)) {
+      target.ipv6Address = address;
+    } else if (discoveredIpv6) {
+      target.ipv6Address = discoveredIpv6;
+    }
+
+    // MAC 地址：拒绝零 MAC（远程/WAN/HTTP 未配对响应中常为 00:00:00:00:00:00），
+    // 否则会抹掉之前局域网发现的真实 MAC，导致 WOL 失效
+    if (info.macAddress && info.macAddress !== ZERO_MAC) {
+      target.macAddress = info.macAddress;
+    }
+
+    // 自定义 HTTP 端口
+    if (httpPort) {
+      target.httpPort = httpPort;
+    }
+
+    // HTTPS 端口
+    if (info.httpsPort > 0) {
+      target.httpsPort = info.httpsPort;
+    }
+
+    // 当前运行的游戏 ID
+    target.runningGameId = info.currentGame || 0;
+
+    // 配对状态：HTTP 请求总是返回 paired=false，只有 HTTPS + 客户端证书才能拿到正确状态。
+    // 所以本地有 serverCert 时信任本地配对状态，避免被 HTTP 响应误判为未配对。
+    if (info.paired) {
+      target.pairState = PairState.PAIRED;
+    } else if (target.serverCert) {
+      target.pairState = PairState.PAIRED;
+    } else {
+      target.pairState = PairState.NOT_PAIRED;
+    }
+
+    // 本函数只在成功获取 ServerInfo 后被调用（3 处调用点都走成功路径），故直接置 ONLINE；
+    // 失败路径由 handlePollFailure 按阈值决定是否转 OFFLINE，不会进入此处
+    target.state = ComputerState.ONLINE;
+    // 在线了→必然清 offlineCount：统一集中在合并入口清，避免各调用点遗漏
+    // （历史 bug：verifyOrPollComputer/addComputerInternal 成功路径曾漏清计数）
+    this.offlineCount.delete(target.uuid);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -332,49 +443,12 @@ export class ComputerManager {
       // 获取服务器信息
       const serverInfo = await nvHttp.getServerInfo();
 
-      // 使用服务器返回的本地地址（过滤 127.x 回环，对齐 Android GS IPv6 Forwarder 保护）
-      const localAddr = (serverInfo.localAddress && !isLoopbackIPv4(serverInfo.localAddress)) ? serverInfo.localAddress : '';
-      const remoteAddr = serverInfo.externalAddress || '';
-      
-      // 检测连接地址是否为 IPv6
-      const isIPv6 = isIPv6Address(address);
-      // mDNS 发现时可能已经拿到了 IPv6 地址
-      const ipv6Addr = isIPv6 ? address : (discoveredIpv6 || undefined);
-
       // 检查是否已存在相同 UUID 的电脑
       const existing = this.computers.get(serverInfo.uniqueId);
       if (existing) {
         // 合并更新：保留已有的配对信息，更新地址和状态
-        // 对齐 Android ComputerDetails.update()：只在新值有效时才覆盖
-        existing.name = serverInfo.hostname || existing.name;
-        existing.address = address;
-        if (localAddr) {
-          existing.localAddress = localAddr;
-        }
-        if (remoteAddr) {
-          existing.remoteAddress = remoteAddr;
-        }
-        if (ipv6Addr) {
-          existing.ipv6Address = ipv6Addr;
-        }
-        if (serverInfo.macAddress) {
-          existing.macAddress = serverInfo.macAddress;
-        }
-        existing.state = ComputerState.ONLINE;
-        existing.runningGameId = serverInfo.currentGame || 0;
-        if (httpPort) {
-          existing.httpPort = httpPort;
-        }
-        if (serverInfo.httpsPort > 0) {
-          existing.httpsPort = serverInfo.httpsPort;
-        }
-        // 关键：保留 serverCert 和 pairState（如已配对）
-        // 只有服务器明确返回 paired=true 时才更新配对状态
-        if (serverInfo.paired) {
-          existing.pairState = PairState.PAIRED;
-        }
-        // 如果 existing.serverCert 已有值，不覆盖
-        // serverCert 只能通过配对流程获取
+        // 所有合并守卫（ZERO_MAC、127.x、HTTP paired 等）集中在 mergeServerInfo
+        this.mergeServerInfo(existing, serverInfo, address, httpPort, discoveredIpv6);
 
         console.info(`ComputerManager: 合并更新已有电脑 ${existing.name} (${existing.uuid}), 保留配对信息`);
         this.computers.set(existing.uuid, existing);
@@ -388,21 +462,21 @@ export class ComputerManager {
         return existing;
       }
 
-      // 全新电脑，创建新条目
+      // 全新电脑，创建新条目（先建空壳，再走统一合并入口填充字段，避免守卫规则分裂）
+      const isIPv6 = isIPv6Address(address);
+      const ipv6Addr = isIPv6 ? address : (discoveredIpv6 || '');
       const computer = new ComputerInfoBuilder()
         .setUuid(serverInfo.uniqueId)
-        .setName(serverInfo.hostname || discoveredName || address)
-        .setAddress(address) // 保持原始连接地址
-        .setLocalAddress(localAddr || address) // 服务器返回的本地地址（已过滤 127.x）
-        .setRemoteAddress(remoteAddr) // 服务器返回的外部地址
-        .setIpv6Address(ipv6Addr) // mDNS 发现的 IPv6 或连接地址本身
-        .setMacAddress(serverInfo.macAddress || '')
-        .setState(ComputerState.ONLINE)
-        .setPairState(serverInfo.paired ? PairState.PAIRED : PairState.NOT_PAIRED)
-        .setRunningGameId(serverInfo.currentGame || 0)
-        .setHttpPort(httpPort) // 保存自定义端口
-        .setHttpsPort(serverInfo.httpsPort > 0 ? serverInfo.httpsPort : undefined)
+        .setName(discoveredName || address) // 兜底名称，mergeServerInfo 会用 hostname 覆盖
+        .setAddress(address)
+        .setLocalAddress(address) // 兜底，mergeServerInfo 会按守卫规则覆盖
+        .setIpv6Address(ipv6Addr)
+        .setState(ComputerState.UNKNOWN)
+        .setPairState(PairState.NOT_PAIRED)
+        .setHttpPort(httpPort)
         .build();
+
+      this.mergeServerInfo(computer, serverInfo, address, httpPort, discoveredIpv6);
 
       this.computers.set(computer.uuid, computer);
       await this.saveComputers();
@@ -412,18 +486,38 @@ export class ComputerManager {
         this.lookupAndSetIpv6(computer, serverInfo.hostname);
       }
 
-      console.info(`ComputerManager: 成功添加电脑 ${computer.name} (${computer.uuid}), localAddr=${localAddr}, remoteAddr=${remoteAddr}`);
+      console.info(`ComputerManager: 成功添加电脑 ${computer.name} (${computer.uuid}), localAddr=${computer.localAddress}, remoteAddr=${computer.remoteAddress}`);
       return computer;
     } catch (err) {
-      // 如果无法获取服务器信息，仍然添加但标记为离线
+      // 如果无法获取服务器信息，仍然添加但标记为未确认
       if (discoveredName) {
+        // 临时 UUID 按 discoveredName 派生：同一发现名重复发现（如 IP 变化）会复用同一条目，
+        // 避免堆积多个“发现了但连不上”的残留条目，然后被后续 saveComputers 一起持久化
+        const tempUuid = `discovered-${discoveredName}`;
+        const reused = this.computers.get(tempUuid);
+        if (reused) {
+          reused.address = address;
+          if (!isLoopbackIPv4(address)) {
+            reused.localAddress = address;
+          }
+          if (httpPort) {
+            reused.httpPort = httpPort;
+          }
+          if (discoveredIpv6) {
+            reused.ipv6Address = discoveredIpv6;
+          }
+          console.info(`ComputerManager: 复用未确认条目 ${reused.name} (${tempUuid})`);
+          return reused;
+        }
         const computer = new ComputerInfoBuilder()
-          .setUuid(`discovered-${Date.now()}`)
+          .setUuid(tempUuid)
           .setName(discoveredName)
           .setAddress(address)
           .setLocalAddress(address)
           .setState(ComputerState.UNKNOWN)
           .setPairState(PairState.NOT_PAIRED)
+          .setHttpPort(httpPort)
+          .setIpv6Address(discoveredIpv6 || '')
           .build();
 
         this.computers.set(computer.uuid, computer);
@@ -439,7 +533,7 @@ export class ComputerManager {
    */
   async removeComputer(uuid: string): Promise<void> {
     this.computers.delete(uuid);
-    this.offlineStreak.delete(uuid);
+    this.offlineCount.delete(uuid);
     await this.saveComputers();
   }
 
@@ -450,42 +544,33 @@ export class ComputerManager {
   /**
    * 刷新所有电脑状态
    * 并行轮询，每台完成后立即通知 UI
+   *
+   * 对齐 Android ComputerManagerService.createPollingJob：
+   * 每个轮询周期都对所有 PC 执行 pollComputer，不跳过；
+   * `pollComputer` 内部根据 offlineCount 决定是否真的把状态标 OFFLINE，
+   * 这样网络抖动 / Sunshine 重启时 PC 不会立刻闪到"离线"。
    */
   async refreshAllComputers(): Promise<void> {
     try {
       await Promise.all(
         Array.from(this.computers.values()).map(async (computer) => {
           try {
-            // 离线退避：连续离线次数越多，跳过的轮询轮次越多
-            const streak = this.offlineStreak.get(computer.uuid) ?? 0;
-            if (streak > 0) {
-              // streak=1→每2轮poll一次, streak>=3→每4轮poll一次（上限）
-              const skipInterval = Math.min(streak + 1, 4);
-              // 用 streak 本身做计数器，只在整除时轮询
-              this.offlineStreak.set(computer.uuid, streak + 1);
-              if (streak % skipInterval !== 0) {
-                return; // 跳过本轮
-              }
-            }
-
-            const online = await this.pollComputer(computer);
-            if (online) {
-              this.offlineStreak.delete(computer.uuid);
-            } else {
-              this.offlineStreak.set(computer.uuid, (this.offlineStreak.get(computer.uuid) ?? 0) || 1);
-            }
-          } catch {
-            computer.state = ComputerState.OFFLINE;
-            this.offlineStreak.set(computer.uuid, (this.offlineStreak.get(computer.uuid) ?? 0) + 1);
+            await this.pollComputer(computer);
+          } catch (err) {
+            // pollComputer 内部已处理网络错误；意外异常仍按一次失败计数
+            console.warn(`ComputerManager: ${computer.name} 轮询异常:`, err);
+            this.handlePollFailure(computer);
           }
           this.notifyListChanged();
         })
       );
     } catch (err) {
       console.error('ComputerManager: refreshAllComputers 异常:', err);
+      // 如果 Promise.all 外层走了 catch（实际几乎不会跳到这里，内层已兑了一层），
+      // 走 handlePollFailure 走阈值，避免绕过 INITIAL_POLL_TRIES 让所有 UNKNOWN 闪 OFFLINE
       this.computers.forEach(computer => {
         if (computer.state === ComputerState.UNKNOWN) {
-          computer.state = ComputerState.OFFLINE;
+          this.handlePollFailure(computer);
         }
       });
       this.notifyListChanged();
@@ -503,7 +588,11 @@ export class ComputerManager {
     
     this.isPollingActive = true;
     console.info('ComputerManager: 启动状态轮询');
-    
+
+    // 重置离线计数：重新进入页面（如串流退出后）重新累计，
+    // 避免历史计数让已恢复的 PC 仍被当作临近阈值、下一次失败立刻闪到离线
+    this.offlineCount.clear();
+
     // 立即执行一次刷新，然后定时轮询
     this.refreshAllComputers().catch((err: Error) => {
       console.warn('ComputerManager: 初始刷新失败', err);
@@ -531,7 +620,7 @@ export class ComputerManager {
       this.netConnection.on('netAvailable', () => {
         console.info('ComputerManager: 网络变为可用，重置并重新轮询');
         this.computers.forEach(c => { c.state = ComputerState.UNKNOWN; });
-        this.offlineStreak.clear(); // 网络恢复，重置退避
+        this.offlineCount.clear(); // 网络恢复，清空失败计数
 
         if (this.isPollingActive) {
           this.refreshAllComputers().catch((err: Error) => {
@@ -545,6 +634,8 @@ export class ComputerManager {
       this.netConnection.on('netLost', () => {
         console.info('ComputerManager: 网络丢失，标记所有 PC 为离线');
         this.computers.forEach(c => { c.state = ComputerState.OFFLINE; });
+        // 已强制 OFFLINE，计数不再被读取；同时避免网络恢复后“旧数”干扰阈值判定
+        this.offlineCount.clear();
         this.notifyListChanged();
       });
 
@@ -596,11 +687,17 @@ export class ComputerManager {
   /**
    * 轮询单台电脑，并行尝试所有已知地址
    * 任一地址成功即标记在线，无需等待所有地址超时
+   *
+   * 失败时不会立刻把状态标 OFFLINE：根据 offlineCount 累计达到阈值
+   * （UNKNOWN→INITIAL_POLL_TRIES，其他→OFFLINE_POLL_TRIES）后才转 OFFLINE，
+   * 期间保留原状态，避免短暂网络抖动 / Sunshine 重启时的误报闪烁。
    */
   async pollComputer(computer: ComputerInfo): Promise<boolean> {
     const addresses = this.collectAddresses(computer);
     if (addresses.length === 0) {
+      // 没有任何地址可试，直接认定离线；强制 OFFLINE 后计数不再被读取，清除即可
       computer.state = ComputerState.OFFLINE;
+      this.offlineCount.delete(computer.uuid);
       return false;
     }
 
@@ -613,12 +710,37 @@ export class ComputerManager {
 
     if (successResult?.serverInfo) {
       this.updateComputerFromPoll(computer, successResult);
+      // offlineCount 由 mergeServerInfo 统一清除，这里不重复
       return true;
     }
 
-    computer.state = ComputerState.OFFLINE;
-    console.info(`ComputerManager: ${computer.name} 所有地址均无法连接`);
+    this.handlePollFailure(computer);
     return false;
+  }
+
+  /**
+   * 处理一次轮询失败：累计失败次数，达到阈值后才标 OFFLINE
+   */
+  private handlePollFailure(computer: ComputerInfo): void {
+    // 避免在轮询 in-flight 期间 PC 被 removeComputer 删掉后，这里又把计数写回 offlineCount
+    // （孤儿条目会一直留到下次 startPolling 才被清理）
+    if (!this.computers.has(computer.uuid)) {
+      this.offlineCount.delete(computer.uuid);
+      return;
+    }
+    const next = (this.offlineCount.get(computer.uuid) ?? 0) + 1;
+    this.offlineCount.set(computer.uuid, next);
+
+    const threshold = computer.state === ComputerState.UNKNOWN
+      ? INITIAL_POLL_TRIES
+      : OFFLINE_POLL_TRIES;
+
+    if (next >= threshold) {
+      computer.state = ComputerState.OFFLINE;
+      console.info(`ComputerManager: ${computer.name} 连续失败 ${next} 次，标记 OFFLINE`);
+    } else {
+      console.info(`ComputerManager: ${computer.name} 失败 ${next}/${threshold} 次，保留原状态 ${computer.state}`);
+    }
   }
 
   /**
@@ -729,61 +851,19 @@ export class ComputerManager {
       target = this.reconcileUuid(computer, info.uniqueId);
     }
 
-    // 更新名称
-    if (info.hostname) {
-      target.name = info.hostname;
-    }
-
-    target.state = ComputerState.ONLINE;
-    target.address = result.address;
-    target.runningGameId = info.currentGame;
-    
-    // 缓存 HTTPS 端口（对齐 Android ComputerDetails.update()）
-    if (info.httpsPort > 0) {
-      target.httpsPort = info.httpsPort;
-    }
-    
-    // 更新 MAC 地址
-    if (info.macAddress && info.macAddress !== '00:00:00:00:00:00') {
-      target.macAddress = info.macAddress;
-    }
-    
-    // 更新本地/远程地址（过滤 127.x 回环，对齐 Android ComputerDetails.update()）
-    if (info.localAddress && !isLoopbackIPv4(info.localAddress)) {
-      target.localAddress = info.localAddress;
-    } else if (target.localAddress && isLoopbackIPv4(target.localAddress)) {
-      // 清理历史遗留的 127.x 回环地址
-      target.localAddress = result.address;
-    }
-    if (info.externalAddress) target.remoteAddress = info.externalAddress;
-
-    // 如果连接地址是 IPv6，更新 ipv6Address
-    if (isIPv6Address(result.address)) {
-      target.ipv6Address = result.address;
-    }
+    // 合并服务器信息（所有字段守卫规则集中在 mergeServerInfo）
+    this.mergeServerInfo(target, info, result.address);
 
     // 如果仍缺少 IPv6 全局地址，异步补充（不阻塞轮询流程）
     if (!target.ipv6Address && info.hostname) {
       this.lookupAndSetIpv6(target, info.hostname);
     }
-    
-    // 更新配对状态：
-    // HTTP 请求总是返回 paired=false，只有 HTTPS + 客户端证书 才返回正确状态
-    // 如果本地有 serverCert，信任本地配对状态
-    if (info.paired) {
-      target.pairState = PairState.PAIRED;
-    } else if (target.serverCert) {
-      // 可能是 HTTP 响应，保持已配对状态
-      target.pairState = PairState.PAIRED;
-    } else {
-      target.pairState = PairState.NOT_PAIRED;
-    }
-    
+
     console.info(`ComputerManager: ${target.name} 在线 (${result.address}), game=${info.currentGame}, paired=${target.pairState}`);
     this.saveComputers();
 
     // 如果已配对且需要 boxArt，异步加载
-    if (target.pairState === PairState.PAIRED && 
+    if (target.pairState === PairState.PAIRED &&
         (!target.boxArtUrl || target.boxArtUrl.startsWith('http'))) {
       this.loadFirstAppBoxArt(target, result.address);
     }
