@@ -219,6 +219,10 @@ export class ComputerManager {
    */
   private reconcileUuid(computer: ComputerInfo, realUuid: string): ComputerInfo {
     const existingReal = this.computers.get(realUuid);
+    // 临时 UUID 上可能已累积了轮询失败计数（如 mDNS 后 verifyOrPollComputer 首次失败），
+    // 需要随 UUID 一起迁移，避免独立计数孤在旧 UUID 上、新 UUID 从 0 重新起算
+    const carriedCount = this.offlineCount.get(computer.uuid);
+    this.offlineCount.delete(computer.uuid);
 
     if (existingReal) {
       // 真实 UUID 条目已存在 → 合并到已有条目，删除临时条目
@@ -226,6 +230,11 @@ export class ComputerManager {
       this.computers.delete(computer.uuid);
       if (computer.manualAddress && !existingReal.manualAddress) {
         existingReal.manualAddress = computer.manualAddress;
+      }
+      // 两边计数取较大值：任一条目达到阈值就该被视为离线
+      if (carriedCount !== undefined) {
+        const realCount = this.offlineCount.get(realUuid) ?? 0;
+        this.offlineCount.set(realUuid, Math.max(realCount, carriedCount));
       }
       return existingReal;
     }
@@ -235,6 +244,9 @@ export class ComputerManager {
     this.computers.delete(computer.uuid);
     computer.uuid = realUuid;
     this.computers.set(realUuid, computer);
+    if (carriedCount !== undefined) {
+      this.offlineCount.set(realUuid, carriedCount);
+    }
     return computer;
   }
 
@@ -328,7 +340,8 @@ export class ComputerManager {
       target.pairState = PairState.NOT_PAIRED;
     }
 
-    // 状态：调用方决定（可能是 ONLINE，也可能保留旧状态等到失败阈值才转 OFFLINE）
+    // 本函数只在成功获取 ServerInfo 后被调用（3 处调用点都走成功路径），故直接置 ONLINE；
+    // 失败路径由 handlePollFailure 按阈值决定是否转 OFFLINE，不会进入此处
     target.state = ComputerState.ONLINE;
   }
 
@@ -655,8 +668,9 @@ export class ComputerManager {
   async pollComputer(computer: ComputerInfo): Promise<boolean> {
     const addresses = this.collectAddresses(computer);
     if (addresses.length === 0) {
+      // 没有任何地址可试，直接认定离线；强制 OFFLINE 后计数不再被读取，清除即可
       computer.state = ComputerState.OFFLINE;
-      this.offlineCount.set(computer.uuid, OFFLINE_POLL_TRIES);
+      this.offlineCount.delete(computer.uuid);
       return false;
     }
 
