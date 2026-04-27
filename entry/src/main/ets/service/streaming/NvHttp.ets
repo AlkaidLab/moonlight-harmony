@@ -92,6 +92,11 @@ export interface GetServerInfoRobustOptions {
   onRetry?: (attempt: number, maxAttempts: number, err: Error) => void;
 }
 
+/** 取消错误：name='CanceledError'，便于调用方与真实网络错误区分 */
+export interface CanceledError extends Error {
+  isCanceled: boolean;
+}
+
 export class NvHttp {
   private address: string;
   private serverCert: string | null;
@@ -399,7 +404,21 @@ export class NvHttp {
       lower.includes('dns') ||
       lower.includes('getaddrinfo') ||
       lower.includes('connect failed') ||
-      lower.includes('reset');
+      lower.includes('connection reset') ||
+      lower.includes('econnreset') ||
+      lower.includes('reset by peer');
+  }
+
+  /**
+   * 构造取消错误：name='CanceledError'，调用方可用 err.name === 'CanceledError'
+   * 或 (err as { isCanceled?: boolean }).isCanceled 区分用户取消与真实网络错误
+   */
+  static makeCanceledError(cause?: Error): Error {
+    const msg = cause ? `操作已取消: ${cause.message}` : '操作已取消';
+    const e: CanceledError = new Error(msg) as CanceledError;
+    e.name = 'CanceledError';
+    e.isCanceled = true;
+    return e;
   }
 
   /**
@@ -532,8 +551,12 @@ export class NvHttp {
       } catch (err) {
         lastErr = err instanceof Error ? err : new Error(String(err));
         const transient = NvHttp.isTransientNetworkError(lastErr);
-        // 硬错误 / 已达上限 / 用户取消 → 立即抛出
-        if (!transient || attempt === maxAttempts || isCancelled()) {
+        // 用户取消 → 抛出独立的取消错误，调用方可与网络错误区分
+        if (isCancelled()) {
+          throw NvHttp.makeCanceledError(lastErr);
+        }
+        // 硬错误 / 已达上限 → 抛出原错误
+        if (!transient || attempt === maxAttempts) {
           throw lastErr;
         }
         console.warn(`NvHttp.getServerInfoRobust: 第 ${attempt}/${maxAttempts} 次失败（瞬时错误），${delayMs}ms 后重试: ${lastErr.message}`);
@@ -543,7 +566,7 @@ export class NvHttp {
         await new Promise<void>(resolve => setTimeout(resolve, delayMs));
         // sleep 期间被取消的常见情况
         if (isCancelled()) {
-          throw lastErr;
+          throw NvHttp.makeCanceledError(lastErr);
         }
       }
     }

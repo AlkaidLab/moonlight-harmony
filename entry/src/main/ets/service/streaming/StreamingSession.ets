@@ -885,9 +885,10 @@ export class StreamingSession {
     // 避免在业务层重复维护错误识别 / 重试 / 取消的细节。
     const serverInfo = await this.nvHttp.getServerInfoRobust({
       isCancelled: (): boolean => this.userInitiatedStop,
+      // 注意：onRetry 仅在还有后续重试时触发，maxAttempts === 1 时不会被调用
       onRetry: (attempt: number, maxAttempts: number): void => {
         if (this.stageProgressCallback) {
-          this.stageProgressCallback(0, `连接重试中 (${attempt}/${maxAttempts - 1})...`);
+          this.stageProgressCallback(0, `连接重试中 (${attempt}/${Math.max(1, maxAttempts - 1)})...`);
         }
       },
     });
