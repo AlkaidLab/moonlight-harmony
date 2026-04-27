@@ -104,10 +104,12 @@ export class NvHttp {
   // 端口常量（来源于 NetworkConstants）
   static readonly DEFAULT_HTTPS_PORT = DEFAULT_HTTPS_PORT;
   static readonly DEFAULT_HTTP_PORT = DEFAULT_HTTP_PORT;
-  // 缩短超时时间以加快离线主机的检测（从 5 秒减少到 3 秒）
+  // 超时时间（对齐 Android 版 NvHTTP 的 SHORT_CONNECTION_TIMEOUT/LONG_CONNECTION_TIMEOUT/READ_TIMEOUT）
+  // 注意：HarmonyOS rcp 当前没有连接复用（每次 createSession+close），每次请求都要走完整 TCP+TLS handshake
+  // 所以 connect 阶段比 Android OkHttp 慢 1.5~3 RTT，这里给的 timeout 已经考虑此差异
   static readonly CONNECTION_TIMEOUT = 3000;
   static readonly LONG_CONNECTION_TIMEOUT = 5000;
-  static readonly READ_TIMEOUT = 5000;
+  static readonly READ_TIMEOUT = 7000;
 
   // getServerInfoRobust 默认参数（启动链路使用）
   static readonly DEFAULT_ROBUST_MAX_ATTEMPTS = 3;
