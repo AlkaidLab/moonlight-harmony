@@ -343,6 +343,9 @@ export class ComputerManager {
     // 本函数只在成功获取 ServerInfo 后被调用（3 处调用点都走成功路径），故直接置 ONLINE；
     // 失败路径由 handlePollFailure 按阈值决定是否转 OFFLINE，不会进入此处
     target.state = ComputerState.ONLINE;
+    // 在线了→必然清 offlineCount：统一集中在合并入口清，避免各调用点遗漏
+    // （历史 bug：verifyOrPollComputer/addComputerInternal 成功路径曾漏清计数）
+    this.offlineCount.delete(target.uuid);
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -707,7 +710,7 @@ export class ComputerManager {
 
     if (successResult?.serverInfo) {
       this.updateComputerFromPoll(computer, successResult);
-      this.offlineCount.delete(computer.uuid);
+      // offlineCount 由 mergeServerInfo 统一清除，这里不重复
       return true;
     }
 
