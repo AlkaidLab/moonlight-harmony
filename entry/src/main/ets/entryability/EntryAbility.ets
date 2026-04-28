@@ -15,6 +15,7 @@ import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppStateService } from '../service/AppStateService';
 import { UiSettings } from '../service/SettingsService';
 import { RcpSessionPool } from '../utils/RcpSessionPool';
+import { NetworkErrorClassifierSelfCheck } from '../utils/NetworkErrorClassifierSelfCheck';
 
 const TAG = 'EntryAbility';
 const DOMAIN = 0x0000;
@@ -43,6 +44,9 @@ export default class EntryAbility extends UIAbility {
     
     // 注册应用前后台状态变化监听
     this.registerAppStateCallback();
+
+    // 网络错误分类契约自检（纯函数，零开销，仅日志）
+    NetworkErrorClassifierSelfCheck.run();
   }
 
   onDestroy(): void {
