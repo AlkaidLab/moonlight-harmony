@@ -133,14 +133,18 @@ export class HttpClient {
    * 主动 session.close() 会同步取消同 session 上所有 in-flight 请求（HTTP/2 RST_STREAM 雪崩），
    * 且该 RST/GOAWAY 会触发 Sunshine (Simple-Web-Server) 一侧 SSL state machine 异常，
    * 让 HTTPS listener 进入 wedged 状态。只在明确丢连接错误时才 invalidate。
+   *
+   * 同理：裸 connection reset / econnreset 也不 invalidate。
+   * - 单条空闲 TCP 被 firewall idle timeout 杀掉，rcp 池能自动重建新 TCP
+   * - 真正 session 级 TLS 损坏的 reset 会带 handshake/1007900035 关键词
+   * - HTTP/2 协议层崩溃由 1007900016 单独覆盖
+   * 让普通 reset 走 transient retry 兜底，避免 invalidate 把 session 内其他
+   * in-flight 请求级联 RST，反而扩大故障面。
    */
   private static isConnectionError(msg: string): boolean {
     if (!msg) return false;
     const lower = msg.toLowerCase();
     return lower.includes('refused') ||
-      lower.includes('connection reset') ||
-      lower.includes('econnreset') ||
-      lower.includes('reset by peer') ||
       lower.includes('unreachable') ||
       lower.includes('handshake') ||
       lower.includes('1007900007') || // Couldn't connect
