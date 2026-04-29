@@ -144,6 +144,8 @@ struct StreamPage {
   @State showKeyboardPanel: boolean = false;  // 系统键盘输入面板
   @State keyboardHeight: number = 0;  // IME 键盘高度 (vp)
   @State showVirtualKeyboard: boolean = false;  // PC 虚拟键盘
+  /** 虚拟键盘锁定状态（同步自 VirtualKeyboard onLockChanged）：锁定后返回手势不会收回键盘 */
+  @State virtualKeyboardLocked: boolean = false;
   @State showCustomKeys: boolean = false;  // 自定义按键覆盖层
   @State customKeyEditMode: boolean = false;  // 自定义按键编辑模式
   @State customKeyProfileVersion: number = 0;  // 配置切换信号（递增触发 Overlay 重载）
@@ -658,8 +660,8 @@ struct StreamPage {
       return false;
     }
 
-    // 虚拟 PC 键盘正在显示时，优先收起
-    if (this.showVirtualKeyboard) {
+    // 虚拟 PC 键盘正在显示时，优先收起（锁定状态下不收起，让后续逻辑处理）
+    if (this.showVirtualKeyboard && !this.virtualKeyboardLocked) {
       this.showVirtualKeyboard = false;
       return true;
     }
@@ -1614,6 +1616,9 @@ struct StreamPage {
           },
           onClose: (): void => {
             this.showVirtualKeyboard = false;
+          },
+          onLockChanged: (locked: boolean): void => {
+            this.virtualKeyboardLocked = locked;
           },
         })
           .width('100%')
