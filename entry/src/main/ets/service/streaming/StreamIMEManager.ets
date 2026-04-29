@@ -33,6 +33,8 @@ export class StreamIMEManager {
   // ── 输入法控制器 ──
   private imeController: inputMethod.InputMethodController | null = null;
   private imeReadyTime: number = 0;
+  /** 锁定模式：开启后点击其他区域不会收起 IME / IME bar，HIDE 事件会被拦截并重新唤起软键盘 */
+  private locked: boolean = false;
 
   // ── 外部依赖 ──
   private viewModel: StreamViewModel | null = null;
@@ -63,6 +65,21 @@ export class StreamIMEManager {
    */
   get isVisible(): boolean {
     return this.imeController !== null;
+  }
+
+  /**
+   * 当前是否处于锁定模式
+   */
+  get isLocked(): boolean {
+    return this.locked;
+  }
+
+  /**
+   * 设置锁定模式。锁定后系统 IME 被点击外部关闭时会自动重新唤起，
+   * 避免 IME bar 随之消失。仅影响 HIDE 回调，不影响主动 hide() / backPress 逻辑。
+   */
+  setLocked(locked: boolean): void {
+    this.locked = locked;
   }
 
   /**
@@ -114,6 +131,14 @@ export class StreamIMEManager {
         // 只响应用户主动关闭键盘的 HIDE 事件
         // 忽略 attach 初始化阶段的假 HIDE（部分设备会在显示前先发一次 HIDE）
         if (status === inputMethod.KeyboardStatus.HIDE && Date.now() - this.imeReadyTime > 300) {
+          // 锁定模式：拦截外部点击导致的收键盘，重新调起软键盘以保持 IME bar 常驻
+          if (this.locked && this.imeController) {
+            this.imeReadyTime = Date.now();
+            this.imeController.showSoftKeyboard().catch((err: Error) => {
+              console.warn(`[StreamIME] re-show on locked failed: ${err.message}`);
+            });
+            return;
+          }
           this.hide();
         }
       });
@@ -129,6 +154,8 @@ export class StreamIMEManager {
    * 关闭系统键盘并清理回调
    */
   hide(): void {
+    // 主动 hide 时释放锁定状态，避免下次 show 时锁定误传递
+    this.locked = false;
     try {
       if (this.imeController) {
         this.imeController.off('insertText');

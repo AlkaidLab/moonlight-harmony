@@ -255,8 +255,6 @@ const FUNC_KEY_HEIGHT = 30;
 
 /** 键盘背景图存储键 */
 const KB_BG_IMAGE_KEY = 'virtual_keyboard_bg_image';
-/** 键盘锁定状态存储键 */
-const KB_LOCKED_KEY = 'virtual_keyboard_locked';
 
 // =============================================================================
 // 组件
@@ -268,8 +266,6 @@ export struct VirtualKeyboard {
   onVirtualKeyEvent: (vk: number, isDown: boolean) => void = () => {};
   /** 关闭键盘回调 */
   onClose: () => void = () => {};
-  /** 锁定状态变化回调（外部可据此忽略返回手势收回逻辑） */
-  onLockChanged: (locked: boolean) => void = () => {};
 
   // ── 状态 ──
   /** 键盘整体透明度 */
@@ -284,8 +280,6 @@ export struct VirtualKeyboard {
   @State private comboMode: boolean = false;
   /** 粘滞修饰键集合（仅组合键模式） */
   @State private stickyModifiers: Set<number> = new Set<number>();
-  /** 锁定模式：开启后返回手势不会收回键盘（仅 ✕ 按钮可关闭），拖拽仍可用 */
-  @State private locked: boolean = false;
   /** 拖拽起始坐标 */
   private dragStartX: number = 0;
   private dragStartY: number = 0;
@@ -314,10 +308,6 @@ export struct VirtualKeyboard {
         await PreferencesUtil.put(KB_BG_IMAGE_KEY, '');
       }
     }
-
-    // 加载保存的锁定状态
-    this.locked = await PreferencesUtil.get<boolean>(KB_LOCKED_KEY, false);
-    this.onLockChanged(this.locked);
   }
 
   build() {
@@ -471,23 +461,6 @@ export struct VirtualKeyboard {
             } else {
               this.pickBackgroundImage();
             }
-          })
-
-        // 锁定按钮（开启后返回手势不会收回键盘，仅 ✕ 可关闭；拖拽不受影响）
-        Text(this.locked ? '🔒' : '🔓')
-          .fontSize(13)
-          .fontColor(this.locked ? '#A8D8EA' : '#80FFFFFF')
-          .width(28)
-          .height(28)
-          .textAlign(TextAlign.Center)
-          .borderRadius(14)
-          .backgroundColor(this.locked ? '#30A8D8EA' : '#20FFFFFF')
-          .margin({ left: 4 })
-          .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.85 })
-          .onClick(() => {
-            this.locked = !this.locked;
-            this.onLockChanged(this.locked);
-            PreferencesUtil.put(KB_LOCKED_KEY, this.locked);
           })
 
         // 关闭按钮

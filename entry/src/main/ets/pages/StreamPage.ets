@@ -142,10 +142,10 @@ struct StreamPage {
   @State xComponentOffsetX: number = 0;  // 画面水平偏移 (vp)
   @State xComponentOffsetY: number = 0;  // 画面垂直偏移 (vp)
   @State showKeyboardPanel: boolean = false;  // 系统键盘输入面板
+  /** IME bar 锁定状态：锁定后点击串流画面不会收起 IME / IME bar */
+  @State imePanelLocked: boolean = false;
   @State keyboardHeight: number = 0;  // IME 键盘高度 (vp)
   @State showVirtualKeyboard: boolean = false;  // PC 虚拟键盘
-  /** 虚拟键盘锁定状态（同步自 VirtualKeyboard onLockChanged）：锁定后返回手势不会收回键盘 */
-  @State virtualKeyboardLocked: boolean = false;
   @State showCustomKeys: boolean = false;  // 自定义按键覆盖层
   @State customKeyEditMode: boolean = false;  // 自定义按键编辑模式
   @State customKeyProfileVersion: number = 0;  // 配置切换信号（递增触发 Overlay 重载）
@@ -370,6 +370,10 @@ struct StreamPage {
     this.imeManager.initialize(this.viewModel, {
       onKeyboardVisibilityChanged: (visible: boolean) => {
         this.showKeyboardPanel = visible;
+        // IME 真正关闭时同步释放锁定状态
+        if (!visible) {
+          this.imePanelLocked = false;
+        }
       },
       onKeyboardHeightChanged: (height: number) => {
         this.keyboardHeight = height;
@@ -660,8 +664,8 @@ struct StreamPage {
       return false;
     }
 
-    // 虚拟 PC 键盘正在显示时，优先收起（锁定状态下不收起，让后续逻辑处理）
-    if (this.showVirtualKeyboard && !this.virtualKeyboardLocked) {
+    // 虚拟 PC 键盘正在显示时，优先收起
+    if (this.showVirtualKeyboard) {
       this.showVirtualKeyboard = false;
       return true;
     }
@@ -672,8 +676,8 @@ struct StreamPage {
       return true;
     }
 
-    // IME 键盘正在显示时，优先收起键盘（排除弹出瞬间的误触发）
-    if (this.showKeyboardPanel && Date.now() - this.imeManager.readyTime > 500) {
+    // IME 键盘正在显示时，优先收起键盘（排除弹出瞬间的误触发；锁定状态下不收起）
+    if (this.showKeyboardPanel && !this.imePanelLocked && Date.now() - this.imeManager.readyTime > 500) {
       this.imeManager.hide();
       return true;
     }
@@ -1617,9 +1621,6 @@ struct StreamPage {
           onClose: (): void => {
             this.showVirtualKeyboard = false;
           },
-          onLockChanged: (locked: boolean): void => {
-            this.virtualKeyboardLocked = locked;
-          },
         })
           .width('100%')
       }
@@ -1767,6 +1768,23 @@ struct StreamPage {
         this.imeManager.hide();
       })
       .position({ right: 8, bottom: this.keyboardHeight + 44 })
+
+    // 锁定按钮（紧邻 ✕ 左侧）：开启后点击其他区域不会收回 IME / 工具条；✕ 仍可关闭
+    Text(this.imePanelLocked ? '🔒' : '🔓')
+      .fontSize(12)
+      .fontColor(this.imePanelLocked ? '#A8D8EA' : '#99FFFFFF')
+      .width(24)
+      .height(24)
+      .textAlign(TextAlign.Center)
+      .borderRadius(12)
+      .backgroundColor(this.imePanelLocked ? '#66395A78' : '#661A1A2E')
+      .backdropBlur(20)
+      .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.85 })
+      .onClick(() => {
+        this.imePanelLocked = !this.imePanelLocked;
+        this.imeManager.setLocked(this.imePanelLocked);
+      })
+      .position({ right: 38, bottom: this.keyboardHeight + 44 })
   }
 
   @Builder
