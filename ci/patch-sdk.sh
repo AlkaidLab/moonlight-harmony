@@ -103,6 +103,14 @@ echo "  Applied RemoteCommunicationKit stubs"
 cp "$STUBS_DIR/kit.NetworkKit.d.ts" "$ETS_API/@kit.NetworkKit.d.ts"
 echo "  Applied NetworkKit declare module"
 
+# ─── @kit.NetworkBoostKit ───
+[ ! -f "$KIT_CONFIGS/@kit.NetworkBoostKit.json" ] && \
+  cp "$STUBS_DIR/kit.NetworkBoostKit.json" "$KIT_CONFIGS/@kit.NetworkBoostKit.json"
+[ ! -f "$ETS_API/@ohos.networkBoost.netQuality.d.ts" ] && \
+  cp "$STUBS_DIR/ohos.networkBoost.netQuality.d.ts" "$ETS_API/@ohos.networkBoost.netQuality.d.ts"
+cp "$STUBS_DIR/kit.NetworkBoostKit.d.ts" "$ETS_API/@kit.NetworkBoostKit.d.ts"
+echo "  Applied NetworkBoostKit stubs"
+
 # ─── Socket stub (only if SDK is missing the file) ───
 if [ ! -f "$ETS_API/@ohos.net.socket.d.ts" ]; then
   cp "$STUBS_DIR/ohos.net.socket.d.ts" "$ETS_API/@ohos.net.socket.d.ts"

@@ -21,6 +21,7 @@ import { MoonlightButton } from '../input/GamepadTypes';
 import { MicrophoneStream } from '../microphone/MicrophoneStream';
 import { AudioVibrationService } from '../AudioVibrationService';
 import { AdaptiveBitrateService } from './AdaptiveBitrateService';
+import { NetworkBoostService } from '../network/NetworkBoostService';
 import {
   MoonBridge,
   CONTROLLER_TYPE_UNKNOWN,
@@ -482,6 +483,8 @@ export class StreamingSession {
       this.applyPostConnectionSettings(config);
 
       this.isRunning = true;
+      // Network Boost Kit: 声明实时游戏类业务，让系统优先调度
+      NetworkBoostService.getInstance().start();
     } catch (err) {
       await this.cleanup();
       throw new Error(`串流会话启动失败: ${(err as Error).message}`);
@@ -498,6 +501,7 @@ export class StreamingSession {
     this.resetControllerState();
     GamepadManager.getInstance().stopAllSensors();
     this.audioVibrationService.stop();
+    NetworkBoostService.getInstance().stop();
     await this.cleanup();
   }
 
@@ -519,6 +523,7 @@ export class StreamingSession {
     }
 
     this.isRunning = false;
+    NetworkBoostService.getInstance().stop();
     await this.cleanup();
     return quitSuccess;
   }
@@ -991,6 +996,7 @@ export class StreamingSession {
       connectionTerminated: (errorCode: number): void => {
         console.info(`连接已终止: ${errorCode}, userInitiated=${this.userInitiatedStop}`);
         this.isRunning = false;
+        NetworkBoostService.getInstance().stop();
         GamepadManager.getInstance().stopAllSensors();
         // 立即停止所有振动（设备马达 + USB 手柄马达 + 音频振动）
         GamepadManager.getInstance().stopAllVibration();
@@ -1003,6 +1009,8 @@ export class StreamingSession {
       },
       connectionStatusUpdate: (status: number): void => {
         console.info(`连接状态更新: ${status}`);
+        // 反馈给系统 Network Boost Kit，触发网络加速调度
+        NetworkBoostService.getInstance().reportConnectionStatus(status === 1 /* CONN_STATUS_POOR */);
         if (this.connectionStatusCallback) {
           this.connectionStatusCallback(status);
         }

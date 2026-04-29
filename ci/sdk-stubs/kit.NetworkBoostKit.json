@@ -1,0 +1,8 @@
+{
+  "symbols": {
+    "netQuality": {
+      "source": "@ohos.networkBoost.netQuality.d.ts",
+      "bindings": "default"
+    }
+  }
+}

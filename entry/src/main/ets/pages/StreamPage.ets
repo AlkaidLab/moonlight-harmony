@@ -48,6 +48,7 @@ import { PanZoomHandler, PanZoomState, PointXY } from '../service/input/PanZoomH
 import { AiKeyService, AiKeyRecommendation } from '../service/AiKeyService';
 import { ComputerManager } from '../service/ComputerManager';
 import { ToastQueue } from '../utils/ToastQueue';
+import { NetworkBoostService, SystemNetScene, SystemNetSceneListener } from '../service/network/NetworkBoostService';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -220,6 +221,11 @@ struct StreamPage {
   private useVdd: boolean = false;
   private cmdList: SuperCmd[] = [];  // 超级指令列表
   private enableBackgroundTask: boolean = true;  // 后台保活开关
+
+  // ── Network Boost 场景监听（弱信号/拥塞 提示） ──
+  private netSceneListener: SystemNetSceneListener | null = null;
+  private netSceneToastedAt: number = 0;
+  private netSceneLastKey: string = '';
   
   aboutToAppear(): void {
     const params = router.getParams() as StreamPageParams;
@@ -277,6 +283,12 @@ struct StreamPage {
     // 初始化窗口管理器
     this.windowManager = new StreamWindowManager(this.context);
     this.windowManager.setOnWindowSizeChanged(() => this.recalculateXComponentSize());
+
+    // 注册 Network Boost 网络场景监听（弱信号/拥塞 提示）
+    this.netSceneListener = (scene: SystemNetScene): void => {
+      this.handleNetworkScene(scene);
+    };
+    NetworkBoostService.getInstance().addSceneListener(this.netSceneListener);
     
     // 初始化快捷键管理器
     this.shortcutManager.initialize(this.context);
@@ -468,6 +480,39 @@ struct StreamPage {
     }
   }
 
+  /**
+   * Network Boost 网络场景回调：弱信号预测/拥塞 提示用户
+   * 同一类提示 30s 内不重复弹，避免轰炸。
+   */
+  private handleNetworkScene(scene: SystemNetScene): void {
+    let key = '';
+    let message = '';
+    if (scene.weakSignalStartSec !== undefined && scene.weakSignalStartSec >= 0) {
+      // 弱信号预测优先级最高
+      key = 'weakSignal';
+      const eta = Math.max(1, Math.round(scene.weakSignalStartSec));
+      message = `📶 系统预测约 ${eta}s 后进入弱信号区，建议降低画质或保留信号良好位置`;
+    } else if (scene.scene === 'congestion' &&
+      (scene.recommendedAction === 'decreaseData' || scene.recommendedAction === 'suspendData')) {
+      key = 'congestion';
+      message = '📡 网络拥塞，可能出现卡顿，建议降低分辨率/码率';
+    } else if (scene.scene === 'frequentHandover') {
+      key = 'handover';
+      message = '🔄 网络频繁切换中，可能影响串流稳定性';
+    } else {
+      // normal/keepData/increaseData 不打扰用户
+      this.netSceneLastKey = '';
+      return;
+    }
+    const now = Date.now();
+    if (key === this.netSceneLastKey && now - this.netSceneToastedAt < 30_000) {
+      return;
+    }
+    this.netSceneLastKey = key;
+    this.netSceneToastedAt = now;
+    ToastQueue.show({ message, duration: 3000 });
+  }
+
   private async runUnhandledUsbCheck(): Promise<void> {
     try {
       const list = this.gamepadManager.detectUnhandledUsbGamepadsThrottled();
@@ -609,6 +654,12 @@ struct StreamPage {
   
   aboutToDisappear(): void {
     console.info('StreamPage aboutToDisappear - cleaning up');
+
+    // 取消 Network Boost 场景监听
+    if (this.netSceneListener) {
+      NetworkBoostService.getInstance().removeSceneListener(this.netSceneListener);
+      this.netSceneListener = null;
+    }
     
     // 取消未识别 USB 手柄检测定时器
     this.cancelUnhandledUsbDetection();
