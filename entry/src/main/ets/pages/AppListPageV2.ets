@@ -68,6 +68,8 @@ struct AppListPageV2 {
   private iconPollIntervalId: number = -1; // 图标轮询定时器ID
   private retryTimerId: number = -1; // 自动重试定时器
   private loadAttempt: number = 0; // 当前加载尝试次数
+  private runningPollTimerId: number = -1; // 退游戏后运行状态轮询定时器
+  private runningPollAttempt: number = 0;
 
   // 空列表重试常量（匹配 Android EMPTY_LIST_THRESHOLD）
   private static readonly EMPTY_LIST_THRESHOLD = 3;
@@ -75,6 +77,13 @@ struct AppListPageV2 {
   // 自动重试常量
   private static readonly MAX_AUTO_RETRY = 2;
   private static readonly RETRY_COUNTDOWN_SEC = 3;
+
+  // 退游戏后运行状态收敛轮询：游戏进程优雅退出可能耗时不定（存档/收尾/UE 关闭），
+  // 本地渐进轮询直到 currentGame=0 或封顶。不依赖 ComputerManager 轮询（它会更新
+  // computer.runningGameId 但不会重新 markRunningApps）。
+  // 间隔递增：1s, 2s, 3s, 5s, 5s, ... 封顶 5s；总轮询次数 12 次总时间约 50s。
+  private static readonly RUNNING_POLL_MAX_ATTEMPTS = 12;
+  private static readonly RUNNING_POLL_INTERVALS_MS: readonly number[] = [1000, 2000, 3000, 5000];
 
   /**
    * 带重试的应用列表获取（服务端可能因瞬时原因返回空列表）
@@ -159,6 +168,8 @@ struct AppListPageV2 {
     }
     // 清理自动重试定时器
     this.cancelRetryTimer();
+    // 清理运行状态轮询
+    this.cancelRunningStatePolling();
   }
 
   onBackPress(): boolean {
@@ -183,12 +194,12 @@ struct AppListPageV2 {
     
     // 页面重新展示时的自动刷新使用静默模式，不弹 toast
     // （退出串流或唤醒主机时 GFE 可能还未就绪，短暂失败是正常的）
-    this.refreshApps(true);
-    
-    // 从串流返回时延迟刷新，等待服务器状态更新
-    if (this.viewModel.hasRunningApp) {
-      setTimeout(() => this.refreshApps(true), 1000);
-    }
+    this.refreshApps(true).then(() => {
+      // 刷新后仍有在运行的游戏 → 可能是刚 quit 还没收敛，启动进程退出轮询
+      if (this.viewModel.hasRunningApp) {
+        this.startRunningStatePolling();
+      }
+    });
   }
 
   /**
@@ -316,6 +327,54 @@ struct AppListPageV2 {
       this.retryTimerId = -1;
     }
     this.retryCountdown = 0;
+  }
+
+  /**
+   * 启动「运行中游戏」状态收敛轮询。
+   * 触发时机：onPageShow 后发现仍有 hasRunningApp（典型为刚 quitGame 返回）。
+   * 行为：按渐进间隔反复 refreshApps(true)，直到 hasRunningApp 变为 false 或达到上限。
+   * 之所以不复用 ComputerManager 的 5s 轮询：它只更新 computer.runningGameId，
+   * 不会重新调用 markRunningApps，AppCard 上的 isRunning 不会自动同步。
+   */
+  private startRunningStatePolling(): void {
+    this.cancelRunningStatePolling();
+    this.runningPollAttempt = 0;
+    this.scheduleNextRunningPoll();
+  }
+
+  private cancelRunningStatePolling(): void {
+    if (this.runningPollTimerId !== -1) {
+      clearTimeout(this.runningPollTimerId);
+      this.runningPollTimerId = -1;
+    }
+    this.runningPollAttempt = 0;
+  }
+
+  private scheduleNextRunningPoll(): void {
+    if (this.runningPollAttempt >= AppListPageV2.RUNNING_POLL_MAX_ATTEMPTS) {
+      // 上限到，仍有运行中游戏：可能游戏真的没退出（用户取消了退出 / 进程卡住）
+      console.info('AppListPageV2: 运行状态轮询达上限，停止');
+      this.cancelRunningStatePolling();
+      return;
+    }
+    const intervals = AppListPageV2.RUNNING_POLL_INTERVALS_MS;
+    const delay = intervals[Math.min(this.runningPollAttempt, intervals.length - 1)];
+    this.runningPollTimerId = setTimeout(async () => {
+      this.runningPollTimerId = -1;
+      this.runningPollAttempt++;
+      try {
+        await this.refreshApps(true);
+      } catch (_) {
+        // refreshApps 内部已处理；这里仅防止异步抛出
+      }
+      // refreshApps 后状态可能变化：若已无 running app，停止；否则继续等
+      if (!this.viewModel.hasRunningApp) {
+        console.info(`AppListPageV2: 运行状态收敛（第 ${this.runningPollAttempt} 次轮询后）`);
+        this.cancelRunningStatePolling();
+        return;
+      }
+      this.scheduleNextRunningPoll();
+    }, delay);
   }
   
   /**
