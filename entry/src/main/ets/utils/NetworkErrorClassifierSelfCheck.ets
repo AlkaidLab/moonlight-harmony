@@ -50,6 +50,8 @@ const TRANSIENT_CASES: ClassifierCase[] = [
   { msg: 'Request was canceled', expected: true, reason: '被 session.close() 级联取消' },
   { msg: 'Operation cancelled', expected: true, reason: '英式拼写变体' },
   { msg: 'Error code: 1007900003', expected: true, reason: 'rcp Canceled 错误码' },
+  // 大小写边界
+  { msg: 'TIMEOUT', expected: true, reason: '全大写应被 lowercase 后匹配' },
 
   // 必须不算瞬时（不应 retry，是真实业务错误）
   { msg: 'HTTP 401 Unauthorized', expected: false, reason: '认证失败不应静默重试' },
@@ -57,6 +59,18 @@ const TRANSIENT_CASES: ClassifierCase[] = [
   { msg: 'HTTP 500 Internal Server Error', expected: false, reason: '服务端真实错误' },
   { msg: 'Certificate verification failed', expected: false, reason: '证书错误必须暴露' },
   { msg: 'Invalid response format', expected: false, reason: '协议层错误' },
+  // 边界：空消息不应被算瞬时（避免无消息时疯狂重试）
+  { msg: '', expected: false, reason: '空字符串不匹配任何关键词' },
+];
+
+/**
+ * 已知的"子串歧义"用例：理论上业务消息含 timeout 等关键词会被误判瞬时。
+ * 实际 Sunshine 错误消息把 HTTP 状态码独立返回，不会出现这类拼接，
+ * 所以这里只断言"如果将来出现这种歧义消息，行为是被算作瞬时（重试 N 次后失败）"。
+ * 用于显式记录 trade-off，避免未来误以为是 bug。
+ */
+const KNOWN_AMBIGUOUS_CASES: ClassifierCase[] = [
+  { msg: '401 Auth token timeout', expected: true, reason: '子串歧义：timeout 触发瞬时（trade-off 接受）' },
 ];
 
 export class NetworkErrorClassifierSelfCheck {
@@ -66,6 +80,7 @@ export class NetworkErrorClassifierSelfCheck {
    */
   static run(): number {
     let failed = 0;
+    // 1. 关键词集合契约
     for (const c of TRANSIENT_CASES) {
       const actual = NvHttp.isTransientNetworkError(c.msg);
       if (actual !== c.expected) {
@@ -75,11 +90,26 @@ export class NetworkErrorClassifierSelfCheck {
           c.msg, String(actual), String(c.expected), c.reason);
       }
     }
+    // 2. 子串歧义已知 trade-off（行为变化时也提醒一下）
+    for (const c of KNOWN_AMBIGUOUS_CASES) {
+      const actual = NvHttp.isTransientNetworkError(c.msg);
+      if (actual !== c.expected) {
+        hilog.warn(DOMAIN, TAG,
+          'AMBIGUOUS CASE CHANGED: isTransientNetworkError(%{public}s) = %{public}s, was %{public}s — review needed',
+          c.msg, String(actual), String(c.expected));
+      }
+    }
+    // 3. Error 对象与 string 等价性（实现里 typeof err === 'string' 分支）
+    const errCase = new Error('Connection timeout');
+    if (NvHttp.isTransientNetworkError(errCase) !== NvHttp.isTransientNetworkError(errCase.message)) {
+      failed++;
+      hilog.error(DOMAIN, TAG, 'Error vs string disagreement: same payload should classify identically');
+    }
+
     if (failed === 0) {
-      hilog.info(DOMAIN, TAG, 'self-check passed (%{public}d cases)', TRANSIENT_CASES.length);
+      hilog.info(DOMAIN, TAG, 'self-check passed (%{public}d cases + Error/string equivalence)', TRANSIENT_CASES.length);
     } else {
-      hilog.error(DOMAIN, TAG, 'self-check FAILED: %{public}d/%{public}d cases broken',
-        failed, TRANSIENT_CASES.length);
+      hilog.error(DOMAIN, TAG, 'self-check FAILED: %{public}d cases broken', failed);
     }
     return failed;
   }
