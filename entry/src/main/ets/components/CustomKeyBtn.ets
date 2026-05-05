@@ -32,6 +32,10 @@ import {
   getButtonIconResource,
 } from './CustomKeyConstants';
 
+function resolveCustomKeyForegroundColor(isActive: boolean, textColor: string): ResourceColor {
+  return isActive ? OV_TEXT_WHITE : textColor;
+}
+
 @Component
 export struct CustomKeyBtn {
   // ── 配置属性 ──
@@ -80,27 +84,33 @@ export struct CustomKeyBtn {
     return this.keyDef.icon ? getButtonIconResource(this.keyDef.icon) : undefined;
   }
 
-  /** 按下/切换态的前景色 */
-  private get fgColor(): ResourceColor {
-    return this.isPressed || this.isToggled ? OV_TEXT_WHITE : this.keyDef.textColor;
+  private getForegroundColor(): ResourceColor {
+    return resolveCustomKeyForegroundColor(
+      this.isPressed || this.isToggled,
+      this.keyDef.textColor);
+  }
+
+  @Builder
+  KeyFace() {
+    if (this.getIconRes()) {
+      Image(this.getIconRes()!)
+        .width(this.keyDef.fontSize + 6)
+        .height(this.keyDef.fontSize + 6)
+        .fillColor(this.getForegroundColor())
+        .objectFit(ImageFit.Contain)
+    } else {
+      Text(this.keyDef.label)
+        .fontSize(this.keyDef.fontSize)
+        .fontColor(this.getForegroundColor())
+        .fontWeight(FontWeight.Bold)
+        .textAlign(TextAlign.Center)
+    }
   }
 
   @Builder
   NormalBtn() {
     Stack() {
-      if (this.getIconRes()) {
-        Image(this.getIconRes()!)
-          .width(this.keyDef.fontSize + 6)
-          .height(this.keyDef.fontSize + 6)
-          .fillColor(this.fgColor)
-          .objectFit(ImageFit.Contain)
-      } else {
-        Text(this.keyDef.label)
-          .fontSize(this.keyDef.fontSize)
-          .fontColor(this.fgColor)
-          .fontWeight(FontWeight.Bold)
-          .textAlign(TextAlign.Center)
-      }
+      this.KeyFace()
     }
     .width(this.keyDef.width)
     .height(this.keyDef.height)
@@ -159,19 +169,7 @@ export struct CustomKeyBtn {
         .height(this.keyDef.height)
 
       // 标签/图标
-      if (this.getIconRes()) {
-        Image(this.getIconRes()!)
-          .width(this.keyDef.fontSize + 6)
-          .height(this.keyDef.fontSize + 6)
-          .fillColor(this.fgColor)
-          .objectFit(ImageFit.Contain)
-      } else {
-        Text(this.keyDef.label)
-          .fontSize(this.keyDef.fontSize)
-          .fontColor(this.fgColor)
-          .fontWeight(FontWeight.Bold)
-          .textAlign(TextAlign.Center)
-      }
+      this.KeyFace()
     }
     .width(this.keyDef.width)
     .height(this.keyDef.height)
