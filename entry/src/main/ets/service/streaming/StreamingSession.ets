@@ -11,9 +11,10 @@
 import { StreamConfig, HdrMode, getSurroundAudioInfo } from '../../model/StreamConfig';
 import { InputEvent, InputType, ControllerButtonEvent, ControllerAxisEvent, ControllerButton } from '../../model/InputEvent';
 import { ComputerManager } from '../ComputerManager';
-import { ComputerInfo } from '../../model/ComputerInfo';
+import { ComputerInfo, selectBestAddress } from '../../model/ComputerInfo';
 import { NvHttp, LaunchConfig } from './NvHttp';
 import { CryptoUtil } from '../../utils/CryptoUtil';
+import { parseAddressAndPort } from '../../utils/NetHelper';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
 import { GamepadManager } from '../input/GamepadManager';
@@ -320,6 +321,8 @@ export class StreamingSession {
   /** 用户主动发起的停止（菜单断开/退出游戏），抑制 connectionTerminated 回调弹窗 */
   private userInitiatedStop: boolean = false;
   private computer: ComputerInfo | null = null;
+  /** 本次串流最终选中的连接地址（手动/锁定/轮询胜出地址），保证 HTTP 与原生串流阶段一致 */
+  private connectionAddress: string = '';
   private nvHttp: NvHttp | null = null;
   private riKey: ArrayBuffer | null = null;
   private riKeyId: number = 0;
@@ -879,7 +882,13 @@ export class StreamingSession {
     const computerResult = computerManager.getComputer(computerId);
     if (!computerResult) throw new Error(`找不到电脑: ${computerId}`);
     this.computer = computerResult;
-    this.nvHttp = NvHttp.fromComputer(this.computer, context);
+    const selectedAddress = selectBestAddress(this.computer);
+    if (!selectedAddress) throw new Error(`没有可用的连接地址: ${this.computer.name}`);
+
+    // NvHttp 允许地址中携带自定义 HTTP 端口；原生 LiStartConnection 需要纯 host。
+    this.connectionAddress = parseAddressAndPort(selectedAddress).host;
+    console.info(`串流连接地址: selected=${selectedAddress}, nativeHost=${this.connectionAddress}`);
+    this.nvHttp = NvHttp.fromAddress(selectedAddress, this.computer, context);
   }
 
   private async fetchServerInfo(): Promise<void> {
@@ -1206,7 +1215,7 @@ export class StreamingSession {
       `vsync=${this.config.enableVsync}, vrr=${this.config.enableVrr}`);
 
     const result = this.nativeModule.startConnection(
-      this.computer.address,
+      this.connectionAddress,
       this.serverAppVersion,
       this.serverGfeVersion,
       this.rtspSessionUrl,

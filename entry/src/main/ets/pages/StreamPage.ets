@@ -42,6 +42,7 @@ import { StreamLifecycleManager } from '../service/streaming/StreamLifecycleMana
 import { StreamIMEManager } from '../service/streaming/StreamIMEManager';
 import { VirtualKeyboard } from '../components/virtual/VirtualKeyboard';
 import { CustomKeyOverlay } from '../components/CustomKeyOverlay';
+import { StreamSessionReport, StreamReportData, StreamReportStats, createEmptyStreamReport, buildStreamReportData } from '../components/StreamSessionReport';
 import { CustomKeyManager, CustomKeyManagerHost, SessionLike } from '../service/customkey/CustomKeyManager';
 import { CustomKeyStore } from '../service/customkey/CustomKeyStore';
 import { PanZoomHandler, PanZoomState, PointXY } from '../service/input/PanZoomHandler';
@@ -156,6 +157,9 @@ struct StreamPage {
    * 通过在父层触发一次重渲染来刷新命中测试树（参见 ARKUI_TOUCH_HANDLING_LESSONS.md）。
    */
   @State private customKeyHitReady: number = 0;
+  /** 串流结束后的可分享战报 */
+  @State private showStreamReport: boolean = false;
+  @State private streamReportData: StreamReportData = createEmptyStreamReport();
   /** 用户设置：优先使用虚拟键盘 */
   private useVirtualKeyboard: boolean = false;
   /** 待对话框关闭后显示 IME */
@@ -221,6 +225,8 @@ struct StreamPage {
   private useVdd: boolean = false;
   private cmdList: SuperCmd[] = [];  // 超级指令列表
   private enableBackgroundTask: boolean = true;  // 后台保活开关
+  private endStreamReportEnabled: boolean = false;  // 结束串流显示数据/战报开关
+  private streamStartedAtMs: number = 0;  // 本次串流真正连上后的时间戳
 
   // ── Network Boost 场景监听（弱信号/拥塞 提示） ──
   private netSceneListener: SystemNetSceneListener | null = null;
@@ -709,6 +715,11 @@ struct StreamPage {
   onBackPress(): boolean {
     // 释放所有通过 onKeyEvent 按下但未释放的物理键（防止 ESC 等键卡住）
     this.inputHandler.releaseAllKeys();
+
+    if (this.showStreamReport) {
+      this.closeStreamReportAndReturn();
+      return true;
+    }
 
     // 如果正在连接中，允许直接返回
     if (this.viewModel.isConnecting) {
@@ -1229,9 +1240,8 @@ struct StreamPage {
     try {
       // 加载设置
       await this.viewModel.loadSettings();
-      this.lifecycleManager.setLatencyToastEnabled(
-        await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false)
-      );
+      this.endStreamReportEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false);
+      this.lifecycleManager.setLatencyToastEnabled(this.endStreamReportEnabled);
       this.lifecycleManager.setDisableWarnings(
         await PreferencesUtil.get<boolean>(SettingsKeys.DISABLE_WARNINGS, false)
       );
@@ -1281,6 +1291,7 @@ struct StreamPage {
 
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
+      this.streamStartedAtMs = Date.now();
 
       // 超分辨率状态 Toast
       this.showUpscaleToast();
@@ -1336,24 +1347,75 @@ struct StreamPage {
     router.back();
   }
 
-  async stopStreaming(): Promise<void> {
-    this.lifecycleManager.showLatencyToastIfEnabled();
+  /**
+   * 生成当前串流战报（必须在 viewModel.stopStreaming/quitGame 清空 session 前调用）
+   */
+  private buildCurrentStreamReport(): StreamReportData {
+    const session = this.viewModel.getSession();
+    const stats = session ? session.getSummaryStats() : this.viewModel.performanceStats;
+    const durationMs = this.streamStartedAtMs > 0 ? Date.now() - this.streamStartedAtMs : 0;
+    const snapshot = new StreamReportStats();
+    snapshot.fps = stats.fps;
+    snapshot.renderedFps = stats.renderedFps;
+    snapshot.bitrate = stats.bitrate;
+    snapshot.latency = stats.latency;
+    snapshot.hostLatency = stats.hostLatency;
+    snapshot.networkLatency = stats.networkLatency;
+    snapshot.packetLoss = stats.packetLoss;
+    snapshot.decodedFrames = stats.decodedFrames;
+    snapshot.droppedFrames = stats.droppedFrames;
+    snapshot.globalAvgDecodeLatency = stats.globalAvgDecodeLatency;
+    snapshot.globalAvgHostLatency = stats.globalAvgHostLatency;
+    snapshot.globalAvgFps = stats.globalAvgFps;
+    snapshot.droppedByL1 = stats.droppedByL1;
+    snapshot.droppedByL2 = stats.droppedByL2;
+    snapshot.droppedByL3 = stats.droppedByL3;
+    snapshot.droppedByL4 = stats.droppedByL4;
+    snapshot.droppedByL5 = stats.droppedByL5;
+    return buildStreamReportData(snapshot, this.viewModel.streamConfig, this.appName || '远程游戏', durationMs);
+  }
+
+  /**
+   * 串流结束后仍停留在页面展示战报，因此需要先主动释放输入/后台资源并恢复窗口。
+   */
+  private async prepareStreamEndUi(): Promise<void> {
     await this.lifecycleManager.stopBackgroundTask();
+    this.cancelUnhandledUsbDetection();
     this.inputHandler.resetState();
+    this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
     try {
       pointer.setPointerVisibleSync(true);
     } catch (_) {}
+    await this.windowManager?.restoreWindow();
+  }
+
+  private async closeStreamReportAndReturn(): Promise<void> {
+    this.showStreamReport = false;
     await this.exitStreamAndReturn();
-    this.viewModel.stopStreaming();
+  }
+
+  async stopStreaming(): Promise<void> {
+    if (!this.endStreamReportEnabled) {
+      await this.prepareStreamEndUi();
+      await this.exitStreamAndReturn();
+      this.viewModel.stopStreaming();
+      return;
+    }
+
+    const report = this.buildCurrentStreamReport();
+    await this.prepareStreamEndUi();
+    await this.viewModel.stopStreaming();
+    this.streamReportData = report;
+    this.showStreamReport = true;
   }
 
   /**
-   * 退出游戏并返回（请求服务器退出当前游戏，先返回菜单再后台发退出请求）
+   * 退出游戏并返回（请求服务器退出当前游戏，显示串流战报后再返回列表）
    */
   async quitGameAndReturn(): Promise<void> {
-    this.lifecycleManager.showLatencyToastIfEnabled();
-    await this.lifecycleManager.stopBackgroundTask();
+    const report = this.endStreamReportEnabled ? this.buildCurrentStreamReport() : null;
+    await this.prepareStreamEndUi();
 
     // 退出前发送 Win+L 锁定主机屏幕，延迟确保命令送达
     if (this.viewModel.streamConfig?.lockScreenAfterDisconnect) {
@@ -1361,8 +1423,15 @@ struct StreamPage {
       await new Promise<void>((resolve) => setTimeout(resolve, 500));
     }
 
-    await this.exitStreamAndReturn();
-    this.viewModel.quitGame().then(() => {}).catch((_err: Error) => {});
+    if (!this.endStreamReportEnabled || !report) {
+      await this.exitStreamAndReturn();
+      this.viewModel.quitGame().then(() => {}).catch((_err: Error) => {});
+      return;
+    }
+
+    await this.viewModel.quitGame();
+    this.streamReportData = report;
+    this.showStreamReport = true;
   }
 
   /**
@@ -1381,6 +1450,7 @@ struct StreamPage {
 
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
+      this.streamStartedAtMs = Date.now();
       console.info('[StreamPage] 重连串流成功');
 
       ToastQueue.show({ message: '已重新连接' });
@@ -1674,6 +1744,16 @@ struct StreamPage {
           },
         })
           .width('100%')
+      }
+
+      // 串流结束战报层（停止 session 后仍留在当前页，用户关闭后再返回）
+      if (this.showStreamReport) {
+        StreamSessionReport({
+          data: this.streamReportData,
+          onClose: (): void => {
+            this.closeStreamReportAndReturn();
+          }
+        })
       }
 
     }
