@@ -53,6 +53,8 @@ export class GamepadManager implements UsbDriverListener {
   
   // 监听器
   private listener: GamepadInputListener | null = null;
+  /** 当前 listener 已收到连接通知的设备 Key，避免初始化即时上报 + 补发已连接设备造成重复 Toast */
+  private notifiedConnectionKeys = new Set<string>();
   
   // 通用状态
   private connectedDevices = new Map<number, string>();
@@ -353,8 +355,9 @@ export class GamepadManager implements UsbDriverListener {
     if (this.connectedDevices.size > 0) {
       console.info(`[GAMEPAD] 清理 ${this.connectedDevices.size} 个竞争期间注册的传统设备`);
       this.connectedDevices.forEach((name, deviceId) => {
-        this.listener?.onGamepadDisconnected(deviceId);
+        this.notifyGamepadDisconnectedByKey(this.getConnectionNotificationKey(deviceId), this.getControllerSlot(deviceId));
       });
+      this.notifiedConnectionKeys.clear();
       this.connectedDevices.clear();
       this.deviceStates.clear();
       this.deviceInfoMap.clear();
@@ -415,9 +418,7 @@ export class GamepadManager implements UsbDriverListener {
       // 清理 GC Kit 相关状态
       // 先通知所有 GC Kit 设备断开，并释放槽位
       this.gcDeviceIdToSlot.forEach((slot, deviceId) => {
-        if (this.listener) {
-          this.listener.onGamepadDisconnected(slot);
-        }
+        this.notifyGamepadDisconnectedByKey(`gc_${deviceId}`, slot);
         // 释放 slotOccupied，防止后续 USB 设备无法分配到该槽位
         this.slotOccupied[slot] = false;
       });
@@ -659,7 +660,11 @@ export class GamepadManager implements UsbDriverListener {
    * 如果使用 Game Controller Kit 模式，会确保 GC Kit 回调已设置
    */
   setListener(listener: GamepadInputListener | null): void {
+    const listenerChanged = this.listener !== listener;
     this.listener = listener;
+    if (listenerChanged) {
+      this.notifiedConnectionKeys.clear();
+    }
     
     // 通知已连接的设备
     if (listener) {
@@ -672,6 +677,37 @@ export class GamepadManager implements UsbDriverListener {
       }
       this.notifyListenerOfExistingDevices();
     }
+  }
+
+  /**
+   * 获取传统/InputKit/USB 控制器的连接通知 Key。
+   * 优先使用物理设备 Key（如 USB 的 VID:PID:bus:addr），没有时退回 controllerId。
+   */
+  private getConnectionNotificationKey(controllerId: number): string {
+    return this.controllerIdToDeviceKey.get(controllerId) ?? `controller_${controllerId}`;
+  }
+
+  /**
+   * 向当前 listener 发送连接通知（同一个 listener 生命周期内同一设备只通知一次）。
+   * 解决 DDK/USB 初始化时 deviceAdded 已即时通知，随后 notifyListenerOfExistingDevices 又补发导致 Toast 重复的问题。
+   */
+  private notifyGamepadConnectedOnce(notificationKey: string, slot: number, name: string, controllerType: number): void {
+    const listener = this.listener;
+    if (!listener) return;
+    if (this.notifiedConnectionKeys.has(notificationKey)) {
+      console.info(`[GAMEPAD] 跳过重复连接通知: ${name} (Key=${notificationKey}, Slot=${slot})`);
+      return;
+    }
+    this.notifiedConnectionKeys.add(notificationKey);
+    listener.onGamepadConnected(slot, name, controllerType);
+  }
+
+  /**
+   * 发送断开通知并释放连接通知 Key，允许同一设备后续真正重连时再次提示。
+   */
+  private notifyGamepadDisconnectedByKey(notificationKey: string, slot: number): void {
+    this.notifiedConnectionKeys.delete(notificationKey);
+    this.listener?.onGamepadDisconnected(slot);
   }
   
   /**
@@ -710,7 +746,7 @@ export class GamepadManager implements UsbDriverListener {
           notifiedSlots.add(slot);
           const ctrlType = MoonlightControllerType.fromDeviceName(device.name);
           console.info(`GamepadManager: 通知已连接手柄: ${device.name} (Slot: ${slot}, Type: ${ctrlType})`);
-          listener.onGamepadConnected(slot, device.name, ctrlType);
+          this.notifyGamepadConnectedOnce(`gc_${device.deviceId}`, slot, device.name, ctrlType);
         }
       } else {
         // 传统模式
@@ -720,7 +756,7 @@ export class GamepadManager implements UsbDriverListener {
           const ctrlType = info?.vendor ? MoonlightControllerType.fromVendorProduct(info.vendor, info.product ?? 0) : MoonlightControllerType.fromDeviceName(name);
           const slot = this.getControllerSlot(deviceId);
           console.info(`GamepadManager: 通知已连接手柄: ${name} (ID: ${deviceId}, Slot: ${slot}, Type: ${ctrlType})`);
-          listener.onGamepadConnected(slot, name, ctrlType);
+          this.notifyGamepadConnectedOnce(this.getConnectionNotificationKey(deviceId), slot, name, ctrlType);
         });
         
         // 重新扫描设备，确保不遗漏
@@ -948,7 +984,7 @@ export class GamepadManager implements UsbDriverListener {
     GamepadManager.DEBUG && console.info(`[GAMEPAD]   检测: joystick源=${hasJoystickSource}, 名称匹配=${nameIndicatesGamepad}`);
     
     const ctrlType = deviceInfo.vendor ? MoonlightControllerType.fromVendorProduct(deviceInfo.vendor, deviceInfo.product ?? 0) : MoonlightControllerType.fromDeviceName(deviceInfo.name);
-    this.listener?.onGamepadConnected(effectiveSlot, deviceInfo.name, ctrlType);
+    this.notifyGamepadConnectedOnce(deviceKey, effectiveSlot, deviceInfo.name, ctrlType);
   }
   
   /**
@@ -1025,10 +1061,8 @@ export class GamepadManager implements UsbDriverListener {
     }
     
     console.info(`GamepadManager: 移除手柄 ${name} (ID: ${deviceId}, Slot: ${slot}, 连接类型: ${connectionType})`);
-    
-    if (this.listener) {
-      this.listener.onGamepadDisconnected(slot);
-    }
+
+    this.notifyGamepadDisconnectedByKey(deviceKey ?? `controller_${deviceId}`, slot);
   }
   
   /**
@@ -1246,11 +1280,10 @@ export class GamepadManager implements UsbDriverListener {
       this.gcDeviceStates.set(deviceId, this.createEmptyState());
       
       // 通知监听器
-      if (this.listener) {
-        const ctrlType = MoonlightControllerType.fromDeviceName(info?.name || '');
-        console.info(`[GAMEPAD-GC] 通知手柄连接: slot=${slot}, name=${info?.name || `Controller ${slot}`}, type=${ctrlType}`);
-        this.listener.onGamepadConnected(slot, info?.name || `Controller ${slot}`, ctrlType);
-      }
+      const ctrlType = MoonlightControllerType.fromDeviceName(info?.name || '');
+      const displayName = info?.name || `Controller ${slot}`;
+      console.info(`[GAMEPAD-GC] 通知手柄连接: slot=${slot}, name=${displayName}, type=${ctrlType}`);
+      this.notifyGamepadConnectedOnce(`gc_${deviceId}`, slot, displayName, ctrlType);
 
       if (hadNoGcDevices) {
         gameControllerService.resumeInputMonitor();
@@ -1299,9 +1332,7 @@ export class GamepadManager implements UsbDriverListener {
       // 释放槽位
       this.releaseSlotForGCDevice(deviceId);
       // 通知监听器
-      if (this.listener) {
-        this.listener.onGamepadDisconnected(slot);
-      }
+      this.notifyGamepadDisconnectedByKey(`gc_${deviceId}`, slot);
 
       // 无手柄时暂停输入监听，减轻键鼠场景下对鼠标轮询的干扰
       // 保留设备上下线监听，确保蓝牙手柄重连时能被检测到
@@ -1380,11 +1411,10 @@ export class GamepadManager implements UsbDriverListener {
 
     this.gcDeviceStates.set(deviceId, this.createEmptyState());
 
-    if (this.listener) {
-      const ctrlType = MoonlightControllerType.fromDeviceName(info?.name || '');
-      console.info(`[GAMEPAD-GC] 通知手柄连接(验证后): slot=${slot}, name=${info?.name || `Controller ${slot}`}, type=${ctrlType}`);
-      this.listener.onGamepadConnected(slot, info?.name || `Controller ${slot}`, ctrlType);
-    }
+    const ctrlType = MoonlightControllerType.fromDeviceName(info?.name || '');
+    const displayName = info?.name || `Controller ${slot}`;
+    console.info(`[GAMEPAD-GC] 通知手柄连接(验证后): slot=${slot}, name=${displayName}, type=${ctrlType}`);
+    this.notifyGamepadConnectedOnce(`gc_${deviceId}`, slot, displayName, ctrlType);
 
     if (hadNoGcDevices) {
       gameControllerService.resumeInputMonitor();
@@ -1645,7 +1675,7 @@ export class GamepadManager implements UsbDriverListener {
       }
       const effectiveSlot = slot >= 0 ? slot : 0;
       console.info(`[GAMEPAD-KEY] 动态注册设备 ${deviceId} -> Slot ${effectiveSlot}`);
-      this.listener?.onGamepadConnected(effectiveSlot, `Controller ${effectiveSlot}`, MoonlightControllerType.XBOX);
+      this.notifyGamepadConnectedOnce(deviceKey, effectiveSlot, `Controller ${effectiveSlot}`, MoonlightControllerType.XBOX);
     }
     return deviceId;
   }
@@ -1856,6 +1886,7 @@ export class GamepadManager implements UsbDriverListener {
     this.deviceStates.clear();
     this.deviceInfoMap.clear();
     this.dpadAxisActive.clear();
+    this.notifiedConnectionKeys.clear();
     
     // 重置 GC Kit 设备状态
     this.gcDeviceStates.forEach((state, _deviceId) => {
@@ -2241,7 +2272,7 @@ export class GamepadManager implements UsbDriverListener {
       this.controllerIdToDeviceKey.delete(controllerId);
       this.releaseSlotForDevice(deviceKey);
       this.dpadAxisActive.delete(controllerId);
-      this.listener?.onGamepadDisconnected(slot);
+      this.notifyGamepadDisconnectedByKey(deviceKey, slot);
     }, GamepadManager.DEVICE_REMOVAL_DEBOUNCE_MS);
     this.pendingUsbRemovalTimers.set(deviceKey, timerId);
   }
@@ -2305,7 +2336,7 @@ export class GamepadManager implements UsbDriverListener {
     } else {
       console.info(`[GAMEPAD-USB] 设备添加: ${name}${ddkTag} (ID=${controllerId}, Slot=${slot})`);
       const ctrlType = MoonlightControllerType.fromVendorProduct(vendorId, productId);
-      this.listener?.onGamepadConnected(slot, `${name}${ddkTag}`, ctrlType);
+      this.notifyGamepadConnectedOnce(deviceKey, slot, `${name}${ddkTag}`, ctrlType);
     }
   }
   
