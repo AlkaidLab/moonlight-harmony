@@ -16,7 +16,7 @@
 import { router, LengthMetrics } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { promptAction } from '@kit.ArkUI';
-import { common } from '@kit.AbilityKit';
+import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { displaySync } from '@kit.ArkGraphics2D';
 import { VirtualControllerOverlay } from '../components/virtual/VirtualController';
 import { PerformanceOverlay } from '../components/PerformanceOverlay';
@@ -673,11 +673,7 @@ struct StreamPage {
   aboutToDisappear(): void {
     console.info('StreamPage aboutToDisappear - cleaning up');
 
-    // 停止剪贴板同步
-    if (this.clipboardSyncService) {
-      this.clipboardSyncService.stop();
-      this.clipboardSyncService = null;
-    }
+    this.stopClipboardSync();
 
     // 取消 Network Boost 场景监听
     if (this.netSceneListener) {
@@ -1301,11 +1297,7 @@ struct StreamPage {
       
       // 设置连接终止回调
       this.viewModel.setConnectionTerminatedCallback((errorCode: number) => {
-        // 停止剪贴板同步
-        if (this.clipboardSyncService) {
-          this.clipboardSyncService.stop();
-          this.clipboardSyncService = null;
-        }
+        this.stopClipboardSync();
         this.lifecycleManager.handleConnectionTerminated(errorCode);
       });
 
@@ -1318,24 +1310,7 @@ struct StreamPage {
       await this.launchStream();
       this.streamStartedAtMs = Date.now();
 
-      // 启动剪贴板同步
-      try {
-        const enableClipboardSyncText = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
-        const enableClipboardSyncImage = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
-        if (enableClipboardSyncText || enableClipboardSyncImage) {
-          const clipboardConfig = new ClipboardSyncConfig();
-          clipboardConfig.enableSyncText = enableClipboardSyncText;
-          clipboardConfig.enableSyncImage = enableClipboardSyncImage;
-          const clipboardObserver: ClipboardSyncObserver = new StreamClipboardObserver();
-          this.clipboardSyncService = new ClipboardSyncService(
-            clipboardConfig,
-            clipboardObserver
-          );
-          this.clipboardSyncService.start();
-        }
-      } catch (error) {
-        console.error('Failed to initialize clipboard sync:', error);
-      }
+      await this.startClipboardSync();
 
       // 超分辨率状态 Toast
       this.showUpscaleToast();
@@ -1441,6 +1416,72 @@ struct StreamPage {
     await this.windowManager?.restoreWindow();
   }
 
+  private stopClipboardSync(): void {
+    if (!this.clipboardSyncService) {
+      return;
+    }
+
+    this.clipboardSyncService.stop();
+    this.clipboardSyncService = null;
+  }
+
+  private async ensureClipboardPermissionGranted(): Promise<boolean> {
+    try {
+      const atManager = abilityAccessCtrl.createAtManager();
+      const bundleInfo = await bundleManager.getBundleInfoForSelf(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION
+      );
+      const tokenId = bundleInfo.appInfo.accessTokenId;
+      const permission: Permissions = 'ohos.permission.READ_PASTEBOARD';
+
+      let granted = atManager.checkAccessTokenSync(tokenId, permission) ===
+        abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+
+      if (!granted) {
+        console.info('[StreamPage] 请求剪贴板权限...');
+        const result = await atManager.requestPermissionsFromUser(this.context, [permission]);
+        granted = result.authResults.length > 0 &&
+          result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+      }
+
+      return granted;
+    } catch (error) {
+      console.error('[StreamPage] 检查剪贴板权限失败:', error);
+      return false;
+    }
+  }
+
+  private async startClipboardSync(): Promise<void> {
+    this.stopClipboardSync();
+
+    try {
+      const enableClipboardSyncText = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
+      const enableClipboardSyncImage = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
+      if (!enableClipboardSyncText && !enableClipboardSyncImage) {
+        return;
+      }
+
+      const granted = await this.ensureClipboardPermissionGranted();
+      if (!granted) {
+        ToastQueue.show({ message: '未授予剪贴板权限，无法启用剪贴板同步', duration: 2000 });
+        return;
+      }
+
+      const clipboardConfig = new ClipboardSyncConfig();
+      clipboardConfig.enableSyncText = enableClipboardSyncText;
+      clipboardConfig.enableSyncImage = enableClipboardSyncImage;
+      const clipboardObserver: ClipboardSyncObserver = new StreamClipboardObserver();
+      this.clipboardSyncService = new ClipboardSyncService(
+        clipboardConfig,
+        clipboardObserver
+      );
+      this.clipboardSyncService.start();
+    } catch (error) {
+      console.error('Failed to initialize clipboard sync:', error);
+      this.stopClipboardSync();
+    }
+  }
+
   /**
    * 战报展示期间，真正的停流/退游戏在后台继续执行；关闭战报前再等待其收尾。
    */
@@ -1515,6 +1556,8 @@ struct StreamPage {
       return;
     }
 
+    this.stopClipboardSync();
+
     if (!this.endStreamReportEnabled) {
       await this.prepareStreamEndUi();
       await this.exitStreamAndReturn();
@@ -1542,6 +1585,8 @@ struct StreamPage {
       console.info('[StreamPage] quitGameAndReturn 已在执行，忽略重复调用');
       return;
     }
+
+    this.stopClipboardSync();
 
     const report = this.endStreamReportEnabled ? this.buildCurrentStreamReport() : null;
     this.prepareStreamEndUiImmediate();
@@ -1574,6 +1619,8 @@ struct StreamPage {
   async reconnectStreaming(): Promise<void> {
     console.info('[StreamPage] 开始重连串流...');
     try {
+      this.stopClipboardSync();
+
       // 先停止当前会话（静默，不导航不显示 toast）
       await this.viewModel.stopStreaming();
       console.info('[StreamPage] 旧会话已停止，开始重新连接...');
@@ -1584,6 +1631,7 @@ struct StreamPage {
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
       this.streamStartedAtMs = Date.now();
+      await this.startClipboardSync();
       console.info('[StreamPage] 重连串流成功');
 
       ToastQueue.show({ message: '已重新连接' });

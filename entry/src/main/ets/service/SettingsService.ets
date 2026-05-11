@@ -61,8 +61,8 @@ export class SettingsKeys {
   static readonly AUDIO_COMPAT_MODE: string = 'settings_audio_compat_mode';
 
   // 剪贴板同步设置
-  static readonly ENABLE_CLIPBOARD_SYNC_TEXT: string = 'enableClipboardSyncText';
-  static readonly ENABLE_CLIPBOARD_SYNC_IMAGE: string = 'enableClipboardSyncImage';
+  static readonly ENABLE_CLIPBOARD_SYNC_TEXT: string = 'settings_enable_clipboard_sync_text';
+  static readonly ENABLE_CLIPBOARD_SYNC_IMAGE: string = 'settings_enable_clipboard_sync_image';
 
   // 输入 - 手柄设置
   static readonly ENABLE_VIBRATION: string = 'settings_enable_vibration';

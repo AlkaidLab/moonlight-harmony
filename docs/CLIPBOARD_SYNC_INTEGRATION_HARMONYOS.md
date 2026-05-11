@@ -156,6 +156,11 @@ sysBoard.off('update', listener)
 - 设置页保留图片同步入口
 - 协议仍识别 PNG kind
 - 本地或远端一旦进入图片分支，只提示一次不支持
+  - 当前 `StreamPage` 中的用户可见文案为：`剪贴板同步错误: 当前 HarmonyOS 兼容 SDK 下未验证图片剪贴板 API，图片同步暂时禁用`
+  - Optional English reference: `Clipboard sync error: image clipboard sync is temporarily disabled because the current HarmonyOS-compatible SDK has no verified image clipboard API path`
+  - 展示方式为 `ToastQueue` 串行调度的系统 Toast（底层是 `promptAction.showToast`），时长 `2000ms`，属于轻量非阻塞提示，不会弹模态框打断串流
+  - “只提示一次”的作用域是**单个 `ClipboardSyncService` 实例生命周期内一次**：由服务内的 `imageSupportWarned` 内存标志控制，不写入本地持久化存储
+  - 该标志会在当前服务实例被停止并释放后失效；当前接线方式下，重新开始一次串流会创建新服务实例，因此新串流会重新允许提示一次
 - 不调用未验证图片剪贴板 API
 
 这样做的好处是：

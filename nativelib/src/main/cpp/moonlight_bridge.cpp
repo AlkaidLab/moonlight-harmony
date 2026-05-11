@@ -168,6 +168,28 @@ static bool GetBool(napi_env env, napi_value value, bool* result) {
     return true;
 }
 
+static size_t GetTypedArrayElementSize(napi_typedarray_type type) {
+    switch (type) {
+        case napi_int8_array:
+        case napi_uint8_array:
+        case napi_uint8_clamped_array:
+            return 1;
+        case napi_int16_array:
+        case napi_uint16_array:
+            return 2;
+        case napi_int32_array:
+        case napi_uint32_array:
+        case napi_float32_array:
+            return 4;
+        case napi_float64_array:
+        case napi_bigint64_array:
+        case napi_biguint64_array:
+            return 8;
+        default:
+            return 0;
+    }
+}
+
 static bool GetByteArrayData(napi_env env, napi_value value, void** data, size_t* length) {
     bool isTypedArray = false;
     napi_status status = napi_is_typedarray(env, value, &isTypedArray);
@@ -175,7 +197,21 @@ static bool GetByteArrayData(napi_env env, napi_value value, void** data, size_t
         napi_typedarray_type type;
         napi_value arrayBuffer;
         size_t byteOffset = 0;
-        return napi_get_typedarray_info(env, value, &type, length, data, &arrayBuffer, &byteOffset) == napi_ok;
+        size_t elementCount = 0;
+        status = napi_get_typedarray_info(env, value, &type, &elementCount, data, &arrayBuffer, &byteOffset);
+        if (status != napi_ok) {
+            return false;
+        }
+
+        const size_t elementSize = GetTypedArrayElementSize(type);
+        if (elementSize == 0) {
+            *data = nullptr;
+            *length = 0;
+            return false;
+        }
+
+        *length = elementCount * elementSize;
+        return true;
     }
 
     bool isArrayBuffer = false;

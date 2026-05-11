@@ -99,11 +99,14 @@ export class ClipboardSyncService implements ClipboardSyncListener {
   private setupPasteboardListener(): void {
     try {
       const sysBoard = pasteboard.getSystemPasteboard()
-      const listener: PasteboardUpdateListener = (): void => {
-        void this.onPasteboardChanged()
+      if (!this.pasteboardEventListener) {
+        this.pasteboardEventListener = (): void => {
+          void this.onPasteboardChanged()
+        }
+      } else {
+        sysBoard.off('update', this.pasteboardEventListener)
       }
-      this.pasteboardEventListener = listener
-      sysBoard.on('update', listener)
+      sysBoard.on('update', this.pasteboardEventListener)
     } catch (err) {
       const message = formatError(err as Object)
       logError(`Failed to setup pasteboard listener: ${message}`)
@@ -215,6 +218,9 @@ export class ClipboardSyncService implements ClipboardSyncListener {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text)
       sysBoard.setDataSync(pasteData)
     } catch (err) {
+      if (this.pendingSelfWrites > 0) {
+        this.pendingSelfWrites--
+      }
       const message = formatError(err as Object)
       logError(`Failed to set local clipboard: ${message}`)
       this.observer?.onError?.(`写入本地剪贴板失败：${message}`)

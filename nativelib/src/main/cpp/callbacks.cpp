@@ -1003,6 +1003,9 @@ void BridgeClResolutionChanged(unsigned int width, unsigned int height) {
 }
 
 void BridgeClClipboardData(const char* data, int length) {
+    static constexpr int kClipboardWireHeaderSize = 10;
+    static constexpr uint32_t kMaxClipboardPayloadBytes = 65500 - kClipboardWireHeaderSize;
+
     if (g_connCallbacks.tsfn_clipboardData == nullptr || data == nullptr || length < 10) {
         return;
     }
@@ -1020,7 +1023,7 @@ void BridgeClClipboardData(const char* data, int length) {
         (static_cast<uint32_t>(frame[7]) << 8) |
         (static_cast<uint32_t>(frame[8]) << 16) |
         (static_cast<uint32_t>(frame[9]) << 24);
-    const int availablePayloadLength = length - 10;
+    const int availablePayloadLength = length - kClipboardWireHeaderSize;
 
     if (version != 1) {
         OH_LOG_WARN(LOG_APP, "BridgeClClipboardData: unsupported version=%{public}u", version);
@@ -1030,6 +1033,14 @@ void BridgeClClipboardData(const char* data, int length) {
     if (payloadLength != static_cast<uint32_t>(availablePayloadLength)) {
         OH_LOG_WARN(LOG_APP, "BridgeClClipboardData: malformed payload len=%{public}u available=%{public}d",
                     payloadLength, availablePayloadLength);
+        return;
+    }
+
+    if (payloadLength > kMaxClipboardPayloadBytes ||
+        static_cast<uint32_t>(availablePayloadLength) > kMaxClipboardPayloadBytes) {
+        OH_LOG_WARN(LOG_APP,
+                    "BridgeClClipboardData: payload too large len=%{public}u available=%{public}d max=%{public}u",
+                    payloadLength, availablePayloadLength, kMaxClipboardPayloadBytes);
         return;
     }
 
@@ -1046,7 +1057,7 @@ void BridgeClClipboardData(const char* data, int length) {
             OH_LOG_ERROR(LOG_APP, "BridgeClClipboardData: malloc failed for %{public}d bytes", availablePayloadLength);
             return;
         }
-        memcpy(cbData->ptrParam, frame + 10, availablePayloadLength);
+        memcpy(cbData->ptrParam, frame + kClipboardWireHeaderSize, availablePayloadLength);
     }
 
     napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_clipboardData, cbData, napi_tsfn_blocking);
