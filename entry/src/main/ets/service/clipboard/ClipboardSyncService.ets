@@ -2,20 +2,27 @@ import { pasteboard, BusinessError } from '@kit.BasicServicesKit'
 import { image } from '@kit.ImageKit'
 import { StringUtil } from '../../utils/StringUtil'
 import { MoonBridge } from '../jni/ClipboardBridge'
+import { ClipboardBlobTransport } from './ClipboardBlobTransport'
 import {
   ClipboardSyncConfig,
   ClipboardWireFrame,
+  ClipboardBlobRef,
   TokenEntry,
   ClipboardSyncListener
 } from './ClipboardSyncConfig'
 
 const TAG = 'ClipboardSyncService'
 const MAX_CLIPBOARD_FRAME_BYTES = 65500 - ClipboardWireFrame.HEADER_SIZE
+const CLIPBOARD_TEXT_MIME = 'text/plain;charset=utf-8'
+const CLIPBOARD_PNG_MIME = 'image/png'
 
 type PasteboardUpdateListener = () => void
 
-interface PasteDataPixelMapAccessor {
-  getPrimaryPixelMap(): image.PixelMap
+interface PasteDataRecordAccessor {
+  mimeType?: string
+  plainText?: string
+  pixelMap?: image.PixelMap
+  toPlainText?(): string
 }
 
 export interface ClipboardSyncObserver {
@@ -52,14 +59,16 @@ function formatError(err: Object): string {
 export class ClipboardSyncService implements ClipboardSyncListener {
   private config: ClipboardSyncConfig
   private observer: ClipboardSyncObserver | null = null
+  private blobTransport: ClipboardBlobTransport | null = null
   private recentSentTokens: TokenEntry[] = []
   private pendingSelfWrites: number = 0
   private pasteboardEventListener: PasteboardUpdateListener | null = null
   private isRunning: boolean = false
 
-  constructor(config?: ClipboardSyncConfig, observer?: ClipboardSyncObserver) {
+  constructor(config?: ClipboardSyncConfig, observer?: ClipboardSyncObserver, blobTransport?: ClipboardBlobTransport | null) {
     this.config = config ? config : new ClipboardSyncConfig()
     this.observer = observer ? observer : null
+    this.blobTransport = blobTransport ? blobTransport : null
   }
 
   start(): void {
@@ -146,28 +155,25 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     try {
       const sysBoard = pasteboard.getSystemPasteboard()
       const pasteData = await sysBoard.getData()
-      const text = this.config.enableSyncText ? pasteData.getPrimaryText() : ''
+      const recordCount = pasteData.getRecordCount()
+      const text = this.config.enableSyncText ? this.tryGetPrimaryText(pasteData, recordCount) : ''
 
       if (this.config.enableSyncText && text && text.length > 0) {
-        this.sendPayload(
-          ClipboardWireFrame.KIND_TEXT,
-          this.generateToken(),
-          StringUtil.stringToUint8Array(text)
-        )
+        logInfo(`Local clipboard changed: recordCount=${recordCount}, textLength=${text.length}`)
+        await this.sendTextPayload(text)
         return
       }
 
       if (this.config.enableSyncImage) {
-        const primaryPixelMap = this.tryGetPrimaryPixelMap(pasteData)
+        const primaryPixelMap = this.tryGetPrimaryPixelMap(pasteData, recordCount)
         if (primaryPixelMap) {
+          logInfo(`Local clipboard changed: recordCount=${recordCount}, detected pixelMap image`)
           await this.sendImagePayload(primaryPixelMap)
           return
         }
       }
 
-      if (!this.config.enableSyncText) {
-        return
-      }
+      logInfo(`Local clipboard changed: recordCount=${recordCount}, no supported text/image payload`)
     } catch (err) {
       const message = formatError(err as Object)
       logError(`Failed to read local clipboard: ${message}`)
@@ -175,14 +181,52 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     }
   }
 
-  private tryGetPrimaryPixelMap(pasteData: pasteboard.PasteData): image.PixelMap | null {
+  private async sendTextPayload(text: string): Promise<void> {
+    const payload = StringUtil.stringToUint8Array(text)
+    await this.sendPayloadOrBlob(ClipboardWireFrame.KIND_TEXT, CLIPBOARD_TEXT_MIME, payload, '文本')
+  }
+
+  private tryGetPrimaryText(pasteData: pasteboard.PasteData, recordCount: number): string {
     try {
-      const accessor = pasteData as PasteDataPixelMapAccessor
-      const pixelMap = accessor.getPrimaryPixelMap()
-      return pixelMap ? pixelMap : null
+      const primaryText = pasteData.getPrimaryText()
+      if (primaryText && primaryText.length > 0) {
+        return primaryText
+      }
     } catch (_err) {
-      return null
     }
+
+    for (let i = 0; i < recordCount; i++) {
+      try {
+        const record = pasteData.getRecord(i) as PasteDataRecordAccessor
+        if (typeof record.plainText === 'string' && record.plainText.length > 0) {
+          return record.plainText
+        }
+        if (record.toPlainText) {
+          const text = record.toPlainText()
+          if (text && text.length > 0) {
+            return text
+          }
+        }
+      } catch (_err) {
+      }
+    }
+
+    return ''
+  }
+
+  private tryGetPrimaryPixelMap(pasteData: pasteboard.PasteData, recordCount: number): image.PixelMap | null {
+    try {
+      for (let i = 0; i < recordCount; i++) {
+        const record = pasteData.getRecord(i) as PasteDataRecordAccessor
+        const pixelMap = record.pixelMap
+        if (pixelMap) {
+          return pixelMap
+        }
+      }
+    } catch (_err) {
+    }
+
+    return null
   }
 
   private async sendImagePayload(pixelMap: image.PixelMap): Promise<void> {
@@ -196,17 +240,7 @@ export class ClipboardSyncService implements ClipboardSyncListener {
         return
       }
 
-      if (payload.length > MAX_CLIPBOARD_FRAME_BYTES) {
-        logWarn(`Clipboard PNG payload size=${payload.length} exceeds limit, dropping`)
-        this.observer?.onError?.('剪贴板图片过大，已跳过同步')
-        return
-      }
-
-      this.sendPayload(
-        ClipboardWireFrame.KIND_PNG,
-        this.generateToken(),
-        payload
-      )
+      await this.sendPayloadOrBlob(ClipboardWireFrame.KIND_PNG, CLIPBOARD_PNG_MIME, payload, '图片')
     } catch (err) {
       const message = formatError(err as Object)
       logError(`Failed to encode clipboard image: ${message}`)
@@ -218,14 +252,47 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     }
   }
 
-  private toExactArrayBuffer(data: Uint8Array): ArrayBuffer {
-    const copy = new Uint8Array(data.length)
-    copy.set(data)
-    return copy.buffer
+  private async sendPayloadOrBlob(kind: number, mime: string, payload: Uint8Array, displayName: string): Promise<void> {
+    if (payload.length === 0) {
+      return
+    }
+
+    if (payload.length <= MAX_CLIPBOARD_FRAME_BYTES) {
+      this.sendPayload(kind, this.generateToken(), payload)
+      return
+    }
+
+    if (!this.blobTransport) {
+      logWarn(`Clipboard ${displayName} payload size=${payload.length} exceeds limit and blob transport is unavailable`)
+      this.observer?.onError?.(`剪贴板${displayName}过大，已跳过同步`)
+      return
+    }
+
+    try {
+      const ref = await this.blobTransport.uploadBlob(mime, payload)
+      const refPayload = ClipboardWireFrame.buildRefPayload(ref)
+      if (refPayload.length > MAX_CLIPBOARD_FRAME_BYTES) {
+        logWarn(`Clipboard REF payload size=${refPayload.length} exceeds limit, dropping`)
+        this.observer?.onError?.(`剪贴板${displayName}引用过大，已跳过同步`)
+        return
+      }
+
+      logInfo(`Uploaded clipboard ${displayName} blob id=${ref.id} size=${ref.size}`)
+      this.sendPayload(ClipboardWireFrame.KIND_REF, this.generateToken(), refPayload)
+    } catch (err) {
+      const message = formatError(err as Object)
+      logError(`Failed to upload clipboard ${displayName} blob: ${message}`)
+      this.observer?.onError?.(`上传剪贴板${displayName}失败：${message}`)
+    }
   }
 
   private async decodePngPayload(payload: Uint8Array): Promise<image.PixelMap> {
-    const imageSource: image.ImageSource = image.createImageSource(this.toExactArrayBuffer(payload))
+    // ImageSource 需要一份独立的 ArrayBuffer。只有在入参 byteOffset != 0 或
+    // byteLength != buffer.byteLength 时才必须拷贝；其他场景直接复用
+    // payload.buffer 避免多余拷贝。
+    const isExact = payload.byteOffset === 0 && payload.byteLength === payload.buffer.byteLength
+    const arrayBuffer = isExact ? payload.buffer : payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength)
+    const imageSource: image.ImageSource = image.createImageSource(arrayBuffer)
     try {
       return await imageSource.createPixelMap({})
     } finally {
@@ -270,6 +337,11 @@ export class ClipboardSyncService implements ClipboardSyncListener {
       return
     }
 
+    if (kind === ClipboardWireFrame.KIND_REF) {
+      await this.applyRemoteBlobReference(payload)
+      return
+    }
+
     if (kind === ClipboardWireFrame.KIND_PNG) {
       if (!this.config.enableSyncImage) {
         return
@@ -301,9 +373,7 @@ export class ClipboardSyncService implements ClipboardSyncListener {
       }
 
       this.pendingSelfWrites++
-      const sysBoard = pasteboard.getSystemPasteboard()
-      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text)
-      sysBoard.setDataSync(pasteData)
+      this.writeTextToPasteboard(text)
     } catch (err) {
       if (this.pendingSelfWrites > 0) {
         this.pendingSelfWrites--
@@ -312,6 +382,114 @@ export class ClipboardSyncService implements ClipboardSyncListener {
       logError(`Failed to set local clipboard: ${message}`)
       this.observer?.onError?.(`写入本地剪贴板失败：${message}`)
     }
+  }
+
+  private async applyRemoteBlobReference(payload: Uint8Array): Promise<void> {
+    const ref = ClipboardWireFrame.parseRefPayload(payload)
+    if (!ref) {
+      logWarn('Ignoring malformed clipboard REF payload')
+      return
+    }
+
+    if (!this.shouldDownloadBlobRef(ref)) {
+      return
+    }
+
+    const blobData = await this.downloadClipboardBlob(ref)
+    if (!blobData) {
+      return
+    }
+
+    if (this.isTextMime(ref.mime)) {
+      await this.applyRemoteTextBlob(blobData)
+      return
+    }
+
+    if (this.isPngMime(ref.mime)) {
+      await this.applyRemotePngBlob(blobData)
+      return
+    }
+
+    logInfo(`Ignoring unsupported clipboard blob mime=${ref.mime}`)
+  }
+
+  private shouldDownloadBlobRef(ref: ClipboardBlobRef): boolean {
+    if (this.isTextMime(ref.mime)) {
+      return this.config.enableSyncText
+    }
+    if (this.isPngMime(ref.mime)) {
+      return this.config.enableSyncImage
+    }
+    return false
+  }
+
+  private async downloadClipboardBlob(ref: ClipboardBlobRef): Promise<Uint8Array | null> {
+    if (!this.blobTransport) {
+      logWarn(`Clipboard blob transport unavailable for ref id=${ref.id}`)
+      this.observer?.onError?.('当前会话未配置剪贴板大文件传输')
+      return null
+    }
+
+    try {
+      const data = await this.blobTransport.downloadBlob(ref.id)
+      if (ref.size > 0 && data.length !== ref.size) {
+        logWarn(`Clipboard blob size mismatch id=${ref.id} expected=${ref.size} actual=${data.length}`)
+      }
+      return data
+    } catch (err) {
+      const message = formatError(err as Object)
+      logError(`Failed to download clipboard blob id=${ref.id}: ${message}`)
+      this.observer?.onError?.(`下载远端剪贴板内容失败：${message}`)
+      return null
+    }
+  }
+
+  private async applyRemoteTextBlob(payload: Uint8Array): Promise<void> {
+    try {
+      const text = StringUtil.uint8ArrayToString(payload)
+      if (text.length === 0) {
+        return
+      }
+
+      this.pendingSelfWrites++
+      this.writeTextToPasteboard(text)
+    } catch (err) {
+      if (this.pendingSelfWrites > 0) {
+        this.pendingSelfWrites--
+      }
+      const message = formatError(err as Object)
+      logError(`Failed to set local clipboard text blob: ${message}`)
+      this.observer?.onError?.(`写入本地剪贴板失败：${message}`)
+    }
+  }
+
+  private async applyRemotePngBlob(payload: Uint8Array): Promise<void> {
+    try {
+      const pixelMap = await this.decodePngPayload(payload)
+      this.pendingSelfWrites++
+      this.writePixelMapToPasteboard(pixelMap)
+    } catch (err) {
+      if (this.pendingSelfWrites > 0) {
+        this.pendingSelfWrites--
+      }
+      const message = formatError(err as Object)
+      logError(`Failed to set local clipboard image blob: ${message}`)
+      this.observer?.onError?.(`写入本地剪贴板图片失败：${message}`)
+    }
+  }
+
+  private writeTextToPasteboard(text: string): void {
+    const sysBoard = pasteboard.getSystemPasteboard()
+    const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text)
+    sysBoard.setDataSync(pasteData)
+  }
+
+  private isTextMime(mime: string): boolean {
+    return mime.startsWith('text/')
+  }
+
+  private isPngMime(mime: string): boolean {
+    return mime === CLIPBOARD_PNG_MIME
   }
 
   private isHostEcho(token: number): boolean {

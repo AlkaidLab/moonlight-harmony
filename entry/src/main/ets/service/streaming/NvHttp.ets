@@ -20,6 +20,7 @@ import { CryptoUtil } from '../../utils/CryptoUtil';
 import { DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT } from '../../common/NetworkConstants';
 import { parseAddressAndPort, formatAddressForUrl } from '../../utils/NetHelper';
 import { selectBestAddress, NvHttpHost } from '../../model/ComputerInfo';
+import { ClipboardBlobRef } from '../clipboard/ClipboardSyncConfig';
 
 /**
  * NvHTTP - 与 NVIDIA GameStream / Sunshine 服务器通信
@@ -78,6 +79,12 @@ interface RotateDisplayResponse {
   success?: boolean;
 }
 
+interface ClipboardBlobUploadResponse {
+  id?: string;
+  mime?: string;
+  size?: number | string;
+}
+
 /**
  * getServerInfoRobust 选项
  */
@@ -115,6 +122,10 @@ export class NvHttp {
   static readonly CONNECTION_TIMEOUT = 3000;
   static readonly LONG_CONNECTION_TIMEOUT = 5000;
   static readonly READ_TIMEOUT = 7000;
+  static readonly CLIPBOARD_BLOB_TIMEOUT = 30000;
+  static readonly CLIPBOARD_BLOB_CONNECT_TIMEOUT = 10000;
+  static readonly CLIPBOARD_BLOB_MAX_ATTEMPTS = 2;
+  static readonly CLIPBOARD_BLOB_RETRY_DELAY_MS = 1200;
 
   // getServerInfoRobust 默认参数（启动链路使用）
   static readonly DEFAULT_ROBUST_MAX_ATTEMPTS = 3;
@@ -436,35 +447,170 @@ export class NvHttp {
    * @param timeout 超时时间
    */
   private async doHttpsRequestWithFrpRetry(path: string, query?: string, timeout: number = NvHttp.READ_TIMEOUT): Promise<string> {
+    return this.doHttpsWithFrpRetry(path, query, timeout, (url: string): Promise<string> => {
+      return this.doRequest(url, timeout, true);
+    });
+  }
+
+  private async doHttpsWithFrpRetry<T>(
+    path: string,
+    query: string | undefined,
+    timeout: number,
+    request: (url: string) => Promise<T>
+  ): Promise<T> {
     const baseUrl = await this.getHttpsBaseUrl();
     const url = this.buildUrl(baseUrl, path, query);
     try {
-      return await this.doRequest(url, timeout, true);
+      return await request(url);
     } catch (err) {
       const errMsg = String(err);
-      // 仅对「超时 + 自定义 HTTP 端口」做 frp 推算重试
       if (!this.isTimeoutError(errMsg) || this.httpPort === NvHttp.DEFAULT_HTTP_PORT) {
         throw err instanceof Error ? err : new Error(errMsg);
       }
+
       const guessedPort = this.httpPort - 5;
       if (guessedPort <= 0 || guessedPort === this.httpsPort) {
         throw err instanceof Error ? err : new Error(errMsg);
       }
-      // 避免重复请求：getHttpsBaseUrl 在自定义端口未缓存时已直接返回 httpPort-5，
-      // 此时 baseUrl 端口与 guessedPort 相同，重试无意义
+
       const usedPort = parseAddressAndPort(baseUrl.replace(/^https?:\/\//, '')).port;
       if (usedPort === guessedPort) {
         throw err instanceof Error ? err : new Error(errMsg);
       }
+
       console.info(`NvHttp: ${path} HTTPS 超时，尝试推算端口 ${guessedPort} (httpPort=${this.httpPort} - 5)`);
       const retryBaseUrl = `https://${formatAddressForUrl(this.address)}:${guessedPort}`;
       const retryUrl = this.buildUrl(retryBaseUrl, path, query);
-      const response = await this.doRequest(retryUrl, timeout, true);
-      // 推算端口成功，缓存（后续请求自动使用）
+      const response = await request(retryUrl);
       this.httpsPort = guessedPort;
       console.info(`NvHttp: ${path} 推算 HTTPS 端口 ${guessedPort} 连接成功，已缓存`);
       return response;
     }
+  }
+
+  private async doBinaryHttpsRequestWithFrpRetry(path: string, query?: string, timeout: number = NvHttp.CLIPBOARD_BLOB_TIMEOUT): Promise<ArrayBuffer> {
+    if (!this.hasCertificateFiles()) {
+      throw new Error('客户端证书缺失，无法下载剪贴板 blob');
+    }
+
+    return this.doClipboardBlobRequestWithRetry(`download ${path}`, (): Promise<ArrayBuffer> => {
+      return this.doHttpsWithFrpRetry(path, query, timeout, (url: string): Promise<ArrayBuffer> => {
+        return HttpClient.getBinaryWithClientCert(
+          url,
+          this.certFilePath,
+          this.keyFilePath,
+          {
+            connectTimeout: NvHttp.CLIPBOARD_BLOB_CONNECT_TIMEOUT,
+            transferTimeout: timeout
+          }
+        );
+      });
+    });
+  }
+
+  private async doBinaryHttpsPostWithFrpRetry(
+    path: string,
+    data: Uint8Array,
+    query?: string,
+    timeout: number = NvHttp.CLIPBOARD_BLOB_TIMEOUT,
+    headers?: Record<string, string>
+  ): Promise<string> {
+    if (!this.hasCertificateFiles()) {
+      throw new Error('客户端证书缺失，无法上传剪贴板 blob');
+    }
+
+    return this.doClipboardBlobRequestWithRetry(`upload ${path}`, (): Promise<string> => {
+      return this.doHttpsWithFrpRetry(path, query, timeout, async (url: string): Promise<string> => {
+        const response = await HttpClient.postBinaryWithClientCert(
+          url,
+          data,
+          this.certFilePath,
+          this.keyFilePath,
+          {
+            headers: headers,
+            connectTimeout: NvHttp.CLIPBOARD_BLOB_CONNECT_TIMEOUT,
+            transferTimeout: timeout
+          }
+        );
+        return response.body;
+      });
+    });
+  }
+
+  private async doClipboardBlobRequestWithRetry<T>(label: string, request: () => Promise<T>): Promise<T> {
+    let lastErr: Error | null = null;
+
+    for (let attempt = 1; attempt <= NvHttp.CLIPBOARD_BLOB_MAX_ATTEMPTS; attempt++) {
+      try {
+        const result = await request();
+        if (attempt > 1) {
+          console.info(`NvHttp: clipboard blob ${label} 第 ${attempt} 次尝试成功`);
+        }
+        return result;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        if (!NvHttp.isTransientNetworkError(lastErr) || attempt === NvHttp.CLIPBOARD_BLOB_MAX_ATTEMPTS) {
+          throw lastErr;
+        }
+
+        console.warn(`NvHttp: clipboard blob ${label} 第 ${attempt}/${NvHttp.CLIPBOARD_BLOB_MAX_ATTEMPTS} 次失败，${NvHttp.CLIPBOARD_BLOB_RETRY_DELAY_MS}ms 后重试: ${lastErr.message}`);
+        await new Promise<void>((resolve: () => void): void => {
+          setTimeout(resolve, NvHttp.CLIPBOARD_BLOB_RETRY_DELAY_MS);
+        });
+      }
+    }
+
+    throw lastErr ?? new Error(`clipboard blob ${label} 失败`);
+  }
+
+  /**
+   * 上传剪贴板大 payload，返回可放入 KIND_REF 的小 JSON 引用。
+   * 与 Sunshine 对接，路径固定为 /api/v1/clipboard/blob。
+   */
+  async uploadClipboardBlob(mime: string, data: Uint8Array): Promise<ClipboardBlobRef> {
+    const headers: Record<string, string> = {
+      'X-Clipboard-Mime': mime
+    }
+    const response = await this.doBinaryHttpsPostWithFrpRetry(
+      'api/v1/clipboard/blob', data, undefined, NvHttp.CLIPBOARD_BLOB_TIMEOUT, headers)
+    return this.parseClipboardBlobUploadResponse(response, mime, data.length)
+  }
+
+  /**
+   * 下载剪贴板 blob。Sunshine 使用 REST 风格 /api/v1/clipboard/blob/{id}。
+   */
+  async downloadClipboardBlob(id: string): Promise<Uint8Array> {
+    const encodedId = encodeURIComponent(id);
+    const data = await this.doBinaryHttpsRequestWithFrpRetry(
+      `api/v1/clipboard/blob/${encodedId}`, undefined, NvHttp.CLIPBOARD_BLOB_TIMEOUT)
+    return new Uint8Array(data)
+  }
+
+  private parseClipboardBlobUploadResponse(response: string, fallbackMime: string, fallbackSize: number): ClipboardBlobRef {
+    const trimmed = response.trim();
+    if (!trimmed) {
+      throw new Error('上传剪贴板 blob 返回空响应');
+    }
+
+    let parsed: ClipboardBlobUploadResponse;
+    try {
+      parsed = JSON.parse(trimmed) as ClipboardBlobUploadResponse;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`上传剪贴板 blob 响应非 JSON: ${message}`);
+    }
+
+    const id = (parsed.id ?? '').trim();
+    if (!id) {
+      throw new Error('上传剪贴板 blob 响应缺少 id');
+    }
+    const size = Number(parsed.size);
+    return {
+      type: 'ref',
+      id: id,
+      mime: parsed.mime || fallbackMime,
+      size: Number.isFinite(size) && size >= 0 ? Math.floor(size) : fallbackSize
+    };
   }
 
   /**
