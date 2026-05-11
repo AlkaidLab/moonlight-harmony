@@ -12,8 +12,14 @@ export class SunshineClipboardBlobTransport implements ClipboardBlobTransport {
     this.nvHttp = nvHttp
   }
 
-  uploadBlob(mime: string, data: Uint8Array): Promise<ClipboardBlobRef> {
-    return this.nvHttp.uploadClipboardBlob(mime, data)
+  async uploadBlob(mime: string, data: Uint8Array): Promise<ClipboardBlobRef> {
+    const result = await this.nvHttp.uploadClipboardBlob(mime, data)
+    return {
+      type: 'ref',
+      id: result.id,
+      mime: result.mime,
+      size: result.size
+    }
   }
 
   downloadBlob(id: string): Promise<Uint8Array> {

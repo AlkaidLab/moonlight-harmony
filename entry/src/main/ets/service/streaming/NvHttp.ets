@@ -20,7 +20,6 @@ import { CryptoUtil } from '../../utils/CryptoUtil';
 import { DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT } from '../../common/NetworkConstants';
 import { parseAddressAndPort, formatAddressForUrl } from '../../utils/NetHelper';
 import { selectBestAddress, NvHttpHost } from '../../model/ComputerInfo';
-import { ClipboardBlobRef } from '../clipboard/ClipboardSyncConfig';
 
 /**
  * NvHTTP - 与 NVIDIA GameStream / Sunshine 服务器通信
@@ -83,6 +82,19 @@ interface ClipboardBlobUploadResponse {
   id?: string;
   mime?: string;
   size?: number | string;
+}
+
+/**
+ * Sunshine /api/v1/clipboard/blob 上传响应的扣准结构。
+ * 这个类型为 NvHttp 内部使用，定义等价于加了 "id 是必选" 约束的
+ * `Required<Pick<ClipboardBlobUploadResponse, 'id'>> & { ... }`。调用方
+ * （SunshineClipboardBlobTransport）负责包装为业务层的 ClipboardBlobRef，
+ * 这样 NvHttp 不反向依赖 clipboard 模块。
+ */
+export interface ClipboardBlobUploadResult {
+  id: string;
+  mime: string;
+  size: number;
 }
 
 /**
@@ -564,10 +576,10 @@ export class NvHttp {
   }
 
   /**
-   * 上传剪贴板大 payload，返回可放入 KIND_REF 的小 JSON 引用。
-   * 与 Sunshine 对接，路径固定为 /api/v1/clipboard/blob。
+   * 上传剪贴板大 payload。返回扫描后的 id/mime/size，包装成 KIND_REF 由
+   * 调用方负责。与 Sunshine 对接，路径固定为 /api/v1/clipboard/blob。
    */
-  async uploadClipboardBlob(mime: string, data: Uint8Array): Promise<ClipboardBlobRef> {
+  async uploadClipboardBlob(mime: string, data: Uint8Array): Promise<ClipboardBlobUploadResult> {
     const headers: Record<string, string> = {
       'X-Clipboard-Mime': mime
     }
@@ -586,7 +598,7 @@ export class NvHttp {
     return new Uint8Array(data)
   }
 
-  private parseClipboardBlobUploadResponse(response: string, fallbackMime: string, fallbackSize: number): ClipboardBlobRef {
+  private parseClipboardBlobUploadResponse(response: string, fallbackMime: string, fallbackSize: number): ClipboardBlobUploadResult {
     const trimmed = response.trim();
     if (!trimmed) {
       throw new Error('上传剪贴板 blob 返回空响应');
@@ -606,7 +618,6 @@ export class NvHttp {
     }
     const size = Number(parsed.size);
     return {
-      type: 'ref',
       id: id,
       mime: parsed.mime || fallbackMime,
       size: Number.isFinite(size) && size >= 0 ? Math.floor(size) : fallbackSize

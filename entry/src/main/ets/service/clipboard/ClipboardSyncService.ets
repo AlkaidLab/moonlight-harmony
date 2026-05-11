@@ -287,12 +287,11 @@ export class ClipboardSyncService implements ClipboardSyncListener {
   }
 
   private async decodePngPayload(payload: Uint8Array): Promise<image.PixelMap> {
-    // ImageSource 需要一份独立的 ArrayBuffer。只有在入参 byteOffset != 0 或
-    // byteLength != buffer.byteLength 时才必须拷贝；其他场景直接复用
-    // payload.buffer 避免多余拷贝。
-    const isExact = payload.byteOffset === 0 && payload.byteLength === payload.buffer.byteLength
-    const arrayBuffer = isExact ? payload.buffer : payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength)
-    const imageSource: image.ImageSource = image.createImageSource(arrayBuffer)
+    // ImageSource 需要一份独立的 ArrayBuffer。OHOS 对 buffer 所有权语义
+    // 文档不明，为避免 use-after-free / use-after-release 风险，始终拷贝。
+    const copy = new Uint8Array(payload.length)
+    copy.set(payload)
+    const imageSource: image.ImageSource = image.createImageSource(copy.buffer)
     try {
       return await imageSource.createPixelMap({})
     } finally {
@@ -346,19 +345,7 @@ export class ClipboardSyncService implements ClipboardSyncListener {
       if (!this.config.enableSyncImage) {
         return
       }
-
-      try {
-        const pixelMap = await this.decodePngPayload(payload)
-        this.pendingSelfWrites++
-        this.writePixelMapToPasteboard(pixelMap)
-      } catch (err) {
-        if (this.pendingSelfWrites > 0) {
-          this.pendingSelfWrites--
-        }
-        const message = formatError(err as Object)
-        logError(`Failed to set local clipboard image: ${message}`)
-        this.observer?.onError?.(`写入本地剪贴板图片失败：${message}`)
-      }
+      await this.writeRemoteImagePayload(payload, '直接帧')
       return
     }
 
@@ -366,22 +353,7 @@ export class ClipboardSyncService implements ClipboardSyncListener {
       return
     }
 
-    try {
-      const text = StringUtil.uint8ArrayToString(payload)
-      if (text.length === 0) {
-        return
-      }
-
-      this.pendingSelfWrites++
-      this.writeTextToPasteboard(text)
-    } catch (err) {
-      if (this.pendingSelfWrites > 0) {
-        this.pendingSelfWrites--
-      }
-      const message = formatError(err as Object)
-      logError(`Failed to set local clipboard: ${message}`)
-      this.observer?.onError?.(`写入本地剪贴板失败：${message}`)
-    }
+    await this.writeRemoteTextPayload(payload, '直接帧')
   }
 
   private async applyRemoteBlobReference(payload: Uint8Array): Promise<void> {
@@ -401,12 +373,12 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     }
 
     if (this.isTextMime(ref.mime)) {
-      await this.applyRemoteTextBlob(blobData)
+      await this.writeRemoteTextPayload(blobData, `blob id=${ref.id}`)
       return
     }
 
     if (this.isPngMime(ref.mime)) {
-      await this.applyRemotePngBlob(blobData)
+      await this.writeRemoteImagePayload(blobData, `blob id=${ref.id}`)
       return
     }
 
@@ -444,36 +416,47 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     }
   }
 
-  private async applyRemoteTextBlob(payload: Uint8Array): Promise<void> {
+  /**
+   * 解码并写入远端文本 payload 到本地剪贴板。统一处理 KIND_TEXT 直接帧
+   * 与 KIND_REF 下载后的文本 blob。
+   */
+  private async writeRemoteTextPayload(payload: Uint8Array, source: string): Promise<void> {
+    let claimedSelfWrite = false
     try {
       const text = StringUtil.uint8ArrayToString(payload)
       if (text.length === 0) {
         return
       }
-
       this.pendingSelfWrites++
+      claimedSelfWrite = true
       this.writeTextToPasteboard(text)
     } catch (err) {
-      if (this.pendingSelfWrites > 0) {
+      if (claimedSelfWrite && this.pendingSelfWrites > 0) {
         this.pendingSelfWrites--
       }
       const message = formatError(err as Object)
-      logError(`Failed to set local clipboard text blob: ${message}`)
+      logError(`Failed to set local clipboard text (${source}): ${message}`)
       this.observer?.onError?.(`写入本地剪贴板失败：${message}`)
     }
   }
 
-  private async applyRemotePngBlob(payload: Uint8Array): Promise<void> {
+  /**
+   * 解码并写入远端图片 payload 到本地剪贴板。统一处理 KIND_PNG 直接帧
+   * 与 KIND_REF 下载后的图片 blob。
+   */
+  private async writeRemoteImagePayload(payload: Uint8Array, source: string): Promise<void> {
+    let claimedSelfWrite = false
     try {
       const pixelMap = await this.decodePngPayload(payload)
       this.pendingSelfWrites++
+      claimedSelfWrite = true
       this.writePixelMapToPasteboard(pixelMap)
     } catch (err) {
-      if (this.pendingSelfWrites > 0) {
+      if (claimedSelfWrite && this.pendingSelfWrites > 0) {
         this.pendingSelfWrites--
       }
       const message = formatError(err as Object)
-      logError(`Failed to set local clipboard image blob: ${message}`)
+      logError(`Failed to set local clipboard image (${source}): ${message}`)
       this.observer?.onError?.(`写入本地剪贴板图片失败：${message}`)
     }
   }
@@ -485,7 +468,19 @@ export class ClipboardSyncService implements ClipboardSyncListener {
   }
 
   private isTextMime(mime: string): boolean {
-    return mime.startsWith('text/')
+    // Sunshine 仅会发 'text/plain;charset=utf-8'。接受任意 text/* + utf-8
+    // charset 或未指定 charset 的 text/plain（默认 ASCII⊆UTF-8）。拒绝
+    // text/csv;charset=gbk 之类，避免 StringUtil.uint8ArrayToString 按 UTF-8
+    // 解码造成乱码。
+    if (!mime.startsWith('text/')) {
+      return false
+    }
+    const charsetMatch = mime.toLowerCase().match(/;\s*charset=([^;\s]+)/)
+    if (!charsetMatch) {
+      return true
+    }
+    const charset = charsetMatch[1].replace(/^"|"$/g, '')
+    return charset === 'utf-8' || charset === 'utf8' || charset === 'us-ascii'
   }
 
   private isPngMime(mime: string): boolean {
