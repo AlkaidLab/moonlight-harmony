@@ -17,7 +17,8 @@ export namespace MoonBridge {
    */
   export enum ClipboardKind {
     TEXT = 1,
-    PNG = 2
+    PNG = 2,
+    REF = 3
   }
 
   /**

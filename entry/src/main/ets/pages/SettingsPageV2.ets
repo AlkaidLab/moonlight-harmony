@@ -499,11 +499,7 @@ struct SettingsPageV2 {
       
       // 剪贴板同步设置
       this.enableClipboardSyncText = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
-      const clipboardImageSyncEnabled = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
-      if (clipboardImageSyncEnabled) {
-        this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
-      }
-      this.enableClipboardSyncImage = false;
+      this.enableClipboardSyncImage = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
       
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
@@ -1811,10 +1807,13 @@ struct SettingsPageV2 {
               },
               {
                 title: '剪贴板同步图片',
-                subtitle: '暂时禁用 - 图片同步链路仍在排查中',
+                subtitle: 'Sunshine only - 与主机双向同步 PNG 图片（大图自动走 blob）',
                 type: 'toggle',
                 value: this.enableClipboardSyncImage,
-                disabled: true
+                action: () => {
+                  this.enableClipboardSyncImage = !this.enableClipboardSyncImage;
+                  this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, this.enableClipboardSyncImage);
+                }
               },
               {
                 title: '仅控制模式',

@@ -52,6 +52,7 @@ import { ToastQueue } from '../utils/ToastQueue';
 import { NetworkBoostService, SystemNetScene, SystemNetSceneListener } from '../service/network/NetworkBoostService';
 import { ClipboardSyncObserver, ClipboardSyncService } from '../service/clipboard/ClipboardSyncService';
 import { ClipboardSyncConfig } from '../service/clipboard/ClipboardSyncConfig';
+import { SunshineClipboardBlobTransport } from '../service/clipboard/SunshineClipboardBlobTransport';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -1456,11 +1457,7 @@ struct StreamPage {
 
     try {
       const enableClipboardSyncText = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
-      const enableClipboardSyncImagePref = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
-      if (enableClipboardSyncImagePref) {
-        await PreferencesUtil.put(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
-      }
-      const enableClipboardSyncImage = false;
+      const enableClipboardSyncImage = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
       if (!enableClipboardSyncText && !enableClipboardSyncImage) {
         return;
       }
@@ -1475,9 +1472,19 @@ struct StreamPage {
       clipboardConfig.enableSyncText = enableClipboardSyncText;
       clipboardConfig.enableSyncImage = enableClipboardSyncImage;
       const clipboardObserver: ClipboardSyncObserver = new StreamClipboardObserver();
+      let blobTransport: SunshineClipboardBlobTransport | null = null;
+      if (enableClipboardSyncImage) {
+        const computer = ComputerManager.getInstance().getComputer(this.computerId);
+        if (computer) {
+          blobTransport = new SunshineClipboardBlobTransport(NvHttp.fromComputer(computer, this.context));
+        } else {
+          console.warn(`[StreamPage] 图片剪贴板同步已开启但找不到 computer(id=${this.computerId})，blob 通道不可用`);
+        }
+      }
       this.clipboardSyncService = new ClipboardSyncService(
         clipboardConfig,
-        clipboardObserver
+        clipboardObserver,
+        blobTransport
       );
       this.clipboardSyncService.start();
     } catch (error) {

@@ -3,6 +3,8 @@
  * Based on Sunshine clipboard sync protocol (moonlight-common-c PR #5, control packet 0x5508)
  */
 
+import { StringUtil } from '../../utils/StringUtil'
+
 /**
  * Configuration for clipboard synchronization.
  */
@@ -67,12 +69,20 @@ export interface ClipboardWireParseResult {
   payload: Uint8Array
 }
 
+export interface ClipboardBlobRef {
+  type?: string
+  id: string
+  mime: string
+  size: number
+}
+
 export class ClipboardWireFrame {
   static readonly WIRE_VERSION = 1
   static readonly HEADER_SIZE = 10  // version(1) + kind(1) + token(4) + length(4)
 
   static readonly KIND_TEXT = 1
   static readonly KIND_PNG = 2
+  static readonly KIND_REF = 3
 
   /**
    * Build a wire frame for sending clipboard data.
@@ -102,6 +112,44 @@ export class ClipboardWireFrame {
     frame.set(payload, ClipboardWireFrame.HEADER_SIZE)
 
     return frame
+  }
+
+  /**
+   * Build a small JSON payload for KIND_REF.
+   */
+  static buildRefPayload(ref: ClipboardBlobRef): Uint8Array {
+    const normalized: ClipboardBlobRef = {
+      type: 'ref',
+      id: ref.id,
+      mime: ref.mime,
+      size: Math.max(0, Math.floor(ref.size))
+    }
+    return StringUtil.stringToUint8Array(JSON.stringify(normalized))
+  }
+
+  /**
+   * Parse a KIND_REF JSON payload.
+   */
+  static parseRefPayload(payload: Uint8Array): ClipboardBlobRef | null {
+    try {
+      const text = StringUtil.uint8ArrayToString(payload)
+      const parsed = JSON.parse(text) as Partial<ClipboardBlobRef>
+      const type = typeof parsed.type === 'string' ? parsed.type.trim() : ''
+      const id = typeof parsed.id === 'string' ? parsed.id.trim() : ''
+      const mime = typeof parsed.mime === 'string' ? parsed.mime.trim() : ''
+      const size = Number(parsed.size)
+      if ((type.length > 0 && type !== 'ref') || !id || !mime || !Number.isFinite(size) || size < 0) {
+        return null
+      }
+      return {
+        type: type.length > 0 ? type : 'ref',
+        id: id,
+        mime: mime,
+        size: Math.floor(size)
+      }
+    } catch (_err) {
+      return null
+    }
   }
 
   /**
