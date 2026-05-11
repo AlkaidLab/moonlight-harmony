@@ -60,6 +60,10 @@ export class SettingsKeys {
   static readonly MIC_BITRATE: string = 'settings_mic_bitrate';
   static readonly AUDIO_COMPAT_MODE: string = 'settings_audio_compat_mode';
 
+  // 剪贴板同步设置
+  static readonly ENABLE_CLIPBOARD_SYNC_TEXT: string = 'enableClipboardSyncText';
+  static readonly ENABLE_CLIPBOARD_SYNC_IMAGE: string = 'enableClipboardSyncImage';
+
   // 输入 - 手柄设置
   static readonly ENABLE_VIBRATION: string = 'settings_enable_vibration';
   static readonly VIBRATION_MODE: string = 'settings_vibration_mode';  // 震动模式：自动/仅手柄/仅设备/同时

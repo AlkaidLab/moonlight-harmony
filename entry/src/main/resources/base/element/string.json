@@ -125,6 +125,10 @@
       "value": "用于通过原生接口直接访问USB手柄设备，实现高速轮询"
     },
     {
+      "name": "permission_read_pasteboard_reason",
+      "value": "用于读取本地剪贴板并与 Sunshine 主机同步"
+    },
+    {
       "name": "permission_file_persist_reason",
       "value": "用于自动备份设置到用户选择的文件，免去每次手动导出"
     }

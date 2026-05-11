@@ -23,6 +23,9 @@ extern "C" {
 // 从 MicrophoneStream.c 导出的函数
 int sendMicrophoneOpusData(const unsigned char* data, int length);
 bool isMicrophoneEncryptionEnabled(void);
+
+// 从 ControlStream.c 导出的函数（剪贴板同步）
+int LiSendClipboardData(const void* payload, int length);
 }
 
 #include "moonlight_bridge.h"
@@ -103,7 +106,9 @@ static CONNECTION_LISTENER_CALLBACKS g_connCallbacksStruct = {
     .rumbleTriggers = BridgeClRumbleTriggers,
     .setMotionEventState = BridgeClSetMotionEventState,
     .setControllerLED = BridgeClSetControllerLED,
+    .setAdaptiveTriggers = nullptr,
     .resolutionChanged = (void (*)(uint32_t, uint32_t))BridgeClResolutionChanged,
+    .clipboardData = BridgeClClipboardData,
 };
 
 // =============================================================================
@@ -161,6 +166,27 @@ static bool GetBool(napi_env env, napi_value value, bool* result) {
     if (type != napi_boolean) return false;
     napi_get_value_bool(env, value, result);
     return true;
+}
+
+static bool GetByteArrayData(napi_env env, napi_value value, void** data, size_t* length) {
+    bool isTypedArray = false;
+    napi_status status = napi_is_typedarray(env, value, &isTypedArray);
+    if (status == napi_ok && isTypedArray) {
+        napi_typedarray_type type;
+        napi_value arrayBuffer;
+        size_t byteOffset = 0;
+        return napi_get_typedarray_info(env, value, &type, length, data, &arrayBuffer, &byteOffset) == napi_ok;
+    }
+
+    bool isArrayBuffer = false;
+    status = napi_is_arraybuffer(env, value, &isArrayBuffer);
+    if (status == napi_ok && isArrayBuffer) {
+        return napi_get_arraybuffer_info(env, value, data, length) == napi_ok;
+    }
+
+    *data = nullptr;
+    *length = 0;
+    return false;
 }
 
 // =============================================================================
@@ -794,7 +820,7 @@ napi_value MoonBridge_SendMicrophoneOpusData(napi_env env, napi_callback_info in
     
     void* data = nullptr;
     size_t length = 0;
-    napi_get_arraybuffer_info(env, args[0], &data, &length);
+    GetByteArrayData(env, args[0], &data, &length);
     
     int ret = -1;
     if (data && length > 0) {
@@ -809,6 +835,34 @@ napi_value MoonBridge_SendMicrophoneOpusData(napi_env env, napi_callback_info in
 napi_value MoonBridge_IsMicrophoneEncryptionEnabled(napi_env env, napi_callback_info info) {
     napi_value result;
     napi_get_boolean(env, isMicrophoneEncryptionEnabled(), &result);
+    return result;
+}
+
+// =============================================================================
+// 剪贴板同步（Sunshine protocol extension）
+// =============================================================================
+
+/**
+ * 发送剪贴板数据到主机
+ * 参数：Uint8Array（包含完整的有线帧：version + kind + token + length + payload）
+ * 返回：错误码 (0 = 成功, < 0 = 错误)
+ */
+napi_value MoonBridge_SendClipboardData(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    
+    void* data = nullptr;
+    size_t length = 0;
+    GetByteArrayData(env, args[0], &data, &length);
+    
+    int ret = -1;
+    if (data && length >= 10 && length <= 65535) {  // 最少 10 字节头，最多 65535 字节
+        ret = LiSendClipboardData(data, (int)length);
+    }
+    
+    napi_value result;
+    napi_create_int32(env, ret, &result);
     return result;
 }
 

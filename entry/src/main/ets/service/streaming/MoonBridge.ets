@@ -237,6 +237,8 @@ export interface ConnectionListenerCallbacks {
   connectionStatusUpdate?: (connectionStatus: number) => void;
   /** 分辨率变更 */
   resolutionChanged?: (width: number, height: number) => void;
+  /** 剪贴板同步数据 */
+  clipboardData?: (kind: number, token: number, payload: Uint8Array) => void;
 }
 
 export interface MoonBridgeCallbacks extends VideoDecoderCallbacks, AudioRendererCallbacks, ConnectionListenerCallbacks {

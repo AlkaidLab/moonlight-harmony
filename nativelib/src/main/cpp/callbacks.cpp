@@ -27,6 +27,7 @@
 // 外部函数：更新 mic 编码器丢包率（定义在 moonlight_bridge.cpp）
 extern void MicCapturerUpdatePacketLossPercent(int percent);
 #include <cstdarg>
+#include <cstdint>
 #include <mutex>
 #include <qos/qos.h>
 #include <sched.h>
@@ -265,6 +266,32 @@ static void CallJs_ResolutionChanged(napi_env env, napi_value js_callback, void*
     delete cbData;
 }
 
+static void CallJs_ClipboardData(napi_env env, napi_value js_callback, void* context, void* data) {
+    CallbackData* cbData = (CallbackData*)data;
+    if (env != nullptr && js_callback != nullptr) {
+        napi_value argv[3];
+        napi_create_int32(env, cbData->intParams[0], &argv[0]);
+        napi_create_double(env, cbData->doubleParams[0], &argv[1]);
+
+        void* bufferData = nullptr;
+        napi_value arrayBuffer;
+        napi_create_arraybuffer(env, cbData->ptrSize, &bufferData, &arrayBuffer);
+        if (cbData->ptrSize > 0 && cbData->ptrParam != nullptr) {
+            memcpy(bufferData, cbData->ptrParam, cbData->ptrSize);
+        }
+        napi_create_typedarray(env, napi_uint8_array, cbData->ptrSize, arrayBuffer, 0, &argv[2]);
+
+        napi_value undefined;
+        napi_get_undefined(env, &undefined);
+        napi_call_function(env, undefined, js_callback, 3, argv, nullptr);
+    }
+
+    if (cbData != nullptr && cbData->ptrParam != nullptr) {
+        free(cbData->ptrParam);
+    }
+    delete cbData;
+}
+
 static void CallJs_DrSetup(napi_env env, napi_value js_callback, void* context, void* data) {
     CallbackData* cbData = (CallbackData*)data;
     if (env != nullptr && js_callback != nullptr) {
@@ -447,6 +474,9 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     if (napi_get_named_property(env, callbacks, "resolutionChanged", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "resolutionChanged", CallJs_ResolutionChanged, &g_connCallbacks.tsfn_resolutionChanged);
     }
+    if (napi_get_named_property(env, callbacks, "clipboardData", &callback) == napi_ok) {
+        CreateThreadsafeFunction(env, callback, "clipboardData", CallJs_ClipboardData, &g_connCallbacks.tsfn_clipboardData);
+    }
     
     OH_LOG_INFO(LOG_APP, "Callbacks initialized");
 }
@@ -480,6 +510,7 @@ void Callbacks_Cleanup(void) {
     if (g_connCallbacks.tsfn_setControllerLED) napi_release_threadsafe_function(g_connCallbacks.tsfn_setControllerLED, napi_tsfn_release);
     if (g_connCallbacks.tsfn_rumbleTriggers) napi_release_threadsafe_function(g_connCallbacks.tsfn_rumbleTriggers, napi_tsfn_release);
     if (g_connCallbacks.tsfn_resolutionChanged) napi_release_threadsafe_function(g_connCallbacks.tsfn_resolutionChanged, napi_tsfn_release);
+    if (g_connCallbacks.tsfn_clipboardData) napi_release_threadsafe_function(g_connCallbacks.tsfn_clipboardData, napi_tsfn_release);
     
     memset(&g_videoCallbacks, 0, sizeof(g_videoCallbacks));
     memset(&g_audioCallbacks, 0, sizeof(g_audioCallbacks));
@@ -968,6 +999,62 @@ void BridgeClResolutionChanged(unsigned int width, unsigned int height) {
         data->intParams[0] = width;
         data->intParams[1] = height;
         napi_call_threadsafe_function(g_connCallbacks.tsfn_resolutionChanged, data, napi_tsfn_blocking);
+    }
+}
+
+void BridgeClClipboardData(const char* data, int length) {
+    if (g_connCallbacks.tsfn_clipboardData == nullptr || data == nullptr || length < 10) {
+        return;
+    }
+
+    const uint8_t* frame = reinterpret_cast<const uint8_t*>(data);
+    const uint8_t version = frame[0];
+    const uint8_t kind = frame[1];
+    const uint32_t token =
+        static_cast<uint32_t>(frame[2]) |
+        (static_cast<uint32_t>(frame[3]) << 8) |
+        (static_cast<uint32_t>(frame[4]) << 16) |
+        (static_cast<uint32_t>(frame[5]) << 24);
+    const uint32_t payloadLength =
+        static_cast<uint32_t>(frame[6]) |
+        (static_cast<uint32_t>(frame[7]) << 8) |
+        (static_cast<uint32_t>(frame[8]) << 16) |
+        (static_cast<uint32_t>(frame[9]) << 24);
+    const int availablePayloadLength = length - 10;
+
+    if (version != 1) {
+        OH_LOG_WARN(LOG_APP, "BridgeClClipboardData: unsupported version=%{public}u", version);
+        return;
+    }
+
+    if (payloadLength != static_cast<uint32_t>(availablePayloadLength)) {
+        OH_LOG_WARN(LOG_APP, "BridgeClClipboardData: malformed payload len=%{public}u available=%{public}d",
+                    payloadLength, availablePayloadLength);
+        return;
+    }
+
+    CallbackData* cbData = new CallbackData();
+    memset(cbData, 0, sizeof(*cbData));
+    cbData->intParams[0] = static_cast<int>(kind);
+    cbData->doubleParams[0] = static_cast<double>(token);
+    cbData->ptrSize = availablePayloadLength;
+
+    if (availablePayloadLength > 0) {
+        cbData->ptrParam = malloc(availablePayloadLength);
+        if (cbData->ptrParam == nullptr) {
+            delete cbData;
+            OH_LOG_ERROR(LOG_APP, "BridgeClClipboardData: malloc failed for %{public}d bytes", availablePayloadLength);
+            return;
+        }
+        memcpy(cbData->ptrParam, frame + 10, availablePayloadLength);
+    }
+
+    napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_clipboardData, cbData, napi_tsfn_blocking);
+    if (st != napi_ok) {
+        if (cbData->ptrParam != nullptr) {
+            free(cbData->ptrParam);
+        }
+        delete cbData;
     }
 }
 

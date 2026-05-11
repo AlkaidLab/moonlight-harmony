@@ -50,6 +50,8 @@ import { AiKeyService, AiKeyRecommendation } from '../service/AiKeyService';
 import { ComputerManager } from '../service/ComputerManager';
 import { ToastQueue } from '../utils/ToastQueue';
 import { NetworkBoostService, SystemNetScene, SystemNetSceneListener } from '../service/network/NetworkBoostService';
+import { ClipboardSyncObserver, ClipboardSyncService } from '../service/clipboard/ClipboardSyncService';
+import { ClipboardSyncConfig } from '../service/clipboard/ClipboardSyncConfig';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -67,6 +69,12 @@ class MoonBridgeMouseCallback implements MouseEmulationCallback {
   }
   sendMouseHighResHScroll(scrollAmount: number): void {
     MoonBridge.sendMouseHighResHScroll(scrollAmount);
+  }
+}
+
+class StreamClipboardObserver implements ClipboardSyncObserver {
+  onError(error: string): void {
+    ToastQueue.show({ message: `剪贴板同步错误: ${error}`, duration: 2000 });
   }
 }
 
@@ -188,6 +196,7 @@ struct StreamPage {
   private inputHandler: StreamInputHandler = new StreamInputHandler();
   private lifecycleManager: StreamLifecycleManager = new StreamLifecycleManager();
   private imeManager: StreamIMEManager = new StreamIMEManager(getContext(this) as common.UIAbilityContext);
+  private clipboardSyncService: ClipboardSyncService | null = null;
   
   // 对话框控制器
   private gameMenuDialogController: CustomDialogController | null = null;
@@ -663,6 +672,12 @@ struct StreamPage {
   
   aboutToDisappear(): void {
     console.info('StreamPage aboutToDisappear - cleaning up');
+
+    // 停止剪贴板同步
+    if (this.clipboardSyncService) {
+      this.clipboardSyncService.stop();
+      this.clipboardSyncService = null;
+    }
 
     // 取消 Network Boost 场景监听
     if (this.netSceneListener) {
@@ -1286,6 +1301,11 @@ struct StreamPage {
       
       // 设置连接终止回调
       this.viewModel.setConnectionTerminatedCallback((errorCode: number) => {
+        // 停止剪贴板同步
+        if (this.clipboardSyncService) {
+          this.clipboardSyncService.stop();
+          this.clipboardSyncService = null;
+        }
         this.lifecycleManager.handleConnectionTerminated(errorCode);
       });
 
@@ -1297,6 +1317,25 @@ struct StreamPage {
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
       this.streamStartedAtMs = Date.now();
+
+      // 启动剪贴板同步
+      try {
+        const enableClipboardSyncText = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
+        const enableClipboardSyncImage = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
+        if (enableClipboardSyncText || enableClipboardSyncImage) {
+          const clipboardConfig = new ClipboardSyncConfig();
+          clipboardConfig.enableSyncText = enableClipboardSyncText;
+          clipboardConfig.enableSyncImage = enableClipboardSyncImage;
+          const clipboardObserver: ClipboardSyncObserver = new StreamClipboardObserver();
+          this.clipboardSyncService = new ClipboardSyncService(
+            clipboardConfig,
+            clipboardObserver
+          );
+          this.clipboardSyncService.start();
+        }
+      } catch (error) {
+        console.error('Failed to initialize clipboard sync:', error);
+      }
 
       // 超分辨率状态 Toast
       this.showUpscaleToast();

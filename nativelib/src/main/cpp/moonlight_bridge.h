@@ -111,6 +111,12 @@ napi_value MoonBridge_SendMicrophoneOpusData(napi_env env, napi_callback_info in
 napi_value MoonBridge_IsMicrophoneEncryptionEnabled(napi_env env, napi_callback_info info);
 
 // =============================================================================
+// 剪贴板同步（Sunshine protocol extension）
+// =============================================================================
+
+napi_value MoonBridge_SendClipboardData(napi_env env, napi_callback_info info);
+
+// =============================================================================
 // Opus 编码器
 // =============================================================================
 

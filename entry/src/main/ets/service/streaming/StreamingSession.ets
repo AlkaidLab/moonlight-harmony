@@ -23,6 +23,7 @@ import { MicrophoneStream } from '../microphone/MicrophoneStream';
 import { AudioVibrationService } from '../AudioVibrationService';
 import { AdaptiveBitrateService } from './AdaptiveBitrateService';
 import { NetworkBoostService } from '../network/NetworkBoostService';
+import { MoonBridge as ClipboardNativeBridge } from '../jni/ClipboardBridge';
 import {
   MoonBridge,
   CONTROLLER_TYPE_UNKNOWN,
@@ -180,6 +181,7 @@ interface StreamCallbacks {
   setMotionEventState?: (controllerNumber: number, motionType: number, reportRateHz: number) => void;
   setControllerLED?: (controllerNumber: number, r: number, g: number, b: number) => void;
   resolutionChanged?: (width: number, height: number) => void;
+  clipboardData?: (kind: number, token: number, payload: Uint8Array) => void;
   bassEnergy?: (intensity: number, lowFreqRatio: number, stereoBalance: number) => void;
 }
 
@@ -1023,6 +1025,9 @@ export class StreamingSession {
         if (this.connectionStatusCallback) {
           this.connectionStatusCallback(status);
         }
+      },
+      clipboardData: (kind: number, token: number, payload: Uint8Array): void => {
+        ClipboardNativeBridge.onClipboardDataReceived(kind, token, payload);
       },
       setHdrMode: (enabled: boolean): void => {
         console.info(`HDR 模式变化通知: ${enabled}`);

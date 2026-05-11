@@ -165,6 +165,10 @@ struct SettingsPageV2 {
   @State micBitrate: number = 64;
   @State audioCompatMode: boolean = false;
   
+  // 剪贴板同步（Sunshine only）
+  @State enableClipboardSyncText: boolean = false;
+  @State enableClipboardSyncImage: boolean = false;
+  
   // 输入 - 手柄设置
   @State enableVibration: boolean = true;
   @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/同时
@@ -268,6 +272,7 @@ struct SettingsPageV2 {
   private sidebarGroups: SidebarGroupMeta[] = [
     { id: 'video', icon: $r('sys.symbol.video_fill'), title: '视频' },
     { id: 'audio', icon: $r('sys.symbol.speaker_wave_2_fill'), title: '音频' },
+    { id: 'clipboard', icon: $r('sys.symbol.share'), title: '剪贴板同步' },
     { id: 'gamepad', icon: $r('sys.symbol.gamecontroller_fill'), title: '手柄' },
     { id: 'usb_driver', icon: $r('sys.symbol.charg_cable'), title: 'USB 驱动' },
     { id: 'osc', icon: $r('sys.symbol.gamecontroller'), title: '屏幕控制器' },
@@ -492,6 +497,10 @@ struct SettingsPageV2 {
       this.enableMic = await this.loadBoolean(SettingsKeys.ENABLE_MIC, false);
       this.micBitrate = await PreferencesUtil.get<number>(SettingsKeys.MIC_BITRATE, 64);
       this.audioCompatMode = await this.loadBoolean(SettingsKeys.AUDIO_COMPAT_MODE, false);
+      
+      // 剪贴板同步设置
+      this.enableClipboardSyncText = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
+      this.enableClipboardSyncImage = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
       
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
@@ -1299,6 +1308,35 @@ struct SettingsPageV2 {
                 onSegmentChange: (value: string) => {
                   this.audioVibrationSceneMode = value;
                   this.saveSetting(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, value);
+                }
+              }
+            ]
+          })
+          
+          // 剪贴板同步设置（仅 Sunshine）
+          this.SettingsGroup({
+            id: 'clipboard',
+            icon: $r('sys.symbol.share'),
+            title: '剪贴板同步',
+            items: [
+              {
+                title: '同步文本',
+                subtitle: 'Sunshine only - 与主机同步剪贴板文本',
+                type: 'toggle',
+                value: this.enableClipboardSyncText,
+                action: () => {
+                  this.enableClipboardSyncText = !this.enableClipboardSyncText;
+                  this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, this.enableClipboardSyncText);
+                }
+              },
+              {
+                title: '同步图片',
+                subtitle: 'Sunshine only - 同步 PNG 格式的剪贴板图片',
+                type: 'toggle',
+                value: this.enableClipboardSyncImage,
+                action: () => {
+                  this.enableClipboardSyncImage = !this.enableClipboardSyncImage;
+                  this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, this.enableClipboardSyncImage);
                 }
               }
             ]
