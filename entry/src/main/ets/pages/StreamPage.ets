@@ -227,6 +227,8 @@ struct StreamPage {
   private enableBackgroundTask: boolean = true;  // 后台保活开关
   private endStreamReportEnabled: boolean = false;  // 结束串流显示数据/战报开关
   private streamStartedAtMs: number = 0;  // 本次串流真正连上后的时间戳
+  private pendingStreamShutdown: Promise<void> | null = null;
+  private pendingStreamShutdownLabel: string = '';
 
   // ── Network Boost 场景监听（弱信号/拥塞 提示） ──
   private netSceneListener: SystemNetSceneListener | null = null;
@@ -1376,10 +1378,9 @@ struct StreamPage {
   }
 
   /**
-   * 串流结束后仍停留在页面展示战报，因此需要先主动释放输入/后台资源并恢复窗口。
+   * 立即停止当前页面上的交互输入，确保战报能先接管界面。
    */
-  private async prepareStreamEndUi(): Promise<void> {
-    await this.lifecycleManager.stopBackgroundTask();
+  private prepareStreamEndUiImmediate(): void {
     this.cancelUnhandledUsbDetection();
     this.inputHandler.resetState();
     this.inputHandler.stopMouseInterceptor();
@@ -1387,51 +1388,131 @@ struct StreamPage {
     try {
       pointer.setPointerVisibleSync(true);
     } catch (_) {}
+  }
+
+  /**
+   * 无战报模式下，仍沿用原来的前台清理流程：停止后台保活并恢复窗口。
+   */
+  private async prepareStreamEndUi(): Promise<void> {
+    this.prepareStreamEndUiImmediate();
+    await this.lifecycleManager.stopBackgroundTask();
     await this.windowManager?.restoreWindow();
   }
 
+  /**
+   * 战报展示期间，真正的停流/退游戏在后台继续执行；关闭战报前再等待其收尾。
+   */
+  private runStreamShutdownInBackground(label: string, task: () => Promise<void>): void {
+    if (this.pendingStreamShutdown) {
+      console.info(`[StreamPage] ${label}流程已在进行中，忽略重复请求`);
+      return;
+    }
+
+    this.pendingStreamShutdownLabel = label;
+    this.pendingStreamShutdown = (async (): Promise<void> => {
+      try {
+        await task();
+      } catch (err) {
+        console.error(`[StreamPage] ${label}后台收尾失败:`, err);
+      } finally {
+        this.pendingStreamShutdown = null;
+        this.pendingStreamShutdownLabel = '';
+      }
+    })();
+  }
+
+  private runDetachedAsyncTask(label: string, task: () => Promise<void>): void {
+    task().catch((err: Error) => {
+      console.error(`[StreamPage] ${label}失败:`, err);
+    });
+  }
+
+  private async waitForPendingStreamShutdown(): Promise<void> {
+    const pending = this.pendingStreamShutdown;
+    if (!pending) {
+      return;
+    }
+
+    ToastQueue.show({
+      message: this.pendingStreamShutdownLabel
+        ? `${this.pendingStreamShutdownLabel}，请稍候…`
+        : '正在结束串流…',
+      duration: 1200
+    });
+    await pending;
+  }
+
+  private async sendLockScreenShortcutBeforeDisconnect(): Promise<void> {
+    if (!this.viewModel.streamConfig?.lockScreenAfterDisconnect) {
+      return;
+    }
+
+    this.viewModel.getSession()?.sendKeys([0x5B, 0x4C]); // VK_LWIN + VK_L
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+  }
+
   private async closeStreamReportAndReturn(): Promise<void> {
+    await this.waitForPendingStreamShutdown();
     this.showStreamReport = false;
     await this.exitStreamAndReturn();
   }
 
   async stopStreaming(): Promise<void> {
+    if (this.pendingStreamShutdown) {
+      console.info('[StreamPage] stopStreaming 已在执行，忽略重复调用');
+      return;
+    }
+
     if (!this.endStreamReportEnabled) {
       await this.prepareStreamEndUi();
       await this.exitStreamAndReturn();
-      this.viewModel.stopStreaming();
+      this.runDetachedAsyncTask('后台停止串流', (): Promise<void> => this.viewModel.stopStreaming());
       return;
     }
 
     const report = this.buildCurrentStreamReport();
-    await this.prepareStreamEndUi();
-    await this.viewModel.stopStreaming();
+    this.prepareStreamEndUiImmediate();
     this.streamReportData = report;
     this.showStreamReport = true;
+    this.runStreamShutdownInBackground('正在断开串流', async (): Promise<void> => {
+      await Promise.all([
+        this.lifecycleManager.stopBackgroundTask(),
+        this.viewModel.stopStreaming()
+      ]);
+    });
   }
 
   /**
    * 退出游戏并返回（请求服务器退出当前游戏，显示串流战报后再返回列表）
    */
   async quitGameAndReturn(): Promise<void> {
-    const report = this.endStreamReportEnabled ? this.buildCurrentStreamReport() : null;
-    await this.prepareStreamEndUi();
-
-    // 退出前发送 Win+L 锁定主机屏幕，延迟确保命令送达
-    if (this.viewModel.streamConfig?.lockScreenAfterDisconnect) {
-      this.viewModel.getSession()?.sendKeys([0x5B, 0x4C]); // VK_LWIN + VK_L
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
-    }
-
-    if (!this.endStreamReportEnabled || !report) {
-      await this.exitStreamAndReturn();
-      this.viewModel.quitGame().then(() => {}).catch((_err: Error) => {});
+    if (this.pendingStreamShutdown) {
+      console.info('[StreamPage] quitGameAndReturn 已在执行，忽略重复调用');
       return;
     }
 
-    await this.viewModel.quitGame();
+    const report = this.endStreamReportEnabled ? this.buildCurrentStreamReport() : null;
+    this.prepareStreamEndUiImmediate();
+
+    if (!this.endStreamReportEnabled || !report) {
+      await this.lifecycleManager.stopBackgroundTask();
+      await this.sendLockScreenShortcutBeforeDisconnect();
+      await this.exitStreamAndReturn();
+      this.runDetachedAsyncTask('后台退出游戏', (): Promise<void> => this.viewModel.quitGame());
+      return;
+    }
+
     this.streamReportData = report;
     this.showStreamReport = true;
+    this.runStreamShutdownInBackground('正在退出游戏', async (): Promise<void> => {
+      const stopBackgroundTaskPromise = this.lifecycleManager.stopBackgroundTask();
+      await this.sendLockScreenShortcutBeforeDisconnect();
+
+      await Promise.all([
+        stopBackgroundTaskPromise,
+        this.viewModel.quitGame()
+      ]);
+    });
   }
 
   /**
