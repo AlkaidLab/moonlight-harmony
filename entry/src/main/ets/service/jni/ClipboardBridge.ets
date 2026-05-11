@@ -5,6 +5,7 @@
  * through the Sunshine control stream (message type 0x5508).
  */
 
+import nativeLib from 'libmoonlight_nativelib.so'
 import { ClipboardSyncListener } from '../clipboard/ClipboardSyncConfig'
 
 /**
@@ -74,8 +75,8 @@ export namespace MoonBridge {
       return SendErrorCode.INVALID_PAYLOAD
     }
 
-    // Call native method
-    return nativeSendClipboardData(frame)
+    // Call native method exported by libmoonlight_nativelib.so
+    return nativeLib.sendClipboardData(frame) as number
   }
 
   /**
@@ -97,20 +98,6 @@ export namespace MoonBridge {
     }
   }
 
-  /**
-   * Native binding: Send clipboard frame data.
-   * 
-   * This is called by sendClipboardData after building the complete wire frame.
-   * The native implementation will:
-   * 1. Validate the frame format
-   * 2. Check server version and capabilities
-   * 3. Send via control stream (0x5508 message)
-   * 
-   * @param frame Complete wire frame (version + kind + token + length + payload)
-   * @returns SendErrorCode result
-   * @nativeMethod moonlight_jni.cpp: Java_com_limelight_nvstream_jni_MoonBridge_nativeSendClipboardData
-   */
-  declare function nativeSendClipboardData(frame: Uint8Array): number
 }
 
 /**

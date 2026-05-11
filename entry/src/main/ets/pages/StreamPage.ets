@@ -1456,7 +1456,11 @@ struct StreamPage {
 
     try {
       const enableClipboardSyncText = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
-      const enableClipboardSyncImage = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
+      const enableClipboardSyncImagePref = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
+      if (enableClipboardSyncImagePref) {
+        await PreferencesUtil.put(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
+      }
+      const enableClipboardSyncImage = false;
       if (!enableClipboardSyncText && !enableClipboardSyncImage) {
         return;
       }

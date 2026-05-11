@@ -272,7 +272,6 @@ struct SettingsPageV2 {
   private sidebarGroups: SidebarGroupMeta[] = [
     { id: 'video', icon: $r('sys.symbol.video_fill'), title: '视频' },
     { id: 'audio', icon: $r('sys.symbol.speaker_wave_2_fill'), title: '音频' },
-    { id: 'clipboard', icon: $r('sys.symbol.share'), title: '剪贴板同步' },
     { id: 'gamepad', icon: $r('sys.symbol.gamecontroller_fill'), title: '手柄' },
     { id: 'usb_driver', icon: $r('sys.symbol.charg_cable'), title: 'USB 驱动' },
     { id: 'osc', icon: $r('sys.symbol.gamecontroller'), title: '屏幕控制器' },
@@ -500,7 +499,11 @@ struct SettingsPageV2 {
       
       // 剪贴板同步设置
       this.enableClipboardSyncText = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
-      this.enableClipboardSyncImage = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
+      const clipboardImageSyncEnabled = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
+      if (clipboardImageSyncEnabled) {
+        this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
+      }
+      this.enableClipboardSyncImage = false;
       
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
@@ -1313,35 +1316,6 @@ struct SettingsPageV2 {
             ]
           })
           
-          // 剪贴板同步设置（仅 Sunshine）
-          this.SettingsGroup({
-            id: 'clipboard',
-            icon: $r('sys.symbol.share'),
-            title: '剪贴板同步',
-            items: [
-              {
-                title: '同步文本',
-                subtitle: 'Sunshine only - 与主机同步剪贴板文本',
-                type: 'toggle',
-                value: this.enableClipboardSyncText,
-                action: () => {
-                  this.enableClipboardSyncText = !this.enableClipboardSyncText;
-                  this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, this.enableClipboardSyncText);
-                }
-              },
-              {
-                title: '同步图片',
-                subtitle: 'Sunshine only - 同步 PNG 格式的剪贴板图片',
-                type: 'toggle',
-                value: this.enableClipboardSyncImage,
-                action: () => {
-                  this.enableClipboardSyncImage = !this.enableClipboardSyncImage;
-                  this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, this.enableClipboardSyncImage);
-                }
-              }
-            ]
-          })
-          
           // 手柄设置
           this.SettingsGroup({
             id: 'gamepad',
@@ -1824,6 +1798,23 @@ struct SettingsPageV2 {
                   this.lockScreenAfterDisconnect = !this.lockScreenAfterDisconnect;
                   this.saveSetting(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, this.lockScreenAfterDisconnect);
                 }
+              },
+              {
+                title: '剪贴板同步文本',
+                subtitle: 'Sunshine only - 与主机双向同步剪贴板文本',
+                type: 'toggle',
+                value: this.enableClipboardSyncText,
+                action: () => {
+                  this.enableClipboardSyncText = !this.enableClipboardSyncText;
+                  this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, this.enableClipboardSyncText);
+                }
+              },
+              {
+                title: '剪贴板同步图片',
+                subtitle: '暂时禁用 - 图片同步链路仍在排查中',
+                type: 'toggle',
+                value: this.enableClipboardSyncImage,
+                disabled: true
               },
               {
                 title: '仅控制模式',

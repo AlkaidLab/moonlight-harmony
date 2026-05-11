@@ -1,4 +1,5 @@
 import { pasteboard, BusinessError } from '@kit.BasicServicesKit'
+import { image } from '@kit.ImageKit'
 import { StringUtil } from '../../utils/StringUtil'
 import { MoonBridge } from '../jni/ClipboardBridge'
 import {
@@ -12,6 +13,10 @@ const TAG = 'ClipboardSyncService'
 const MAX_CLIPBOARD_FRAME_BYTES = 65500 - ClipboardWireFrame.HEADER_SIZE
 
 type PasteboardUpdateListener = () => void
+
+interface PasteDataPixelMapAccessor {
+  getPrimaryPixelMap(): image.PixelMap
+}
 
 export interface ClipboardSyncObserver {
   onError?(error: string): void
@@ -43,9 +48,6 @@ function formatError(err: Object): string {
 
 /**
  * Manages clipboard synchronization between HarmonyOS and Sunshine host.
- *
- * 当前 SDK 已验证文本剪贴板 API；图片剪贴板相关接口在本项目兼容 SDK 下不可用，
- * 因此图片同步暂时显式降级为 no-op，并保留协议层入口以便未来恢复。
  */
 export class ClipboardSyncService implements ClipboardSyncListener {
   private config: ClipboardSyncConfig
@@ -54,7 +56,6 @@ export class ClipboardSyncService implements ClipboardSyncListener {
   private pendingSelfWrites: number = 0
   private pasteboardEventListener: PasteboardUpdateListener | null = null
   private isRunning: boolean = false
-  private imageSupportWarned: boolean = false
 
   constructor(config?: ClipboardSyncConfig, observer?: ClipboardSyncObserver) {
     this.config = config ? config : new ClipboardSyncConfig()
@@ -69,10 +70,6 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     if (!this.config.enableSyncText && !this.config.enableSyncImage) {
       logInfo('Clipboard sync disabled in config')
       return
-    }
-
-    if (this.config.enableSyncImage) {
-      this.warnImageSyncUnsupported('start')
     }
 
     this.setupPasteboardListener()
@@ -142,28 +139,105 @@ export class ClipboardSyncService implements ClipboardSyncListener {
       return
     }
 
-    if (!this.config.enableSyncText) {
+    if (!this.config.enableSyncText && !this.config.enableSyncImage) {
       return
     }
 
     try {
       const sysBoard = pasteboard.getSystemPasteboard()
       const pasteData = await sysBoard.getData()
-      const text = pasteData.getPrimaryText()
-      if (!text || text.length === 0) {
+      const text = this.config.enableSyncText ? pasteData.getPrimaryText() : ''
+
+      if (this.config.enableSyncText && text && text.length > 0) {
+        this.sendPayload(
+          ClipboardWireFrame.KIND_TEXT,
+          this.generateToken(),
+          StringUtil.stringToUint8Array(text)
+        )
         return
       }
 
-      this.sendPayload(
-        ClipboardWireFrame.KIND_TEXT,
-        this.generateToken(),
-        StringUtil.stringToUint8Array(text)
-      )
+      if (this.config.enableSyncImage) {
+        const primaryPixelMap = this.tryGetPrimaryPixelMap(pasteData)
+        if (primaryPixelMap) {
+          await this.sendImagePayload(primaryPixelMap)
+          return
+        }
+      }
+
+      if (!this.config.enableSyncText) {
+        return
+      }
     } catch (err) {
       const message = formatError(err as Object)
       logError(`Failed to read local clipboard: ${message}`)
       this.observer?.onError?.(`读取本地剪贴板失败：${message}`)
     }
+  }
+
+  private tryGetPrimaryPixelMap(pasteData: pasteboard.PasteData): image.PixelMap | null {
+    try {
+      const accessor = pasteData as PasteDataPixelMapAccessor
+      const pixelMap = accessor.getPrimaryPixelMap()
+      return pixelMap ? pixelMap : null
+    } catch (_err) {
+      return null
+    }
+  }
+
+  private async sendImagePayload(pixelMap: image.PixelMap): Promise<void> {
+    let packer: image.ImagePacker | null = null
+    try {
+      packer = image.createImagePacker()
+      const packed = await packer.packing(pixelMap, { format: 'image/png', quality: 100 }) as ArrayBuffer
+      const payload = new Uint8Array(packed)
+
+      if (payload.length === 0) {
+        return
+      }
+
+      if (payload.length > MAX_CLIPBOARD_FRAME_BYTES) {
+        logWarn(`Clipboard PNG payload size=${payload.length} exceeds limit, dropping`)
+        this.observer?.onError?.('剪贴板图片过大，已跳过同步')
+        return
+      }
+
+      this.sendPayload(
+        ClipboardWireFrame.KIND_PNG,
+        this.generateToken(),
+        payload
+      )
+    } catch (err) {
+      const message = formatError(err as Object)
+      logError(`Failed to encode clipboard image: ${message}`)
+      this.observer?.onError?.(`读取本地剪贴板图片失败：${message}`)
+    } finally {
+      if (packer) {
+        packer.release()
+      }
+    }
+  }
+
+  private toExactArrayBuffer(data: Uint8Array): ArrayBuffer {
+    const copy = new Uint8Array(data.length)
+    copy.set(data)
+    return copy.buffer
+  }
+
+  private async decodePngPayload(payload: Uint8Array): Promise<image.PixelMap> {
+    const imageSource: image.ImageSource = image.createImageSource(this.toExactArrayBuffer(payload))
+    try {
+      return await imageSource.createPixelMap({})
+    } finally {
+      imageSource.release()
+    }
+  }
+
+  private writePixelMapToPasteboard(pixelMap: image.PixelMap): void {
+    const createPixelMapData = pasteboard.createData as (mimeType: string, value: image.PixelMap) => pasteboard.PasteData
+    const sysBoard = pasteboard.getSystemPasteboard()
+    const pasteData = createPixelMapData(pasteboard.MIMETYPE_PIXELMAP, pixelMap)
+    sysBoard.setDataSync(pasteData)
   }
 
   private sendPayload(kind: number, token: number, payload: Uint8Array): void {
@@ -197,8 +271,21 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     }
 
     if (kind === ClipboardWireFrame.KIND_PNG) {
-      if (this.config.enableSyncImage) {
-        this.warnImageSyncUnsupported('remote')
+      if (!this.config.enableSyncImage) {
+        return
+      }
+
+      try {
+        const pixelMap = await this.decodePngPayload(payload)
+        this.pendingSelfWrites++
+        this.writePixelMapToPasteboard(pixelMap)
+      } catch (err) {
+        if (this.pendingSelfWrites > 0) {
+          this.pendingSelfWrites--
+        }
+        const message = formatError(err as Object)
+        logError(`Failed to set local clipboard image: ${message}`)
+        this.observer?.onError?.(`写入本地剪贴板图片失败：${message}`)
       }
       return
     }
@@ -253,16 +340,5 @@ export class ClipboardSyncService implements ClipboardSyncListener {
 
   private generateToken(): number {
     return Math.floor(Math.random() * 0x100000000) >>> 0
-  }
-
-  private warnImageSyncUnsupported(source: string): void {
-    if (this.imageSupportWarned) {
-      return
-    }
-
-    this.imageSupportWarned = true
-    const message = '当前 HarmonyOS 兼容 SDK 下未验证图片剪贴板 API，图片同步暂时禁用'
-    logWarn(`${message} (${source})`)
-    this.observer?.onError?.(message)
   }
 }
