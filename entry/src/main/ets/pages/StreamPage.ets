@@ -229,6 +229,7 @@ struct StreamPage {
   private streamStartedAtMs: number = 0;  // 本次串流真正连上后的时间戳
   private pendingStreamShutdown: Promise<void> | null = null;
   private pendingStreamShutdownLabel: string = '';
+  private isClosingStreamReport: boolean = false;
 
   // ── Network Boost 场景监听（弱信号/拥塞 提示） ──
   private netSceneListener: SystemNetSceneListener | null = null;
@@ -765,9 +766,11 @@ struct StreamPage {
         this.resumeMouseInterceptor();
       },
       onDisconnect: () => {
+        this.gameMenuDialogController?.close();
         this.stopStreaming();
       },
       onQuitGame: () => {
+        this.gameMenuDialogController?.close();
         this.quitGameAndReturn();
       },
       onTouchModeChanged: (mode: string) => {
@@ -1452,9 +1455,19 @@ struct StreamPage {
   }
 
   private async closeStreamReportAndReturn(): Promise<void> {
-    await this.waitForPendingStreamShutdown();
-    this.showStreamReport = false;
-    await this.exitStreamAndReturn();
+    if (this.isClosingStreamReport) {
+      return;
+    }
+
+    this.isClosingStreamReport = true;
+    try {
+      await this.waitForPendingStreamShutdown();
+      this.showStreamReport = false;
+      await this.exitStreamAndReturn();
+    } catch (err) {
+      this.isClosingStreamReport = false;
+      console.error('[StreamPage] 关闭串流战报失败:', err);
+    }
   }
 
   async stopStreaming(): Promise<void> {
