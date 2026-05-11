@@ -149,7 +149,17 @@ export class GyroAssistService {
    * 启用/禁用体感助手
    */
   setEnabled(enabled: boolean): void {
-    if (this._enabled === enabled) return;
+    if (this._enabled === enabled) {
+      // 串流页面退出时 dispose() 会停止传感器监听；如果持久化设置仍为开启，
+      // 下次进入串流会再次 setEnabled(true)。此时运行态可能是 enabled=true
+      // 但 sensorListening=false，必须补启动，否则需要用户手动关/开一次才生效。
+      if (enabled && !this.sensorListening) {
+        this.startListening();
+      } else if (!enabled && this.sensorListening) {
+        this.stopListening();
+      }
+      return;
+    }
     this._enabled = enabled;
 
     if (enabled) {
@@ -207,8 +217,10 @@ export class GyroAssistService {
     this._invertY = settings.invertY;
     this._activationKey = settings.activationKey;
 
-    if (this._activationKey === GYRO_ACTIVATION_ALWAYS) {
-      this.holdActive = true;
+    this.holdActive = this._activationKey === GYRO_ACTIVATION_ALWAYS;
+    if (!this.holdActive) {
+      this.gyroStickX = 0;
+      this.gyroStickY = 0;
     }
   }
 
@@ -438,6 +450,10 @@ export class GyroAssistService {
    */
   dispose(): void {
     this.stopListening();
+    this._enabled = false;
+    this.holdActive = false;
+    this.gyroStickX = 0;
+    this.gyroStickY = 0;
     this.originalSensorCallback = null;
     this.sendCallback = null;
   }
