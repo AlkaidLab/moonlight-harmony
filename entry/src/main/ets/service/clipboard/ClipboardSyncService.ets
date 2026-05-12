@@ -8,7 +8,8 @@ import {
   ClipboardWireFrame,
   ClipboardBlobRef,
   TokenEntry,
-  ClipboardSyncListener
+  ClipboardSyncListener,
+  CLIPBOARD_BLOB_MAX_BYTES
 } from './ClipboardSyncConfig'
 
 const TAG = 'ClipboardSyncService'
@@ -402,10 +403,27 @@ export class ClipboardSyncService implements ClipboardSyncListener {
       return null
     }
 
+    // Reject before download if the host advertises an oversized blob.
+    if (ref.size > CLIPBOARD_BLOB_MAX_BYTES) {
+      logWarn(`Clipboard blob too large id=${ref.id} advertised=${ref.size} max=${CLIPBOARD_BLOB_MAX_BYTES}`)
+      this.observer?.onError?.(`远端剪贴板内容过大（${ref.size} 字节，上限 ${CLIPBOARD_BLOB_MAX_BYTES}）`)
+      return null
+    }
+
     try {
       const data = await this.blobTransport.downloadBlob(ref.id)
+      // Independent post-download cap: even when ref.size==0 (unknown), refuse
+      // to hand a multi-hundred-MiB buffer to the PNG/text decoder.
+      if (data.length > CLIPBOARD_BLOB_MAX_BYTES) {
+        logWarn(`Clipboard blob payload exceeds cap id=${ref.id} actual=${data.length} max=${CLIPBOARD_BLOB_MAX_BYTES}`)
+        this.observer?.onError?.(`远端剪贴板内容超出大小上限（${data.length} 字节）`)
+        return null
+      }
+      // Hard fail on size mismatch: an honest server must report accurate size.
       if (ref.size > 0 && data.length !== ref.size) {
         logWarn(`Clipboard blob size mismatch id=${ref.id} expected=${ref.size} actual=${data.length}`)
+        this.observer?.onError?.(`远端剪贴板内容大小不一致（声明 ${ref.size}，实际 ${data.length}）`)
+        return null
       }
       return data
     } catch (err) {

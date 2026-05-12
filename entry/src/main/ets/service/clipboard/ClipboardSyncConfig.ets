@@ -76,6 +76,14 @@ export interface ClipboardBlobRef {
   size: number
 }
 
+/**
+ * Hard upper bound for any single clipboard blob (download or upload).
+ * 64 MiB comfortably covers a full-screen 4K PNG screenshot while preventing
+ * a malicious or buggy host from exhausting client memory by advertising or
+ * actually returning an unbounded payload.
+ */
+export const CLIPBOARD_BLOB_MAX_BYTES: number = 64 * 1024 * 1024
+
 export class ClipboardWireFrame {
   static readonly WIRE_VERSION = 1
   static readonly HEADER_SIZE = 10  // version(1) + kind(1) + token(4) + length(4)

@@ -389,6 +389,7 @@ export class HttpClient {
       skipServerValidation: true,
       clientCertPath: certPath,
       clientKeyPath: keyPath,
+      headers: config?.headers,
       connectTimeout: config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT,
       transferTimeout: config?.transferTimeout ?? 120000
     });
@@ -408,6 +409,7 @@ export class HttpClient {
       skipServerValidation: true,
       clientCertPath: certPath,
       clientKeyPath: keyPath,
+      headers: config?.headers,
       connectTimeout: config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT,
       transferTimeout: config?.transferTimeout ?? 120000
     });
