@@ -1797,7 +1797,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '剪贴板同步文本',
-                subtitle: 'Sunshine only - 与主机双向同步剪贴板文本',
+                subtitle: 'Foundation Sunshine only - 与主机双向同步剪贴板文本',
                 type: 'toggle',
                 value: this.enableClipboardSyncText,
                 action: () => {
@@ -1807,7 +1807,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '剪贴板同步图片',
-                subtitle: 'Sunshine only - 与主机双向同步 PNG 图片（大图自动走 blob）',
+                subtitle: 'Sunshine only - 与主机双向同步 PNG 图片',
                 type: 'toggle',
                 value: this.enableClipboardSyncImage,
                 action: () => {
