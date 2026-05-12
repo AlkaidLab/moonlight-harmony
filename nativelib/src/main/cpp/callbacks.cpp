@@ -27,6 +27,7 @@
 // 外部函数：更新 mic 编码器丢包率（定义在 moonlight_bridge.cpp）
 extern void MicCapturerUpdatePacketLossPercent(int percent);
 #include <cstdarg>
+#include <cstdint>
 #include <mutex>
 #include <qos/qos.h>
 #include <sched.h>
@@ -265,6 +266,32 @@ static void CallJs_ResolutionChanged(napi_env env, napi_value js_callback, void*
     delete cbData;
 }
 
+static void CallJs_ClipboardData(napi_env env, napi_value js_callback, void* context, void* data) {
+    CallbackData* cbData = (CallbackData*)data;
+    if (env != nullptr && js_callback != nullptr) {
+        napi_value argv[3];
+        napi_create_int32(env, cbData->intParams[0], &argv[0]);
+        napi_create_double(env, cbData->doubleParams[0], &argv[1]);
+
+        void* bufferData = nullptr;
+        napi_value arrayBuffer;
+        napi_create_arraybuffer(env, cbData->ptrSize, &bufferData, &arrayBuffer);
+        if (cbData->ptrSize > 0 && cbData->ptrParam != nullptr) {
+            memcpy(bufferData, cbData->ptrParam, cbData->ptrSize);
+        }
+        napi_create_typedarray(env, napi_uint8_array, cbData->ptrSize, arrayBuffer, 0, &argv[2]);
+
+        napi_value undefined;
+        napi_get_undefined(env, &undefined);
+        napi_call_function(env, undefined, js_callback, 3, argv, nullptr);
+    }
+
+    if (cbData != nullptr && cbData->ptrParam != nullptr) {
+        free(cbData->ptrParam);
+    }
+    delete cbData;
+}
+
 static void CallJs_DrSetup(napi_env env, napi_value js_callback, void* context, void* data) {
     CallbackData* cbData = (CallbackData*)data;
     if (env != nullptr && js_callback != nullptr) {
@@ -447,6 +474,9 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     if (napi_get_named_property(env, callbacks, "resolutionChanged", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "resolutionChanged", CallJs_ResolutionChanged, &g_connCallbacks.tsfn_resolutionChanged);
     }
+    if (napi_get_named_property(env, callbacks, "clipboardData", &callback) == napi_ok) {
+        CreateThreadsafeFunction(env, callback, "clipboardData", CallJs_ClipboardData, &g_connCallbacks.tsfn_clipboardData);
+    }
     
     OH_LOG_INFO(LOG_APP, "Callbacks initialized");
 }
@@ -480,6 +510,7 @@ void Callbacks_Cleanup(void) {
     if (g_connCallbacks.tsfn_setControllerLED) napi_release_threadsafe_function(g_connCallbacks.tsfn_setControllerLED, napi_tsfn_release);
     if (g_connCallbacks.tsfn_rumbleTriggers) napi_release_threadsafe_function(g_connCallbacks.tsfn_rumbleTriggers, napi_tsfn_release);
     if (g_connCallbacks.tsfn_resolutionChanged) napi_release_threadsafe_function(g_connCallbacks.tsfn_resolutionChanged, napi_tsfn_release);
+    if (g_connCallbacks.tsfn_clipboardData) napi_release_threadsafe_function(g_connCallbacks.tsfn_clipboardData, napi_tsfn_release);
     
     memset(&g_videoCallbacks, 0, sizeof(g_videoCallbacks));
     memset(&g_audioCallbacks, 0, sizeof(g_audioCallbacks));
@@ -658,7 +689,11 @@ int BridgeArInit(int audioConfiguration, void* opusConfigPtr, void* context, int
         return -1;
     }
     
-    // 分配解码缓冲区
+    // 分配解码缓冲区（先释放旧的，避免由上轮 Cleanup 未完整走完导致的泄漏 / size 不一致越界）
+    if (g_decodedAudioBuffer) {
+        free(g_decodedAudioBuffer);
+        g_decodedAudioBuffer = nullptr;
+    }
     g_decodedAudioBuffer = (short*)malloc(opusConfig->channelCount * opusConfig->samplesPerFrame * sizeof(short));
     
     // 初始化音频播放器
@@ -797,18 +832,68 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
         g_decodedAudioBuffer,
         g_opusConfig.samplesPerFrame
     );
-    
+
+    // ---- 诊断采样：每 ~1s 输出一行 PCM 统计，异常帧立即 WARN ----
+    // 用于排查"断连后重连卡爆音 + 手柄乱震"类问题
+    // sequence 关联：BridgeArInit/Cleanup 已有 INFO 日志，便于按时间轴对位
+    static thread_local uint64_t s_arvFrameSeq = 0;
+    static thread_local uint64_t s_arvDecodeFailCount = 0;
+    static thread_local int64_t  s_arvSatSum = 0;        // saturated sample 累计
+    static thread_local int64_t  s_arvAbsSum = 0;
+    static thread_local int      s_arvMaxAbs = 0;
+    static thread_local int      s_arvSampleCount = 0;
+    static thread_local int      s_arvBassFires = 0;
+    static thread_local int      s_arvLastIntensityMax = 0;
+    constexpr int kSatThreshold = 30000;
+    constexpr int kFramesPerLog = 200;  // ~1s @5ms/frame
+
+    s_arvFrameSeq++;
+    if (decodeLen <= 0) {
+        s_arvDecodeFailCount++;
+        if (s_arvDecodeFailCount <= 3 || (s_arvDecodeFailCount % 50) == 0) {
+            OH_LOG_WARN(LOG_APP, "[AUDIO_DIAG] decode failed/empty: seq=%{public}llu len=%{public}d failCount=%{public}llu",
+                        (unsigned long long)s_arvFrameSeq, decodeLen, (unsigned long long)s_arvDecodeFailCount);
+        }
+    }
+
     if (decodeLen > 0) {
         // 始终写入解码后的音频，不在解码层丢帧
         // 延迟控制由环形缓冲区内部处理：满时丢弃旧数据、写入新数据
         // 这样波形始终连续，避免丢帧导致的电流滋啦声
         AudioRendererInstance::PlaySamples(g_decodedAudioBuffer, decodeLen);
-        
+
+        // 累计本帧 PCM 统计
+        const int totalSamples = decodeLen * g_opusConfig.channelCount;
+        int frameMaxAbs = 0;
+        int64_t frameAbsSum = 0;
+        int frameSat = 0;
+        for (int i = 0; i < totalSamples; i++) {
+            int v = g_decodedAudioBuffer[i];
+            int a = v < 0 ? -v : v;
+            if (a > frameMaxAbs) frameMaxAbs = a;
+            frameAbsSum += a;
+            if (a >= kSatThreshold) frameSat++;
+        }
+        s_arvSatSum += frameSat;
+        s_arvAbsSum += frameAbsSum;
+        s_arvSampleCount += totalSamples;
+        if (frameMaxAbs > s_arvMaxAbs) s_arvMaxAbs = frameMaxAbs;
+
+        // 单帧异常告警：饱和率 > 50%
+        if (totalSamples > 0 && frameSat * 2 > totalSamples) {
+            OH_LOG_WARN(LOG_APP, "[AUDIO_DIAG] frame saturation: seq=%{public}llu satRatio=%{public}d%% maxAbs=%{public}d totalSamples=%{public}d",
+                        (unsigned long long)s_arvFrameSeq,
+                        (int)(frameSat * 100 / totalSamples),
+                        frameMaxAbs, totalSamples);
+        }
+
         // 低频能量分析（音频振动）
         int bassIntensity = 0;
         int bassLowFreqRatio = 50;
         int bassStereoBalance = 50;
         if (g_bassAnalyzer.ProcessFrame(g_decodedAudioBuffer, decodeLen, bassIntensity, bassLowFreqRatio, bassStereoBalance)) {
+            s_arvBassFires++;
+            if (bassIntensity > s_arvLastIntensityMax) s_arvLastIntensityMax = bassIntensity;
             if (g_audioCallbacks.tsfn_bassEnergy) {
                 CallbackData* data = new CallbackData();
                 data->intParams[0] = bassIntensity;
@@ -818,6 +903,25 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                 if (st != napi_ok) delete data;
             }
         }
+    }
+
+    if ((s_arvFrameSeq % kFramesPerLog) == 0 && s_arvSampleCount > 0) {
+        const int satPct = (int)(s_arvSatSum * 100 / s_arvSampleCount);
+        const int meanAbs = (int)(s_arvAbsSum / s_arvSampleCount);
+        OH_LOG_INFO(LOG_APP,
+            "[AUDIO_DIAG] window seq=%{public}llu frames=%{public}d samples=%{public}d "
+            "maxAbs=%{public}d meanAbs=%{public}d satPct=%{public}d%% bassFires=%{public}d intensityMax=%{public}d decodeFails=%{public}llu",
+            (unsigned long long)s_arvFrameSeq, kFramesPerLog,
+            s_arvSampleCount, s_arvMaxAbs, meanAbs, satPct,
+            s_arvBassFires, s_arvLastIntensityMax,
+            (unsigned long long)s_arvDecodeFailCount);
+        s_arvSatSum = 0;
+        s_arvAbsSum = 0;
+        s_arvSampleCount = 0;
+        s_arvMaxAbs = 0;
+        s_arvBassFires = 0;
+        s_arvLastIntensityMax = 0;
+        // decodeFails 不清零，便于看累计
     }
 }
 
@@ -968,6 +1072,73 @@ void BridgeClResolutionChanged(unsigned int width, unsigned int height) {
         data->intParams[0] = width;
         data->intParams[1] = height;
         napi_call_threadsafe_function(g_connCallbacks.tsfn_resolutionChanged, data, napi_tsfn_blocking);
+    }
+}
+
+void BridgeClClipboardData(const char* data, int length) {
+    static constexpr int kClipboardWireHeaderSize = 10;
+    static constexpr uint32_t kMaxClipboardPayloadBytes = 65500 - kClipboardWireHeaderSize;
+
+    if (g_connCallbacks.tsfn_clipboardData == nullptr || data == nullptr || length < 10) {
+        return;
+    }
+
+    const uint8_t* frame = reinterpret_cast<const uint8_t*>(data);
+    const uint8_t version = frame[0];
+    const uint8_t kind = frame[1];
+    const uint32_t token =
+        static_cast<uint32_t>(frame[2]) |
+        (static_cast<uint32_t>(frame[3]) << 8) |
+        (static_cast<uint32_t>(frame[4]) << 16) |
+        (static_cast<uint32_t>(frame[5]) << 24);
+    const uint32_t payloadLength =
+        static_cast<uint32_t>(frame[6]) |
+        (static_cast<uint32_t>(frame[7]) << 8) |
+        (static_cast<uint32_t>(frame[8]) << 16) |
+        (static_cast<uint32_t>(frame[9]) << 24);
+    const int availablePayloadLength = length - kClipboardWireHeaderSize;
+
+    if (version != 1) {
+        OH_LOG_WARN(LOG_APP, "BridgeClClipboardData: unsupported version=%{public}u", version);
+        return;
+    }
+
+    if (payloadLength != static_cast<uint32_t>(availablePayloadLength)) {
+        OH_LOG_WARN(LOG_APP, "BridgeClClipboardData: malformed payload len=%{public}u available=%{public}d",
+                    payloadLength, availablePayloadLength);
+        return;
+    }
+
+    if (payloadLength > kMaxClipboardPayloadBytes ||
+        static_cast<uint32_t>(availablePayloadLength) > kMaxClipboardPayloadBytes) {
+        OH_LOG_WARN(LOG_APP,
+                    "BridgeClClipboardData: payload too large len=%{public}u available=%{public}d max=%{public}u",
+                    payloadLength, availablePayloadLength, kMaxClipboardPayloadBytes);
+        return;
+    }
+
+    CallbackData* cbData = new CallbackData();
+    memset(cbData, 0, sizeof(*cbData));
+    cbData->intParams[0] = static_cast<int>(kind);
+    cbData->doubleParams[0] = static_cast<double>(token);
+    cbData->ptrSize = availablePayloadLength;
+
+    if (availablePayloadLength > 0) {
+        cbData->ptrParam = malloc(availablePayloadLength);
+        if (cbData->ptrParam == nullptr) {
+            delete cbData;
+            OH_LOG_ERROR(LOG_APP, "BridgeClClipboardData: malloc failed for %{public}d bytes", availablePayloadLength);
+            return;
+        }
+        memcpy(cbData->ptrParam, frame + kClipboardWireHeaderSize, availablePayloadLength);
+    }
+
+    napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_clipboardData, cbData, napi_tsfn_blocking);
+    if (st != napi_ok) {
+        if (cbData->ptrParam != nullptr) {
+            free(cbData->ptrParam);
+        }
+        delete cbData;
     }
 }
 

@@ -48,7 +48,7 @@ import { image } from '@kit.ImageKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { systemShare } from '@kit.ShareKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
-import { common } from '@kit.AbilityKit';
+import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import {
   OV_ACCENT_BLUE, OV_TEXT_BRIGHT, OV_TEXT_MEDIUM, OV_TEXT_DIM,
   OV_TEXT_WHITE, OV_TEXT_SUBTLE, OV_BG_TRACK, OV_BG_CARD_LIGHTER,
@@ -2063,8 +2063,40 @@ export struct CustomKeyOverlay {
   }
 
   /** 从剪贴板粘贴导入 */
+  private async ensureClipboardReadPermissionGranted(): Promise<boolean> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const atManager = abilityAccessCtrl.createAtManager();
+      const bundleInfo = await bundleManager.getBundleInfoForSelf(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION
+      );
+      const tokenId = bundleInfo.appInfo.accessTokenId;
+      const permission: Permissions = 'ohos.permission.READ_PASTEBOARD';
+
+      let granted = atManager.checkAccessTokenSync(tokenId, permission) ===
+        abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+
+      if (!granted) {
+        const result = await atManager.requestPermissionsFromUser(context, [permission]);
+        granted = result.authResults.length > 0 &&
+          result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+      }
+
+      return granted;
+    } catch (error) {
+      console.error('[CustomKeyOverlay] 检查剪贴板权限失败:', JSON.stringify(error));
+      return false;
+    }
+  }
+
   private async pasteFromClipboard(): Promise<void> {
     try {
+      const granted = await this.ensureClipboardReadPermissionGranted();
+      if (!granted) {
+        ToastQueue.show({ message: '未授予剪贴板权限', duration: 1500 });
+        return;
+      }
+
       const sysBoard = pasteboard.getSystemPasteboard();
       const pasteData = await sysBoard.getData();
       const text = pasteData.getPrimaryText();

@@ -86,6 +86,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "sendMicrophoneOpusData", nullptr, MoonBridge_SendMicrophoneOpusData, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "isMicrophoneEncryptionEnabled", nullptr, MoonBridge_IsMicrophoneEncryptionEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         
+        // 剪贴板同步（Sunshine protocol extension）
+        { "sendClipboardData", nullptr, MoonBridge_SendClipboardData, nullptr, nullptr, nullptr, napi_default, nullptr },
+        
         // Opus 编码器
         { "opusEncoderCreate", nullptr, MoonBridge_OpusEncoderCreate, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "opusEncoderEncode", nullptr, MoonBridge_OpusEncoderEncode, nullptr, nullptr, nullptr, napi_default, nullptr },

@@ -87,6 +87,7 @@ typedef struct {
     napi_threadsafe_function tsfn_setMotionEventState;
     napi_threadsafe_function tsfn_setControllerLED;
     napi_threadsafe_function tsfn_resolutionChanged;
+    napi_threadsafe_function tsfn_clipboardData;
 } ConnectionListenerCallbacks;
 
 // =============================================================================
@@ -128,6 +129,7 @@ void BridgeClRumbleTriggers(unsigned short controllerNumber, unsigned short left
 void BridgeClSetMotionEventState(unsigned short controllerNumber, unsigned char motionType, unsigned short reportRateHz);
 void BridgeClSetControllerLED(unsigned short controllerNumber, unsigned char r, unsigned char g, unsigned char b);
 void BridgeClResolutionChanged(unsigned int width, unsigned int height);
+void BridgeClClipboardData(const char* data, int length);
 void BridgeClLogMessage(const char* format, ...);
 
 #ifdef __cplusplus

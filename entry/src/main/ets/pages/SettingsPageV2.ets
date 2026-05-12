@@ -165,6 +165,10 @@ struct SettingsPageV2 {
   @State micBitrate: number = 64;
   @State audioCompatMode: boolean = false;
   
+  // 剪贴板同步（Sunshine only）
+  @State enableClipboardSyncText: boolean = false;
+  @State enableClipboardSyncImage: boolean = false;
+  
   // 输入 - 手柄设置
   @State enableVibration: boolean = true;
   @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/同时
@@ -492,6 +496,10 @@ struct SettingsPageV2 {
       this.enableMic = await this.loadBoolean(SettingsKeys.ENABLE_MIC, false);
       this.micBitrate = await PreferencesUtil.get<number>(SettingsKeys.MIC_BITRATE, 64);
       this.audioCompatMode = await this.loadBoolean(SettingsKeys.AUDIO_COMPAT_MODE, false);
+      
+      // 剪贴板同步设置
+      this.enableClipboardSyncText = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
+      this.enableClipboardSyncImage = await this.loadBoolean(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, false);
       
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
@@ -1785,6 +1793,26 @@ struct SettingsPageV2 {
                 action: () => {
                   this.lockScreenAfterDisconnect = !this.lockScreenAfterDisconnect;
                   this.saveSetting(SettingsKeys.LOCK_SCREEN_AFTER_DISCONNECT, this.lockScreenAfterDisconnect);
+                }
+              },
+              {
+                title: '剪贴板同步文本',
+                subtitle: 'Sunshine only - 与主机双向同步剪贴板文本',
+                type: 'toggle',
+                value: this.enableClipboardSyncText,
+                action: () => {
+                  this.enableClipboardSyncText = !this.enableClipboardSyncText;
+                  this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, this.enableClipboardSyncText);
+                }
+              },
+              {
+                title: '剪贴板同步图片',
+                subtitle: 'Sunshine only - 与主机双向同步 PNG 图片（大图自动走 blob）',
+                type: 'toggle',
+                value: this.enableClipboardSyncImage,
+                action: () => {
+                  this.enableClipboardSyncImage = !this.enableClipboardSyncImage;
+                  this.saveSetting(SettingsKeys.ENABLE_CLIPBOARD_SYNC_IMAGE, this.enableClipboardSyncImage);
                 }
               },
               {

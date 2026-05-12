@@ -20,6 +20,8 @@ export interface HttpClientConfig {
   connectTimeout?: number;
   /** 传输超时（毫秒） */
   transferTimeout?: number;
+  /** 自定义请求头 */
+  headers?: Record<string, string>;
   /** 是否跳过服务器证书验证 */
   skipServerValidation?: boolean;
   /** 客户端证书文件路径（PEM 格式） */
@@ -73,6 +75,40 @@ export class HttpClient {
     };
   }
 
+  private static buildHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
+    if (!headers) {
+      return undefined
+    }
+
+    const entries = Object.entries(headers)
+    if (entries.length === 0) {
+      return undefined
+    }
+
+    const normalized: Record<string, string> = {}
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i]
+      const key = entry[0]
+      const value = entry[1]
+      if (!key || value === undefined || value === null) {
+        continue
+      }
+      normalized[key] = String(value)
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined
+  }
+
+  /**
+   * 将请求体转换为精确的 ArrayBuffer，避免 TypedArray 的 byteOffset/byteLength 干扰。
+   */
+  private static toExactArrayBuffer(data: ArrayBuffer | Uint8Array): ArrayBuffer {
+    if (data instanceof Uint8Array) {
+      return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+    }
+    return data
+  }
+
   /**
    * 通用 GET 执行器（文本响应）
    */
@@ -88,7 +124,7 @@ export class HttpClient {
     const request = new rcp.Request(
       url,
       'GET',
-      undefined,
+      HttpClient.buildHeaders(config?.headers),
       undefined,
       undefined,
       undefined,
@@ -208,7 +244,7 @@ export class HttpClient {
     const request = new rcp.Request(
       url,
       'GET',
-      undefined,
+      HttpClient.buildHeaders(config?.headers),
       undefined,
       undefined,
       undefined,
@@ -273,7 +309,7 @@ export class HttpClient {
     const request = new rcp.Request(
       url,
       'POST',
-      undefined,
+      HttpClient.buildHeaders(config?.headers),
       body,
       undefined,
       undefined,
@@ -299,6 +335,47 @@ export class HttpClient {
   }
 
   /**
+   * 执行 POST 请求（二进制 body）。
+   */
+  static async postBinary(url: string, body: ArrayBuffer | Uint8Array, config?: HttpClientConfig): Promise<HttpResponse> {
+    const connectTimeout = config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT;
+    const transferTimeout = config?.transferTimeout ?? HttpClient.DEFAULT_TRANSFER_TIMEOUT;
+    const skipValidation = config?.skipServerValidation !== false;
+    const key = RcpSessionPool.keyFor(url, config?.clientCertPath);
+    const session = RcpSessionPool.acquire(key, { skipServerValidation: skipValidation, clientCertPath: config?.clientCertPath, clientKeyPath: config?.clientKeyPath });
+
+    console.debug(`HttpClient: POST(binary) ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
+
+    const requestBody = HttpClient.toExactArrayBuffer(body);
+    const request = new rcp.Request(
+      url,
+      'POST',
+      HttpClient.buildHeaders(config?.headers),
+      requestBody,
+      undefined,
+      undefined,
+      HttpClient.buildRequestConfig(connectTimeout, transferTimeout)
+    );
+
+    try {
+      const response = await session.fetch(request);
+      console.debug(`HttpClient: POST(binary) 响应状态码 = ${response.statusCode}`);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw new Error(`HTTP ${response.statusCode}`);
+      }
+      const responseBody = response.body ? StringUtil.arrayBufferToString(response.body) : '';
+      return { statusCode: response.statusCode ?? 0, body: responseBody };
+    } catch (err) {
+      const error = err as Error;
+      if (HttpClient.isConnectionError(error.message)) {
+        RcpSessionPool.invalidate(key);
+      }
+      console.error(`HttpClient: POST(binary) 请求失败 - ${error.message}`);
+      throw new Error(`HTTP POST 请求失败: ${error.message}`);
+    }
+  }
+
+  /**
    * 执行带客户端证书的 POST 请求
    */
   static async postWithClientCert(
@@ -312,6 +389,27 @@ export class HttpClient {
       skipServerValidation: true,
       clientCertPath: certPath,
       clientKeyPath: keyPath,
+      headers: config?.headers,
+      connectTimeout: config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT,
+      transferTimeout: config?.transferTimeout ?? 120000
+    });
+  }
+
+  /**
+   * 执行带客户端证书的二进制 POST 请求。
+   */
+  static async postBinaryWithClientCert(
+    url: string,
+    body: ArrayBuffer | Uint8Array,
+    certPath: string,
+    keyPath: string,
+    config?: HttpClientConfig
+  ): Promise<HttpResponse> {
+    return HttpClient.postBinary(url, body, {
+      skipServerValidation: true,
+      clientCertPath: certPath,
+      clientKeyPath: keyPath,
+      headers: config?.headers,
       connectTimeout: config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT,
       transferTimeout: config?.transferTimeout ?? 120000
     });
