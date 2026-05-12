@@ -689,7 +689,11 @@ int BridgeArInit(int audioConfiguration, void* opusConfigPtr, void* context, int
         return -1;
     }
     
-    // 分配解码缓冲区
+    // 分配解码缓冲区（先释放旧的，避免由上轮 Cleanup 未完整走完导致的泄漏 / size 不一致越界）
+    if (g_decodedAudioBuffer) {
+        free(g_decodedAudioBuffer);
+        g_decodedAudioBuffer = nullptr;
+    }
     g_decodedAudioBuffer = (short*)malloc(opusConfig->channelCount * opusConfig->samplesPerFrame * sizeof(short));
     
     // 初始化音频播放器

@@ -151,6 +151,7 @@ export class AudioVibrationService {
    */
   stop(): void {
     this.stopAll();
+
   }
 
   // ==================== 场景判断 ====================
