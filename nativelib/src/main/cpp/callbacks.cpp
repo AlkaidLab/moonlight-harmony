@@ -832,18 +832,68 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
         g_decodedAudioBuffer,
         g_opusConfig.samplesPerFrame
     );
-    
+
+    // ---- 诊断采样：每 ~1s 输出一行 PCM 统计，异常帧立即 WARN ----
+    // 用于排查"断连后重连卡爆音 + 手柄乱震"类问题
+    // sequence 关联：BridgeArInit/Cleanup 已有 INFO 日志，便于按时间轴对位
+    static thread_local uint64_t s_arvFrameSeq = 0;
+    static thread_local uint64_t s_arvDecodeFailCount = 0;
+    static thread_local int64_t  s_arvSatSum = 0;        // saturated sample 累计
+    static thread_local int64_t  s_arvAbsSum = 0;
+    static thread_local int      s_arvMaxAbs = 0;
+    static thread_local int      s_arvSampleCount = 0;
+    static thread_local int      s_arvBassFires = 0;
+    static thread_local int      s_arvLastIntensityMax = 0;
+    constexpr int kSatThreshold = 30000;
+    constexpr int kFramesPerLog = 200;  // ~1s @5ms/frame
+
+    s_arvFrameSeq++;
+    if (decodeLen <= 0) {
+        s_arvDecodeFailCount++;
+        if (s_arvDecodeFailCount <= 3 || (s_arvDecodeFailCount % 50) == 0) {
+            OH_LOG_WARN(LOG_APP, "[AUDIO_DIAG] decode failed/empty: seq=%{public}llu len=%{public}d failCount=%{public}llu",
+                        (unsigned long long)s_arvFrameSeq, decodeLen, (unsigned long long)s_arvDecodeFailCount);
+        }
+    }
+
     if (decodeLen > 0) {
         // 始终写入解码后的音频，不在解码层丢帧
         // 延迟控制由环形缓冲区内部处理：满时丢弃旧数据、写入新数据
         // 这样波形始终连续，避免丢帧导致的电流滋啦声
         AudioRendererInstance::PlaySamples(g_decodedAudioBuffer, decodeLen);
-        
+
+        // 累计本帧 PCM 统计
+        const int totalSamples = decodeLen * g_opusConfig.channelCount;
+        int frameMaxAbs = 0;
+        int64_t frameAbsSum = 0;
+        int frameSat = 0;
+        for (int i = 0; i < totalSamples; i++) {
+            int v = g_decodedAudioBuffer[i];
+            int a = v < 0 ? -v : v;
+            if (a > frameMaxAbs) frameMaxAbs = a;
+            frameAbsSum += a;
+            if (a >= kSatThreshold) frameSat++;
+        }
+        s_arvSatSum += frameSat;
+        s_arvAbsSum += frameAbsSum;
+        s_arvSampleCount += totalSamples;
+        if (frameMaxAbs > s_arvMaxAbs) s_arvMaxAbs = frameMaxAbs;
+
+        // 单帧异常告警：饱和率 > 50%
+        if (totalSamples > 0 && frameSat * 2 > totalSamples) {
+            OH_LOG_WARN(LOG_APP, "[AUDIO_DIAG] frame saturation: seq=%{public}llu satRatio=%{public}d%% maxAbs=%{public}d totalSamples=%{public}d",
+                        (unsigned long long)s_arvFrameSeq,
+                        (int)(frameSat * 100 / totalSamples),
+                        frameMaxAbs, totalSamples);
+        }
+
         // 低频能量分析（音频振动）
         int bassIntensity = 0;
         int bassLowFreqRatio = 50;
         int bassStereoBalance = 50;
         if (g_bassAnalyzer.ProcessFrame(g_decodedAudioBuffer, decodeLen, bassIntensity, bassLowFreqRatio, bassStereoBalance)) {
+            s_arvBassFires++;
+            if (bassIntensity > s_arvLastIntensityMax) s_arvLastIntensityMax = bassIntensity;
             if (g_audioCallbacks.tsfn_bassEnergy) {
                 CallbackData* data = new CallbackData();
                 data->intParams[0] = bassIntensity;
@@ -853,6 +903,25 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                 if (st != napi_ok) delete data;
             }
         }
+    }
+
+    if ((s_arvFrameSeq % kFramesPerLog) == 0 && s_arvSampleCount > 0) {
+        const int satPct = (int)(s_arvSatSum * 100 / s_arvSampleCount);
+        const int meanAbs = (int)(s_arvAbsSum / s_arvSampleCount);
+        OH_LOG_INFO(LOG_APP,
+            "[AUDIO_DIAG] window seq=%{public}llu frames=%{public}d samples=%{public}d "
+            "maxAbs=%{public}d meanAbs=%{public}d satPct=%{public}d%% bassFires=%{public}d intensityMax=%{public}d decodeFails=%{public}llu",
+            (unsigned long long)s_arvFrameSeq, kFramesPerLog,
+            s_arvSampleCount, s_arvMaxAbs, meanAbs, satPct,
+            s_arvBassFires, s_arvLastIntensityMax,
+            (unsigned long long)s_arvDecodeFailCount);
+        s_arvSatSum = 0;
+        s_arvAbsSum = 0;
+        s_arvSampleCount = 0;
+        s_arvMaxAbs = 0;
+        s_arvBassFires = 0;
+        s_arvLastIntensityMax = 0;
+        // decodeFails 不清零，便于看累计
     }
 }
 
