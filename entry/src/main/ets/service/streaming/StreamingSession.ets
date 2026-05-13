@@ -500,6 +500,9 @@ export class StreamingSession {
       }
       const cachedCurrentGame = this.getCachedCurrentGame();
       await this.launchApp(cachedCurrentGame);
+      // 成功 launch/resume 后 currentGame 必然变化（变为本次 appId），
+      // 让缓存立即失效，避免下次进入串流复用陈旧的 currentGame 导致误判
+      ComputerManager.getInstance().invalidateServerInfoCache(this.computerId);
       await this.connectToServer();
       this.applyPostConnectionSettings(config);
 
