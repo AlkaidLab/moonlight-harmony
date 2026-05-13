@@ -1019,7 +1019,14 @@ export class StreamingSession {
       },
       drStart: (): void => {
         console.info('视频解码器启动');
-        if (this.decoderStartedCallback) this.decoderStartedCallback();
+        // 隔离外部回调异常，避免冒泡进 native 回调链导致连接流程不稳定
+        if (this.decoderStartedCallback) {
+          try {
+            this.decoderStartedCallback();
+          } catch (err) {
+            console.error(`[StreamingSession] decoderStartedCallback 执行失败: ${err}`);
+          }
+        }
       },
       drStop: (): void => { console.info('视频解码器停止'); },
       drCleanup: (): void => { console.info('视频解码器清理'); },

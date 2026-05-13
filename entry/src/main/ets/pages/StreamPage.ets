@@ -227,6 +227,8 @@ struct StreamPage {
   private controllerTypes: Map<number, number> = new Map();  // slot → MoonlightControllerType
   private aiKeyService: AiKeyService | null = null;
   private aiKeyNvHttp: NvHttp | null = null;
+  // AI 可用性探测的延时定时器，aboutToDisappear 时需清理
+  private aiProbeTimer: number | null = null;
   
   // 页面参数
   private computerId: string = '';
@@ -462,9 +464,16 @@ struct StreamPage {
   private probeAiAvailableDeferred(): void {
     const nvHttp = this.aiKeyNvHttp;
     if (!nvHttp) return;
-    setTimeout(() => {
+    if (this.aiProbeTimer !== null) {
+      clearTimeout(this.aiProbeTimer);
+      this.aiProbeTimer = null;
+    }
+    this.aiProbeTimer = setTimeout(() => {
+      this.aiProbeTimer = null;
+      // 二次校验：页面已销毁则 aiKeyNvHttp 会被置空
+      if (!this.aiKeyNvHttp) return;
       nvHttp.checkAiAvailable().then((available: boolean) => {
-        if (available) {
+        if (available && this.aiKeyNvHttp) {
           ToastQueue.show({
             message: '✨ AI LLM 已连接，可使用 AIV+ 功能',
             duration: 2500
@@ -687,6 +696,13 @@ struct StreamPage {
   
   aboutToDisappear(): void {
     console.info('StreamPage aboutToDisappear - cleaning up');
+
+    // 取消 AI 可用性延时探测，避免页面销毁后回调触发 Toast / 网络请求
+    if (this.aiProbeTimer !== null) {
+      clearTimeout(this.aiProbeTimer);
+      this.aiProbeTimer = null;
+    }
+    this.aiKeyNvHttp = null;
 
     this.stopClipboardSync();
 

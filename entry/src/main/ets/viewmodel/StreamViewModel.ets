@@ -357,8 +357,13 @@ export class StreamViewModel {
       // 视频解码器启动回调：drStart 在 LiStartConnection 内部触发，
       // 比 session.start() resolve 更早。提前切到 CONNECTED 让 UI 立即隐藏 loading，
       // 缩短"已连接 → 首帧"之间的视觉空窗。
+      // 捕获当前 session 实例，防止旧会话延迟回调污染新会话或把 ERROR/DISCONNECTED 改回 CONNECTED。
+      const currentSession = this.streamingSession;
       this.streamingSession.setDecoderStartedCallback(() => {
-        if (this.connectionState !== StreamConnectionState.CONNECTED) {
+        if (this.streamingSession !== currentSession) {
+          return;
+        }
+        if (this.connectionState === StreamConnectionState.CONNECTING) {
           console.info('StreamViewModel: drStart 触发，提前进入 CONNECTED 状态');
           this.connectionProgress = 1.0;
           this.connectionStageText = '已连接';
