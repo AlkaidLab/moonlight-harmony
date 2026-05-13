@@ -353,6 +353,18 @@ export class StreamViewModel {
         this.connectionProgress = Math.min(nativeProgress, 1.0);
         this.connectionStageText = stageName;
       });
+
+      // 视频解码器启动回调：drStart 在 LiStartConnection 内部触发，
+      // 比 session.start() resolve 更早。提前切到 CONNECTED 让 UI 立即隐藏 loading，
+      // 缩短"已连接 → 首帧"之间的视觉空窗。
+      this.streamingSession.setDecoderStartedCallback(() => {
+        if (this.connectionState !== StreamConnectionState.CONNECTED) {
+          console.info('StreamViewModel: drStart 触发，提前进入 CONNECTED 状态');
+          this.connectionProgress = 1.0;
+          this.connectionStageText = '已连接';
+          this.connectionState = StreamConnectionState.CONNECTED;
+        }
+      });
       
       // 更新进度：获取服务器信息
       this.connectionProgress = 0.05;

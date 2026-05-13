@@ -348,6 +348,8 @@ export class StreamingSession {
   private resolutionChangedCallback: ResolutionChangedCallback | null = null;
   private stageProgressCallback: ((stage: number, stageName: string) => void) | null = null;
   private connectionStatusCallback: ((connectionStatus: number) => void) | null = null;
+  /** 视频解码器启动回调（drStart）：在 LiStartConnection 内部触发，早于 start() resolve */
+  private decoderStartedCallback: (() => void) | null = null;
 
   // ---------------------------------------------------------------------------
   // 成员变量 — 手柄状态
@@ -440,6 +442,15 @@ export class StreamingSession {
     this.connectionStatusCallback = callback;
   }
 
+  /**
+   * 设置"视频解码器已启动"回调（对应 native drStart）。
+   * 此回调在 LiStartConnection 内部、首帧渲染前触发，比 session.start() resolve 更早。
+   * UI 可以借此提前隐藏 loading 蒙层，让用户更快看到画面。
+   */
+  setDecoderStartedCallback(callback: (() => void) | null): void {
+    this.decoderStartedCallback = callback;
+  }
+
   // ---------------------------------------------------------------------------
   // 生命周期 — 启动 / 停止 / 恢复
   // ---------------------------------------------------------------------------
@@ -473,9 +484,14 @@ export class StreamingSession {
 
     try {
       await this.resolveComputer(computerId, context);
-      await this.fetchServerInfo();
       this.generateInputKey();
-      await this.initializeNative();
+      // 并行执行：网络请求（fetchServerInfo）与本地 native 初始化没有依赖，
+      // 可重叠执行节省 50-300ms。两者都会更新 stageProgressCallback 文本，
+      // 后到者覆盖前者，对用户感知无影响。
+      await Promise.all([
+        this.fetchServerInfo(),
+        this.initializeNative(),
+      ]);
       this.applyPreConnectionSettings(config);
       await this.setupVideoSurface();
 
@@ -896,6 +912,21 @@ export class StreamingSession {
   private async fetchServerInfo(): Promise<void> {
     if (!this.nvHttp) throw new Error('nvHttp 未初始化');
 
+    // 命中 ComputerManager 的 ServerInfo 缓存：避免与轮询/AppList 刷新刚拿到的
+    // 数据重复一次 HTTPS round-trip（典型局域网 50-200ms，远程更长）。
+    const cached = ComputerManager.getInstance().getCachedServerInfo(this.computerId);
+    if (cached) {
+      this.serverAppVersion = cached.appVersion || '';
+      this.serverGfeVersion = cached.gfeVersion || '';
+      this.serverCodecModeSupport = cached.serverCodecModeSupport || 0;
+      this.cachedCurrentGame = cached.currentGame || 0;
+      console.info(`串流: 命中 ServerInfo 缓存, currentGame=${this.cachedCurrentGame}, codecSupport=${this.serverCodecModeSupport}`);
+      if (this.stageProgressCallback) {
+        this.stageProgressCallback(0, '正在初始化...');
+      }
+      return;
+    }
+
     // 主机/Sunshine 重启窗口（mDNS/ICMP 已恢复但 HTTPS 监听尚未 ready）会让单次 ServerInfo
     // 请求必败。委托给 NvHttp.getServerInfoRobust 处理瞬时错误重试 + 取消响应，
     // 避免在业务层重复维护错误识别 / 重试 / 取消的细节。
@@ -915,6 +946,9 @@ export class StreamingSession {
     this.cachedCurrentGame = serverInfo.currentGame || 0;
     console.info(`服务器版本: app=${this.serverAppVersion}, gfe=${this.serverGfeVersion}, ` +
       `codecSupport=${this.serverCodecModeSupport}, currentGame=${this.cachedCurrentGame}`);
+
+    // 写回缓存供后续短期内复用（场景：连接失败后用户立即重试）
+    ComputerManager.getInstance().cacheServerInfo(this.computerId, serverInfo);
 
     if (this.stageProgressCallback) {
       this.stageProgressCallback(0, '正在初始化...');
@@ -980,7 +1014,10 @@ export class StreamingSession {
         if (this.codecStateCallback) this.codecStateCallback(actualCodec);
         if (this.hdrStateCallback) this.hdrStateCallback(actualHdr);
       },
-      drStart: (): void => { console.info('视频解码器启动'); },
+      drStart: (): void => {
+        console.info('视频解码器启动');
+        if (this.decoderStartedCallback) this.decoderStartedCallback();
+      },
       drStop: (): void => { console.info('视频解码器停止'); },
       drCleanup: (): void => { console.info('视频解码器清理'); },
       arInit: (audioConfiguration: number, sampleRate: number, samplesPerFrame: number): void => {
