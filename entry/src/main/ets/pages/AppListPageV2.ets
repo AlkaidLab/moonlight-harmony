@@ -1160,6 +1160,9 @@ struct AppListPageV2 {
 
   private doLaunchApp(app: ObservableApp): void {
     const displayGuid = this.getSelectedDisplayGuid();
+    // 把当前 app 的本地海报路径传给 StreamPage，作为 ConnectingOverlay 的背景，
+    // 让等待 launchApp / 首帧的几秒钟不再是纯黑屏。
+    const posterPath = (app.localIconPath && app.iconLoaded) ? app.localIconPath : '';
     router.pushUrl({
       url: 'pages/StreamPage',
       params: {
@@ -1169,7 +1172,8 @@ struct AppListPageV2 {
         cmdList: app.cmdList.length > 0 ? JSON.stringify(app.cmdList) : undefined,
         resume: app.isRunning,
         displayGuid: displayGuid,
-        useVdd: this.useVirtualDisplay
+        useVdd: this.useVirtualDisplay,
+        posterPath: posterPath
       }
     });
   }

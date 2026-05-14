@@ -164,7 +164,11 @@ export class StreamViewModel {
   private resolutionChangedCallback: ((width: number, height: number) => void) | null = null;
   // 连接状态回调（用于端口诊断等）
   private connectionStatusCallback: ((connectionStatus: number) => void) | null = null;
-  
+
+  // drStart 到首帧上屏还有 ~150-300ms：轮询 framesDecoded，上屏后才切 CONNECTED，
+  // 让 ConnectingOverlay 淡出与首帧出现对齐。
+  private firstFrameTimer: number = -1;
+
   // 便捷属性
   get isConnecting(): boolean {
     return this.connectionState === StreamConnectionState.CONNECTING;
@@ -313,6 +317,7 @@ export class StreamViewModel {
       // 设置连接终止回调
       this.streamingSession.setConnectionTerminatedCallback((errorCode: number) => {
         console.info(`StreamViewModel: 连接终止回调 errorCode=${errorCode}`);
+        this.stopFirstFrameWatcher();
         this.connectionState = StreamConnectionState.DISCONNECTED;
         if (this.connectionTerminatedCallback) {
           this.connectionTerminatedCallback(errorCode);
@@ -354,21 +359,26 @@ export class StreamViewModel {
         this.connectionStageText = stageName;
       });
 
-      // 视频解码器启动回调：drStart 在 LiStartConnection 内部触发，
-      // 比 session.start() resolve 更早。提前切到 CONNECTED 让 UI 立即隐藏 loading，
-      // 缩短"已连接 → 首帧"之间的视觉空窗。
-      // 捕获当前 session 实例，防止旧会话延迟回调污染新会话或把 ERROR/DISCONNECTED 改回 CONNECTED。
-      const currentSession = this.streamingSession;
+      // drStart 后轮询 framesDecoded，首帧解出才切 CONNECTED，避免 overlay 提前淡出露出黑屏。
+      const session = this.streamingSession;
       this.streamingSession.setDecoderStartedCallback(() => {
-        if (this.streamingSession !== currentSession) {
-          return;
-        }
-        if (this.connectionState === StreamConnectionState.CONNECTING) {
-          console.info('StreamViewModel: drStart 触发，提前进入 CONNECTED 状态');
-          this.connectionProgress = 1.0;
-          this.connectionStageText = '已连接';
-          this.connectionState = StreamConnectionState.CONNECTED;
-        }
+        if (this.streamingSession !== session || this.connectionState !== StreamConnectionState.CONNECTING) return;
+        this.connectionStageText = '等待首帧...';
+        const deadline = Date.now() + 1500;
+        this.stopFirstFrameWatcher();
+        this.firstFrameTimer = setInterval(() => {
+          if (this.streamingSession !== session || this.connectionState !== StreamConnectionState.CONNECTING) {
+            this.stopFirstFrameWatcher();
+            return;
+          }
+          const decoded = session.getStats()?.decodedFrames ?? 0;
+          if (decoded > 0 || Date.now() >= deadline) {
+            this.connectionProgress = 1.0;
+            this.connectionStageText = '已连接';
+            this.connectionState = StreamConnectionState.CONNECTED;
+            this.stopFirstFrameWatcher();
+          }
+        }, 50);
       });
       
       // 更新进度：获取服务器信息
@@ -391,9 +401,12 @@ export class StreamViewModel {
         }
       }
       
-      this.connectionProgress = 1.0;
-      this.connectionStageText = '已连接';
-      this.connectionState = StreamConnectionState.CONNECTED;
+      // 不在这里强制切 CONNECTED：start() resolve 常于 drStart 之后，但首帧可能还没上屏。
+      // 让 firstFrameWatcher 控制 CONNECTED 的跳变时点，有效消除 loading → 首帧 之间的视觉跳跃。
+      // 如果 watcher 已经完成（极快的路径），这里状态已经是 CONNECTED，冗余赋值也安全。
+      if (this.connectionState !== StreamConnectionState.CONNECTING) {
+        this.connectionProgress = 1.0;
+      }
       
       // 查询实际生效的超分引擎
       this.activeUpscaleMode = this.streamingSession?.getActiveUpscaleMode() ?? 0;
@@ -407,6 +420,7 @@ export class StreamViewModel {
       }
       
     } catch (err) {
+      this.stopFirstFrameWatcher();
       this.connectionState = StreamConnectionState.ERROR;
       const error = err as Error;
       this.errorMessage = `连接失败: ${error.message}`;
@@ -420,7 +434,10 @@ export class StreamViewModel {
   async stopStreaming(): Promise<void> {
     // 重置旋转状态
     this.resetRotationState();
-    
+
+    // 停止首帧轮询（如果还在运行）
+    this.stopFirstFrameWatcher();
+
     // 清除网络质量警告
     AppStorage.setOrCreate('connectionPoor', false);
     
@@ -431,6 +448,13 @@ export class StreamViewModel {
     }
     
     this.connectionState = StreamConnectionState.DISCONNECTED;
+  }
+
+  private stopFirstFrameWatcher(): void {
+    if (this.firstFrameTimer !== -1) {
+      clearInterval(this.firstFrameTimer);
+      this.firstFrameTimer = -1;
+    }
   }
   
   /**
