@@ -31,6 +31,46 @@ interface BackgroundImageProps {
   enableLongPressSave?: boolean;
 }
 
+// 像素地图中单个 tile
+interface PixelTile {
+  ch: string;        // 'V'山岩 / '+'草木
+  color: string;
+}
+
+// 复古像素风地图色板（6 种地形）
+const TILE_PALETTE: PixelTile[] = [
+  { ch: '+', color: 'rgba(143, 203, 107, 0.85)' },  // 草绿 - 平原
+  { ch: '+', color: 'rgba(229, 199, 107, 0.85)' },  // 沙黄 - 沙漠
+  { ch: 'V', color: 'rgba(168, 116, 74,  0.90)' },  // 山棕 - 山岩
+  { ch: 'V', color: 'rgba(91,  168, 216, 0.85)' },  // 水蓝 - 海洋
+  { ch: '+', color: 'rgba(220, 110, 150, 0.80)' },  // 花粉 - 花田
+  { ch: 'V', color: 'rgba(156, 107, 198, 0.85)' }   // 山紫 - 魔法地
+];
+
+// 28x42 高密度像素地图
+const PIXEL_MAP_COLS = 28;
+const PIXEL_MAP_ROWS = 42;
+const PIXEL_TILES: PixelTile[] = (() => {
+  const arr: PixelTile[] = [];
+  for (let r = 0; r < PIXEL_MAP_ROWS; r++) {
+    for (let c = 0; c < PIXEL_MAP_COLS; c++) {
+      const h = (r * 7 + c * 13 + r * c * 3 + (r * r + c * c) % 11) % TILE_PALETTE.length;
+      // 二级哈希：用于生成随机斝驳（碳化黑点 / 褐色亮点 / 缺失空位）
+      const h2 = (r * 31 + c * 17 + (r ^ c) * 5 + r * c * c) % 25;
+      let tile = TILE_PALETTE[h];
+      if (h2 === 1) {
+        tile = { ch: tile.ch, color: 'rgba(40, 30, 25, 0.90)' };       // 黑斝 - 碳化/烧焦
+      } else if (h2 === 7) {
+        tile = { ch: tile.ch, color: 'rgba(245, 235, 210, 0.50)' };    // 亮斝 - 褐色/反光
+      } else if (h2 === 13) {
+        tile = { ch: '', color: '' };                                  // 缺失 - 背景透出
+      }
+      arr.push(tile);
+    }
+  }
+  return arr;
+})();
+
 @Component
 export struct BackgroundImage {
   @Prop imageUrl: string = '';
@@ -39,6 +79,8 @@ export struct BackgroundImage {
   @State showSaveDialog: boolean = false;
   // 淡入过渡效果：图片加载完成前透明度为 0
   @State currentOpacity: number = 0;
+  // 标记网络壁纸是否已加载完成，用于控制默认装饰层淡出
+  @State imageLoaded: boolean = false;
   // 记录上一次的 URL，检测变化时重置淡入
   private lastImageUrl: string = '';
   
@@ -101,7 +143,30 @@ export struct BackgroundImage {
         .height('100%')
         .backgroundColor(AppColors.Background)
 
-      // 网络图片背景 - 带淡入过渡效果
+      // 默认装饰层：使用 V 和 + 两个字符摆出复古像素风游戏地图
+      // 28x42 高密度网格，主色板 6 色地形（草绿/沙黄/山棕/水蓝/花粉/魔法紫）
+      // 加随机斝驳：~4% 黑斝 / ~4% 亮斝 / ~4% 缺失，仿复古地图的年代感
+      Grid() {
+        ForEach(PIXEL_TILES, (tile: PixelTile, index: number) => {
+          GridItem() {
+            if (tile.ch !== '') {
+              Text(tile.ch)
+                .fontSize(12)
+                .fontWeight(FontWeight.Bold)
+                .fontFamily('HarmonyOS Mono')
+                .fontColor(tile.color)
+            }
+          }
+        }, (tile: PixelTile, index: number) => `t${index}`)
+      }
+      .columnsTemplate('repeat(' + PIXEL_MAP_COLS + ', 1fr)')
+      .rowsTemplate('repeat(' + PIXEL_MAP_ROWS + ', 1fr)')
+      .width('100%')
+      .height('100%')
+      .opacity(this.imageLoaded ? 0 : 0.55)
+      .animation({ duration: 600, curve: Curve.EaseOut })
+
+      // 网络图片背景 - 带淡入过渡效果（加载完成后会淡入覆盖装饰层）
       if (this.imageUrl && this.imageUrl.length > 0) {
         Image(this.imageUrl)
           .width('100%')
@@ -113,21 +178,25 @@ export struct BackgroundImage {
             curve: Curve.EaseOut
           })
           .onAppear(() => {
-            // URL 变化时重置透明度
+            // URL 变化时重置透明度与加载标志
             if (this.lastImageUrl !== this.imageUrl) {
               this.currentOpacity = 0;
+              this.imageLoaded = false;
               this.lastImageUrl = this.imageUrl;
             }
           })
           .onComplete(() => {
-            // 图片加载完成，淡入到目标透明度
+            // 图片加载完成，淡入到目标透明度，并通知装饰层淡出
             this.currentOpacity = this.imageOpacity;
+            this.imageLoaded = true;
             // 仅在支持长按保存时预缓存图片数据
             if (this.enableLongPressSave) {
               this.backgroundUtil.preloadAndCacheImage();
             }
           })
           .onError(() => {
+            // 加载失败保持装饰层显示
+            this.imageLoaded = false;
             console.warn('BackgroundImage: 背景图加载失败', this.imageUrl);
           })
           .gesture(
