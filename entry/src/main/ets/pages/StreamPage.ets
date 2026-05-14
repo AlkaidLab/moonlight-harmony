@@ -27,6 +27,7 @@ import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { TouchInputHandler, TouchInputMode } from '../service/input/TouchInputHandler';
 import { StreamWindowManager } from '../service/streaming/StreamWindowManager';
 import { ShortcutManager, Shortcut } from '../components/ShortcutManager';
+import { pickRandomConnectingTip } from '../components/StreamConnectingTips';
 import { ShortcutEditorDialog, ShortcutEditData } from '../components/dialogs/ShortcutEditorDialog';
 import { GamepadManager, GamepadState, MoonlightControllerType, MouseEmulationCallback } from '../service/input/GamepadManager';
 import { GyroAssistService } from '../service/input/GyroAssistService';
@@ -86,6 +87,7 @@ interface StreamPageParams {
   cmdList?: string;       // JSON 字符串格式的超级指令列表
   displayGuid?: string;   // 指定的显示器 GUID
   useVdd?: boolean;       // 是否使用虚拟显示器
+  posterPath?: string;    // 应用本地海报路径，连接中遮罩背景
 }
 
 /** StreamPage 对 CustomKeyManager 的宿主回调实现 */
@@ -145,6 +147,11 @@ struct StreamPage {
   
   // 网络质量警告（通过 AppStorage 跨 NAPI 边界可靠同步）
   @StorageLink('connectionPoor') connectionPoor: boolean = false;
+
+  // 连接中遮罩使用的应用海报（由 AppListPageV2 传入），让等待 launchApp/首帧时不再是纯黑屏
+  @State posterPath: string = '';
+  // 连接中遮罩随机展示的小课堂提示
+  @State connectingTip: string = '';
   
   // UI 状态
   @State xComponentWidth: Length = '100%';
@@ -257,6 +264,8 @@ struct StreamPage {
       this.appName = params.appName || '';
       this.displayGuid = params.displayGuid || '';
       this.useVdd = params.useVdd || false;
+      // 连接中遮罩背景（应用海报），让等待首帧时有视觉锚点
+      this.posterPath = params.posterPath || '';
       // 解析超级指令列表
       if (params.cmdList) {
         try {
@@ -266,6 +275,8 @@ struct StreamPage {
         }
       }
     }
+    // 每次进入随机选一条小课堂提示
+    this.connectingTip = pickRandomConnectingTip();
 
     // 自动加载游戏关联的自定义按键配置
     if (this.appId > 0) {
@@ -2167,23 +2178,85 @@ struct StreamPage {
 
   @Builder
   ConnectingOverlay() {
-    Column() {
-      LoadingProgress()
-        .width(48)
-        .height(48)
-        .color(Color.White)
+    Stack() {
+      // 1) 海报背景层：有海报时用 app 封面，模糊 + 暗化；无海报时回退到纯黑
+      if (this.posterPath.length > 0) {
+        Image(`file://${this.posterPath}`)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .blur(40)
+          .opacity(0.55)
+      }
+      // 2) 渐变暗化层（顶部和底部更暗，居中信息可读性更高）
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient({
+          angle: 180,
+          colors: [
+            ['rgba(0,0,0,0.85)', 0.0],
+            ['rgba(0,0,0,0.55)', 0.5],
+            ['rgba(0,0,0,0.92)', 1.0]
+          ]
+        })
 
-      Text(this.viewModel.connectionStageText || '正在连接...')
-        .fontSize(14)
-        .fontColor('#B0FFFFFF')
-        .margin({ top: 16 })
-        .textAlign(TextAlign.Center)
-        .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+      // 3) 信息层
+      Column() {
+        // 应用名（如果有）
+        if (this.appName.length > 0) {
+          Text(this.appName)
+            .fontSize(20)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#FFFFFFFF')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ bottom: 32 })
+            .constraintSize({ maxWidth: 360 })
+            .textAlign(TextAlign.Center)
+        }
+
+        LoadingProgress()
+          .width(48)
+          .height(48)
+          .color(Color.White)
+
+        Text(this.viewModel.connectionStageText || '正在连接...')
+          .fontSize(14)
+          .fontColor('#E0FFFFFF')
+          .margin({ top: 16 })
+          .textAlign(TextAlign.Center)
+          .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+
+        // 小课堂提示（仅在有 tip 时显示，控制最大宽度）
+        if (this.connectingTip.length > 0) {
+          Text(this.connectingTip)
+            .fontSize(12)
+            .fontColor('#99FFFFFF')
+            .margin({ top: 28 })
+            .padding({ left: 28, right: 28 })
+            .textAlign(TextAlign.Center)
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 460 })
+            .lineHeight(18)
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#CC000000')
-    .justifyContent(FlexAlign.Center)
+    // 淡出 + 轻微放大消失，让"已连接 → 首帧"之间不再瞬间黑切。
+    // 进入时用瞬时显现（appear: identity），离开时 320ms ease-out 淡到 0 + scale 1.04
+    .transition(TransitionEffect.asymmetric(
+      TransitionEffect.IDENTITY,
+      TransitionEffect.OPACITY.combine(
+        TransitionEffect.scale({ x: 1.04, y: 1.04 })
+      ).animation({ duration: 320, curve: Curve.EaseOut })
+    ))
   }
 
   @Builder

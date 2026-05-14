@@ -1266,27 +1266,52 @@ export class StreamingSession {
     console.info(`解码器: buffers=${this.config.decoderBufferCount}, sync=${this.config.enableSyncDecode}, ` +
       `vsync=${this.config.enableVsync}, vrr=${this.config.enableVrr}`);
 
-    const result = this.nativeModule.startConnection(
+    const callStart = (): number => this.nativeModule.startConnection(
       this.connectionAddress,
       this.serverAppVersion,
       this.serverGfeVersion,
       this.rtspSessionUrl,
       this.serverCodecModeSupport,
-      this.config.width, this.config.height, this.config.fps,
-      this.config.bitrate,
+      this.config!.width, this.config!.height, this.config!.fps,
+      this.config!.bitrate,
       1392, // packetSize (will be capped by moonlight-common-c for remote)
       2,    // streamingRemotely: STREAM_CFG_AUTO - let moonlight-common-c auto-detect
-      this.config.audioConfig,
+      this.config!.audioConfig,
       supportedVideoFormats,
-      this.config.clientRefreshRateX100,
-      this.riKey, riAesIv,
+      this.config!.clientRefreshRateX100,
+      this.riKey!, riAesIv,
       0x01 | 0x02, // videoCapabilities: DIRECT_SUBMIT | RFI_AVC
-      this.config.hdr ? 2 : 1, // colorSpace: REC_2020 / REC_709
-      this.config.colorRange,
-      this.config.hdr ? this.config.hdrMode : HdrMode.SDR,
-      this.config.microphoneEnabled,
-      this.config.controlOnly    // controlOnly
+      this.config!.hdr ? 2 : 1, // colorSpace: REC_2020 / REC_709
+      this.config!.colorRange,
+      this.config!.hdr ? this.config!.hdrMode : HdrMode.SDR,
+      this.config!.microphoneEnabled,
+      this.config!.controlOnly
     );
+
+    let result = callStart();
+    // RTSP/ENet 瞬态错误自动重试 1 次：errno 4=EINTR、110=ETIMEDOUT、104=ECONNRESET、32=EPIPE
+    // 这类错误通常是 ENet service 循环被打断或网络抖动，host 端不需要重新 launchApp，
+    // 只需 stopConnection 释放 native 资源后等待短暂窗口再重试即可恢复。
+    const TRANSIENT_ERRORS = [4, 32, 104, 110];
+    if (result !== 0 && TRANSIENT_ERRORS.includes(result)) {
+      // 瞬态错误后立即检查是否已被用户取消
+      if (this.userInitiatedStop) {
+        return;
+      }
+      console.warn(`StreamingSession: startConnection 返回瞬态错误 ${result}，1.5s 后重试一次`);
+      if (!this.userInitiatedStop) {
+        this.nativeModule.stopConnection();
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, 1500));
+      // 重试前再次检查是否已被用户取消
+      if (this.userInitiatedStop) {
+        return;
+      }
+      result = callStart();
+      if (result === 0) {
+        console.info('StreamingSession: 重试成功');
+      }
+    }
 
     if (result !== 0) {
       throw new Error(`连接失败，错误码: ${result}`);
