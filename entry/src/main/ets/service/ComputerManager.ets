@@ -36,6 +36,23 @@ interface PollResult {
 /** 轮询间隔（毫秒），参照 Android ComputerManagerService */
 const SERVERINFO_POLLING_PERIOD_MS = 5000;
 
+/**
+ * ServerInfo 缓存有效期（毫秒）。
+ *
+ * 用于在 ComputerManager 轮询 / AppListPage 刷新拿到的 ServerInfo 之上，
+ * 让后续"进入串流"链路可以跳过一次 HTTPS round-trip。仅复用与连接无关的字段
+ * （hostname/uniqueId/serverCodecModeSupport/currentGame 等），不会影响诊断准确性。
+ */
+const SERVER_INFO_CACHE_TTL_MS = 30_000;
+
+/**
+ * ServerInfo 缓存项
+ */
+interface CachedServerInfo {
+  info: ServerInfo;
+  timestamp: number;
+}
+
 /** 全 0 MAC：远程响应或 HTTP 未配对响应中的占位值，不能用它覆盖已发现的真实 MAC */
 const ZERO_MAC = '00:00:00:00:00:00';
 
@@ -62,6 +79,12 @@ export class ComputerManager {
   private netConnection: connection.NetConnection | null = null;
   /** 离线轮询计数：连续失败次数，达到 INITIAL_POLL_TRIES/OFFLINE_POLL_TRIES 阈值后才标 OFFLINE */
   private offlineCount: Map<string, number> = new Map();
+
+  /**
+   * ServerInfo 缓存（key=computer uuid）。
+   * 由轮询 / 刷新链路写入；StreamingSession.fetchServerInfo 命中即复用，省一次 HTTPS。
+   */
+  private serverInfoCache: Map<string, CachedServerInfo> = new Map();
 
   // ═══════════════════════════════════════════════════════════
   // 初始化 & 单例
@@ -366,6 +389,36 @@ export class ComputerManager {
   getComputer(uuid: string): ComputerInfo | undefined {
     const computer = this.computers.get(uuid);
     return computer ? ComputerPersistence.cloneComputer(computer) : undefined;
+  }
+
+  /**
+   * 缓存最新的 ServerInfo（轮询 / AppList 刷新成功时调用）
+   * 用于让"进入串流"链路跳过一次 HTTPS /serverinfo 请求。
+   */
+  cacheServerInfo(uuid: string, info: ServerInfo): void {
+    if (!uuid) return;
+    this.serverInfoCache.set(uuid, { info, timestamp: Date.now() });
+  }
+
+  /**
+   * 获取最近 ${SERVER_INFO_CACHE_TTL_MS}ms 内缓存的 ServerInfo，过期/缺失返回 null。
+   */
+  getCachedServerInfo(uuid: string): ServerInfo | null {
+    if (!uuid) return null;
+    const entry = this.serverInfoCache.get(uuid);
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > SERVER_INFO_CACHE_TTL_MS) {
+      this.serverInfoCache.delete(uuid);
+      return null;
+    }
+    return entry.info;
+  }
+
+  /**
+   * 主动让某台电脑的 ServerInfo 缓存失效（例如配对/解配后状态可能改变时）
+   */
+  invalidateServerInfoCache(uuid: string): void {
+    this.serverInfoCache.delete(uuid);
   }
 
   /**
@@ -853,6 +906,9 @@ export class ComputerManager {
 
     // 合并服务器信息（所有字段守卫规则集中在 mergeServerInfo）
     this.mergeServerInfo(target, info, result.address);
+
+    // 缓存最新 ServerInfo，让"进入串流"链路省一次 HTTPS round-trip
+    this.cacheServerInfo(target.uuid, info);
 
     // 如果仍缺少 IPv6 全局地址，异步补充（不阻塞轮询流程）
     if (!target.ipv6Address && info.hostname) {

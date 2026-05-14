@@ -21,7 +21,8 @@ import { PairState } from '../model/ComputerInfo';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { ToastQueue } from '../utils/ToastQueue';
-import { UiSettings } from '../service/SettingsService';
+import { UiSettings, SettingsService } from '../service/SettingsService';
+import { StreamingSession } from '../service/streaming/StreamingSession';
 
 interface AppListPageParams {
   computerId: string;
@@ -152,6 +153,36 @@ struct AppListPageV2 {
     } else if (this.isLoading) {
       this.isLoading = false;
     }
+
+    // 进入应用列表 = 用户即将开始串流，提前预热"启动链路"上的高开销资源：
+    //   1) Native lib (.so) 加载 + NAPI 注册（首次冷启动 100-500ms）
+    //   2) 解码器能力查询（StreamingSession 启动时会调用 2 次）
+    //   3) 流配置 / 输入设置 / 显示设置（首次读取走 Preferences I/O，后续在内存中）
+    // 全部失败兜底：忽略，正常路径在 startStreaming 里会重新触发。
+    this.preheatStreamResources();
+  }
+
+  /**
+   * 预热串流启动链路上的高开销资源（native + 设置）。
+   * 不阻塞 UI；任何失败都仅打日志，启动链路会重新走完整路径。
+   */
+  private preheatStreamResources(): void {
+    try {
+      const caps = StreamingSession.getDecoderCapabilities();
+      console.info(`AppListPage: native 预热完成, H264=${caps.supportsH264}, HEVC=${caps.supportsHEVC}, AV1=${caps.supportsAV1}`);
+    } catch (err) {
+      console.warn(`AppListPage: native 预热失败: ${(err as Error).message}`);
+    }
+    const settings = SettingsService.getInstance();
+    settings.getStreamConfig().catch((err: Error) => {
+      console.warn(`AppListPage: stream 配置预热失败: ${err.message}`);
+    });
+    settings.getInputSettings().catch((err: Error) => {
+      console.warn(`AppListPage: input 配置预热失败: ${err.message}`);
+    });
+    settings.getDisplaySettings().catch((err: Error) => {
+      console.warn(`AppListPage: display 配置预热失败: ${err.message}`);
+    });
   }
 
   aboutToDisappear(): void {
@@ -450,6 +481,8 @@ struct AppListPageV2 {
           if (computer) {
             computer.runningGameId = serverInfo.currentGame;
           }
+          // 写入 ServerInfo 缓存：用户随后点击应用进入串流时可省一次 HTTPS round-trip
+          this.computerManager.cacheServerInfo(this.computerId, serverInfo);
         } catch {
           // 忽略服务器状态获取失败
         }

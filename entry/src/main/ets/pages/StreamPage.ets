@@ -226,6 +226,9 @@ struct StreamPage {
   private panZoomHandler: PanZoomHandler = new PanZoomHandler();
   private controllerTypes: Map<number, number> = new Map();  // slot → MoonlightControllerType
   private aiKeyService: AiKeyService | null = null;
+  private aiKeyNvHttp: NvHttp | null = null;
+  // AI 可用性探测的延时定时器，aboutToDisappear 时需清理
+  private aiProbeTimer: number | null = null;
   
   // 页面参数
   private computerId: string = '';
@@ -275,24 +278,15 @@ struct StreamPage {
     }
     
     // 初始化 AI 按键推荐服务
+    // 注意：AI 探测的 HTTPS 请求会与串流启动链路抢带宽 / TLS handshake，因此这里只创建
+    // 服务实例，把可用性探测推迟到 startStreaming() 成功之后再触发（见 probeAiAvailable）。
     if (this.computerId) {
       try {
         const computer = ComputerManager.getInstance().getComputer(this.computerId);
         if (computer) {
           const nvHttp = NvHttp.fromComputer(computer, this.context);
           this.aiKeyService = new AiKeyService(nvHttp, this.context);
-
-          // 异步探测 AI 可用性，延迟显示避免与手柄连接等 toast 冲突
-          nvHttp.checkAiAvailable().then((available: boolean) => {
-            if (available) {
-              setTimeout(() => {
-                ToastQueue.show({
-                  message: '✨ AI LLM 已连接，可使用 AIV+ 功能',
-                  duration: 2500
-                });
-              }, 3000);
-            }
-          });
+          this.aiKeyNvHttp = nvHttp;
         }
       } catch (err) {
         console.warn(`[StreamPage] AI 服务初始化失败: ${err}`);
@@ -461,6 +455,35 @@ struct StreamPage {
   // 重新检测周期（首次延迟，覆盖热插拔的简单场景）
   private static readonly UNHANDLED_USB_DETECT_DELAY_MS: number = 5000;
   private static readonly UNHANDLED_USB_DETECT_REPEAT_MS: number = 10000;
+
+  /**
+   * 串流就绪后异步探测 AI LLM 可用性。
+   * 推迟到此处而非 aboutToAppear，是为了避免与启动链路（serverinfo / launchApp / RTSP）
+   * 抢带宽和 TLS 资源；用户也已经看到画面，多 1-3 秒延迟感知不到。
+   */
+  private probeAiAvailableDeferred(): void {
+    const nvHttp = this.aiKeyNvHttp;
+    if (!nvHttp) return;
+    if (this.aiProbeTimer !== null) {
+      clearTimeout(this.aiProbeTimer);
+      this.aiProbeTimer = null;
+    }
+    this.aiProbeTimer = setTimeout(() => {
+      this.aiProbeTimer = null;
+      // 二次校验：页面已销毁则 aiKeyNvHttp 会被置空
+      if (!this.aiKeyNvHttp) return;
+      nvHttp.checkAiAvailable().then((available: boolean) => {
+        if (available && this.aiKeyNvHttp) {
+          ToastQueue.show({
+            message: '✨ AI LLM 已连接，可使用 AIV+ 功能',
+            duration: 2500
+          });
+        }
+      }).catch((err: Error) => {
+        console.warn(`[StreamPage] AI 可用性探测失败: ${err.message}`);
+      });
+    }, 2000);
+  }
 
   /**
    * 调度未识别 USB 手柄检测：
@@ -673,6 +696,13 @@ struct StreamPage {
   
   aboutToDisappear(): void {
     console.info('StreamPage aboutToDisappear - cleaning up');
+
+    // 取消 AI 可用性延时探测，避免页面销毁后回调触发 Toast / 网络请求
+    if (this.aiProbeTimer !== null) {
+      clearTimeout(this.aiProbeTimer);
+      this.aiProbeTimer = null;
+    }
+    this.aiKeyNvHttp = null;
 
     this.stopClipboardSync();
 
@@ -1310,6 +1340,9 @@ struct StreamPage {
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
       this.streamStartedAtMs = Date.now();
+
+      // 串流就绪后再做 AI 服务可用性探测，避免与启动链路抢带宽
+      this.probeAiAvailableDeferred();
 
       await this.startClipboardSync();
 

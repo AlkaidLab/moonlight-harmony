@@ -668,7 +668,11 @@ export class UsbDriverService implements UsbDriverListener {
   static listKnownUsbGamepads(): KnownUsbGamepadInfo[] {
     const result: KnownUsbGamepadInfo[] = [];
     try {
-      const devices: usbManager.USBDevice[] = usbManager.getDevices();
+      // 模拟器/无 USB 权限场景下 getDevices() 可能返回 undefined
+      const devices: usbManager.USBDevice[] | undefined = usbManager.getDevices();
+      if (!devices || devices.length === 0) {
+        return result;
+      }
       for (let i = 0; i < devices.length; i++) {
         const d = devices[i];
         const name = UsbDriverService.identifyKnownGamepad(d);
