@@ -150,6 +150,8 @@ struct StreamPage {
 
   // 连接中遮罩使用的应用海报（由 AppListPageV2 传入），让等待 launchApp/首帧时不再是纯黑屏
   @State posterPath: string = '';
+  // 全局底商：PcView 加载的背景壁纸。posterPath 为空时（从 PcCard 直接串流）底到这里
+  @StorageLink('globalBackgroundImageUrl') globalBgUrl: string = '';
   // 连接中遮罩随机展示的小课堂提示
   @State connectingTip: string = '';
   
@@ -2179,7 +2181,7 @@ struct StreamPage {
   @Builder
   ConnectingOverlay() {
     Stack() {
-      // 1) 海报背景层：有海报时用 app 封面，模糊 + 暗化；无海报时回退到纯黑
+      // 1) 海报背景层：优先 app 封面；从 PcCard 直接串流时 fallback 到 PcView 背景壁纸；都没有就纯黑
       if (this.posterPath.length > 0) {
         Image(`file://${this.posterPath}`)
           .width('100%')
@@ -2187,6 +2189,13 @@ struct StreamPage {
           .objectFit(ImageFit.Cover)
           .blur(40)
           .opacity(0.55)
+      } else if (this.globalBgUrl.length > 0) {
+        Image(this.globalBgUrl)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .blur(40)
+          .opacity(0.45)
       }
       // 2) 渐变暗化层（顶部和底部更暗，居中信息可读性更高）
       Column()

@@ -155,6 +155,7 @@ struct PcListPageV2 {
       const bgType = await this.backgroundUtil.getBackgroundImageType();
       if (bgType === BackgroundImageType.NONE) {
         this.backgroundImageUrl = '';
+        AppStorage.setOrCreate<string>('globalBackgroundImageUrl', '');
         return;
       }
 
@@ -174,6 +175,8 @@ struct PcListPageV2 {
         // 如果本地缓存失败，使用在线 URL
         this.backgroundImageUrl = await this.backgroundUtil.getBackgroundImageUrl();
       }
+      // 发布到全局：StreamPage 连接中遮罩在没有应用海报时底到这张背景图
+      AppStorage.setOrCreate<string>('globalBackgroundImageUrl', this.backgroundImageUrl);
     } catch (err) {
       // 忽略错误
     }
@@ -190,6 +193,7 @@ struct PcListPageV2 {
       const currentType = await this.backgroundUtil.getBackgroundImageType();
       if (currentType === BackgroundImageType.NONE) {
         this.backgroundImageUrl = '';
+        AppStorage.setOrCreate<string>('globalBackgroundImageUrl', '');
       } else if (typeChanged) {
         // 类型变化，重新加载（缓存已在 setBackgroundImageType 中清除）
         this.loadBackgroundImage();
