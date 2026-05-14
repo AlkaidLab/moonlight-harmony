@@ -1294,9 +1294,19 @@ export class StreamingSession {
     // 只需 stopConnection 释放 native 资源后等待短暂窗口再重试即可恢复。
     const TRANSIENT_ERRORS = [4, 32, 104, 110];
     if (result !== 0 && TRANSIENT_ERRORS.includes(result)) {
+      // 瞬态错误后立即检查是否已被用户取消
+      if (this.userInitiatedStop) {
+        return;
+      }
       console.warn(`StreamingSession: startConnection 返回瞬态错误 ${result}，1.5s 后重试一次`);
-      this.nativeModule.stopConnection();
+      if (!this.userInitiatedStop) {
+        this.nativeModule.stopConnection();
+      }
       await new Promise<void>(resolve => setTimeout(resolve, 1500));
+      // 重试前再次检查是否已被用户取消
+      if (this.userInitiatedStop) {
+        return;
+      }
       result = callStart();
       if (result === 0) {
         console.info('StreamingSession: 重试成功');
