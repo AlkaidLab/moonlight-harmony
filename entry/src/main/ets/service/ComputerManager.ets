@@ -16,7 +16,7 @@ import { ComputerPersistence } from './ComputerPersistence';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { WakeOnLan } from './network/WakeOnLan';
-import { isLanAddress, getBestIpv6Address, isIPv6Address, isLoopbackIPv4, parseAddressAndPort } from '../utils/NetHelper';
+import { isLanAddress, getBestIpv6Address, isIPv4Address, isIPv6Address, isLoopbackIPv4, parseAddressAndPort } from '../utils/NetHelper';
 import { connection } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
@@ -223,9 +223,9 @@ export class ComputerManager {
       // 走单一合并入口，保证与轮询/添加路径使用同一套守卫规则
       this.mergeServerInfo(target, serverInfo, address);
 
-      // 如果仍缺少 IPv6 全局地址，异步补充
-      if (!target.ipv6Address && serverInfo.hostname) {
-        this.lookupAndSetIpv6(target, serverInfo.hostname);
+      // 如果仍缺少 IPv6 全局地址，异步补充（包含用户输入的 DDNS 域名）
+      if (!target.ipv6Address) {
+        this.lookupAndSetIpv6(target, serverInfo.hostname, target.manualAddress);
       }
 
       this.saveComputers();
@@ -468,21 +468,72 @@ export class ComputerManager {
    *   - "::1" 或 "[::1]" - IPv6 地址，使用默认端口
    *   - "[::1]:47989" - IPv6 地址 + 自定义端口
    *   - "mydomain.com" - 域名，会被保存为 manualAddress
+   *
+   * 对 AAAA-only 域名的兜底：用户反馈"手输 IPv6 字面量可连接、用域名超时"
+   * 推测鸿蒙 RCK / native getaddrinfo 对纯 AAAA 域名解析不稳定。
+   * 添加流程：先尝试用原域名连接 → 失败时通过 ETS 层 connection.getAddressesByName
+   * 解析出 IPv6 字面量再重试，确保首次添加能成功且后续会持久化 ipv6Address。
    */
   async addComputer(addressInput: string): Promise<ComputerInfo> {
     const parsed = parseAddressAndPort(addressInput);
-    const result = await this.addComputerInternal(parsed.host, undefined, parsed.port);
-    
+    const isLiteralIp = isIPv4Address(parsed.host) || isIPv6Address(parsed.host);
+
+    let result: ComputerInfo;
+    let resolvedIpv6: string | undefined;
+    try {
+      result = await this.addComputerInternal(parsed.host, undefined, parsed.port);
+    } catch (firstErr) {
+      // 域名直连失败 → 尝试在 ETS 层解析 AAAA 再用裸 IPv6 重试
+      if (isLiteralIp) {
+        throw firstErr as Error;
+      }
+      const ipv6 = await this.resolveAaaaLiteral(parsed.host);
+      if (!ipv6) {
+        // AAAA 解析也无果，把原错误抛出（含网络/超时信息）
+        throw firstErr as Error;
+      }
+      console.info(`ComputerManager: 域名 ${parsed.host} 直连失败，已解析 AAAA → ${ipv6}，用裸 IPv6 重试添加`);
+      result = await this.addComputerInternal(ipv6, undefined, parsed.port);
+      resolvedIpv6 = ipv6;
+    }
+
     // 保存用户手动输入的地址（仅主机部分，端口已存储在 httpPort 中）
     // 这个地址永不会被自动发现覆盖，轮询时最优先尝试
     result.manualAddress = parsed.host;
-    
+
+    // 域名场景：把解析出的 IPv6 字面量持久化，让后续轮询并行尝试时 IPv6 字面量直连可用
+    if (resolvedIpv6) {
+      result.ipv6Address = resolvedIpv6;
+    }
+
     // 保存更新后的电脑信息
     this.computers.set(result.uuid, result);
     await this.saveComputers();
-    
+
     this.notifyListChanged();
     return result;
+  }
+
+  /**
+   * ETS 层主动解析 AAAA，返回最佳 IPv6 全局地址（无则 undefined）。
+   * 用于：
+   *   - addComputer 域名直连失败时的回退
+   *   - lookupAndSetIpv6 持久化 IPv6 字面量到 computer.ipv6Address
+   */
+  private async resolveAaaaLiteral(host: string): Promise<string | undefined> {
+    try {
+      const addresses = await connection.getAddressesByName(host);
+      const ipv6List: string[] = [];
+      for (const addr of addresses) {
+        if (addr.family === 2 && addr.address) {
+          ipv6List.push(addr.address);
+        }
+      }
+      return getBestIpv6Address(ipv6List);
+    } catch (err) {
+      console.info(`ComputerManager: resolveAaaaLiteral('${host}') 失败: ${err}`);
+      return undefined;
+    }
   }
 
   /**
@@ -507,9 +558,9 @@ export class ComputerManager {
         this.computers.set(existing.uuid, existing);
         await this.saveComputers();
 
-        // 如果仍缺少 IPv6 全局地址，异步补充
-        if (!existing.ipv6Address && serverInfo.hostname) {
-          this.lookupAndSetIpv6(existing, serverInfo.hostname);
+        // 如果仍缺少 IPv6 全局地址，异步补充（包含用户输入的 DDNS 域名）
+        if (!existing.ipv6Address) {
+          this.lookupAndSetIpv6(existing, serverInfo.hostname, existing.manualAddress);
         }
 
         return existing;
@@ -534,9 +585,9 @@ export class ComputerManager {
       this.computers.set(computer.uuid, computer);
       await this.saveComputers();
 
-      // 如果仍缺少 IPv6 全局地址，异步补充
-      if (!computer.ipv6Address && serverInfo.hostname) {
-        this.lookupAndSetIpv6(computer, serverInfo.hostname);
+      // 如果仍缺少 IPv6 全局地址，异步补充（包含用户输入的 DDNS 域名）
+      if (!computer.ipv6Address) {
+        this.lookupAndSetIpv6(computer, serverInfo.hostname, computer.manualAddress);
       }
 
       console.info(`ComputerManager: 成功添加电脑 ${computer.name} (${computer.uuid}), localAddr=${computer.localAddress}, remoteAddr=${computer.remoteAddress}`);
@@ -911,8 +962,13 @@ export class ComputerManager {
     this.cacheServerInfo(target.uuid, info);
 
     // 如果仍缺少 IPv6 全局地址，异步补充（不阻塞轮询流程）
-    if (!target.ipv6Address && info.hostname) {
-      this.lookupAndSetIpv6(target, info.hostname);
+    // 候选源（按外网可达性排序）：
+    //   - manualAddress：用户输入的 DDNS / 公网域名，外网最可能解析到 AAAA
+    //   - info.hostname：服务器自报主机名，通常仅 LAN 可解析
+    //   - hostname.local：mDNS fallback
+    // 不限制 isIPv6Address(manualAddress)，DDNS 域名 ≠ IPv6 字面量但解析后是 IPv6
+    if (!target.ipv6Address) {
+      this.lookupAndSetIpv6(target, info.hostname, target.manualAddress);
     }
 
     console.info(`ComputerManager: ${target.name} 在线 (${result.address}), game=${info.currentGame}, paired=${target.pairState}`);
@@ -928,43 +984,44 @@ export class ComputerManager {
   /**
    * 异步查询主机的 IPv6 全局地址并更新到 ComputerInfo
    *
-   * 通过 DNS 解析主机名获取 AAAA 记录，选出最佳 IPv6 全局地址。
-   * 作为 mDNS 发现的补充机制，确保外网可达的 IPv6 地址被持久化。
+   * 通过 DNS 解析多个候选主机名获取 AAAA 记录，选出最佳 IPv6 全局地址。
+   *
+   * 候选源（按外网可达性排序）：
+   *   1. manualAddress：用户输入的 DDNS / 公网域名（外网最优）
+   *   2. hostname：服务器自报（通常仅 LAN 可解析）
+   *   3. hostname.local：mDNS fallback
+   *
+   * 必要性：用户反馈"手输 IPv6 字面量可连接、用 AAAA-only 域名超时"。
+   * 推断 RCK / native getaddrinfo 对 AAAA-only 域名解析行为有问题。
+   * 通过 ETS 层 `connection.getAddressesByName` 主动解析出裸 IPv6 字面量后，
+   * 写入 `computer.ipv6Address`，后续轮询会把它并入候选地址并行 race；
+   * IPv6 字面量绕过底层 DNS 直连，胜出后即成为 `computer.address`。
    */
-  private lookupAndSetIpv6(computer: ComputerInfo, hostname: string): void {
-    const tryLookup = async (host: string): Promise<string | undefined> => {
-      try {
-        const addresses = await connection.getAddressesByName(host);
-        console.info(`ComputerManager: getAddressesByName('${host}') 返回 ${addresses.length} 个地址`);
-        const ipv6List: string[] = [];
-        for (const addr of addresses) {
-          if (addr.family === 2 && addr.address) {
-            ipv6List.push(addr.address);
-          }
+  private lookupAndSetIpv6(computer: ComputerInfo, hostname: string | undefined, manualAddress?: string): void {
+    // 不解析已经是 IPv6 字面量的 manualAddress；纯 IPv4 字面量也跳过
+    const lookupSources: string[] = [];
+    if (manualAddress && !isIPv6Address(manualAddress) && !isIPv4Address(manualAddress)) {
+      lookupSources.push(manualAddress);
+    }
+    if (hostname) {
+      lookupSources.push(hostname, `${hostname}.local`);
+    }
+    if (lookupSources.length === 0) return;
+
+    // 顺序尝试，第一个拿到 IPv6 全局地址即停止
+    const lookupChain = async (): Promise<void> => {
+      for (const host of lookupSources) {
+        const ipv6 = await this.resolveAaaaLiteral(host);
+        if (ipv6) {
+          computer.ipv6Address = ipv6;
+          console.info(`ComputerManager: 为 ${computer.name} 补充 IPv6 地址: ${ipv6} (源: ${host})`);
+          this.saveComputers();
+          return;
         }
-        return getBestIpv6Address(ipv6List);
-      } catch (err) {
-        console.info(`ComputerManager: getAddressesByName('${host}') 失败: ${err}`);
-        return undefined;
       }
     };
 
-    // 先尝试主机名，再尝试 hostname.local
-    tryLookup(hostname).then((ipv6: string | undefined) => {
-      if (ipv6) {
-        computer.ipv6Address = ipv6;
-        console.info(`ComputerManager: 为 ${computer.name} 补充 IPv6 地址: ${ipv6}`);
-        this.saveComputers();
-        return;
-      }
-      return tryLookup(`${hostname}.local`);
-    }).then((ipv6: string | undefined) => {
-      if (ipv6) {
-        computer.ipv6Address = ipv6;
-        console.info(`ComputerManager: 为 ${computer.name} 补充 IPv6 地址 (.local): ${ipv6}`);
-        this.saveComputers();
-      }
-    }).catch(() => {
+    lookupChain().catch(() => {
       // 静默忽略
     });
   }
