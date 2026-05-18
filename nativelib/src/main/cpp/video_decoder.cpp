@@ -299,6 +299,7 @@ static void TryLoadMediaKeys() {
 // 缓冲区配置
 static constexpr int kMinBufferCount = 2;       // 最小缓冲区数（双缓冲）
 static constexpr int kMaxBufferCount = 8;       // 最大缓冲区数
+static constexpr int kAutoBufferCount = 2;      // 自动模式下，默认统一使用 2
 static constexpr int kHighFpsThreshold = 60;    // 高帧率阈值
 static constexpr int kHighFpsMaxBuffers = 4;    // 高帧率时最大缓冲区数
 
@@ -366,6 +367,14 @@ static constexpr double kL5HighFpsThreshold = 90.0;
 // 避免在快速解码器上误判正常的批量输出为堆积
 static constexpr int64_t kL5AbsoluteLatencyFloorMs = 30;
 
+static int ResolveEffectiveBufferCount(int requestedCount, DecoderMode mode) {
+    if (requestedCount > 0) {
+        return std::clamp(requestedCount, kMinBufferCount, kMaxBufferCount);
+    }
+    (void)mode;
+    return kAutoBufferCount;
+}
+
 // =============================================================================
 // VideoDecoder 类实现
 // =============================================================================
@@ -403,15 +412,6 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     
     config_ = config;
     window_ = window;
-    
-    // 设置软件队列大小（用于同步模式）
-    // 使用用户设置的 bufferCount，如果是 0（默认）则使用 2（最低延迟）
-    if (config_.bufferCount > 0) {
-        maxPendingFrames_ = static_cast<size_t>(std::clamp(config_.bufferCount, 2, 16));
-    } else {
-        maxPendingFrames_ = 2;  // 默认值，最低延迟
-    }
-    OH_LOG_INFO(LOG_APP, "{Init} Software queue size: %{public}zu", maxPendingFrames_);
     
     OH_LOG_INFO(LOG_APP, "{Init} Initializing video decoder: %{public}dx%{public}d@%.2f, codec=%{public}d, window=%{public}p",
                 config_.width, config_.height, config_.fps, static_cast<int>(config_.codec), static_cast<void*>(window));
@@ -579,37 +579,37 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
         OH_LOG_INFO(LOG_APP, "{Init} Async callbacks registered successfully");
     }
     
+    // 统一解析解码队列深度：同一个设置在同步/异步模式下都先解析成一个有效值。
+    // 自动模式默认统一为 2；同步模式下再同时作用于
+    // 1) 软件 pending queue 上限
+    // 2) 解码器 input/output buffer 请求值
+    // 0 表示自动：默认统一解析为 2。
+    int effectiveBufferCount = ResolveEffectiveBufferCount(config_.bufferCount, config_.decoderMode);
+    maxPendingFrames_ = static_cast<size_t>(effectiveBufferCount > 0 ? effectiveBufferCount : kMinBufferCount);
+    OH_LOG_INFO(LOG_APP, "{Init} Queue depth resolved: requested=%{public}d, effective=%{public}d, mode=%{public}s, softwareQueue=%{public}zu",
+                config_.bufferCount, effectiveBufferCount,
+                config_.decoderMode == DecoderMode::SYNC ? "SYNC" : "ASYNC",
+                maxPendingFrames_);
+
     // 缓冲区配置优化 - 减少管线延迟
     // HarmonyOS 官方 API：
     // - OH_MD_MAX_INPUT_BUFFER_COUNT: 最大输入缓冲区个数
     // - OH_MD_MAX_OUTPUT_BUFFER_COUNT: 最大输出缓冲区个数
-    // 
-    // bufferCount = 0 表示使用系统默认值（不设置）
-    // bufferCount = 2-8 表示指定缓冲区数量
-    
-    int bufferCount = config_.bufferCount;
-    
-    // 同步模式需要更大的 buffer 数量，因为需要手动管理 buffer
-    // 如果用户没有指定（bufferCount=0），同步模式使用较大的默认值
-    if (syncModeConfigured && bufferCount == 0) {
-        bufferCount = 4;  // 同步模式默认 4 个 buffer
-        OH_LOG_INFO(LOG_APP, "{Init} Sync mode: using default buffer count of 4");
-    }
-    
-    if (bufferCount > 0) {
-        // 限制缓冲区数量在有效范围内，完全尊重用户设置
-        bufferCount = std::clamp(bufferCount, kMinBufferCount, kMaxBufferCount);
-        
-        OH_AVFormat_SetIntValue(format, OH_MD_MAX_INPUT_BUFFER_COUNT, bufferCount);
-        OH_AVFormat_SetIntValue(format, OH_MD_MAX_OUTPUT_BUFFER_COUNT, bufferCount);
+    //
+    // effectiveBufferCount == 0 表示保持系统默认值（不设置）
+    // effectiveBufferCount > 0 表示使用统一解析后的队列深度
+    if (effectiveBufferCount > 0) {
+        OH_AVFormat_SetIntValue(format, OH_MD_MAX_INPUT_BUFFER_COUNT, effectiveBufferCount);
+        OH_AVFormat_SetIntValue(format, OH_MD_MAX_OUTPUT_BUFFER_COUNT, effectiveBufferCount);
         
         // 尝试设置解码器特定的输出缓冲区数量（可能不是所有设备都支持）
-        OH_AVFormat_SetIntValue(format, "video_decoder_output_buffer_count", bufferCount);
-        OH_LOG_INFO(LOG_APP, "{Init} Decoder buffer count set to: %{public}d (fps=%.2f, sync=%{public}d)", 
-                    bufferCount, config_.fps, syncModeConfigured ? 1 : 0);
+        OH_AVFormat_SetIntValue(format, "video_decoder_output_buffer_count", effectiveBufferCount);
+        OH_LOG_INFO(LOG_APP, "{Init} Decoder buffer request set to: %{public}d (fps=%.2f, mode=%{public}s)", 
+                    effectiveBufferCount, config_.fps,
+                    config_.decoderMode == DecoderMode::SYNC ? "SYNC" : "ASYNC");
     } else {
-        // bufferCount = 0，使用系统默认值
-        OH_LOG_INFO(LOG_APP, "{Init} Using system default buffer count (fps=%.2f)", config_.fps);
+        OH_LOG_INFO(LOG_APP, "{Init} Using system default decoder buffer count (fps=%.2f, mode=%{public}s)",
+                    config_.fps, config_.decoderMode == DecoderMode::SYNC ? "SYNC" : "ASYNC");
     }
     
     // 配置颜色范围: 0 = Limited, 1 = Full
@@ -2423,19 +2423,21 @@ void ResetHdrConfig() {
 void SetBufferCount(int count) {
     std::lock_guard<std::mutex> lock(g_videoDecoderMutex);
     
-    // 限制有效范围: 0 (系统默认) 或 2-8
+    // 限制有效范围: 0 (自动) 或 2-8
     if (count < 0) count = 0;
     if (count == 1) count = kMinBufferCount;
     if (count > kMaxBufferCount) count = kMaxBufferCount;
     
     g_bufferCount = count;
+    OH_LOG_INFO(LOG_APP, "SetBufferCount: requested=%{public}d (%{public}s)",
+                count, count == 0 ? "AUTO" : "MANUAL");
 }
 
 void SetSyncMode(bool syncMode) {
     std::lock_guard<std::mutex> lock(g_videoDecoderMutex);
     
     g_syncMode = syncMode;
-    OH_LOG_INFO(LOG_APP, "SetSyncMode: %{public}s", syncMode ? "SYNC (low latency)" : "ASYNC (default)");
+    OH_LOG_INFO(LOG_APP, "SetSyncMode: %{public}s", syncMode ? "SYNC (ultra-low-latency, drain-to-latest)" : "ASYNC (default)");
 }
 
 void SetVrrEnabled(bool enabled) {

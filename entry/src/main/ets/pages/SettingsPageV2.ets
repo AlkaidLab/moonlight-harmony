@@ -1945,14 +1945,14 @@ struct SettingsPageV2 {
             title: '性能与调试',
             items: [
               {
-                title: '解码器缓冲区',
-                subtitle: '0=系统默认，2-8=指定数量',
+                title: '解码队列深度',
+                subtitle: '0=自动(2)，同步模式也限制软件队列',
                 type: 'slider',
                 value: this.decoderBufferCount,
                 min: 0,
                 max: 8,
                 step: 1,
-                unit: this.decoderBufferCount === 0 ? '(默认)' : ' 个',
+                unit: this.decoderBufferCount === 0 ? '(自动)' : ' 个',
                 onSliderChange: (value: number) => {
                   // 跳过 1，因为单缓冲不可用
                   if (value === 1) {
@@ -1963,8 +1963,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '同步解码模式 (实验性)',
-                subtitle: 'API 20+，理论上帧率输出更稳定',
+                title: '同步解码 / 极低延迟 (实验性)',
+                subtitle: 'API 20+，主动轮询并只保留最新输出帧；延迟更低，平滑性可能略受影响',
                 type: 'toggle',
                 value: this.enableSyncDecode,
                 action: () => {
@@ -1984,7 +1984,7 @@ struct SettingsPageV2 {
               },
               {
                 title: 'VSync 渲染',
-                subtitle: '精确帧呈现时间，减少画面撕裂',
+                subtitle: '按时间戳精确呈现，减少撕裂；通常更平滑，但可能增加约 1 帧延迟',
                 type: 'toggle',
                 value: this.enableVsync,
                 action: () => {

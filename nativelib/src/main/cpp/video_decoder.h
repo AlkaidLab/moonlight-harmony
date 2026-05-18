@@ -101,7 +101,7 @@ struct VideoDecoderConfig {
     HdrType hdrType;      // HDR 类型
     ColorSpace colorSpace;
     ColorRange colorRange;
-    int bufferCount;      // 解码器缓冲区数量 (0=系统默认，2-8=指定数量)
+    int bufferCount;      // 解码队列深度 (0=自动，2-8=指定数量；同步模式下统一作用于软件队列和解码器缓冲请求)
     bool enableVsync;     // 启用垂直同步（使用 RenderOutputBufferAtTime）
     DecoderMode decoderMode;  // 解码器工作模式 (同步/异步)
     bool enableVrr;       // VRR (Variable Refresh Rate) 可变刷新率模式
@@ -325,8 +325,8 @@ private:
     std::mutex pendingFrameMutex_;
     std::condition_variable pendingFrameCond_;
     std::queue<PendingFrame> pendingFrameQueue_;
-    // 动态队列大小，根据用户设置的 bufferCount 决定
-    // 如果用户设置为 0（默认），使用 2（最低延迟）；否则使用用户设置值
+    // 动态队列大小，根据统一解析后的解码队列深度决定
+    // 异步模式不使用该队列；同步模式下与 decoder buffer 请求保持同一语义
     size_t maxPendingFrames_{2};  // 由 Init() 根据 config_.bufferCount 设置
     
     // 同步模式解码线程
@@ -438,14 +438,15 @@ namespace VideoDecoderInstance {
     
     /**
      * 设置解码器缓冲区数量
-     * @param count 缓冲区数量 (0=系统默认值，2-8=指定数量)
+        * @param count 解码队列深度 (0=自动，2-8=指定数量)
      */
     void SetBufferCount(int count);
     
     /**
      * 设置解码器工作模式
-     * @param syncMode 是否使用同步模式 (true=同步模式，低延迟; false=异步模式，默认)
-     * 同步模式需要 API 20+，使用主动轮询代替回调，可减少约 1-3ms 延迟
+        * @param syncMode 是否使用同步模式 (true=同步模式，极低延迟; false=异步模式，默认)
+        * 同步模式需要 API 20+：使用主动轮询代替回调，并在输出侧只渲染最新帧，
+        * 以最低输入延迟为优先，代价是拥塞时平滑性可能略差。
      */
     void SetSyncMode(bool syncMode);
     

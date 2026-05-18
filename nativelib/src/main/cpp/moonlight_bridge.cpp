@@ -1555,7 +1555,7 @@ napi_value MoonBridge_SetDecoderBufferCount(napi_env env, napi_callback_info inf
     napi_value args[1];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
-    int32_t count = 4;  // 默认值
+    int32_t count = 0;  // 默认自动
     if (argc >= 1) {
         GetInt32(env, args[0], &count);
     }
@@ -1579,7 +1579,7 @@ napi_value MoonBridge_SetDecoderSyncMode(napi_env env, napi_callback_info info) 
     }
     
     OH_LOG_INFO(LOG_APP, "MoonBridge_SetDecoderSyncMode: %{public}s", 
-                syncMode ? "SYNC (low latency)" : "ASYNC (default)");
+                syncMode ? "SYNC (ultra-low-latency, drain-to-latest)" : "ASYNC (default)");
     VideoDecoderInstance::SetSyncMode(syncMode);
     
     napi_value result;
