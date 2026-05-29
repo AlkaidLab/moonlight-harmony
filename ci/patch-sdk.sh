@@ -4,7 +4,7 @@
 #   1. Copies type declaration stubs from ci/sdk-stubs/
 #   2. Creates missing shared libraries
 #   3. Deduplicates id_defined.json
-#   4. Patches hos-config.json for API 20
+#   4. Patches hos-config.json for HarmonyOS 6.1.1(API 24)
 set -euo pipefail
 
 SDK_HOME="${1:-$HOME/ohos-sdk}"
@@ -16,7 +16,7 @@ ETS_LOADER="$SDK_HOME/ets/build-tools/ets-loader"
 
 echo "=== Applying SDK patches ==="
 
-# ─── Patch hos-config.json for API 20 ───
+# ─── Patch hos-config.json for API 24 targetSdkVersion ───
 echo "Patching hos-config.json..."
 find ~/cmdline-tools -name "hos-config.json" -type f | while read -r cfg; do
   CONFIG_PATH="$cfg" python3 -c "
@@ -24,9 +24,24 @@ import json, os
 p = os.environ['CONFIG_PATH']
 with open(p) as f:
     c = json.load(f)
-c.setdefault('osVersionMapper', {})['6.0.0'] = '20'
-c.setdefault('osNameMapper', {})['6.0.0'] = 'HarmonyOS NEXT3'
-c.setdefault('pathVersionMapper', {})['6.0.0'] = 'HarmonyOS-NEXT3'
+os_versions = c.setdefault('osVersionMapper', {})
+os_names = c.setdefault('osNameMapper', {})
+path_versions = c.setdefault('pathVersionMapper', {})
+
+# Keep older CI command-line-tools aware of the API 24 target used by build-profile.json5.
+os_versions['6.1.1'] = '24'
+os_names['6.1.1'] = os_names.get('6.1.1', 'HarmonyOS NEXT2')
+path_versions['6.1.1'] = path_versions.get('6.1.1', 'HarmonyOS NEXT2')
+
+# Public 6.1-Release SDK currently reports API 23, so CI may target 6.1.0(23).
+os_versions['6.1.0'] = '23'
+os_names['6.1.0'] = os_names.get('6.1.0', 'HarmonyOS NEXT2')
+path_versions['6.1.0'] = path_versions.get('6.1.0', 'HarmonyOS NEXT2')
+
+# Preserve the historical API 20 mapping used by the public OpenHarmony SDK fallback.
+os_versions.setdefault('6.0.0', '20')
+os_names.setdefault('6.0.0', 'HarmonyOS NEXT2')
+path_versions.setdefault('6.0.0', 'HarmonyOS-NEXT2')
 with open(p, 'w') as f:
     json.dump(c, f, indent=2)
 print('  Patched: ' + p)

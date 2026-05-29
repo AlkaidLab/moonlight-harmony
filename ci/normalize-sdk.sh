@@ -18,11 +18,14 @@ echo "=== Normalizing SDK layout ==="
 PKG_FILE=$(find "$SDK_HOME" -maxdepth 4 -name "oh-uni-package.json" -type f | head -1)
 if [ -n "$PKG_FILE" ]; then
   API_VER=$(python3 -c "import json; print(json.load(open('$PKG_FILE'))['apiVersion'])")
+  SDK_PKG_VERSION=$(python3 -c "import json; print(json.load(open('$PKG_FILE')).get('version', '6.1.0.47'))")
 else
   API_VER=$(find "$SDK_HOME/openharmony" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | head -1)
+  SDK_PKG_VERSION="6.1.0.47"
 fi
 echo "SDK API version: $API_VER"
 [ -z "$API_VER" ] && { echo "ERROR: Could not determine API version"; exit 1; }
+echo "SDK package version: $SDK_PKG_VERSION"
 
 # ─── Step 1: Flatten nested openharmony/<ver> layout to root ───
 for comp in ets js native toolchains previewer; do
@@ -42,7 +45,7 @@ for comp in ets js native toolchains previewer; do
 
   if [ ! -f "$COMP_DIR/oh-uni-package.json" ]; then
     cat > "$COMP_DIR/oh-uni-package.json" << EOF
-{"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
+{"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"$SDK_PKG_VERSION"}
 EOF
   fi
 
@@ -80,7 +83,7 @@ for comp in ets native previewer; do
   [ -d "$SDK_HOME/$comp" ] && ln -sf "$SDK_HOME/$comp" "$SDK_HOME/toolchains/hms/$comp"
   if [ ! -f "$SDK_HOME/$comp/uni-package.json" ]; then
     cat > "$SDK_HOME/$comp/uni-package.json" << EOF
-{"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"6.0.0.47"}
+{"apiVersion":"$API_VER","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"$SDK_PKG_VERSION"}
 EOF
   fi
 done
@@ -92,7 +95,7 @@ for item in "$SDK_HOME/toolchains/"*; do
   ln -sf "$item" "$SDK_HOME/toolchains/hms/toolchains/$bname"
 done
 cat > "$SDK_HOME/toolchains/hms/toolchains/uni-package.json" << EOF
-{"apiVersion":"$API_VER","displayName":"Toolchains","meta":{"metaVersion":"3.0.0"},"path":"toolchains","releaseType":"Beta1","version":"6.0.0.47"}
+{"apiVersion":"$API_VER","displayName":"Toolchains","meta":{"metaVersion":"3.0.0"},"path":"toolchains","releaseType":"Beta1","version":"$SDK_PKG_VERSION"}
 EOF
 echo "  Created toolchains/hms/"
 
@@ -111,7 +114,7 @@ for comp in ets native previewer toolchains; do
   [ ! -f "$REAL_DIR/sdk-pkg.json" ] && [ ! -f "$HMS_DIR/sdk-pkg.json" ] && \
     python3 -c "
 import json
-data = {'apiVersion': '$API_VER', 'displayName': '${comp^}', 'path': '$comp', 'releaseType': 'Beta1', 'version': '6.0.0.47'}
+data = {'apiVersion': '$API_VER', 'displayName': '${comp^}', 'path': '$comp', 'releaseType': 'Beta1', 'version': '$SDK_PKG_VERSION'}
 with open('$REAL_DIR/sdk-pkg.json', 'w') as f:
     json.dump({'data': data, 'meta': {'version': '3.0.0'}}, f)
 "

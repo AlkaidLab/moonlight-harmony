@@ -23,9 +23,9 @@ concurrency:
 
 env:
   NODE_OPTIONS: '--max_old_space_size=8192'
-  SDK_VERSION: '6.0-Release'
+  SDK_VERSION: '6.1-Release'
   CMDLINE_TOOLS_VERSION: '5.1.0.840'
-  CACHE_VERSION: 'v5'
+  CACHE_VERSION: 'v6'
 
 jobs:
   build:
@@ -135,6 +135,15 @@ jobs:
         echo "$OUTPUT"
         API_VER=$(echo "$OUTPUT" | grep "SDK_API_VERSION=" | cut -d= -f2)
         echo "SDK_API_VERSION=$API_VER" >> "$GITHUB_ENV"
+        case "$API_VER" in
+          24) TARGET_SDK_VERSION="6.1.1(24)" ;;
+          23) TARGET_SDK_VERSION="6.1.0(23)" ;;
+          22) TARGET_SDK_VERSION="6.0.2(22)" ;;
+          20) TARGET_SDK_VERSION="6.0.0(20)" ;;
+          *) echo "Unsupported SDK API version: $API_VER" >&2; exit 1 ;;
+        esac
+        echo "TARGET_SDK_VERSION=$TARGET_SDK_VERSION" >> "$GITHUB_ENV"
+        echo "Target SDK version: $TARGET_SDK_VERSION"
 
     - name: Setup environment
       run: |
@@ -156,7 +165,7 @@ jobs:
     - name: Create build profile (unsigned)
       if: steps.signing.outputs.available != 'true'
       run: |
-        cat > build-profile.json5 << 'EOF'
+        cat > build-profile.json5 << EOF
         {
           "app": {
             "signingConfigs": [],
@@ -164,7 +173,7 @@ jobs:
               {
                 "name": "default",
                 "compatibleSdkVersion": "5.0.0(12)",
-                "targetSdkVersion": "6.1.1(24)",
+                "targetSdkVersion": "${TARGET_SDK_VERSION}",
                 "runtimeOS": "HarmonyOS",
                 "buildOption": {
                   "strictMode": {
@@ -232,7 +241,7 @@ jobs:
                 "name": "default",
                 "signingConfig": "default",
                 "compatibleSdkVersion": "5.0.0(12)",
-                "targetSdkVersion": "6.1.1(24)",
+                "targetSdkVersion": "${TARGET_SDK_VERSION}",
                 "runtimeOS": "HarmonyOS",
                 "buildOption": {
                   "strictMode": {
