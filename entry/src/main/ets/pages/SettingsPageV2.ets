@@ -27,6 +27,7 @@ import { GamepadManager } from '../service/input/GamepadManager';
 import { SettingsKeys, UiSettings } from '../service/SettingsService';
 import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
+import { isAihdrSupported } from '../components/AihdrModifier';
 import { DevKeyVerifier } from '../utils/DevKeyVerifier';
 import { ToastQueue } from '../utils/ToastQueue';
 
@@ -227,7 +228,9 @@ struct SettingsPageV2 {
   @State enablePostProcess: boolean = false;  // 后处理滤镜（暗区抖动补偿）
   @State upscaleMode: number = 0;             // 超分辨率模式
   @State upscaleSharpness: number = 50;       // 超分锐度 (0-100)
-  @State sdrToHdr: boolean = false;            // SDR→HDR
+  @State sdrToHdr: boolean = false;            // SDR→HDR（派生自 sdrToHdrMode===1）
+  @State sdrToHdrMode: number = 0;             // HDR 增强模式 (0=关闭,1=自研shader,2=AIHDR)
+  @State aihdrSupported: boolean = false;      // 设备是否支持 AIHDR
   @State sdrToHdrPeakNits: number = 500;       // SDR→HDR 峰值亮度
   @State sdrToHdrSaturation: number = 130;     // SDR→HDR 色彩饱和度 (50-200)
   @State sdrToHdrContrast: number = 100;       // SDR→HDR 对比度 (50-200)
@@ -564,7 +567,10 @@ struct SettingsPageV2 {
       this.enablePostProcess = await this.loadBoolean(SettingsKeys.ENABLE_POST_PROCESS, false);
       this.upscaleMode = await PreferencesUtil.get<number>(SettingsKeys.UPSCALE_MODE, 0);
       this.upscaleSharpness = await PreferencesUtil.get<number>(SettingsKeys.UPSCALE_SHARPNESS, 50);
-      this.sdrToHdr = await this.loadBoolean(SettingsKeys.SDR_TO_HDR, false);
+      const legacySdrToHdr = await this.loadBoolean(SettingsKeys.SDR_TO_HDR, false);
+      this.sdrToHdrMode = await PreferencesUtil.get<number>(SettingsKeys.SDR_TO_HDR_MODE, legacySdrToHdr ? 1 : 0);
+      this.sdrToHdr = (this.sdrToHdrMode === 1);
+      this.aihdrSupported = isAihdrSupported();
       this.sdrToHdrPeakNits = await PreferencesUtil.get<number>(SettingsKeys.SDR_TO_HDR_PEAK_NITS, 500);
       this.sdrToHdrSaturation = await PreferencesUtil.get<number>(SettingsKeys.SDR_TO_HDR_SATURATION, 130);
       this.sdrToHdrContrast = await PreferencesUtil.get<number>(SettingsKeys.SDR_TO_HDR_CONTRAST, 100);
@@ -1879,19 +1885,15 @@ struct SettingsPageV2 {
               },
               {
                 title: 'HDR 映像增强',
-                subtitle: 'SDR→HDR 逆向色调映射（HLG 模式下对比度/饱和度效果有限）',
-                type: 'toggle',
-                value: this.sdrToHdr,
-                action: () => {
-                  this.sdrToHdr = !this.sdrToHdr;
-                  this.saveSetting(SettingsKeys.SDR_TO_HDR, this.sdrToHdr);
-                }
+                subtitle: ['关闭', '自研 Shader（SDR→HDR 逆向色调映射）', 'AIHDR（系统 AI 增强）'][this.sdrToHdrMode] ?? '关闭',
+                type: 'select',
+                action: () => this.showSdrToHdrModePicker()
               },
               {
                 title: '显示峰值亮度',
                 subtitle: 'HDR 增强的目标峰值亮度上限',
                 type: 'slider',
-                visible: this.sdrToHdr,
+                visible: this.sdrToHdrMode === 1,
                 value: this.sdrToHdrPeakNits,
                 min: 200,
                 max: 2000,
@@ -1907,7 +1909,7 @@ struct SettingsPageV2 {
                 title: '色彩鲜明度',
                 subtitle: 'HDR 增强画面的色彩饱和度',
                 type: 'slider',
-                visible: this.sdrToHdr,
+                visible: this.sdrToHdrMode === 1,
                 value: this.sdrToHdrSaturation,
                 min: 50,
                 max: 200,
@@ -1923,7 +1925,7 @@ struct SettingsPageV2 {
                 title: '画面对比度',
                 subtitle: '降低可缓解高光过曝，提高可增强明暗层次',
                 type: 'slider',
-                visible: this.sdrToHdr,
+                visible: this.sdrToHdrMode === 1,
                 value: this.sdrToHdrContrast,
                 min: 50,
                 max: 200,
@@ -2824,6 +2826,31 @@ struct SettingsPageV2 {
         const value = option.value as number;
         this.upscaleMode = value;
         this.saveSetting(SettingsKeys.UPSCALE_MODE, value);
+      }
+    };
+    this.showPicker(config);
+  }
+
+  private showSdrToHdrModePicker(): void {
+    const options: PickerOption[] = [
+      { title: '关闭', subtitle: '不进行 HDR 增强', value: 0 } as PickerOption,
+      { title: '自研 Shader', subtitle: 'SDR→HDR 逆向色调映射，可调亮度/饱和度/对比度', value: 1 } as PickerOption,
+    ];
+    if (this.aihdrSupported) {
+      options.push({ title: 'AIHDR', subtitle: '系统 AI HDR 增强，画质更自然', value: 2 } as PickerOption);
+    }
+
+    const config: PickerConfig = {
+      title: 'HDR 映像增强',
+      subtitle: this.aihdrSupported ? '将 SDR 画面增强为 HDR 显示效果' : '将 SDR 画面增强为 HDR 显示效果（当前设备不支持 AIHDR）',
+      selectedValue: this.sdrToHdrMode,
+      options: options,
+      onSelect: (option: PickerOption) => {
+        const value = option.value as number;
+        this.sdrToHdrMode = value;
+        this.sdrToHdr = (value === 1);
+        this.saveSetting(SettingsKeys.SDR_TO_HDR_MODE, value);
+        this.saveSetting(SettingsKeys.SDR_TO_HDR, this.sdrToHdr);
       }
     };
     this.showPicker(config);

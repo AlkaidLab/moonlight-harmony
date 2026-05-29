@@ -30,6 +30,11 @@ import { notificationManager } from '@kit.NotificationKit';
 import { image } from '@kit.ImageKit';
 
 const TAG = '[BackgroundStreamService]';
+const BACKGROUND_PLAY_MODE_ENABLE = 0; // avSession.BackgroundPlayMode.ENABLE_BACKGROUND_PLAY (API 24+)
+
+interface BackgroundPlayableAVSession extends AVSessionManager.AVSession {
+  setBackgroundPlayMode(mode: number): Promise<void>;
+}
 
 /**
  * 播控中心控制回调
@@ -156,6 +161,7 @@ export class BackgroundStreamService {
         'audio'
       );
       console.info(`${TAG} AVSession 已创建, sessionId=${this.session.sessionId}`);
+      await this.enableBackgroundPlaybackIfSupported();
 
       // 加载应用图标作为封面 (800x800 方形，符合播控中心规范)
       let coverImage: image.PixelMap | undefined = undefined;
@@ -209,6 +215,27 @@ export class BackgroundStreamService {
       const error = err as BusinessError;
       console.error(`${TAG} 创建 AVSession 失败: code=${error.code}, msg=${error.message}`);
       throw new Error(`创建 AVSession 失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * API 24+ 支持显式声明 AVSession 允许后台播放。
+   * 通过运行时探测避免低版本设备触达 API 24+ 方法。
+   */
+  private async enableBackgroundPlaybackIfSupported(): Promise<void> {
+    if (!this.session) return;
+
+    const session = this.session as BackgroundPlayableAVSession;
+    if (typeof session.setBackgroundPlayMode !== 'function') {
+      console.info(`${TAG} 当前 SDK/设备不支持 setBackgroundPlayMode，沿用系统默认后台播放策略`);
+      return;
+    }
+
+    try {
+      await session.setBackgroundPlayMode(BACKGROUND_PLAY_MODE_ENABLE);
+      console.info(`${TAG} 已显式启用 AVSession 后台播放模式`);
+    } catch (err) {
+      console.warn(`${TAG} 设置 AVSession 后台播放模式失败，沿用系统默认策略:`, err);
     }
   }
 

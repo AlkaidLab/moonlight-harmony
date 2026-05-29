@@ -38,6 +38,7 @@ import { pointer } from '@kit.InputKit';
 import { InputInterceptorService } from '../service/input/InputInterceptorService';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { SettingsKeys } from '../service/SettingsService';
+import { AihdrModifier, isAihdrSupported } from '../components/AihdrModifier';
 import { StreamInputHandler } from '../service/streaming/StreamInputHandler';
 import { StreamLifecycleManager } from '../service/streaming/StreamLifecycleManager';
 import { StreamIMEManager } from '../service/streaming/StreamIMEManager';
@@ -225,6 +226,7 @@ struct StreamPage {
 
   // 组件控制器和服务
   private xComponentController: XComponentController = new XComponentController();
+  @State aihdrModifier: AihdrModifier = new AihdrModifier();
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
   private touchInputHandler: TouchInputHandler = new TouchInputHandler();
   private windowManager: StreamWindowManager | null = null;
@@ -1328,6 +1330,13 @@ struct StreamPage {
       const streamConfig = this.viewModel.streamConfig;
       if (streamConfig) {
         await this.windowManager?.setHdrBrightness(streamConfig.hdr, streamConfig.hdrHighBrightness);
+        // AIHDR 模式 (sdrToHdrMode===2)：启用系统 AI HDR 修饰器
+        if (streamConfig.sdrToHdrMode === 2 && isAihdrSupported()) {
+          const m = new AihdrModifier();
+          m.enabled = true;
+          m.brightness = this.aihdrModifier.brightness;
+          this.aihdrModifier = m;
+        }
       }
       
       // 设置触摸输入模式
@@ -1810,6 +1819,7 @@ struct StreamPage {
           .width(this.xComponentWidth)
           .height(this.xComponentHeight)
           .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+          .attributeModifier(this.aihdrModifier)
           .hitTestBehavior((this.viewModel.showController && !this.touchPassthrough) ? HitTestMode.None : HitTestMode.Default)
           .onTouch((event: TouchEvent) => {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，

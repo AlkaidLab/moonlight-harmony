@@ -134,7 +134,8 @@ export class SettingsKeys {
   static readonly ENABLE_POST_PROCESS: string = 'settings_enable_post_process';  // 后处理滤镜
   static readonly UPSCALE_MODE: string = 'settings_upscale_mode';               // 超分辨率模式
   static readonly UPSCALE_SHARPNESS: string = 'settings_upscale_sharpness';     // 超分锐度 (0-100)
-  static readonly SDR_TO_HDR: string = 'settings_sdr_to_hdr';                   // SDR→HDR
+  static readonly SDR_TO_HDR: string = 'settings_sdr_to_hdr';                   // SDR→HDR（旧布尔值，向后兼容）
+  static readonly SDR_TO_HDR_MODE: string = 'settings_sdr_to_hdr_mode';         // HDR 增强模式 (0=关闭,1=自研shader,2=AIHDR)
   static readonly SDR_TO_HDR_PEAK_NITS: string = 'settings_sdr_to_hdr_peak_nits'; // 峰值亮度
   static readonly SDR_TO_HDR_SATURATION: string = 'settings_sdr_to_hdr_saturation'; // 饱和度
   static readonly SDR_TO_HDR_CONTRAST: string = 'settings_sdr_to_hdr_contrast'; // 对比度
@@ -617,7 +618,10 @@ export class SettingsService {
     const enablePostProcess = await this.getBoolean(SettingsKeys.ENABLE_POST_PROCESS, false);
     const upscaleMode = await this.getNumber(SettingsKeys.UPSCALE_MODE, 0);
     const upscaleSharpness = await this.getNumber(SettingsKeys.UPSCALE_SHARPNESS, 50) / 100.0;
-    const sdrToHdr = await this.getBoolean(SettingsKeys.SDR_TO_HDR, false);
+    // HDR 增强模式：优先读新的三档枚举；若未设置则从旧布尔值派生（true→自研shader, false→关闭）
+    const legacySdrToHdr = await this.getBoolean(SettingsKeys.SDR_TO_HDR, false);
+    const sdrToHdrMode = await this.getNumber(SettingsKeys.SDR_TO_HDR_MODE, legacySdrToHdr ? 1 : 0);
+    const sdrToHdr = (sdrToHdrMode === 1);
     const sdrToHdrPeakNits = await this.getNumber(SettingsKeys.SDR_TO_HDR_PEAK_NITS, 500);
     const sdrToHdrSaturation = await this.getNumber(SettingsKeys.SDR_TO_HDR_SATURATION, 130) / 100.0;
     const sdrToHdrContrast = await this.getNumber(SettingsKeys.SDR_TO_HDR_CONTRAST, 100) / 100.0;
@@ -696,6 +700,7 @@ export class SettingsService {
       enableVrr: enableVrr,
       enableVsync: enableVsync,
       enablePostProcess: enablePostProcess,
+      sdrToHdrMode: sdrToHdrMode,
       sdrToHdr: sdrToHdr,
       sdrToHdrPeakNits: sdrToHdrPeakNits,
       sdrToHdrSaturation: sdrToHdrSaturation,

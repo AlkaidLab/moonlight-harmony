@@ -164,7 +164,7 @@ jobs:
               {
                 "name": "default",
                 "compatibleSdkVersion": "5.0.0(12)",
-                "targetSdkVersion": "6.0.0(20)",
+                "targetSdkVersion": "6.1.1(24)",
                 "runtimeOS": "HarmonyOS",
                 "buildOption": {
                   "strictMode": {
@@ -232,7 +232,7 @@ jobs:
                 "name": "default",
                 "signingConfig": "default",
                 "compatibleSdkVersion": "5.0.0(12)",
-                "targetSdkVersion": "6.0.0(20)",
+                "targetSdkVersion": "6.1.1(24)",
                 "runtimeOS": "HarmonyOS",
                 "buildOption": {
                   "strictMode": {
