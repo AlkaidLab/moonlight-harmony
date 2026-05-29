@@ -4,7 +4,7 @@
 #   1. Copies type declaration stubs from ci/sdk-stubs/
 #   2. Creates missing shared libraries
 #   3. Deduplicates id_defined.json
-#   4. Patches hos-config.json for API 20
+#   4. Patches hos-config.json for HarmonyOS 6.1.1(API 24)
 set -euo pipefail
 
 SDK_HOME="${1:-$HOME/ohos-sdk}"
@@ -16,7 +16,7 @@ ETS_LOADER="$SDK_HOME/ets/build-tools/ets-loader"
 
 echo "=== Applying SDK patches ==="
 
-# ─── Patch hos-config.json for API 20 ───
+# ─── Patch hos-config.json for API 24 targetSdkVersion ───
 echo "Patching hos-config.json..."
 find ~/cmdline-tools -name "hos-config.json" -type f | while read -r cfg; do
   CONFIG_PATH="$cfg" python3 -c "
@@ -24,14 +24,80 @@ import json, os
 p = os.environ['CONFIG_PATH']
 with open(p) as f:
     c = json.load(f)
-c.setdefault('osVersionMapper', {})['6.0.0'] = '20'
-c.setdefault('osNameMapper', {})['6.0.0'] = 'HarmonyOS NEXT3'
-c.setdefault('pathVersionMapper', {})['6.0.0'] = 'HarmonyOS-NEXT3'
+os_versions = c.setdefault('osVersionMapper', {})
+os_names = c.setdefault('osNameMapper', {})
+path_versions = c.setdefault('pathVersionMapper', {})
+
+# Keep older CI command-line-tools aware of the API 24 target used by build-profile.json5.
+os_versions['6.1.1'] = '24'
+os_names['6.1.1'] = os_names.get('6.1.1', 'HarmonyOS NEXT2')
+path_versions['6.1.1'] = path_versions.get('6.1.1', 'HarmonyOS NEXT2')
+
+# Public 6.1-Release SDK currently reports API 23, so CI may target 6.1.0(23).
+os_versions['6.1.0'] = '23'
+os_names['6.1.0'] = os_names.get('6.1.0', 'HarmonyOS NEXT2')
+path_versions['6.1.0'] = path_versions.get('6.1.0', 'HarmonyOS NEXT2')
+
+# Preserve the historical API 20 mapping used by the public OpenHarmony SDK fallback.
+os_versions['6.0.2'] = '22'
+os_names['6.0.2'] = os_names.get('6.0.2', 'HarmonyOS NEXT2')
+path_versions['6.0.2'] = path_versions.get('6.0.2', 'HarmonyOS-NEXT2')
+os_versions.setdefault('6.0.0', '20')
+os_names.setdefault('6.0.0', 'HarmonyOS NEXT2')
+path_versions.setdefault('6.0.0', 'HarmonyOS-NEXT2')
 with open(p, 'w') as f:
     json.dump(c, f, indent=2)
 print('  Patched: ' + p)
 "
 done
+
+echo "Patching hmos-sdk-loader fallback..."
+python3 - <<'PY'
+import glob
+import os
+import re
+
+patched = False
+candidates = []
+for loader in glob.glob(os.path.expanduser('~/cmdline-tools/**/hmos-sdk-loader.js'), recursive=True):
+    candidates.append(loader)
+    with open(loader, encoding='utf-8') as f:
+        text = f.read()
+    if '.getLocalSdks(`${' in text and '.api}`)' in text:
+        print('  Already patched: ' + loader)
+        patched = True
+        continue
+    pattern = re.compile(
+        r'const\s+([A-Za-z_$][\w$]*)=this\.ohosSdkInfoHandler\.getLocalSdks\(([^;]+)\);'
+        r'this\.checkComponentExistence\(([A-Za-z_$][\w$]*),\1,!1\)\|\|_log\.printErrorExit\("SDK_COMPONENT_MISSING"\);'
+    )
+    match = pattern.search(text)
+    if not match:
+        idx = text.find('ohosSdkInfoHandler.getLocalSdks')
+        if idx >= 0:
+            print('  Unmatched loader snippet: ' + text[max(0, idx - 160):idx + 260])
+        continue
+    sdk_map, version_expr, components = match.groups()
+    source = 'e'
+    source_match = re.search(r'\$\{([A-Za-z_$][\w$]*)\.(?:fullVersion|version)\}', version_expr)
+    if not source_match:
+        source_match = re.search(r'([A-Za-z_$][\w$]*)\.(?:fullVersion|version)', version_expr)
+    if source_match:
+        source = source_match.group(1)
+    replacement = (
+        f'let {sdk_map}=this.ohosSdkInfoHandler.getLocalSdks({version_expr});'
+        f'if(!this.checkComponentExistence({components},{sdk_map},!1)&&{source}.api)'
+        f'{sdk_map}=this.ohosSdkInfoHandler.getLocalSdks(`${{{source}.api}}`);'
+        f'this.checkComponentExistence({components},{sdk_map},!1)||_log.printErrorExit("SDK_COMPONENT_MISSING");'
+    )
+    with open(loader, 'w', encoding='utf-8') as f:
+        f.write(text[:match.start()] + replacement + text[match.end():])
+    print('  Patched: ' + loader)
+    patched = True
+
+if not patched:
+    raise SystemExit('Could not patch hmos-sdk-loader.js; candidates=' + ','.join(candidates))
+PY
 
 # ─── aubio config.h ───
 AUBIO_CONFIG="nativelib/src/main/cpp/aubio/src/config.h"

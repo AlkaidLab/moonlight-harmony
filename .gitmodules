@@ -4,7 +4,7 @@
 	branch = mic
 [submodule "nativelib/src/main/cpp/ohos-openssl"]
 	path = nativelib/src/main/cpp/ohos-openssl
-	url = https://gitee.com/ohos-rs/ohos-openssl.git
+	url = https://github.com/ohos-rs/ohos-openssl.git
 [submodule "nativelib/src/main/cpp/aubio"]
 	path = nativelib/src/main/cpp/aubio
 	url = https://github.com/aubio/aubio.git

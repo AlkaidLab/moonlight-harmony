@@ -23,9 +23,10 @@ concurrency:
 
 env:
   NODE_OPTIONS: '--max_old_space_size=8192'
-  SDK_VERSION: '6.0-Release'
+  SDK_VERSION: '6.1-Release'
+  CI_TARGET_API_VERSION: '24'
   CMDLINE_TOOLS_VERSION: '5.1.0.840'
-  CACHE_VERSION: 'v5'
+  CACHE_VERSION: 'v10'
 
 jobs:
   build:
@@ -134,7 +135,10 @@ jobs:
         OUTPUT=$(ci/normalize-sdk.sh ~/ohos-sdk)
         echo "$OUTPUT"
         API_VER=$(echo "$OUTPUT" | grep "SDK_API_VERSION=" | cut -d= -f2)
+        TARGET_SDK_VERSION=$(echo "$OUTPUT" | grep "HOS_TARGET_SDK_VERSION=" | cut -d= -f2)
         echo "SDK_API_VERSION=$API_VER" >> "$GITHUB_ENV"
+        echo "TARGET_SDK_VERSION=$TARGET_SDK_VERSION" >> "$GITHUB_ENV"
+        echo "Target SDK version: $TARGET_SDK_VERSION"
 
     - name: Setup environment
       run: |
@@ -156,7 +160,7 @@ jobs:
     - name: Create build profile (unsigned)
       if: steps.signing.outputs.available != 'true'
       run: |
-        cat > build-profile.json5 << 'EOF'
+        cat > build-profile.json5 << EOF
         {
           "app": {
             "signingConfigs": [],
@@ -164,7 +168,8 @@ jobs:
               {
                 "name": "default",
                 "compatibleSdkVersion": "5.0.0(12)",
-                "targetSdkVersion": "6.1.1(24)",
+                "compileSdkVersion": "${TARGET_SDK_VERSION}",
+                "targetSdkVersion": "${TARGET_SDK_VERSION}",
                 "runtimeOS": "HarmonyOS",
                 "buildOption": {
                   "strictMode": {
@@ -232,7 +237,8 @@ jobs:
                 "name": "default",
                 "signingConfig": "default",
                 "compatibleSdkVersion": "5.0.0(12)",
-                "targetSdkVersion": "6.1.1(24)",
+                "compileSdkVersion": "${TARGET_SDK_VERSION}",
+                "targetSdkVersion": "${TARGET_SDK_VERSION}",
                 "runtimeOS": "HarmonyOS",
                 "buildOption": {
                   "strictMode": {
