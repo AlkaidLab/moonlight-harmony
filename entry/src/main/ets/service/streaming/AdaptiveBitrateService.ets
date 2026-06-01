@@ -56,6 +56,8 @@ export class AdaptiveBitrateService {
   private latestSystemQos: SystemNetQos | null = null;
   private latestSystemScene: SystemNetScene | null = null;
   private latestSystemSceneAt: number = 0;
+  private latestWeakSignalStartAt: number = 0;
+  private latestWeakSignalEndAt: number = 0;
   private qosListener: SystemNetQosListener | null = null;
   private sceneListener: SystemNetSceneListener | null = null;
 
@@ -220,6 +222,8 @@ export class AdaptiveBitrateService {
     this.latestSystemQos = null;
     this.latestSystemScene = null;
     this.latestSystemSceneAt = 0;
+    this.latestWeakSignalStartAt = 0;
+    this.latestWeakSignalEndAt = 0;
     this.serverEnableRetries = 0;
     this.serverRetryTickCounter = 0;
   }
@@ -233,8 +237,17 @@ export class AdaptiveBitrateService {
       this.latestSystemQos = qos;
     };
     const sceneListener: SystemNetSceneListener = (scene: SystemNetScene): void => {
+      const now = Date.now();
       this.latestSystemScene = scene;
-      this.latestSystemSceneAt = Date.now();
+      this.latestSystemSceneAt = now;
+      this.latestWeakSignalStartAt = 0;
+      this.latestWeakSignalEndAt = 0;
+      if (scene.weakSignalStartSec !== undefined && scene.weakSignalStartSec >= 0) {
+        this.latestWeakSignalStartAt = now + scene.weakSignalStartSec * 1000;
+        if (scene.weakSignalDurationSec !== undefined && scene.weakSignalDurationSec > 0) {
+          this.latestWeakSignalEndAt = this.latestWeakSignalStartAt + scene.weakSignalDurationSec * 1000;
+        }
+      }
     };
     this.qosListener = qosListener;
     this.sceneListener = sceneListener;
@@ -257,6 +270,8 @@ export class AdaptiveBitrateService {
     this.latestSystemQos = null;
     this.latestSystemScene = null;
     this.latestSystemSceneAt = 0;
+    this.latestWeakSignalStartAt = 0;
+    this.latestWeakSignalEndAt = 0;
   }
 
   /**
@@ -306,6 +321,7 @@ export class AdaptiveBitrateService {
    * 服务端模式：上报指标，执行服务端指令
    */
   private async tickServer(stats: StreamStats): Promise<void> {
+    const now = Date.now();
     const systemQos = this.getFreshSystemQos();
     const systemScene = this.getFreshSystemScene();
     const feedback: NetworkFeedback = {
@@ -325,8 +341,11 @@ export class AdaptiveBitrateService {
     if (systemScene) {
       feedback.systemNetworkScene = systemScene.scene;
       feedback.systemRecommendedAction = systemScene.recommendedAction;
-      feedback.weakSignalStartSec = systemScene.weakSignalStartSec;
-      feedback.weakSignalDurationSec = systemScene.weakSignalDurationSec;
+      const weakSignalStartSec = this.getWeakSignalStartSec(now);
+      if (weakSignalStartSec !== null) {
+        feedback.weakSignalStartSec = weakSignalStartSec;
+        feedback.weakSignalDurationSec = systemScene.weakSignalDurationSec;
+      }
     }
 
     const action = await this.nvHttp.reportNetworkFeedback(feedback);
@@ -360,6 +379,16 @@ export class AdaptiveBitrateService {
     return this.latestSystemScene;
   }
 
+  private getWeakSignalStartSec(now: number): number | null {
+    if (this.latestWeakSignalStartAt <= 0) {
+      return null;
+    }
+    if (this.latestWeakSignalEndAt > 0 && now > this.latestWeakSignalEndAt) {
+      return null;
+    }
+    return Math.max(0, (this.latestWeakSignalStartAt - now) / 1000);
+  }
+
   private getSceneMitigation(now: number): SceneMitigation | null {
     const scene = this.getFreshSystemScene();
     if (!scene) {
@@ -367,10 +396,11 @@ export class AdaptiveBitrateService {
     }
 
     let mitigation: SceneMitigation | null = null;
-    if (scene.weakSignalStartSec !== undefined && scene.weakSignalStartSec >= 0 && scene.weakSignalStartSec <= 8) {
+    const weakSignalStartSec = this.getWeakSignalStartSec(now);
+    if (weakSignalStartSec !== null && weakSignalStartSec <= 8) {
       mitigation = {
         factor: 0.82,
-        reason: `networkBoost weakSignal in ${Math.round(scene.weakSignalStartSec)}s`,
+        reason: `networkBoost weakSignal in ${Math.round(weakSignalStartSec)}s`,
         key: 'weakSignal'
       };
     } else if (scene.scene === 'congestion' && scene.recommendedAction === 'suspendData') {
@@ -400,8 +430,6 @@ export class AdaptiveBitrateService {
       now - this.lastSceneMitigationTime < AdaptiveBitrateService.SCENE_MITIGATION_COOLDOWN_MS) {
       return null;
     }
-    this.lastSceneMitigationKey = mitigation.key;
-    this.lastSceneMitigationTime = now;
     return mitigation;
   }
 
@@ -470,6 +498,10 @@ export class AdaptiveBitrateService {
         console.info(`${TAG} [local] ${this.currentBitrate}→${newBitrate}kbps (${reason})`);
         this.currentBitrate = newBitrate;
         this.lastAdjustTime = now;
+        if (sceneMitigation) {
+          this.lastSceneMitigationKey = sceneMitigation.key;
+          this.lastSceneMitigationTime = now;
+        }
       }
     }
   }
