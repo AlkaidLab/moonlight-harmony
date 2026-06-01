@@ -1348,6 +1348,15 @@ export interface NetworkFeedback {
   decodeFps: number;
   droppedFrames: number;
   currentBitrate: number;
+  systemRttMs?: number;
+  systemUpBufferDelayMs?: number;
+  systemUpBufferCongestionPercent?: number;
+  systemUpBandwidthBps?: number;
+  systemDownBandwidthBps?: number;
+  systemNetworkScene?: string;
+  systemRecommendedAction?: string;
+  weakSignalStartSec?: number;
+  weakSignalDurationSec?: number;
 }
 
 export interface AbrAction {
