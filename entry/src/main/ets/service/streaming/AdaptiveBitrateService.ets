@@ -10,8 +10,21 @@
 
 import { NvHttp, AbrConfig, NetworkFeedback, AbrCapabilities, AbrAction } from './NvHttp';
 import { StreamStats } from './StreamingSession';
+import {
+  NetworkBoostService,
+  SystemNetQos,
+  SystemNetQosListener,
+  SystemNetScene,
+  SystemNetSceneListener
+} from '../network/NetworkBoostService';
 
 const TAG = '[ABR]';
+
+interface SceneMitigation {
+  factor: number;
+  reason: string;
+  key: string;
+}
 
 /**
  * 智能码率调节服务
@@ -37,6 +50,14 @@ export class AdaptiveBitrateService {
   private lossStreak: number = 0;
   private lastAdjustTime: number = 0;
   private lastDirection: 'up' | 'down' | 'none' = 'none';
+  private lastSceneMitigationTime: number = 0;
+  private lastSceneMitigationKey: string = '';
+
+  private latestSystemQos: SystemNetQos | null = null;
+  private latestSystemScene: SystemNetScene | null = null;
+  private latestSystemSceneAt: number = 0;
+  private qosListener: SystemNetQosListener | null = null;
+  private sceneListener: SystemNetSceneListener | null = null;
 
   // 回调
   private onBitrateChange: ((bitrate: number, reason: string) => Promise<boolean>) | null = null;
@@ -50,6 +71,9 @@ export class AdaptiveBitrateService {
   private serverRetryTickCounter: number = 0;
   private static readonly MAX_SERVER_ENABLE_RETRIES = 10;
   private static readonly SERVER_RETRY_INTERVAL_TICKS = 5;
+  private static readonly SYSTEM_QOS_TTL_MS = 5_000;
+  private static readonly SYSTEM_SCENE_TTL_MS = 12_000;
+  private static readonly SCENE_MITIGATION_COOLDOWN_MS = 6_000;
 
   constructor(nvHttp: NvHttp) {
     this.nvHttp = nvHttp;
@@ -92,6 +116,7 @@ export class AdaptiveBitrateService {
     }
 
     this.enabled = true;
+    this.subscribeNetworkBoostSignals();
 
     // 启动每秒 tick（延迟 3 秒开始，让连接稳定）
     this.tickInterval = setInterval(() => {
@@ -111,6 +136,8 @@ export class AdaptiveBitrateService {
       clearInterval(this.tickInterval);
       this.tickInterval = -1;
     }
+
+    this.unsubscribeNetworkBoostSignals();
 
     // 通知服务端关闭
     if (this.serverSupported) {
@@ -188,8 +215,48 @@ export class AdaptiveBitrateService {
     this.lossStreak = 0;
     this.lastAdjustTime = 0;
     this.lastDirection = 'none';
+    this.lastSceneMitigationTime = 0;
+    this.lastSceneMitigationKey = '';
+    this.latestSystemQos = null;
+    this.latestSystemScene = null;
+    this.latestSystemSceneAt = 0;
     this.serverEnableRetries = 0;
     this.serverRetryTickCounter = 0;
+  }
+
+  private subscribeNetworkBoostSignals(): void {
+    if (this.qosListener || this.sceneListener) {
+      return;
+    }
+    const service = NetworkBoostService.getInstance();
+    const qosListener: SystemNetQosListener = (qos: SystemNetQos): void => {
+      this.latestSystemQos = qos;
+    };
+    const sceneListener: SystemNetSceneListener = (scene: SystemNetScene): void => {
+      this.latestSystemScene = scene;
+      this.latestSystemSceneAt = Date.now();
+    };
+    this.qosListener = qosListener;
+    this.sceneListener = sceneListener;
+    service.addListener(qosListener);
+    service.addSceneListener(sceneListener);
+  }
+
+  private unsubscribeNetworkBoostSignals(): void {
+    const service = NetworkBoostService.getInstance();
+    const qosListener = this.qosListener;
+    if (qosListener) {
+      service.removeListener(qosListener);
+      this.qosListener = null;
+    }
+    const sceneListener = this.sceneListener;
+    if (sceneListener) {
+      service.removeSceneListener(sceneListener);
+      this.sceneListener = null;
+    }
+    this.latestSystemQos = null;
+    this.latestSystemScene = null;
+    this.latestSystemSceneAt = 0;
   }
 
   /**
@@ -239,13 +306,28 @@ export class AdaptiveBitrateService {
    * 服务端模式：上报指标，执行服务端指令
    */
   private async tickServer(stats: StreamStats): Promise<void> {
+    const systemQos = this.getFreshSystemQos();
+    const systemScene = this.getFreshSystemScene();
     const feedback: NetworkFeedback = {
       packetLoss: stats.packetLoss,
-      rttMs: stats.networkLatency,
+      rttMs: stats.networkLatency > 0 ? stats.networkLatency : (systemQos?.rttMs ?? 0),
       decodeFps: stats.renderedFps,
       droppedFrames: stats.droppedFrames,
       currentBitrate: this.currentBitrate,
     };
+    if (systemQos) {
+      feedback.systemRttMs = systemQos.rttMs;
+      feedback.systemUpBufferDelayMs = systemQos.upBufferDelayMs;
+      feedback.systemUpBufferCongestionPercent = systemQos.upBufferCongestionPercent;
+      feedback.systemUpBandwidthBps = systemQos.upBandwidthBps;
+      feedback.systemDownBandwidthBps = systemQos.downBandwidthBps;
+    }
+    if (systemScene) {
+      feedback.systemNetworkScene = systemScene.scene;
+      feedback.systemRecommendedAction = systemScene.recommendedAction;
+      feedback.weakSignalStartSec = systemScene.weakSignalStartSec;
+      feedback.weakSignalDurationSec = systemScene.weakSignalDurationSec;
+    }
 
     const action = await this.nvHttp.reportNetworkFeedback(feedback);
     if (action?.newBitrate && action.newBitrate !== this.currentBitrate) {
@@ -256,6 +338,71 @@ export class AdaptiveBitrateService {
         this.currentBitrate = clamped;
       }
     }
+  }
+
+  private getFreshSystemQos(): SystemNetQos | null {
+    if (!this.latestSystemQos) {
+      return null;
+    }
+    if (Date.now() - this.latestSystemQos.timestampMs > AdaptiveBitrateService.SYSTEM_QOS_TTL_MS) {
+      return null;
+    }
+    return this.latestSystemQos;
+  }
+
+  private getFreshSystemScene(): SystemNetScene | null {
+    if (!this.latestSystemScene) {
+      return null;
+    }
+    if (Date.now() - this.latestSystemSceneAt > AdaptiveBitrateService.SYSTEM_SCENE_TTL_MS) {
+      return null;
+    }
+    return this.latestSystemScene;
+  }
+
+  private getSceneMitigation(now: number): SceneMitigation | null {
+    const scene = this.getFreshSystemScene();
+    if (!scene) {
+      return null;
+    }
+
+    let mitigation: SceneMitigation | null = null;
+    if (scene.weakSignalStartSec !== undefined && scene.weakSignalStartSec >= 0 && scene.weakSignalStartSec <= 8) {
+      mitigation = {
+        factor: 0.82,
+        reason: `networkBoost weakSignal in ${Math.round(scene.weakSignalStartSec)}s`,
+        key: 'weakSignal'
+      };
+    } else if (scene.scene === 'congestion' && scene.recommendedAction === 'suspendData') {
+      mitigation = {
+        factor: 0.72,
+        reason: 'networkBoost congestion suspendData',
+        key: 'congestion:suspendData'
+      };
+    } else if (scene.scene === 'congestion' && scene.recommendedAction === 'decreaseData') {
+      mitigation = {
+        factor: 0.84,
+        reason: 'networkBoost congestion decreaseData',
+        key: 'congestion:decreaseData'
+      };
+    } else if (scene.scene === 'frequentHandover') {
+      mitigation = {
+        factor: 0.90,
+        reason: 'networkBoost frequentHandover',
+        key: 'frequentHandover'
+      };
+    }
+
+    if (!mitigation) {
+      return null;
+    }
+    if (mitigation.key === this.lastSceneMitigationKey &&
+      now - this.lastSceneMitigationTime < AdaptiveBitrateService.SCENE_MITIGATION_COOLDOWN_MS) {
+      return null;
+    }
+    this.lastSceneMitigationKey = mitigation.key;
+    this.lastSceneMitigationTime = now;
+    return mitigation;
   }
 
   /**
@@ -271,7 +418,13 @@ export class AdaptiveBitrateService {
     let newBitrate = this.currentBitrate;
     let reason = '';
 
-    if (stats.packetLoss > 5) {
+    const sceneMitigation = this.getSceneMitigation(now);
+    if (sceneMitigation) {
+      newBitrate = this.currentBitrate * sceneMitigation.factor;
+      reason = sceneMitigation.reason;
+      this.stableSeconds = 0;
+      this.lossStreak++;
+    } else if (stats.packetLoss > 5) {
       // 紧急降档：丢包 > 5%
       newBitrate = this.currentBitrate * 0.7;
       reason = `loss=${stats.packetLoss.toFixed(1)}% emergency`;
