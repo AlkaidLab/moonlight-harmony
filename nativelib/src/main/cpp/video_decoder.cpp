@@ -346,8 +346,13 @@ static constexpr double kAsyncSkipThresholdMultiplier = 3.0;
 static constexpr double kCriticalLatencyMultiplier = 8.0;
 static constexpr double kCriticalLatencyMinMs = 100.0;  // IDR 恢复最小阈值
 static constexpr int kLatencyRecoveryMinFrames = 60;     // 启动阶段不触发
+static constexpr int64_t kLatencyRecoveryTimeoutMs = 1000; // drop-until-IDR 超时兜底：IDR 久未到达则恢复提交，避免长时间冻结
 // L4: 网络抖动突发检测 - 连续 N 帧在极短间隔内到达时主动 Flush + IDR
-static constexpr int kBurstFlushThreshold = 4;           // 连续突发帧数阈值
+static constexpr int kBurstFlushThreshold = 4;           // 连续突发帧数阈值（@基准帧率）
+static constexpr double kBurstBaselineFps = 60.0;        // 突发计数阈值的基准帧率
+// 高刷下帧间隔本就极短，设备侧的正常补发很容易凑出连续短间隔。
+// 按刷新率线性放宽触发计数，使"需要相同绝对积压时长(≈基准帧率下 kBurstFlushThreshold 帧)"
+// 才触发，避免高刷误触：burstThreshold = max(基准, round(基准 × fps / 基准帧率))。
 static constexpr double kBurstIntervalRatio = 0.3;       // 到达间隔 < 帧间隔 × 此比率视为突发
 // L5: 异步渲染跳帧 - 输出间隔过短且延迟偏高时跳帧
 // 目的：当解码器批量输出帧时，跳过中间帧只渲染最新帧，保持均匀帧间距
@@ -1003,9 +1008,14 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
         int64_t lastArrival = lastFrameArrivalMs_.exchange(nowMs);
         double expectedFrameMs = 1000.0 / config_.fps;
         
+        // 按刷新率放宽 L4 触发计数：高刷下帧间隔短，正常的设备侧补发易凑出连续短间隔，
+        // 故要求更多连续突发帧（绝对积压时长保持 ≈ 基准帧率下 kBurstFlushThreshold 帧）才触发。
+        int burstThreshold = std::max(kBurstFlushThreshold,
+            static_cast<int>(kBurstFlushThreshold * config_.fps / kBurstBaselineFps + 0.5));
+        
         if (lastArrival > 0 && (nowMs - lastArrival) < static_cast<int64_t>(expectedFrameMs * kBurstIntervalRatio)) {
             int burst = burstFrameCount_.fetch_add(1) + 1;
-            if (burst >= kBurstFlushThreshold && frameType != VideoFrameType::I_FRAME) {
+            if (burst >= burstThreshold && frameType != VideoFrameType::I_FRAME) {
                 burstFrameCount_.store(0);
                 // 清空软件待解码队列
                 {
@@ -1026,8 +1036,8 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
                     stats_.droppedFrames++;
                     stats_.droppedByL4++;
                 }
-                OH_LOG_WARN(LOG_APP, "L4 burst detected (%{public}d frames in <%.1fms interval), requesting IDR",
-                            burst, expectedFrameMs * kBurstIntervalRatio);
+                OH_LOG_WARN(LOG_APP, "L4 burst detected (%{public}d/%{public}d frames in <%.1fms interval @%.0ffps), requesting IDR",
+                            burst, burstThreshold, expectedFrameMs * kBurstIntervalRatio, config_.fps);
                 return -1;  // DR_NEED_IDR
             }
         } else {
@@ -1367,7 +1377,10 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
                 self->stats_.droppedFrames++;
                 self->stats_.droppedByL2++;
             }
-            self->lastInstantDecodeTimeMs_.store(instantDecodeTimeMs);
+            // 注意：不要把含排队等待的管线延迟 instantDecodeTimeMs 写入 lastInstantDecodeTimeMs_。
+            // 该字段是 L3 临界延迟判据的输入，应只反映"真实解码耗时"（剔除队列等待）。
+            // 若在此写入管线延迟，会让 L3 把网络抖动/积压误判为解码卡顿而触发 IDR（L2→L3 串扰）。
+            // 此处丢弃的帧未真正解码，没有精确解码时间，保留上一帧的良好值即可。
             return;
         }
         
@@ -1579,6 +1592,7 @@ int VideoDecoder::CheckLatencyRecovery(VideoFrameType frameType, int size, int f
     // 收到 IDR 帧时重置恢复状态
     if (isIFrame && latencyRecoveryActive_.load()) {
         latencyRecoveryActive_.store(false);
+        latencyRecoveryStartMs_.store(0);
         int64_t currentLatency = lastInstantDecodeTimeMs_.load();
         OH_LOG_INFO(LOG_APP, "IDR received, latency recovery complete (current decode=%{public}lldms)",
                     static_cast<long long>(currentLatency));
@@ -1592,13 +1606,35 @@ int VideoDecoder::CheckLatencyRecovery(VideoFrameType frameType, int size, int f
     // 恢复模式已激活（由 L3 临界延迟或队列溢出触发），持续丢弃 P 帧直到 IDR 到达
     // 避免向解码器提交缺少参考帧的 P 帧，那样会导致输出损坏或卡顿
     if (latencyRecoveryActive_.load()) {
-        UpdateReceivedStats(size, frameNumber, hostProcessingLatency);
-        {
-            std::lock_guard<std::mutex> lock(statsMutex_);
-            stats_.droppedFrames++;
-            stats_.droppedByL3++;
+        int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        int64_t startMs = latencyRecoveryStartMs_.load();
+        if (startMs == 0) {
+            latencyRecoveryStartMs_.store(nowMs);
+            startMs = nowMs;
         }
-        return -1;  // DR_NEED_IDR
+        // 超时兜底：IDR 久未到达（可能请求或 IDR 本身在弱网下丢失），
+        // 若继续盲丢所有 P 帧会造成长时间冻结。超时后恢复正常提交并补发一次 IDR 请求，
+        // 宁可短暂出现参考链断裂的瑕疵，也不要长冻结。
+        if (nowMs - startMs > kLatencyRecoveryTimeoutMs) {
+            latencyRecoveryActive_.store(false);
+            latencyRecoveryStartMs_.store(0);
+            // 重置陈旧的解码耗时读数：恢复期间无新解码，lastInstantDecodeTimeMs_ 仍是触发时的高值，
+            // 若不清零，下方 L3 判定会立即用陈旧值再次触发，形成"丢 1s→放 1 帧→再丢"的抖动循环。
+            lastInstantDecodeTimeMs_.store(0);
+            LiRequestIdrFrame();
+            OH_LOG_WARN(LOG_APP, "Latency recovery timeout (%{public}lldms), resuming submit and re-requesting IDR",
+                        static_cast<long long>(nowMs - startMs));
+            // 不丢弃当前帧，落到下方正常处理逻辑
+        } else {
+            UpdateReceivedStats(size, frameNumber, hostProcessingLatency);
+            {
+                std::lock_guard<std::mutex> lock(statsMutex_);
+                stats_.droppedFrames++;
+                stats_.droppedByL3++;
+            }
+            return -1;  // DR_NEED_IDR
+        }
     }
     
     int64_t lastDecodeTime = lastInstantDecodeTimeMs_.load();

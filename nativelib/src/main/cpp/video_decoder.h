@@ -355,6 +355,7 @@ private:
     // 延迟恢复状态
     std::atomic<int64_t> lastInstantDecodeTimeMs_{0};  // 最近一帧的实际解码耗时 (ms)
     std::atomic<bool> latencyRecoveryActive_{false};    // 是否已请求 IDR 恢复
+    std::atomic<int64_t> latencyRecoveryStartMs_{0};    // 进入 drop-until-IDR 的起始时间 (ms)，用于超时兜底
     
     // === 精确解码时间统计（排除队列等待） ===
     std::atomic<int64_t> lastOutputTimeMs_{0};          // 上一帧解码输出时间 (ms)
