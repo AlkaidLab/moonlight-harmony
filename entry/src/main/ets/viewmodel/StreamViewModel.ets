@@ -169,6 +169,11 @@ export class StreamViewModel {
   // 让 ConnectingOverlay 淡出与首帧出现对齐。
   private firstFrameTimer: number = -1;
 
+  // 网络质量警告迟滞防抖：POOR 需持续一段时间才显示浮层，OKAY 立即清除，
+  // 避免瞬时网络抖动导致警告浮层频繁闪烁。
+  private poorWarnTimer: number = -1;
+  private static readonly POOR_WARN_SHOW_DELAY_MS = 1500;
+
   // 便捷属性
   get isConnecting(): boolean {
     return this.connectionState === StreamConnectionState.CONNECTING;
@@ -343,9 +348,27 @@ export class StreamViewModel {
       // 属性可能无法可靠触发 ArkUI 重新渲染，而 AppStorage + @StorageLink 保证生效
       this.streamingSession.setConnectionStatusCallback((connectionStatus: number) => {
         const newPoor = (connectionStatus === CONN_STATUS_POOR);
-        const oldPoor = AppStorage.get<boolean>('connectionPoor') ?? false;
-        console.info(`StreamViewModel: connectionStatusUpdate ${connectionStatus}, connectionPoor: ${oldPoor} -> ${newPoor}`);
-        AppStorage.setOrCreate('connectionPoor', newPoor);
+        // 迟滞防抖：POOR 需持续 POOR_WARN_SHOW_DELAY_MS 仍未恢复才显示警告浮层；
+        // 一旦收到 OKAY，立即取消待显示并清除已显示的警告，让画面恢复时警告即时消失。
+        if (newPoor) {
+          const alreadyPoor = AppStorage.get<boolean>('connectionPoor') ?? false;
+          if (!alreadyPoor && this.poorWarnTimer < 0) {
+            this.poorWarnTimer = setTimeout(() => {
+              this.poorWarnTimer = -1;
+              AppStorage.setOrCreate('connectionPoor', true);
+              console.info('StreamViewModel: connectionPoor -> true (debounced show)');
+            }, StreamViewModel.POOR_WARN_SHOW_DELAY_MS);
+          }
+        } else {
+          if (this.poorWarnTimer >= 0) {
+            clearTimeout(this.poorWarnTimer);
+            this.poorWarnTimer = -1;
+          }
+          if (AppStorage.get<boolean>('connectionPoor') ?? false) {
+            AppStorage.setOrCreate('connectionPoor', false);
+            console.info('StreamViewModel: connectionPoor -> false (immediate clear)');
+          }
+        }
         if (this.connectionStatusCallback) {
           this.connectionStatusCallback(connectionStatus);
         }
@@ -438,7 +461,11 @@ export class StreamViewModel {
     // 停止首帧轮询（如果还在运行）
     this.stopFirstFrameWatcher();
 
-    // 清除网络质量警告
+    // 清除网络质量警告与待显示的防抖定时器
+    if (this.poorWarnTimer >= 0) {
+      clearTimeout(this.poorWarnTimer);
+      this.poorWarnTimer = -1;
+    }
     AppStorage.setOrCreate('connectionPoor', false);
     
     // 停止串流会话
