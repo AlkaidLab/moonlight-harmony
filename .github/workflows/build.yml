@@ -288,6 +288,10 @@ jobs:
         mkdir -p "$CMDTOOLS_HVIGOR/node_modules/@ohos"
         ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$CMDTOOLS_HVIGOR/node_modules/@ohos/hvigor"
         ln -sf "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin" "$CMDTOOLS_HVIGOR/node_modules/@ohos/hvigor-ohos-plugin"
+        mkdir -p "$CMDTOOLS_HVIGOR/hvigor/node_modules/@ohos"
+        ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$CMDTOOLS_HVIGOR/hvigor/node_modules/@ohos/hvigor"
+        mkdir -p "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin/node_modules/@ohos"
+        ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin/node_modules/@ohos/hvigor"
         for dir in . hvigor entry nativelib; do
           mkdir -p "$dir/node_modules/@ohos"
           ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$dir/node_modules/@ohos/hvigor"
@@ -307,7 +311,7 @@ jobs:
         ci/patch-sdk.sh ~/ohos-sdk
 
     # ── 构建 ──
-    - name: Build Native
+    - name: Build Native HAR
       run: |
         set -o pipefail
         BUILD_MODE="${{ steps.build-mode.outputs.mode }}"
@@ -319,6 +323,23 @@ jobs:
         node hvigorw.js assembleHar \
           --mode module \
           -p module=nativelib@default \
+          -p product=default \
+          -p buildMode="${BUILD_MODE}" \
+          --no-daemon \
+          --stacktrace \
+          2>&1 | tee build-har.log
+
+    - name: Build App
+      run: |
+        set -o pipefail
+        BUILD_MODE="${{ steps.build-mode.outputs.mode }}"
+
+        export NODE_HOME="$(dirname "$(dirname "$(which node)")")"
+        export JAVA_HOME="${JAVA_HOME_17_X64}"
+        export LD_LIBRARY_PATH="${HOME}/ohos-sdk/toolchains/lib:${HOME}/ohos-sdk/previewer/common/bin:${LD_LIBRARY_PATH:-}"
+
+        node hvigorw.js assembleApp \
+          --mode project \
           -p product=default \
           -p buildMode="${BUILD_MODE}" \
           --no-daemon \
@@ -336,7 +357,19 @@ jobs:
       with:
         name: build-logs-${{ github.run_id }}
         path: |
+          build-har.log
           build-hap.log
         retention-days: 7
 
-  # Release 由本地手动构建签名后上传
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: harmonyos-${{ steps.build-mode.outputs.mode }}-${{ github.run_id }}
+        path: |
+          entry/build/default/outputs/**/*.hap
+          nativelib/build/default/outputs/**/*.har
+        if-no-files-found: warn
+        retention-days: 7
+
+  # Signed release artifacts are produced when signing secrets are configured.

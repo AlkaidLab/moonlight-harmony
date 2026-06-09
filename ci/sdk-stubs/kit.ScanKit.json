@@ -7,6 +7,10 @@
     "scanBarcode": {
       "source": "@ohos.scan.scanBarcode.d.ts",
       "bindings": "default"
+    },
+    "generateBarcode": {
+      "source": "@ohos.scan.generateBarcode.d.ts",
+      "bindings": "default"
     }
   }
 }

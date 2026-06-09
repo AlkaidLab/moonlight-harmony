@@ -1,3 +1,5 @@
+import image from '@ohos.multimedia.image';
+
 declare module '@kit.ScanKit' {
   namespace scanCore {
     enum ScanType {
@@ -19,4 +21,21 @@ declare module '@kit.ScanKit' {
     }
     function startScanForResult(context: object, options?: ScanOptions): Promise<ScanResult>;
   }
+  namespace generateBarcode {
+    enum ErrorCorrectionLevel {
+      LEVEL_L = 0,
+      LEVEL_M = 1,
+      LEVEL_Q = 2,
+      LEVEL_H = 3,
+    }
+    interface CreateOptions {
+      scanType: scanCore.ScanType;
+      width: number;
+      height: number;
+      margin?: number;
+      level?: ErrorCorrectionLevel;
+    }
+    function createBarcode(content: string, options: CreateOptions): Promise<image.PixelMap>;
+  }
+  export { scanCore, scanBarcode, generateBarcode };
 }

@@ -670,7 +670,7 @@ export class QrShareService {
           margin: 2,
           level: scanEcLevel,
         };
-        const pixelMap = await generateBarcode.createBarcode(content, options);
+        const pixelMap: image.PixelMap = await generateBarcode.createBarcode(content, options);
         console.info(`[QrShareService] ScanKit 生成 QR: ${content.length} chars, ECLevel=${level}`);
         return { pixelMap };
       } catch (e) {

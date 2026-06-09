@@ -24,7 +24,7 @@
  * C++ (BassEnergyAnalyzer) → TSFN → ArkTS (本服务) → 分路由
  *
  * 分路由策略（遵循 vibrationMode 振动模式设置）：
- * - 设备振动：直接调用 @ohos.vibrator HD Haptic API（保持最高精度）
+ * - 设备振动：通过 SensorServiceKit vibrator HD Haptic API（保持最高精度）
  * - USB 手柄：通过 GamepadManager 直接发送 USB HID 报告
  */
 

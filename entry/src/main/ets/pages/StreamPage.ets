@@ -1991,7 +1991,6 @@ struct StreamPage {
             this.showVirtualKeyboard = false;
           },
         })
-          .width('100%')
       }
 
       // 串流结束战报层（停止 session 后仍留在当前页，用户关闭后再返回）

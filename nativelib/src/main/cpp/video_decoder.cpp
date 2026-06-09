@@ -602,8 +602,9 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
         OH_AVFormat_SetIntValue(format, OH_MD_MAX_INPUT_BUFFER_COUNT, effectiveBufferCount);
         OH_AVFormat_SetIntValue(format, OH_MD_MAX_OUTPUT_BUFFER_COUNT, effectiveBufferCount);
         
-        // 尝试设置解码器特定的输出缓冲区数量（可能不是所有设备都支持）
+#ifdef MOONLIGHT_ENABLE_PRIVATE_AVCODEC_KEYS
         OH_AVFormat_SetIntValue(format, "video_decoder_output_buffer_count", effectiveBufferCount);
+#endif
         OH_LOG_INFO(LOG_APP, "{Init} Decoder buffer request set to: %{public}d (fps=%.2f, mode=%{public}s)", 
                     effectiveBufferCount, config_.fps,
                     config_.decoderMode == DecoderMode::SYNC ? "SYNC" : "ASYNC");

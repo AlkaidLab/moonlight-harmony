@@ -8,8 +8,7 @@
  * (at your option) any later version.
  */
 
-import socket from '@ohos.net.socket';
-import connection from '@ohos.net.connection';
+import { socket, connection } from '@kit.NetworkKit';
 import { NvHttp } from '../streaming/NvHttp';
 import { isIPv6Address, isIPv4Address } from '../../utils/NetHelper';
 
@@ -126,7 +125,7 @@ export class WakeOnLan {
    * 广播发送（独立 socket，设置 broadcast 标志）
    */
   private static async sendBroadcast(payload: ArrayBuffer, ports: number[]): Promise<void> {
-    const udpSocket = socket.constructUDPSocketInstance();
+    const udpSocket: socket.UDPSocket = socket.constructUDPSocketInstance();
     try {
       await udpSocket.bind({ address: '0.0.0.0', port: 0, family: 1 });
       await udpSocket.setExtraOptions({ broadcast: true });
@@ -151,7 +150,7 @@ export class WakeOnLan {
    */
   private static async sendUnicast(payload: ArrayBuffer, address: string, ports: number[], isIPv6: boolean): Promise<void> {
     const family = isIPv6 ? 2 : 1;
-    const udpSocket = socket.constructUDPSocketInstance();
+    const udpSocket: socket.UDPSocket = socket.constructUDPSocketInstance();
     try {
       await udpSocket.bind({ address: isIPv6 ? '::' : '0.0.0.0', port: 0, family: family });
 

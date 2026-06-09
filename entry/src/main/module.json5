@@ -101,6 +101,14 @@
         }
       },
       {
+        "name": "ohos.permission.INPUT_MONITORING",
+        "reason": "$string:permission_input_monitoring_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
         "name": "ohos.permission.GET_NETWORK_INFO",
         "reason": "$string:permission_network_info_reason",
         "usedScene": {

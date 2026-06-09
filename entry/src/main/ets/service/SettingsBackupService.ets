@@ -21,9 +21,7 @@
  *   4. 卸载重装后文件保留，但权限丢失，需用户选一次文件恢复
  */
 
-import { picker } from '@kit.CoreFileKit';
-import { fileIo } from '@kit.CoreFileKit';
-import fileShare from '@ohos.fileshare';
+import { picker, fileIo, fileShare } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { preferences } from '@kit.ArkData';
 import { PreferencesUtil } from '../utils/PreferencesUtil';

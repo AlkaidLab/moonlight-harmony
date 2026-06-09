@@ -1,18 +1,103 @@
 #!/usr/bin/env bash
 # Normalize the downloaded OpenHarmony SDK layout for hvigor.
 #
-# hvigor's parseSdks scans $SDK_HOME for sdk-pkg.json (flat layout).
-# OhosBaseSdkInfoHandler.getLocalSdks() remaps component locations:
-#   OPENHARMONY → $SDK_HOME/toolchains/openharmony/<component>/
-#   HARMONYOS   → $SDK_HOME/toolchains/hms/<component>/
-# checkComponentExistence verifies oh-uni-package.json / uni-package.json
-# at the REMAPPED locations. We keep flat layout for scanning and create
-# symlinks at the remapped locations for the existence check.
+# Different Hvigor/sdkmanager releases expect different local SDK layouts:
+#   - older CI helpers scan flat $SDK_HOME/<component>
+#   - OpenHarmony sdkmanager scans $SDK_HOME/<api>/<component>
+#   - HarmonyOS sdkmanager scans platform containers such as
+#     $SDK_HOME/toolchains and then expands them to toolchains/hms/<component>
+# Keep the real component directories flat and create symlink views for the
+# SDK managers instead of copying the SDK.
 set -euo pipefail
 
 SDK_HOME="${1:-$HOME/ohos-sdk}"
 
 echo "=== Normalizing SDK layout ==="
+
+display_name_for() {
+  case "$1" in
+    ets) echo "Ets" ;;
+    js) echo "Js" ;;
+    native) echo "Native" ;;
+    toolchains) echo "Toolchains" ;;
+    previewer) echo "Previewer" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+component_json() {
+  local comp="$1"
+  local meta_key="$2"
+  local include_stage="${3:-0}"
+  local display_name
+  display_name="$(display_name_for "$comp")"
+  COMP="$comp" DISPLAY_NAME="$display_name" META_KEY="$meta_key" INCLUDE_STAGE="$include_stage" \
+    API_VER="$API_VER" HOS_PLATFORM_VERSION="$HOS_PLATFORM_VERSION" SDK_PKG_VERSION="$SDK_PKG_VERSION" \
+    python3 - <<'PY'
+import json
+import os
+
+data = {
+    "apiVersion": os.environ["API_VER"],
+    "fullApiVersion": os.environ["API_VER"],
+    "platformVersion": os.environ["HOS_PLATFORM_VERSION"],
+    "displayName": os.environ["DISPLAY_NAME"],
+    "path": os.environ["COMP"],
+    "releaseType": "Release",
+    "version": os.environ["SDK_PKG_VERSION"],
+}
+if os.environ.get("INCLUDE_STAGE") == "1":
+    data["stage"] = "Release"
+meta_key = os.environ["META_KEY"]
+if meta_key == "metaVersion":
+    data["meta"] = {"metaVersion": "3.0.0"}
+elif meta_key == "version":
+    data = {"data": data, "meta": {"version": "1.0.0"}}
+print(json.dumps(data, separators=(",", ":")))
+PY
+}
+
+write_oh_package() {
+  local comp="$1"
+  local dir="$2"
+  mkdir -p "$dir"
+  component_json "$comp" metaVersion > "$dir/oh-uni-package.json"
+}
+
+write_hos_package() {
+  local comp="$1"
+  local dir="$2"
+  mkdir -p "$dir"
+  component_json "$comp" version 1 > "$dir/sdk-pkg.json"
+}
+
+write_hms_check_package() {
+  local comp="$1"
+  local dir="$2"
+  mkdir -p "$dir"
+  component_json "$comp" metaVersion > "$dir/uni-package.json"
+}
+
+link_component_contents() {
+  local src="$1"
+  local dst="$2"
+  shift 2
+  mkdir -p "$dst"
+  for item in "$src"/*; do
+    [ -e "$item" ] || continue
+    local bname
+    bname="$(basename "$item")"
+    case "$bname" in
+      openharmony|hms) continue ;;
+    esac
+    local skip=0
+    for excluded in "$@"; do
+      [ "$bname" = "$excluded" ] && skip=1 && break
+    done
+    [ "$skip" -eq 1 ] && continue
+    ln -sfn "$item" "$dst/$bname"
+  done
+}
 
 # ─── Determine API version ───
 PKG_FILE=$(find "$SDK_HOME" -maxdepth 4 -name "oh-uni-package.json" -type f | head -1)
@@ -53,104 +138,62 @@ for comp in ets js native toolchains previewer; do
 done
 rm -rf "$SDK_HOME/openharmony" "$SDK_HOME/HarmonyOS"
 
-# ─── Step 2: Ensure oh-uni-package.json and sdk-pkg.json in each component ───
+# ─── Step 2: Ensure component metadata in each flat component ───
 for comp in ets js native toolchains previewer; do
   COMP_DIR="$SDK_HOME/$comp"
   [ ! -d "$COMP_DIR" ] && mkdir -p "$COMP_DIR"
-
-  if [ ! -f "$COMP_DIR/oh-uni-package.json" ]; then
-    cat > "$COMP_DIR/oh-uni-package.json" << EOF
-{"apiVersion":"$API_VER","fullApiVersion":"$API_VER","platformVersion":"$HOS_PLATFORM_VERSION","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"$SDK_PKG_VERSION"}
-EOF
-  fi
-  COMPONENT_FILE="$COMP_DIR/oh-uni-package.json" API_VER="$API_VER" HOS_PLATFORM_VERSION="$HOS_PLATFORM_VERSION" python3 -c "
-import json, os
-p = os.environ['COMPONENT_FILE']
-with open(p) as f:
-    pkg = json.load(f)
-pkg['apiVersion'] = os.environ['API_VER']
-pkg['fullApiVersion'] = os.environ['API_VER']
-pkg['platformVersion'] = os.environ['HOS_PLATFORM_VERSION']
-with open(p, 'w') as f:
-    json.dump(pkg, f)
-"
-
-  if [ "$comp" != "toolchains" ]; then
-    rm -f "$COMP_DIR/sdk-pkg.json"
-  else
-    python3 -c "
-import json
-with open('$COMP_DIR/oh-uni-package.json') as f:
-    pkg = json.load(f)
-meta_ver = pkg.get('meta', {}).get('metaVersion', '3.0.0')
-data = {k: v for k, v in pkg.items() if k != 'meta'}
-with open('$COMP_DIR/sdk-pkg.json', 'w') as f:
-    json.dump({'data': data, 'meta': {'version': meta_ver}}, f)
-"
-  fi
+  write_oh_package "$comp" "$COMP_DIR"
+  rm -f "$COMP_DIR/sdk-pkg.json"
 done
 
-# ─── Step 3: Create OPENHARMONY remapped locations ───
+# ─── Step 3: Create OpenHarmony sdkmanager view ($SDK_HOME/<api>/<component>) ───
+rm -rf "$SDK_HOME/$API_VER"
+mkdir -p "$SDK_HOME/$API_VER"
+for comp in ets js native toolchains previewer; do
+  [ -d "$SDK_HOME/$comp" ] && ln -sfn "$SDK_HOME/$comp" "$SDK_HOME/$API_VER/$comp"
+done
+echo "  Created $API_VER/ component view"
+
+# ─── Step 4: Create legacy OPENHARMONY remapped locations ───
 rm -rf "$SDK_HOME/toolchains/openharmony"
 mkdir -p "$SDK_HOME/toolchains/openharmony"
 for comp in ets js native previewer; do
   [ -d "$SDK_HOME/$comp" ] && ln -sf "$SDK_HOME/$comp" "$SDK_HOME/toolchains/openharmony/$comp"
 done
 mkdir -p "$SDK_HOME/toolchains/openharmony/toolchains"
-for item in "$SDK_HOME/toolchains/"*; do
-  bname=$(basename "$item")
-  case "$bname" in openharmony|hms) continue ;; esac
-  ln -sf "$item" "$SDK_HOME/toolchains/openharmony/toolchains/$bname"
-done
+link_component_contents "$SDK_HOME/toolchains" "$SDK_HOME/toolchains/openharmony/toolchains" id_defined.json
 echo "  Created toolchains/openharmony/"
 
-# ─── Step 4: Create HARMONYOS (HMS) remapped locations ───
+# ─── Step 5: Create HarmonyOS sdkmanager platform views ───
 rm -rf "$SDK_HOME/toolchains/hms"
 mkdir -p "$SDK_HOME/toolchains/hms"
+write_hos_package "toolchains" "$SDK_HOME/toolchains"
 for comp in ets native previewer; do
   [ -d "$SDK_HOME/$comp" ] && ln -sf "$SDK_HOME/$comp" "$SDK_HOME/toolchains/hms/$comp"
-  if [ ! -f "$SDK_HOME/$comp/uni-package.json" ]; then
-    cat > "$SDK_HOME/$comp/uni-package.json" << EOF
-{"apiVersion":"$API_VER","fullApiVersion":"$API_VER","platformVersion":"$HOS_PLATFORM_VERSION","displayName":"${comp^}","meta":{"metaVersion":"3.0.0"},"path":"$comp","releaseType":"Beta1","version":"$SDK_PKG_VERSION"}
-EOF
-  fi
-  COMPONENT_FILE="$SDK_HOME/$comp/uni-package.json" API_VER="$API_VER" HOS_PLATFORM_VERSION="$HOS_PLATFORM_VERSION" python3 -c "
-import json, os
-p = os.environ['COMPONENT_FILE']
-with open(p) as f:
-    pkg = json.load(f)
-pkg['apiVersion'] = os.environ['API_VER']
-pkg['fullApiVersion'] = os.environ['API_VER']
-pkg['platformVersion'] = os.environ['HOS_PLATFORM_VERSION']
-with open(p, 'w') as f:
-    json.dump(pkg, f)
-"
+  write_hms_check_package "$comp" "$SDK_HOME/$comp"
 done
 # HMS toolchains: skip id_defined.json to avoid duplicate ID errors
 mkdir -p "$SDK_HOME/toolchains/hms/toolchains"
-for item in "$SDK_HOME/toolchains/"*; do
-  bname=$(basename "$item")
-  case "$bname" in openharmony|hms|id_defined.json) continue ;; esac
-  ln -sf "$item" "$SDK_HOME/toolchains/hms/toolchains/$bname"
+link_component_contents "$SDK_HOME/toolchains" "$SDK_HOME/toolchains/hms/toolchains"
+write_hms_check_package "toolchains" "$SDK_HOME/toolchains/hms/toolchains"
+
+# Some command-line-tools only know HarmonyOS <= 5.1.0 until patched. The real
+# platform version stays 6.1.1 in sdk-pkg.json, while this alias lets those
+# tools discover the same local platform container before ci/patch-sdk.sh runs.
+for platform_alias in "hmscore/$API_VER" "hmscore/$HOS_PLATFORM_VERSION" "HarmonyOS-NEXT2" "HarmonyOS NEXT2"; do
+  rm -rf "$SDK_HOME/$platform_alias"
+  mkdir -p "$(dirname "$SDK_HOME/$platform_alias")"
+  ln -sfn "$SDK_HOME/toolchains" "$SDK_HOME/$platform_alias"
 done
-cat > "$SDK_HOME/toolchains/hms/toolchains/uni-package.json" << EOF
-{"apiVersion":"$API_VER","fullApiVersion":"$API_VER","platformVersion":"$HOS_PLATFORM_VERSION","displayName":"Toolchains","meta":{"metaVersion":"3.0.0"},"path":"toolchains","releaseType":"Beta1","version":"$SDK_PKG_VERSION"}
-EOF
 echo "  Created toolchains/hms/"
 
-# ─── Step 5: Schema stubs for HarmonyOS validation ───
+# ─── Step 6: Schema stubs for HarmonyOS validation ───
 for check_dir in modulecheck configcheck syscapcheck; do
   CHECK_PATH="$SDK_HOME/toolchains/$check_dir"
   [ ! -d "$CHECK_PATH" ] && continue
   for schema in app.json module.json; do
     [ ! -f "$CHECK_PATH/$schema" ] && echo '{}' > "$CHECK_PATH/$schema"
   done
-done
-# Remove stale per-component sdk-pkg.json files from older cached CI layouts.
-for comp in ets native previewer toolchains; do
-  HMS_DIR="$SDK_HOME/toolchains/hms/$comp"
-  REAL_DIR=$(readlink -f "$HMS_DIR" 2>/dev/null || echo "$HMS_DIR")
-  rm -f "$REAL_DIR/sdk-pkg.json" "$HMS_DIR/sdk-pkg.json"
 done
 
 echo "SDK_API_VERSION=$API_VER"

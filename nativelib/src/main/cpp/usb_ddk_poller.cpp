@@ -27,14 +27,21 @@
 #include <dlfcn.h>
 #include <atomic>
 #include <mutex>
+#include <cstddef>
 #include <hilog/log.h>
+#if __has_include(<usb/usb_ddk_api.h>) && __has_include(<usb/usb_ddk_types.h>)
+#include <usb/usb_ddk_api.h>
+#include <usb/usb_ddk_types.h>
+#define MOONLIGHT_HAS_OFFICIAL_USB_DDK 1
+#endif
 
 #define LOG_TAG "USB-DDK-Poller"
 
 // ============================================================
-// USB DDK 类型定义 (手动定义，通过 dlopen 调用)
+// USB DDK 类型定义 (通过 dlopen 调用，优先使用官方头文件)
 // ============================================================
 
+#ifndef MOONLIGHT_HAS_OFFICIAL_USB_DDK
 #define USB_DDK_SUCCESS         0
 #define USB_DDK_NO_PERM         201
 #define USB_DDK_INVALID_PARAM   401
@@ -78,6 +85,15 @@ struct UsbDeviceMemMap {
     uint32_t bufferLength;
     uint32_t transferedLength;
 };
+#else
+#define USB_DDK_INVALID_PARAM USB_DDK_INVALID_PARAMETER
+#define USB_DDK_INVALID_OP USB_DDK_INVALID_OPERATION
+#endif
+
+static_assert(sizeof(UsbDeviceDescriptor) == 24, "Unexpected UsbDeviceDescriptor ABI layout");
+static_assert(sizeof(UsbRequestPipe) == 16, "Unexpected UsbRequestPipe ABI layout");
+static_assert(sizeof(UsbDeviceMemMap) >= sizeof(uint8_t*) + sizeof(size_t) + sizeof(uint32_t) * 3,
+              "Unexpected UsbDeviceMemMap ABI layout");
 
 // ============================================================
 // DDK 函数指针

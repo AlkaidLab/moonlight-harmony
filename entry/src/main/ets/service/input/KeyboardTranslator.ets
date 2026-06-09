@@ -12,7 +12,7 @@
  * KeyboardTranslator - HarmonyOS KeyCode → Windows Virtual Key Code 映射
  *
  * 参照 Android moonlight-android KeyboardTranslator.java 实现
- * HarmonyOS 按键码定义: @ohos.multimodalInput.keyCode (KeyCode enum)
+ * HarmonyOS 按键码定义: InputKit KeyCode enum
  * Windows VK 码参考: https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
  *
  * HarmonyOS 按键码偏移:

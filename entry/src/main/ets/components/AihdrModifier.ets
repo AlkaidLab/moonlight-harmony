@@ -11,7 +11,7 @@
 /**
  * AIHDR 修饰器
  *
- * 通过 attributeModifier 隔离 @since 24 的 XComponent.hdrBrightness(brightness, HdrType.AIHDR) 调用。
+ * 通过 attributeModifier 隔离 XComponent.hdrBrightness(brightness) 调用。
  * 使用 @Available 注解将 @since 24 API 在 compatibleSdkVersion < 24 时从编译错误降级为警告，
  * 并在运行时通过 deviceInfo.sdkApiVersion 守卫，确保低版本设备不会执行该路径。
  */
@@ -46,7 +46,7 @@ export class AihdrModifier implements AttributeModifier<XComponentAttribute> {
   @Available({ minApiVersion: '24' })
   applyNormalAttribute(instance: XComponentAttribute): void {
     if (this.enabled && deviceInfo.sdkApiVersion >= 24) {
-      instance.hdrBrightness(this.brightness, HdrType.AIHDR);
+      instance.hdrBrightness(this.brightness);
     }
   }
 }

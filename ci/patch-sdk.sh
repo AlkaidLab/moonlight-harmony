@@ -8,58 +8,129 @@
 set -euo pipefail
 
 SDK_HOME="${1:-$HOME/ohos-sdk}"
+SDK_CONTENT_ROOT="$SDK_HOME"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 STUBS_DIR="$SCRIPT_DIR/sdk-stubs"
-ETS_API="$SDK_HOME/ets/api"
-KIT_CONFIGS="$SDK_HOME/ets/build-tools/ets-loader/kit_configs"
-ETS_LOADER="$SDK_HOME/ets/build-tools/ets-loader"
+
+if [ -d "$SDK_HOME/default/openharmony/ets" ] || [ -d "$SDK_HOME/default/hms/ets" ]; then
+  DEVECO_LAYOUT=1
+  SDK_CONTENT_ROOT="$SDK_HOME/default"
+  OH_SDK_ROOT="$SDK_CONTENT_ROOT/openharmony"
+  HMS_SDK_ROOT="$SDK_CONTENT_ROOT/hms"
+elif [ -d "$SDK_HOME/openharmony/ets" ] || [ -d "$SDK_HOME/hms/ets" ]; then
+  DEVECO_LAYOUT=1
+  OH_SDK_ROOT="$SDK_CONTENT_ROOT/openharmony"
+  HMS_SDK_ROOT="$SDK_CONTENT_ROOT/hms"
+else
+  DEVECO_LAYOUT=0
+  OH_SDK_ROOT="$SDK_CONTENT_ROOT"
+  HMS_SDK_ROOT="$SDK_CONTENT_ROOT"
+fi
+
+OH_ETS_API="$OH_SDK_ROOT/ets/api"
+OH_ETS_KITS="$OH_SDK_ROOT/ets/kits"
+OH_KIT_CONFIGS="$OH_SDK_ROOT/ets/build-tools/ets-loader/kit_configs"
+OH_ETS_LOADER="$OH_SDK_ROOT/ets/build-tools/ets-loader"
+OH_TOOLCHAINS="$OH_SDK_ROOT/toolchains"
+
+HMS_ETS_API="$HMS_SDK_ROOT/ets/api"
+HMS_ETS_KITS="$HMS_SDK_ROOT/ets/kits"
+HMS_KIT_CONFIGS="$HMS_SDK_ROOT/ets/build-tools/ets-loader/kit_configs"
+HMS_ETS_LOADER="$HMS_SDK_ROOT/ets/build-tools/ets-loader"
+HMS_TOOLCHAINS="$HMS_SDK_ROOT/toolchains"
+
+ETS_API="$OH_ETS_API"
+ETS_KITS="$OH_ETS_KITS"
+KIT_CONFIGS="$OH_KIT_CONFIGS"
+ETS_LOADER="$OH_ETS_LOADER"
+TOOLCHAINS="$OH_TOOLCHAINS"
 
 echo "=== Applying SDK patches ==="
 
+kit_decl_exists() {
+  local kit_name="$1"
+  [ -f "$OH_ETS_KITS/$kit_name.d.ts" ] || [ -f "$OH_ETS_KITS/$kit_name.d.ets" ] || \
+    [ -f "$HMS_ETS_KITS/$kit_name.d.ts" ] || [ -f "$HMS_ETS_KITS/$kit_name.d.ets" ]
+}
+
+cmdline_tool_roots() {
+  for root in "${CMDLINE_TOOLS_HOME:-}" "${COMMANDLINE_TOOLS_HOME:-}" "$HOME/cmdline-tools"; do
+    [ -n "$root" ] && [ -d "$root" ] && printf '%s\n' "$root"
+  done | awk '!seen[$0]++'
+}
+
+loader_patch_roots() {
+  while IFS= read -r root; do
+    case "$root" in
+      */DevEco-Studio.app/Contents/tools|*/DevEco-Studio.app/Contents/tools/*)
+        echo "  Using official DevEco loader: $root"
+        ;;
+      *)
+        printf '%s\n' "$root"
+        ;;
+    esac
+  done
+}
+
 # ─── Patch hos-config.json for API 24 targetSdkVersion ───
 echo "Patching hos-config.json..."
-find ~/cmdline-tools -name "hos-config.json" -type f | while read -r cfg; do
+CMDLINE_ROOTS="$(cmdline_tool_roots || true)"
+if [ -n "$CMDLINE_ROOTS" ]; then
+printf '%s\n' "$CMDLINE_ROOTS" | while IFS= read -r root; do
+find "$root" -name "hos-config.json" -type f
+done | while read -r cfg; do
   CONFIG_PATH="$cfg" python3 -c "
 import json, os
 p = os.environ['CONFIG_PATH']
 with open(p) as f:
     c = json.load(f)
+before = json.dumps(c, sort_keys=True)
 os_versions = c.setdefault('osVersionMapper', {})
 os_names = c.setdefault('osNameMapper', {})
 path_versions = c.setdefault('pathVersionMapper', {})
 
 # Keep older CI command-line-tools aware of the API 24 target used by build-profile.json5.
-os_versions['6.1.1'] = '24'
-os_names['6.1.1'] = os_names.get('6.1.1', 'HarmonyOS NEXT2')
-path_versions['6.1.1'] = path_versions.get('6.1.1', 'HarmonyOS NEXT2')
+os_versions.setdefault('6.1.1', '24')
+os_names.setdefault('6.1.1', 'HarmonyOS NEXT2')
+path_versions.setdefault('6.1.1', 'HarmonyOS NEXT2')
 
 # Public 6.1-Release SDK currently reports API 23, so CI may target 6.1.0(23).
-os_versions['6.1.0'] = '23'
-os_names['6.1.0'] = os_names.get('6.1.0', 'HarmonyOS NEXT2')
-path_versions['6.1.0'] = path_versions.get('6.1.0', 'HarmonyOS NEXT2')
+os_versions.setdefault('6.1.0', '23')
+os_names.setdefault('6.1.0', 'HarmonyOS NEXT2')
+path_versions.setdefault('6.1.0', 'HarmonyOS NEXT2')
 
 # Preserve the historical API 20 mapping used by the public OpenHarmony SDK fallback.
-os_versions['6.0.2'] = '22'
-os_names['6.0.2'] = os_names.get('6.0.2', 'HarmonyOS NEXT2')
-path_versions['6.0.2'] = path_versions.get('6.0.2', 'HarmonyOS-NEXT2')
+os_versions.setdefault('6.0.2', '22')
+os_names.setdefault('6.0.2', 'HarmonyOS NEXT2')
+path_versions.setdefault('6.0.2', 'HarmonyOS-NEXT2')
 os_versions.setdefault('6.0.0', '20')
 os_names.setdefault('6.0.0', 'HarmonyOS NEXT2')
 path_versions.setdefault('6.0.0', 'HarmonyOS-NEXT2')
-with open(p, 'w') as f:
-    json.dump(c, f, indent=2)
-print('  Patched: ' + p)
+after = json.dumps(c, sort_keys=True)
+if after != before:
+    with open(p, 'w') as f:
+        json.dump(c, f, indent=2)
+    print('  Patched: ' + p)
+else:
+    print('  Already supports target versions: ' + p)
 "
 done
+else
+  echo "  No cmdline-tools directory; skipped"
+fi
 
 echo "Patching hmos-sdk-loader fallback..."
-python3 - <<'PY'
+LOADER_ROOTS="$(printf '%s\n' "$CMDLINE_ROOTS" | loader_patch_roots | awk '/^  Using official DevEco loader:/ {next} {print}')"
+CMDLINE_TOOL_ROOTS="$LOADER_ROOTS" python3 - <<'PY'
 import glob
 import os
 import re
 
 patched = False
 candidates = []
-for loader in glob.glob(os.path.expanduser('~/cmdline-tools/**/hmos-sdk-loader.js'), recursive=True):
+roots = [p for p in os.environ.get('CMDLINE_TOOL_ROOTS', '').splitlines() if p]
+for root in roots:
+  for loader in glob.glob(os.path.join(root, '**', 'hmos-sdk-loader.js'), recursive=True):
     candidates.append(loader)
     with open(loader, encoding='utf-8') as f:
         text = f.read()
@@ -96,7 +167,10 @@ for loader in glob.glob(os.path.expanduser('~/cmdline-tools/**/hmos-sdk-loader.j
     patched = True
 
 if not patched:
-    raise SystemExit('Could not patch hmos-sdk-loader.js; candidates=' + ','.join(candidates))
+    if not candidates:
+        print('  No hmos-sdk-loader.js found; skipped')
+    else:
+        raise SystemExit('Could not patch hmos-sdk-loader.js; candidates=' + ','.join(candidates))
 PY
 
 # ─── aubio config.h ───
@@ -106,26 +180,36 @@ if [ ! -f "$AUBIO_CONFIG" ]; then
   echo "  Created aubio config.h"
 fi
 
-# ─── libimage_transcoder_shared.so stub ───
-for so_name in libimage_transcoder_shared.so; do
-  if ! find "$SDK_HOME" -name "$so_name" -print -quit | grep -q .; then
-    echo 'void __stub_placeholder(void) {}' | gcc -shared -x c - -o "$SDK_HOME/toolchains/lib/$so_name"
-    echo "  Created stub $so_name"
+# ─── libimage_transcoder_shared stub ───
+case "$(uname -s)" in
+  Darwin) IMAGE_TRANSCODER_LIB="libimage_transcoder_shared.dylib" ;;
+  *) IMAGE_TRANSCODER_LIB="libimage_transcoder_shared.so" ;;
+esac
+if ! find "$SDK_HOME" -name "$IMAGE_TRANSCODER_LIB" -print -quit | grep -q .; then
+  mkdir -p "$TOOLCHAINS/lib"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    echo 'void __stub_placeholder(void) {}' | cc -dynamiclib -arch x86_64 -arch arm64 -x c - -o "$TOOLCHAINS/lib/$IMAGE_TRANSCODER_LIB"
+  else
+    echo 'void __stub_placeholder(void) {}' | cc -shared -x c - -o "$TOOLCHAINS/lib/$IMAGE_TRANSCODER_LIB"
   fi
-done
+  echo "  Created stub $IMAGE_TRANSCODER_LIB"
+fi
 
 # ─── Deduplicate id_defined.json ───
-ID_FILE="$SDK_HOME/toolchains/id_defined.json"
-if [ -f "$ID_FILE" ]; then
-  python3 -c "
+for ID_FILE in "$OH_TOOLCHAINS/id_defined.json" "$HMS_TOOLCHAINS/id_defined.json"; do
+[ -f "$ID_FILE" ] || continue
+  ID_FILE="$ID_FILE" python3 -c "
 import json, os
-p = os.path.expanduser('$ID_FILE')
+p = os.path.expanduser(os.environ['ID_FILE'])
 with open(p) as f:
     data = json.load(f)
 def dedup_records(records):
     seen, deduped = set(), []
     for item in records:
-        key = json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item)
+        if isinstance(item, dict) and 'name' in item:
+            key = (item.get('type'), item.get('name'))
+        else:
+            key = json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item)
         if key not in seen:
             seen.add(key)
             deduped.append(item)
@@ -146,36 +230,52 @@ if changed:
     with open(p, 'w') as f:
         json.dump(data, f, indent=2)
 else:
-    print('  No duplicates in id_defined.json')
+    print('  No duplicates in ' + p)
 "
-fi
+done
 
 # ─── ets-loader externalconfig.json ───
-COMPONENTS_DIR="$ETS_LOADER/components"
-if [ ! -f "$COMPONENTS_DIR/externalconfig.json" ]; then
-  cp "$STUBS_DIR/externalconfig.json" "$COMPONENTS_DIR/externalconfig.json"
-  echo "  Created externalconfig.json"
+if [ "$DEVECO_LAYOUT" -eq 0 ]; then
+for COMPONENTS_DIR in "$OH_ETS_LOADER/components" "$HMS_ETS_LOADER/components"; do
+  [ -d "$COMPONENTS_DIR" ] || continue
+  if [ ! -f "$COMPONENTS_DIR/externalconfig.json" ]; then
+    cp "$STUBS_DIR/externalconfig.json" "$COMPONENTS_DIR/externalconfig.json"
+    echo "  Created externalconfig.json in $COMPONENTS_DIR"
+  fi
+done
 fi
 
 # ─── @kit.RemoteCommunicationKit ───
-[ ! -f "$KIT_CONFIGS/@kit.RemoteCommunicationKit.json" ] && \
-  cp "$STUBS_DIR/kit.RemoteCommunicationKit.json" "$KIT_CONFIGS/@kit.RemoteCommunicationKit.json"
-[ ! -f "$ETS_API/@ohos.net.rcp.d.ts" ] && \
-  cp "$STUBS_DIR/ohos.net.rcp.d.ts" "$ETS_API/@ohos.net.rcp.d.ts"
-cp "$STUBS_DIR/kit.RemoteCommunicationKit.d.ts" "$ETS_API/@kit.RemoteCommunicationKit.d.ts"
-echo "  Applied RemoteCommunicationKit stubs"
+if ! kit_decl_exists "@kit.RemoteCommunicationKit"; then
+  [ ! -f "$HMS_KIT_CONFIGS/@kit.RemoteCommunicationKit.json" ] && \
+    cp "$STUBS_DIR/kit.RemoteCommunicationKit.json" "$HMS_KIT_CONFIGS/@kit.RemoteCommunicationKit.json"
+  [ ! -f "$HMS_ETS_API/@ohos.net.rcp.d.ts" ] && \
+    cp "$STUBS_DIR/ohos.net.rcp.d.ts" "$HMS_ETS_API/@ohos.net.rcp.d.ts"
+  cp "$STUBS_DIR/kit.RemoteCommunicationKit.d.ts" "$HMS_ETS_API/@kit.RemoteCommunicationKit.d.ts"
+  echo "  Applied RemoteCommunicationKit stubs"
+else
+  echo "  Using SDK RemoteCommunicationKit declarations"
+fi
 
 # ─── @kit.NetworkKit declare module ───
-cp "$STUBS_DIR/kit.NetworkKit.d.ts" "$ETS_API/@kit.NetworkKit.d.ts"
-echo "  Applied NetworkKit declare module"
+if ! kit_decl_exists "@kit.NetworkKit"; then
+  cp "$STUBS_DIR/kit.NetworkKit.d.ts" "$ETS_API/@kit.NetworkKit.d.ts"
+  echo "  Applied NetworkKit declare module"
+else
+  echo "  Using SDK NetworkKit declarations"
+fi
 
 # ─── @kit.NetworkBoostKit ───
-[ ! -f "$KIT_CONFIGS/@kit.NetworkBoostKit.json" ] && \
-  cp "$STUBS_DIR/kit.NetworkBoostKit.json" "$KIT_CONFIGS/@kit.NetworkBoostKit.json"
-[ ! -f "$ETS_API/@ohos.networkBoost.netQuality.d.ts" ] && \
-  cp "$STUBS_DIR/ohos.networkBoost.netQuality.d.ts" "$ETS_API/@ohos.networkBoost.netQuality.d.ts"
-cp "$STUBS_DIR/kit.NetworkBoostKit.d.ts" "$ETS_API/@kit.NetworkBoostKit.d.ts"
-echo "  Applied NetworkBoostKit stubs"
+if ! kit_decl_exists "@kit.NetworkBoostKit"; then
+  [ ! -f "$HMS_KIT_CONFIGS/@kit.NetworkBoostKit.json" ] && \
+    cp "$STUBS_DIR/kit.NetworkBoostKit.json" "$HMS_KIT_CONFIGS/@kit.NetworkBoostKit.json"
+  [ ! -f "$HMS_ETS_API/@ohos.networkBoost.netQuality.d.ts" ] && \
+    cp "$STUBS_DIR/ohos.networkBoost.netQuality.d.ts" "$HMS_ETS_API/@ohos.networkBoost.netQuality.d.ts"
+  cp "$STUBS_DIR/kit.NetworkBoostKit.d.ts" "$HMS_ETS_API/@kit.NetworkBoostKit.d.ts"
+  echo "  Applied NetworkBoostKit stubs"
+else
+  echo "  Using SDK NetworkBoostKit declarations"
+fi
 
 # ─── Socket stub (only if SDK is missing the file) ───
 if [ ! -f "$ETS_API/@ohos.net.socket.d.ts" ]; then
@@ -191,19 +291,28 @@ if [ -n "$DISPLAY_DTS" ] && ! grep -q "getBrightnessInfo" "$DISPLAY_DTS"; then
 fi
 
 # ─── @kit.ScanKit ───
-[ ! -f "$KIT_CONFIGS/@kit.ScanKit.json" ] && \
-  cp "$STUBS_DIR/kit.ScanKit.json" "$KIT_CONFIGS/@kit.ScanKit.json"
-cp "$STUBS_DIR/kit.ScanKit.d.ts" "$ETS_API/@kit.ScanKit.d.ts"
-cp "$STUBS_DIR/ohos.scan.scanCore.d.ts" "$ETS_API/@ohos.scan.scanCore.d.ts"
-cp "$STUBS_DIR/ohos.scan.scanBarcode.d.ts" "$ETS_API/@ohos.scan.scanBarcode.d.ts"
-echo "  Applied ScanKit stubs"
+if ! kit_decl_exists "@kit.ScanKit"; then
+  [ ! -f "$HMS_KIT_CONFIGS/@kit.ScanKit.json" ] && \
+    cp "$STUBS_DIR/kit.ScanKit.json" "$HMS_KIT_CONFIGS/@kit.ScanKit.json"
+  cp "$STUBS_DIR/kit.ScanKit.d.ts" "$HMS_ETS_API/@kit.ScanKit.d.ts"
+  cp "$STUBS_DIR/ohos.scan.scanCore.d.ts" "$HMS_ETS_API/@ohos.scan.scanCore.d.ts"
+  cp "$STUBS_DIR/ohos.scan.scanBarcode.d.ts" "$HMS_ETS_API/@ohos.scan.scanBarcode.d.ts"
+  cp "$STUBS_DIR/ohos.scan.generateBarcode.d.ts" "$HMS_ETS_API/@ohos.scan.generateBarcode.d.ts"
+  echo "  Applied ScanKit stubs"
+else
+  echo "  Using SDK ScanKit declarations"
+fi
 
 # ─── @kit.ShareKit ───
-[ ! -f "$KIT_CONFIGS/@kit.ShareKit.json" ] && \
-  cp "$STUBS_DIR/kit.ShareKit.json" "$KIT_CONFIGS/@kit.ShareKit.json"
-cp "$STUBS_DIR/kit.ShareKit.d.ts" "$ETS_API/@kit.ShareKit.d.ts"
-cp "$STUBS_DIR/ohos.share.systemShare.d.ts" "$ETS_API/@ohos.share.systemShare.d.ts"
-echo "  Applied ShareKit stubs"
+if ! kit_decl_exists "@kit.ShareKit"; then
+  [ ! -f "$HMS_KIT_CONFIGS/@kit.ShareKit.json" ] && \
+    cp "$STUBS_DIR/kit.ShareKit.json" "$HMS_KIT_CONFIGS/@kit.ShareKit.json"
+  cp "$STUBS_DIR/kit.ShareKit.d.ts" "$HMS_ETS_API/@kit.ShareKit.d.ts"
+  cp "$STUBS_DIR/ohos.share.systemShare.d.ts" "$HMS_ETS_API/@ohos.share.systemShare.d.ts"
+  echo "  Applied ShareKit stubs"
+else
+  echo "  Using SDK ShareKit declarations"
+fi
 
 # ─── DevKeySecret (CI-only placeholder) ───
 DEV_KEY_SECRET="entry/src/main/ets/config/DevKeySecret.ets"

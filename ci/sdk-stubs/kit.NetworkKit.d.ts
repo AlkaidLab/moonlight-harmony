@@ -52,6 +52,11 @@ declare module '@kit.NetworkKit' {
     function createHttp(): HttpRequest;
   }
   namespace connection {
+    interface NetAddress {
+      address: string;
+      family?: number;
+      port?: number;
+    }
     interface NetHandle {
       netId: number;
     }
@@ -62,6 +67,7 @@ declare module '@kit.NetworkKit' {
       unregister(callback: (err: Object) => void): void;
     }
     function createNetConnection(): NetConnection;
+    function getAddressesByName(host: string): Promise<Array<NetAddress>>;
     function getDefaultNet(): Promise<NetHandle>;
     function hasDefaultNet(): Promise<boolean>;
     function getDefaultNetSync(): NetHandle;
