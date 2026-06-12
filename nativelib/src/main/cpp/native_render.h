@@ -126,9 +126,11 @@ private:
     
     // 应用帧率范围（通过 NativeVSync，API 20+）
     void ApplyFrameRateRange();
+    void ApplyFrameRateRangeValue(int fps);
     
     // 应用 NativeWindow 帧率（Surface buffer queue 级别，API 12+）
     void ApplyNativeWindowFrameRate();
+    void ApplyNativeWindowFrameRateValue(int fps, bool exact);
     
     // 初始化 NativeVSync
     void InitNativeVSync();
@@ -142,6 +144,10 @@ private:
 
     // 应用 DisplaySoloist 帧率（显示层持续 vsync 请求，API 12+）
     void ApplyDisplaySoloistFrameRate();
+    void ApplyDisplaySoloistFrameRateValue(int fps);
+
+    // 将 NativeVSync / NativeWindow 帧率提示恢复到 60Hz 默认值
+    void ResetFrameRateHintsToDefault();
 
 private:
     // 单例
@@ -149,6 +155,7 @@ private:
     static std::mutex instanceMutex_;
     
     // Surface 相关
+    std::recursive_mutex frameRateMutex_;
     OHNativeWindow* window_ = nullptr;
     uint64_t surfaceWidth_ = 0;
     uint64_t surfaceHeight_ = 0;

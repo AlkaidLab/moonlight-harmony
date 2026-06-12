@@ -1310,7 +1310,14 @@ struct StreamPage {
     // 设置 XComponent / DisplaySoloist 期望帧率，解决智能帧率下 120fps 回落到 60Hz 的问题
     this.applyDisplayFrameRateHints(true);
 
-    await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+    try {
+      await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+    } catch (err) {
+      try {
+        MoonBridge.setDisplayFramePacerEnabled(false);
+      } catch (_) {}
+      throw err instanceof Error ? err : new Error(String(err));
+    }
 
     // 串流启动后调度未识别 USB 手柄检测（延迟内 GCK 完成扫描）
     this.scheduleUnhandledUsbDetection();

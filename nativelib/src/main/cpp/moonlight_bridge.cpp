@@ -2001,7 +2001,10 @@ napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info in
         int32_t xcRet = g_pfnXCSetFrameRateNew(nodeHandle, range);
         OH_LOG_INFO(LOG_APP, "XComponent FrameRateRange set to %{public}d/%{public}d/%{public}d fps via ArkUI_NodeHandle (API 20): ret=%{public}d",
                     fps, fps, fps, xcRet);
-        return GetUndefined(env);
+        if (xcRet == 0) {
+            return GetUndefined(env);
+        }
+        OH_LOG_WARN(LOG_APP, "XComponent API 20 frame rate path failed, trying NativeXComponent fallback");
     }
     
     // 方式2 (API 12+11): NodeHandle → OH_NativeXComponent → SetExpectedFrameRateRange

@@ -240,6 +240,7 @@ void NativeRender::ReleaseNativeVSync() {
 }
 
 void NativeRender::InitDisplaySoloist() {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
     if (displaySoloist_ != nullptr || configuredFps_ <= 60 || !displayFramePacerEnabled_.load()) {
         return;
     }
@@ -268,6 +269,7 @@ void NativeRender::InitDisplaySoloist() {
 }
 
 void NativeRender::ReleaseDisplaySoloist() {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
     if (displaySoloist_ == nullptr) {
         return;
     }
@@ -284,6 +286,7 @@ void NativeRender::ReleaseDisplaySoloist() {
 }
 
 void NativeRender::SetDisplayFramePacerEnabled(bool enable) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
     displayFramePacerEnabled_.store(enable);
     OH_LOG_INFO(LOG_APP, "Display frame pacer %{public}s for configured fps=%{public}d",
                 enable ? "enabled" : "disabled", configuredFps_);
@@ -293,6 +296,7 @@ void NativeRender::SetDisplayFramePacerEnabled(bool enable) {
         RefreshFrameRateHints(true);
     } else {
         ReleaseDisplaySoloist();
+        ResetFrameRateHintsToDefault();
     }
 }
 
@@ -301,6 +305,7 @@ void NativeRender::SetDisplayFramePacerEnabled(bool enable) {
 // =============================================================================
 
 void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint64_t height) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
     window_ = window;
     surfaceWidth_ = width;
     surfaceHeight_ = height;
@@ -330,6 +335,8 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
 }
 
 void NativeRender::SetConfiguredFps(int fps) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    int oldFps = configuredFps_;
     configuredFps_ = fps;
     OH_LOG_INFO(LOG_APP, "Configured FPS set to: %{public}d", fps);
     
@@ -347,6 +354,9 @@ void NativeRender::SetConfiguredFps(int fps) {
         InitDisplaySoloist();
     } else if (configuredFps_ <= 60) {
         ReleaseDisplaySoloist();
+        if (oldFps > 60) {
+            ResetFrameRateHintsToDefault();
+        }
     }
 }
 
@@ -360,6 +370,7 @@ void NativeRender::SetVsyncEnabled(bool enable) {
 }
 
 void NativeRender::ConfigureNativeWindow() {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
     if (window_ == nullptr) {
         return;
     }
@@ -417,7 +428,12 @@ static bool CheckAndLoadNWFrameRateApi() {
 }
 
 void NativeRender::ApplyNativeWindowFrameRate() {
-    if (window_ == nullptr || configuredFps_ <= 60) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    ApplyNativeWindowFrameRateValue(configuredFps_, true);
+}
+
+void NativeRender::ApplyNativeWindowFrameRateValue(int fps, bool exact) {
+    if (window_ == nullptr || fps <= 0) {
         return;
     }
     
@@ -427,55 +443,74 @@ void NativeRender::ApplyNativeWindowFrameRate() {
     
     // strategy = 1 (EXACT): 高帧率串流时明确请求固定刷新率，避免智能帧率回落到 60Hz。
     constexpr int32_t NATIVE_WINDOW_FRAME_RATE_STRATEGY_EXACT = 1;
+    constexpr int32_t NATIVE_WINDOW_FRAME_RATE_STRATEGY_DEFAULT = 0;
+    int32_t strategy = exact ? NATIVE_WINDOW_FRAME_RATE_STRATEGY_EXACT : NATIVE_WINDOW_FRAME_RATE_STRATEGY_DEFAULT;
     int32_t ret = g_pfnNWSetFrameRateRange(
-        window_, configuredFps_, configuredFps_, configuredFps_, NATIVE_WINDOW_FRAME_RATE_STRATEGY_EXACT);
+        window_, fps, fps, fps, strategy);
     if (ret == 0) {
-        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d/%{public}d/%{public}d fps (EXACT)",
-                    configuredFps_, configuredFps_, configuredFps_);
+        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d/%{public}d/%{public}d fps (%{public}s)",
+                    fps, fps, fps, exact ? "EXACT" : "DEFAULT");
     } else {
         OH_LOG_WARN(LOG_APP, "NativeWindow SetFrameRateRange failed: ret=%{public}d, fps=%{public}d", 
-                    ret, configuredFps_);
+                    ret, fps);
     }
 }
 
 void NativeRender::ApplyDisplaySoloistFrameRate() {
-    if (displaySoloist_ == nullptr || configuredFps_ <= 60 || !g_pfnDisplaySoloistSetRate) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    ApplyDisplaySoloistFrameRateValue(configuredFps_);
+}
+
+void NativeRender::ApplyDisplaySoloistFrameRateValue(int fps) {
+    if (displaySoloist_ == nullptr || fps <= 60 || !g_pfnDisplaySoloistSetRate) {
         return;
     }
 
-    DisplaySoloistExpectedRateRange range = { configuredFps_, configuredFps_, configuredFps_ };
+    DisplaySoloistExpectedRateRange range = { fps, fps, fps };
     int32_t ret = g_pfnDisplaySoloistSetRate(displaySoloist_, &range);
     if (ret == 0) {
         OH_LOG_INFO(LOG_APP, "DisplaySoloist FrameRateRange set to %{public}d/%{public}d/%{public}d fps",
-                    configuredFps_, configuredFps_, configuredFps_);
+                    fps, fps, fps);
     } else {
         OH_LOG_WARN(LOG_APP, "DisplaySoloist SetExpectedFrameRateRange failed: ret=%{public}d, fps=%{public}d",
-                    ret, configuredFps_);
+                    ret, fps);
     }
 }
 
 void NativeRender::ApplyFrameRateRange() {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    ApplyFrameRateRangeValue(configuredFps_);
+}
+
+void NativeRender::ApplyFrameRateRangeValue(int fps) {
     // NativeVSync SetExpectedFrameRateRange (API 20+)
     // 设置 VSync 回调的期望帧率，影响 VSync 信号频率
     // 注意：XComponent 帧率提示由 MoonBridge_SetXComponentFrameRate 通过 ArkUI_NodeHandle 独立设置
     if (nativeVSync_ != nullptr && CheckAndLoadApi20()) {
         OH_NativeVSync_ExpectedRateRange range;
-        range.min = configuredFps_;
-        range.max = configuredFps_;
-        range.expected = configuredFps_;
+        range.min = fps;
+        range.max = fps;
+        range.expected = fps;
         
         int32_t ret = g_pfnSetExpectedFrameRateRange(nativeVSync_, &range);
         if (ret == 0) {
             OH_LOG_INFO(LOG_APP, "NativeVSync FrameRateRange set to fixed %{public}d fps",
-                        configuredFps_);
+                        fps);
         } else {
             OH_LOG_WARN(LOG_APP, "Failed to set NativeVSync FrameRateRange to %{public}d: ret=%{public}d", 
-                        configuredFps_, ret);
+                        fps, ret);
         }
     }
 }
 
+void NativeRender::ResetFrameRateHintsToDefault() {
+    OH_LOG_INFO(LOG_APP, "Resetting frame rate hints to default 60 fps");
+    ApplyFrameRateRangeValue(60);
+    ApplyNativeWindowFrameRateValue(60, false);
+}
+
 void NativeRender::RefreshFrameRateHints(bool force) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
     if (configuredFps_ <= 60) {
         return;
     }
