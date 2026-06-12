@@ -747,6 +747,9 @@ struct StreamPage {
     InputInterceptorService.getInstance().stop();
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
+    try {
+      MoonBridge.setDisplayFramePacerEnabled(false);
+    } catch (_) {}
 
     // 停止体感助手
     GyroAssistService.getInstance().dispose();
@@ -1272,25 +1275,40 @@ struct StreamPage {
   }
 
   /**
-   * 设置 XComponent 帧率 + 获取 surfaceId + 启动串流
+   * 应用显示链路帧率提示。
+   * 120fps 串流时启动 native DisplaySoloist，并重申 XComponent / native 层帧率范围。
    */
-  private async launchStream(): Promise<void> {
-    const surfaceId = this.xComponentController.getXComponentSurfaceId();
-
-    // 设置 XComponent 期望帧率（通过 FrameNode → ArkUI_NodeHandle）
-    // 解决 MatePad 等设备渲染帧率被锁定在 60fps 的问题
+  private applyDisplayFrameRateHints(enablePacer: boolean = true): void {
     const streamConfig = this.viewModel.streamConfig;
     if (streamConfig && streamConfig.fps > 60) {
       try {
+        if (enablePacer) {
+          MoonBridge.setDisplayFramePacerEnabled(true);
+        }
         const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
         if (frameNode) {
           MoonBridge.setXComponentFrameRate(frameNode, streamConfig.fps);
           console.info(`XComponent 帧率已设置为 ${streamConfig.fps} fps`);
         }
+        MoonBridge.refreshFrameRateHints();
       } catch (e) {
-        console.warn(`设置 XComponent 帧率失败: ${e}`);
+        console.warn(`设置显示帧率提示失败: ${e}`);
       }
+    } else if (enablePacer) {
+      try {
+        MoonBridge.setDisplayFramePacerEnabled(false);
+      } catch (_) {}
     }
+  }
+
+  /**
+   * 设置 XComponent 帧率 + 获取 surfaceId + 启动串流
+   */
+  private async launchStream(): Promise<void> {
+    const surfaceId = this.xComponentController.getXComponentSurfaceId();
+
+    // 设置 XComponent / DisplaySoloist 期望帧率，解决智能帧率下 120fps 回落到 60Hz 的问题
+    this.applyDisplayFrameRateHints(true);
 
     await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
 
@@ -1362,6 +1380,7 @@ struct StreamPage {
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
       this.streamStartedAtMs = Date.now();
+      this.applyDisplayFrameRateHints(true);
 
       // 串流就绪后再做 AI 服务可用性探测，避免与启动链路抢带宽
       this.probeAiAvailableDeferred();
@@ -1458,6 +1477,9 @@ struct StreamPage {
     this.inputHandler.resetState();
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
+    try {
+      MoonBridge.setDisplayFramePacerEnabled(false);
+    } catch (_) {}
     try {
       pointer.setPointerVisibleSync(true);
     } catch (_) {}
@@ -1856,6 +1878,7 @@ struct StreamPage {
               const screenY = globalPos.y as number;
               this.inputHandler.updateXComponentScreenPosition(screenX, screenY);
             }
+            this.applyDisplayFrameRateHints(this.viewModel.isConnected);
           })
       }
       .width('100%')

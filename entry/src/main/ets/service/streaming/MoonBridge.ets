@@ -588,6 +588,21 @@ class MoonBridgeClass {
     nativeLib.setXComponentFrameRate(frameNode, fps);
   }
 
+  /**
+   * 启动/停止显示层高刷保持（native DisplaySoloist）。
+   * 用于 120fps 串流时持续向系统智能帧率策略请求高刷新率。
+   */
+  setDisplayFramePacerEnabled(enabled: boolean): void {
+    nativeLib.setDisplayFramePacerEnabled(enabled);
+  }
+
+  /**
+   * 重新应用 NativeVSync / NativeWindow / DisplaySoloist 帧率提示。
+   */
+  refreshFrameRateHints(): void {
+    nativeLib.refreshFrameRateHints();
+  }
+
   // ==========================================================================
   // 性能模式
   // ==========================================================================
