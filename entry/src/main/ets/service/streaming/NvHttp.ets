@@ -477,7 +477,7 @@ export class NvHttp {
   private async doHttpsRequestWithFrpRetry(path: string, options?: NvHttpPathRequestOptions): Promise<string> {
     const transferTimeout = options?.transferTimeout ?? NvHttp.READ_TIMEOUT;
     const connectTimeout = options?.connectTimeout ?? NvHttp.CONNECTION_TIMEOUT;
-    return this.doHttpsWithFrpRetry(path, options?.query, transferTimeout, (url: string): Promise<string> => {
+    return this.doHttpsWithFrpRetry(path, options?.query, (url: string): Promise<string> => {
       return this.doRequest(url, {
         transferTimeout: transferTimeout,
         useClientCert: true,
@@ -489,7 +489,6 @@ export class NvHttp {
   private async doHttpsWithFrpRetry<T>(
     path: string,
     query: string | undefined,
-    timeout: number,
     request: (url: string) => Promise<T>,
     connectTimeout: number = NvHttp.CONNECTION_TIMEOUT
   ): Promise<T> {
@@ -529,7 +528,7 @@ export class NvHttp {
     }
 
     return this.doClipboardBlobRequestWithRetry(`download ${path}`, (): Promise<ArrayBuffer> => {
-      return this.doHttpsWithFrpRetry(path, query, timeout, (url: string): Promise<ArrayBuffer> => {
+      return this.doHttpsWithFrpRetry(path, query, (url: string): Promise<ArrayBuffer> => {
         return HttpClient.getBinaryWithClientCert(
           url,
           this.certFilePath,
@@ -555,7 +554,7 @@ export class NvHttp {
     }
 
     return this.doClipboardBlobRequestWithRetry(`upload ${path}`, (): Promise<string> => {
-      return this.doHttpsWithFrpRetry(path, query, timeout, async (url: string): Promise<string> => {
+      return this.doHttpsWithFrpRetry(path, query, async (url: string): Promise<string> => {
         const response = await HttpClient.postBinaryWithClientCert(
           url,
           data,
