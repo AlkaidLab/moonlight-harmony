@@ -33,6 +33,13 @@ interface PollResult {
   serverInfo: ServerInfo | null;
 }
 
+interface AddComputerInternalOptions {
+  discoveredName?: string;
+  httpPort?: number;
+  discoveredIpv6?: string;
+  robustServerInfo?: boolean;
+}
+
 /** 轮询间隔（毫秒），参照 Android ComputerManagerService */
 const SERVERINFO_POLLING_PERIOD_MS = 5000;
 
@@ -63,6 +70,10 @@ const ZERO_MAC = '00:00:00:00:00:00';
  */
 const INITIAL_POLL_TRIES = 2;
 const OFFLINE_POLL_TRIES = 3;
+
+/** 手动添加主机时允许一次快速重试，兜住 RCP/网络偶发超时但不显著拖慢失败反馈 */
+const MANUAL_ADD_SERVERINFO_ATTEMPTS = 2;
+const MANUAL_ADD_RETRY_DELAY_MS = 500;
 
 /**
  * 电脑管理器 - 管理所有已发现和手动添加的电脑
@@ -168,7 +179,11 @@ export class ComputerManager {
       await this.verifyOrPollComputer(existing, discovered.address);
     } else {
       try {
-        await this.addComputerInternal(discovered.address, discovered.name, discovered.port, discovered.ipv6Address);
+        await this.addComputerInternal(discovered.address, {
+          discoveredName: discovered.name,
+          httpPort: discovered.port,
+          discoveredIpv6: discovered.ipv6Address
+        });
       } catch (err) {
         console.error(`ComputerManager: 无法添加电脑 ${discovered.name}: ${err}`);
       }
@@ -477,11 +492,15 @@ export class ComputerManager {
   async addComputer(addressInput: string): Promise<ComputerInfo> {
     const parsed = parseAddressAndPort(addressInput);
     const isLiteralIp = isIPv4Address(parsed.host) || isIPv6Address(parsed.host);
+    const manualAddOptions: AddComputerInternalOptions = {
+      httpPort: parsed.port,
+      robustServerInfo: true
+    };
 
     let result: ComputerInfo;
     let resolvedIpv6: string | undefined;
     try {
-      result = await this.addComputerInternal(parsed.host, undefined, parsed.port);
+      result = await this.addComputerInternal(parsed.host, manualAddOptions);
     } catch (firstErr) {
       // 域名直连失败 → 尝试在 ETS 层解析 AAAA 再用裸 IPv6 重试
       if (isLiteralIp) {
@@ -493,7 +512,7 @@ export class ComputerManager {
         throw firstErr as Error;
       }
       console.info(`ComputerManager: 域名 ${parsed.host} 直连失败，已解析 AAAA → ${ipv6}，用裸 IPv6 重试添加`);
-      result = await this.addComputerInternal(ipv6, undefined, parsed.port);
+      result = await this.addComputerInternal(ipv6, manualAddOptions);
       resolvedIpv6 = ipv6;
     }
 
@@ -540,12 +559,21 @@ export class ComputerManager {
    * 内部添加电脑方法
    * 如果该 UUID 的电脑已存在，合并更新而非替换，保留 serverCert 等配对信息
    */
-  private async addComputerInternal(address: string, discoveredName?: string, httpPort?: number, discoveredIpv6?: string): Promise<ComputerInfo> {
+  private async addComputerInternal(address: string, options?: AddComputerInternalOptions): Promise<ComputerInfo> {
+    const discoveredName = options?.discoveredName;
+    const httpPort = options?.httpPort;
+    const discoveredIpv6 = options?.discoveredIpv6;
+    const robustServerInfo = options?.robustServerInfo === true;
     const nvHttp = new NvHttp(address, null, this.context || undefined, httpPort);
 
     try {
       // 获取服务器信息
-      const serverInfo = await nvHttp.getServerInfo();
+      const serverInfo = robustServerInfo
+        ? await nvHttp.getServerInfoRobust({
+          maxAttempts: MANUAL_ADD_SERVERINFO_ATTEMPTS,
+          delayMs: MANUAL_ADD_RETRY_DELAY_MS
+        })
+        : await nvHttp.getServerInfo(false);
 
       // 检查是否已存在相同 UUID 的电脑
       const existing = this.computers.get(serverInfo.uniqueId);
@@ -866,7 +894,8 @@ export class ComputerManager {
   private async tryPollAddress(address: string, computer: ComputerInfo): Promise<PollResult> {
     try {
       const nvHttp = NvHttp.fromAddress(address, computer, this.context || undefined);
-      const serverInfo = await nvHttp.getServerInfo();
+      const likelyOnline = computer.state === ComputerState.ONLINE && address === computer.address;
+      const serverInfo = await nvHttp.getServerInfo(likelyOnline);
       return { address, serverInfo };
     } catch (err) {
       return { address, serverInfo: null };

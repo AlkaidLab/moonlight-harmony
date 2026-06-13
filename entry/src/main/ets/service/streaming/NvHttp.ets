@@ -116,6 +116,21 @@ export interface CanceledError extends Error {
   isCanceled: boolean;
 }
 
+interface NvHttpRequestOptions {
+  /** 传输超时（毫秒），默认 READ_TIMEOUT */
+  transferTimeout?: number;
+  /** 连接超时（毫秒），默认 CONNECTION_TIMEOUT */
+  connectTimeout?: number;
+  /** 是否使用客户端证书（HTTPS 请求需要） */
+  useClientCert?: boolean;
+}
+
+interface NvHttpPathRequestOptions {
+  query?: string;
+  transferTimeout?: number;
+  connectTimeout?: number;
+}
+
 export class NvHttp {
   private address: string;
   private serverCert: string | null;
@@ -324,7 +339,7 @@ export class NvHttp {
    * 2. 自动通过 HTTP serverinfo 获取（懒加载）
    * 3. 根据 httpPort 计算的端口（httpPort - 5）作为最终兜底
    */
-  private async getHttpsBaseUrl(): Promise<string> {
+  private async getHttpsBaseUrl(connectTimeout: number = NvHttp.CONNECTION_TIMEOUT): Promise<string> {
     // 已缓存 → 直接使用
     if (this.httpsPort > 0) {
       return `https://${formatAddressForUrl(this.address)}:${this.httpsPort}`;
@@ -340,7 +355,7 @@ export class NvHttp {
     // 默认端口 + 未缓存 → 通过 HTTP serverinfo 获取（和 Android 一致）
     try {
       const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
-      const response = await this.doRequest(url);
+      const response = await this.doRequest(url, { connectTimeout: connectTimeout });
       const port = XmlUtil.getIntValue(response, 'HttpsPort', 0);
       if (port > 0) {
         this.httpsPort = port;
@@ -377,21 +392,23 @@ export class NvHttp {
   /**
    * 执行 HTTP 请求
    * @param url 请求URL
-   * @param timeout 超时时间（毫秒）
-   * @param useClientCert 是否使用客户端证书（HTTPS请求需要）
+   * @param options 请求超时和证书选项
    */
-  private async doRequest(url: string, timeout: number = NvHttp.READ_TIMEOUT, useClientCert: boolean = false): Promise<string> {
+  private async doRequest(url: string, options?: NvHttpRequestOptions): Promise<string> {
+    const transferTimeout = options?.transferTimeout ?? NvHttp.READ_TIMEOUT;
+    const connectTimeout = options?.connectTimeout ?? NvHttp.CONNECTION_TIMEOUT;
+    const useClientCert = options?.useClientCert ?? false;
     console.debug(`NvHttp: 请求 ${url}`);
 
     if (useClientCert && this.certFilePath && this.keyFilePath) {
       return HttpClient.getWithClientCert(url, this.certFilePath, this.keyFilePath, {
-        connectTimeout: NvHttp.CONNECTION_TIMEOUT,
-        transferTimeout: timeout
+        connectTimeout: connectTimeout,
+        transferTimeout: transferTimeout
       });
     } else {
       return HttpClient.get(url, {
-        connectTimeout: NvHttp.CONNECTION_TIMEOUT,
-        transferTimeout: timeout
+        connectTimeout: connectTimeout,
+        transferTimeout: transferTimeout
       });
     }
   }
@@ -455,22 +472,28 @@ export class NvHttp {
    * 应用范围：getAppList / launchApp / resumeApp / quitApp 等仅 HTTPS 的请求
    *
    * @param path API 路径（如 'applist', 'launch'）
-   * @param query 可选查询参数
-   * @param timeout 超时时间
+   * @param options 可选查询参数和超时配置
    */
-  private async doHttpsRequestWithFrpRetry(path: string, query?: string, timeout: number = NvHttp.READ_TIMEOUT): Promise<string> {
-    return this.doHttpsWithFrpRetry(path, query, timeout, (url: string): Promise<string> => {
-      return this.doRequest(url, timeout, true);
-    });
+  private async doHttpsRequestWithFrpRetry(path: string, options?: NvHttpPathRequestOptions): Promise<string> {
+    const transferTimeout = options?.transferTimeout ?? NvHttp.READ_TIMEOUT;
+    const connectTimeout = options?.connectTimeout ?? NvHttp.CONNECTION_TIMEOUT;
+    return this.doHttpsWithFrpRetry(path, options?.query, transferTimeout, (url: string): Promise<string> => {
+      return this.doRequest(url, {
+        transferTimeout: transferTimeout,
+        useClientCert: true,
+        connectTimeout: connectTimeout
+      });
+    }, connectTimeout);
   }
 
   private async doHttpsWithFrpRetry<T>(
     path: string,
     query: string | undefined,
     timeout: number,
-    request: (url: string) => Promise<T>
+    request: (url: string) => Promise<T>,
+    connectTimeout: number = NvHttp.CONNECTION_TIMEOUT
   ): Promise<T> {
-    const baseUrl = await this.getHttpsBaseUrl();
+    const baseUrl = await this.getHttpsBaseUrl(connectTimeout);
     const url = this.buildUrl(baseUrl, path, query);
     try {
       return await request(url);
@@ -630,6 +653,7 @@ export class NvHttp {
    */
   async getServerInfo(likelyOnline: boolean = true): Promise<ServerInfo> {
     let response: string;
+    const connectTimeout = likelyOnline ? NvHttp.LONG_CONNECTION_TIMEOUT : NvHttp.CONNECTION_TIMEOUT;
 
     try {
       // 如果有服务器证书且客户端证书文件存在（已配对），尝试 HTTPS 并使用客户端证书
@@ -637,7 +661,7 @@ export class NvHttp {
         try {
           console.debug(`NvHttp: getServerInfo 尝试 HTTPS + 客户端证书（含 frp 重试）`);
           // 复用通用 helper：超时 + 自定义端口会按 Sunshine 规则 (httpPort - 5) 重试
-          response = await this.doHttpsRequestWithFrpRetry('serverinfo');
+          response = await this.doHttpsRequestWithFrpRetry('serverinfo', { connectTimeout: connectTimeout });
         } catch (err) {
           const errMsg = String(err).toLowerCase();
           // 存在 cert 错误才降级 HTTP（超时/拒绝/DNS 等矬时错误不降级，避免错误决策）
@@ -652,7 +676,7 @@ export class NvHttp {
           if (isCertError) {
             console.warn(`NvHttp: HTTPS serverinfo 证书错误: ${err}, 降级到 HTTP`);
             const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
-            response = await this.doRequest(url);
+            response = await this.doRequest(url, { connectTimeout: connectTimeout });
           } else {
             console.warn(`NvHttp: HTTPS serverinfo 失败 (非证书错误，不降级): ${err}`);
             throw new Error(`HTTPS serverinfo 失败: ${err}`);
@@ -662,7 +686,7 @@ export class NvHttp {
         // 未配对，使用 HTTP
         console.debug(`NvHttp: getServerInfo 使用 HTTP (serverCert=${!!this.serverCert}, hasCertFiles=${this.hasCertificateFiles()})`);
         const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
-        response = await this.doRequest(url);
+        response = await this.doRequest(url, { connectTimeout: connectTimeout });
       }
     } catch (err) {
       throw new Error(`获取服务器信息失败: ${err}`);
@@ -765,7 +789,7 @@ export class NvHttp {
     const url = this.buildUrl(await this.getHttpsBaseUrl(), 'launch', query);
 
     // 启动可能需要较长时间，使用客户端证书
-    const response = await this.doRequest(url, 60000, true);
+    const response = await this.doRequest(url, { transferTimeout: 60000, useClientCert: true });
     console.info(`NvHttp: launchApp 响应: ${response}`);
 
     // 检查是否成功
@@ -791,7 +815,7 @@ export class NvHttp {
     console.info(`NvHttp: resumeApp URL: ${url}`);
 
     // 使用客户端证书
-    const response = await this.doRequest(url, 60000, true);
+    const response = await this.doRequest(url, { transferTimeout: 60000, useClientCert: true });
 
     const resume = XmlUtil.getValue(response, 'resume');
     if (resume === '0') {
@@ -807,7 +831,7 @@ export class NvHttp {
   async quitApp(): Promise<boolean> {
     const url = this.buildUrl(await this.getHttpsBaseUrl(), 'cancel');
     // 服务端处理 /cancel 需要等待应用进程退出（默认5秒超时），使用较长超时避免客户端提前放弃
-    const response = await this.doRequest(url, 60000, true);
+    const response = await this.doRequest(url, { transferTimeout: 60000, useClientCert: true });
 
     const cancel = XmlUtil.getValue(response, 'cancel');
     return cancel !== '0';
@@ -822,7 +846,7 @@ export class NvHttp {
     try {
       const url = this.buildUrl(await this.getHttpsBaseUrl(), 'bitrate', `bitrate=${bitrateKbps}`);
       // 使用客户端证书
-      const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+      const response = await this.doRequest(url, { useClientCert: true });
       const result = XmlUtil.getValue(response, 'bitrate');
       return result !== '0';
     } catch (err) {
@@ -838,7 +862,7 @@ export class NvHttp {
   async sendSuperCmd(cmdId: string): Promise<boolean> {
     try {
       const url = this.buildUrl(await this.getHttpsBaseUrl(), 'supercmd', `cmdId=${cmdId}`);
-      const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+      const response = await this.doRequest(url, { useClientCert: true });
       const result = XmlUtil.getValue(response, 'supercmd');
       return result !== '0';
     } catch (err) {
@@ -853,7 +877,7 @@ export class NvHttp {
     try {
       const url = this.buildUrl(await this.getHttpsBaseUrl(), 'pcsleep');
       // 使用客户端证书
-      const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+      const response = await this.doRequest(url, { useClientCert: true });
       const result = XmlUtil.getValue(response, 'pcsleep');
       return result !== '0';
     } catch (err) {
@@ -879,7 +903,7 @@ export class NvHttp {
       }
       
       const url = this.buildUrl(await this.getHttpsBaseUrl(), 'rotate-display', query);
-      const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+      const response = await this.doRequest(url, { useClientCert: true });
       
       // 解析 JSON 响应
       const json = JSON.parse(response) as RotateDisplayResponse;
@@ -908,7 +932,10 @@ export class NvHttp {
   async getDisplays(): Promise<DisplayInfo[]> {
     const url = this.buildUrl(await this.getHttpsBaseUrl(), 'displays');
     // 使用客户端证书
-    const response = await this.doRequest(url, NvHttp.LONG_CONNECTION_TIMEOUT, true);
+    const response = await this.doRequest(url, {
+      transferTimeout: NvHttp.LONG_CONNECTION_TIMEOUT,
+      useClientCert: true
+    });
     
     // 解析 JSON 响应
     const json = JSON.parse(response) as DisplaysResponse;
@@ -1267,7 +1294,7 @@ export class NvHttp {
     try {
       const baseUrl = await this.getHttpsBaseUrl();
       const url = `${baseUrl}/api/abr/capabilities`;
-      const response = await this.doRequest(url, NvHttp.READ_TIMEOUT, true);
+      const response = await this.doRequest(url, { useClientCert: true });
       return JSON.parse(response) as AbrCapabilities;
     } catch {
       return { supported: false, version: 0, features: [] };
