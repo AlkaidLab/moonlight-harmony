@@ -30,6 +30,8 @@ export interface HttpClientConfig {
   clientKeyPath?: string;
 }
 
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD';
+
 /**
  * HTTP 响应
  */
@@ -204,6 +206,52 @@ export class HttpClient {
    */
   static async request(url: string, config?: HttpClientConfig): Promise<HttpResponse> {
     return HttpClient.executeGet(url, config);
+  }
+
+  /**
+   * 执行原始 HTTP 请求，保留状态码并允许空响应体。
+   * 适用于 GitHub Star 检查这类用 204/404 表达业务结果的 API。
+   */
+  static async requestRaw(
+    url: string,
+    method: HttpMethod,
+    body?: string,
+    config?: HttpClientConfig
+  ): Promise<HttpResponse> {
+    const connectTimeout = config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT;
+    const transferTimeout = config?.transferTimeout ?? HttpClient.DEFAULT_TRANSFER_TIMEOUT;
+    const skipValidation = config?.skipServerValidation !== false;
+    const key = RcpSessionPool.keyFor(url, config?.clientCertPath);
+    const session = RcpSessionPool.acquire(key, {
+      skipServerValidation: skipValidation,
+      clientCertPath: config?.clientCertPath,
+      clientKeyPath: config?.clientKeyPath
+    });
+
+    console.debug(`HttpClient: RAW ${method} ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
+
+    const request = new rcp.Request(
+      url,
+      method,
+      HttpClient.buildHeaders(config?.headers),
+      body,
+      undefined,
+      undefined,
+      HttpClient.buildRequestConfig(connectTimeout, transferTimeout)
+    );
+
+    try {
+      const response = await session.fetch(request);
+      const responseBody = response.body ? StringUtil.arrayBufferToString(response.body) : '';
+      return { statusCode: response.statusCode ?? 0, body: responseBody };
+    } catch (err) {
+      const error = err as Error;
+      if (HttpClient.isConnectionError(error.message)) {
+        RcpSessionPool.invalidate(key);
+      }
+      console.error(`HttpClient: RAW 请求失败 - ${error.message}`);
+      throw new Error(`HTTP 请求失败: ${error.message}`);
+    }
   }
 
   /**

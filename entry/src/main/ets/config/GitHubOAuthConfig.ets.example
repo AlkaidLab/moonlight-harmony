@@ -1,0 +1,8 @@
+/*
+ * GitHub OAuth Device Flow 配置模板
+ * 复制为 GitHubOAuthConfig.ets 后填入公开的 OAuth Client ID。
+ */
+
+export const GITHUB_OAUTH_CLIENT_ID = '';
+export const GITHUB_STAR_REPO_OWNER = 'AlkaidLab';
+export const GITHUB_STAR_REPO_NAME = 'moonlight-harmony';

@@ -163,6 +163,15 @@ export class SettingsKeys {
   static readonly DEVELOPER_MODE: string = 'settings_developer_mode';
   // 开发者模式已激活（一次激活永久有效）
   static readonly DEV_KEY_ACTIVATED: string = 'settings_dev_key_activated';
+  static readonly DEV_GITHUB_ACCESS_TOKEN: string = 'settings_dev_github_access_token';
+  static readonly DEV_GITHUB_LOGIN: string = 'settings_dev_github_login';
+  static readonly DEV_GITHUB_VERIFIED_AT: string = 'settings_dev_github_verified_at';
+  static readonly DEV_GITHUB_PENDING_DEVICE_CODE: string = 'settings_dev_github_pending_device_code';
+  static readonly DEV_GITHUB_PENDING_USER_CODE: string = 'settings_dev_github_pending_user_code';
+  static readonly DEV_GITHUB_PENDING_VERIFICATION_URI: string = 'settings_dev_github_pending_verification_uri';
+  static readonly DEV_GITHUB_PENDING_VERIFICATION_URI_COMPLETE: string = 'settings_dev_github_pending_verification_uri_complete';
+  static readonly DEV_GITHUB_PENDING_EXPIRES_AT: string = 'settings_dev_github_pending_expires_at';
+  static readonly DEV_GITHUB_PENDING_INTERVAL: string = 'settings_dev_github_pending_interval';
   
   // 性能模式
   static readonly PERFORMANCE_MODE: string = 'settings_performance_mode';
