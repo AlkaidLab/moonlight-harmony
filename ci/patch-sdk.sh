@@ -122,15 +122,24 @@ fi
 echo "Patching hmos-sdk-loader fallback..."
 LOADER_ROOTS="$(printf '%s\n' "$CMDLINE_ROOTS" | loader_patch_roots | awk '/^  Using official DevEco loader:/ {next} {print}')"
 CMDLINE_TOOL_ROOTS="$LOADER_ROOTS" python3 - <<'PY'
-import glob
 import os
 import re
 
 patched = False
 candidates = []
 roots = [p for p in os.environ.get('CMDLINE_TOOL_ROOTS', '').splitlines() if p]
+
+def iter_loader_files(root):
+  for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    dirnames[:] = [
+      name for name in dirnames
+      if not os.path.islink(os.path.join(dirpath, name))
+    ]
+    if 'hmos-sdk-loader.js' in filenames:
+      yield os.path.join(dirpath, 'hmos-sdk-loader.js')
+
 for root in roots:
-  for loader in glob.glob(os.path.join(root, '**', 'hmos-sdk-loader.js'), recursive=True):
+  for loader in iter_loader_files(root):
     candidates.append(loader)
     with open(loader, encoding='utf-8') as f:
         text = f.read()
