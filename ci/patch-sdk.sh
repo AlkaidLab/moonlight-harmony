@@ -312,6 +312,41 @@ else
   echo "  Using SDK ScanKit declarations"
 fi
 
+SCAN_KIT_CONFIG_FOUND=0
+for SCAN_KIT_CONFIG in "$OH_KIT_CONFIGS/@kit.ScanKit.json" "$HMS_KIT_CONFIGS/@kit.ScanKit.json"; do
+  [ -f "$SCAN_KIT_CONFIG" ] || continue
+  SCAN_KIT_CONFIG_FOUND=1
+  SCAN_KIT_CONFIG="$SCAN_KIT_CONFIG" python3 - <<'PY'
+import json
+import os
+
+p = os.environ['SCAN_KIT_CONFIG']
+with open(p) as f:
+    data = json.load(f)
+symbols = data.setdefault('symbols', {})
+if 'generateBarcode' in symbols:
+    print('  ScanKit generateBarcode export already present: ' + p)
+else:
+    symbols['generateBarcode'] = {
+        'source': '@ohos.scan.generateBarcode.d.ts',
+        'bindings': 'default',
+    }
+    with open(p, 'w') as f:
+        json.dump(data, f, indent=2)
+    print('  Patched ScanKit generateBarcode export: ' + p)
+PY
+done
+if [ "$SCAN_KIT_CONFIG_FOUND" -eq 0 ]; then
+  mkdir -p "$HMS_KIT_CONFIGS"
+  cp "$STUBS_DIR/kit.ScanKit.json" "$HMS_KIT_CONFIGS/@kit.ScanKit.json"
+  echo "  Created ScanKit kit config"
+fi
+for SCAN_KIT_API in "$OH_ETS_API" "$HMS_ETS_API"; do
+  [ -d "$SCAN_KIT_API" ] || continue
+  [ ! -f "$SCAN_KIT_API/@ohos.scan.generateBarcode.d.ts" ] && \
+    cp "$STUBS_DIR/ohos.scan.generateBarcode.d.ts" "$SCAN_KIT_API/@ohos.scan.generateBarcode.d.ts"
+done
+
 # ─── @kit.ShareKit ───
 if ! kit_decl_exists "@kit.ShareKit"; then
   [ ! -f "$HMS_KIT_CONFIGS/@kit.ShareKit.json" ] && \
