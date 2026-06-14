@@ -107,7 +107,9 @@ export class StreamWindowManager {
   async configureWindow(): Promise<void> {
     try {
       const win = await window.getLastWindow(this.context);
-      win.setWindowKeepScreenOn(true);
+      win.setWindowKeepScreenOn(true).catch(() => {
+        // TODO: Implement error handling.
+      });
       await this.enterImmersiveFullscreen(win);
 
       // 横屏多窗支持
