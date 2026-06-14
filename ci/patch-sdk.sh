@@ -366,4 +366,12 @@ if [ ! -f "$DEV_KEY_SECRET" ]; then
   echo "  Created DevKeySecret from example"
 fi
 
+# ─── GitHubOAuthConfig (CI/local placeholder) ───
+GITHUB_OAUTH_CONFIG="entry/src/main/ets/config/GitHubOAuthConfig.ets"
+if [ ! -f "$GITHUB_OAUTH_CONFIG" ]; then
+  mkdir -p "$(dirname "$GITHUB_OAUTH_CONFIG")"
+  cp "${GITHUB_OAUTH_CONFIG}.example" "$GITHUB_OAUTH_CONFIG"
+  echo "  Created GitHubOAuthConfig from example"
+fi
+
 echo "✅ SDK patches applied"

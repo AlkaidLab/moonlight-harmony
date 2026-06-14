@@ -1,6 +1,10 @@
 /*
  * GitHub OAuth Device Flow 配置模板
- * 复制为 GitHubOAuthConfig.ets 后填入公开的 OAuth Client ID。
+ *
+ * 使用前请复制为 GitHubOAuthConfig.ets。
+ * GITHUB_OAUTH_CLIENT_ID 为空时，设置页会继续使用原有激活码流程。
+ * 若要启用 GitHub Star 验证，请创建 GitHub OAuth App，启用 Device Flow，
+ * 并将公开的 Client ID 填入本地 GitHubOAuthConfig.ets。
  */
 
 export const GITHUB_OAUTH_CLIENT_ID = '';

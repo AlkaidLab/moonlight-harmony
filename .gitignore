@@ -19,6 +19,7 @@ nativelib/BuildProfile.ets
 
 # Dev key secret (contains activation salt)
 entry/src/main/ets/config/DevKeySecret.ets
+entry/src/main/ets/config/GitHubOAuthConfig.ets
 
 # Temp empty files
 Check
