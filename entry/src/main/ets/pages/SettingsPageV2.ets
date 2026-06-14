@@ -29,6 +29,13 @@ import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
 import { isAihdrSupported } from '../components/AihdrModifier';
 import { DevKeyVerifier } from '../utils/DevKeyVerifier';
+import {
+  GitHubDeviceCode,
+  GitHubStarCheck,
+  GitHubStarVerifier,
+  GitHubTokenPollResult,
+  GitHubTokenPollStatus
+} from '../utils/GitHubStarVerifier';
 import { ToastQueue } from '../utils/ToastQueue';
 
 /**
@@ -256,7 +263,10 @@ struct SettingsPageV2 {
   @State backgroundImageUrl: string = '';
   @State resumeStream: boolean = false;
   @State developerMode: boolean = false;  // 开发者模式
+  @State developerUnlockBusy: boolean = false;
   private devKeyActivated: boolean = false;  // 激活码已验证过
+  private developerPendingDeviceCode: GitHubDeviceCode | null = null;
+  private developerLastPollMs: number = 0;
   
   // 应用版本
   @State appVersion: string = '';
@@ -595,6 +605,7 @@ struct SettingsPageV2 {
       this.resumeStream = await this.loadBoolean(SettingsKeys.RESUME_STREAM, false);
       this.developerMode = await this.loadBoolean(SettingsKeys.DEVELOPER_MODE, false);
       this.devKeyActivated = await this.loadBoolean(SettingsKeys.DEV_KEY_ACTIVATED, false);
+      await this.restoreDeveloperPendingDeviceCode();
       
       // 备份
       this.autoBackupEnabled = await SettingsBackupService.isAutoBackupEnabled();
@@ -2078,22 +2089,11 @@ struct SettingsPageV2 {
               },
               {
                 title: '开发者模式',
-                subtitle: this.developerMode ? '已激活' : (this.devKeyActivated ? '已授权，点击开启' : '需要激活码'),
+                subtitle: this.getDeveloperModeSubtitle(),
                 type: 'toggle',
                 value: this.developerMode,
                 action: () => {
-                  if (this.developerMode) {
-                    this.developerMode = false;
-                    this.saveSetting(SettingsKeys.DEVELOPER_MODE, false);
-                  } else if (this.devKeyActivated) {
-                    // 已验证过激活码，直接开启
-                    this.developerMode = true;
-                    this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
-                  } else {
-                    // 首次需要输入激活码
-                    this.developerMode = true;
-                    this.showDevKeyActivation();
-                  }
+                  this.toggleDeveloperMode();
                 }
               }
             ]
@@ -3707,6 +3707,273 @@ struct SettingsPageV2 {
     this.showTextInputDialog = true;
   }
 
+  private getDeveloperModeSubtitle(): string {
+    if (this.developerUnlockBusy) {
+      return '正在验证 GitHub Star';
+    }
+    if (this.developerMode) {
+      return '已开启';
+    }
+    if (this.devKeyActivated) {
+      return GitHubStarVerifier.isConfigured() ? '已验证 Star，点击开启' : '已授权，点击开启';
+    }
+    if (GitHubStarVerifier.isConfigured()) {
+      return `验证 ${GitHubStarVerifier.projectFullName()} Star 后开启`;
+    }
+    return '需要激活码';
+  }
+
+  private async toggleDeveloperMode(): Promise<void> {
+    if (this.developerUnlockBusy) {
+      ToastQueue.show({ message: '开发者模式验证正在进行中', duration: 2000 });
+      return;
+    }
+
+    if (this.developerMode) {
+      this.developerMode = false;
+      await this.saveSetting(SettingsKeys.DEVELOPER_MODE, false);
+      return;
+    }
+
+    if (this.devKeyActivated) {
+      this.developerMode = true;
+      await this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
+      return;
+    }
+
+    if (GitHubStarVerifier.isConfigured()) {
+      this.showDeveloperUnlockDialog();
+    } else {
+      this.developerMode = true;
+      this.showDevKeyActivation();
+    }
+  }
+
+  private async showDeveloperUnlockDialog(): Promise<void> {
+    const pending = this.developerPendingDeviceCode ?? await this.loadDeveloperPendingDeviceCode();
+    if (pending) {
+      this.developerPendingDeviceCode = pending;
+      this.showDeveloperDeviceCodeDialog(pending);
+      this.pollDeveloperPendingDeviceCode(false, true);
+      return;
+    }
+
+    promptAction.showDialog({
+      title: '激活开发者模式',
+      message: `开发者功能面向项目支持者开放。登录 GitHub 后，应用会验证当前账号是否 Star 了 ${GitHubStarVerifier.projectFullName()}。\n\n说明：该方式依赖 GitHub 第三方服务；若市场审核不允许外部平台互动解锁功能，可继续保留激活码方式用于市场包。`,
+      buttons: [
+        { text: '验证 Star', color: AppColors.Primary },
+        { text: '打开项目', color: AppColors.TextSecondary },
+        { text: '激活码', color: AppColors.TextSecondary }
+      ]
+    }).then((result) => {
+      if (result.index === 0) {
+        this.startDeveloperUnlockVerification();
+      } else if (result.index === 1) {
+        this.openUrl(GitHubStarVerifier.projectUrl());
+      } else if (result.index === 2) {
+        this.developerMode = true;
+        this.showDevKeyActivation();
+      }
+    });
+  }
+
+  private async startDeveloperUnlockVerification(): Promise<void> {
+    if (this.developerUnlockBusy) {
+      ToastQueue.show({ message: '开发者模式验证正在进行中', duration: 2000 });
+      return;
+    }
+
+    await this.requestDeveloperDeviceCode();
+  }
+
+  private async requestDeveloperDeviceCode(): Promise<void> {
+    this.developerUnlockBusy = true;
+    ToastQueue.show({ message: '正在发起 GitHub 授权...', duration: 2000 });
+    try {
+      const deviceCode = await GitHubStarVerifier.requestDeviceCode();
+      this.developerPendingDeviceCode = deviceCode;
+      await this.saveDeveloperPendingDeviceCode(deviceCode);
+      this.showDeveloperDeviceCodeDialog(deviceCode);
+    } catch (err) {
+      const message = (err as Error).message ?? String(err);
+      ToastQueue.show({ message: `GitHub 授权失败: ${message}`, duration: 3000 });
+    } finally {
+      this.developerUnlockBusy = false;
+    }
+  }
+
+  private showDeveloperDeviceCodeDialog(deviceCode: GitHubDeviceCode): void {
+    promptAction.showDialog({
+      title: 'GitHub Star 验证',
+      message: `1. 打开授权页并输入代码：${deviceCode.userCode}\n2. 确认已 Star ${GitHubStarVerifier.projectFullName()}\n3. 回到这里点击“我已授权”\n\n授权页：${deviceCode.verificationUri}`,
+      buttons: [
+        { text: '打开授权页', color: AppColors.Primary },
+        { text: '我已授权', color: AppColors.Primary },
+        { text: '打开项目', color: AppColors.TextSecondary }
+      ]
+    }).then((result) => {
+      if (result.index === 0) {
+        this.openUrl(deviceCode.verificationUriComplete ?? deviceCode.verificationUri);
+      } else if (result.index === 1) {
+        this.pollDeveloperPendingDeviceCode(true, false);
+      } else if (result.index === 2) {
+        this.openUrl(GitHubStarVerifier.projectUrl());
+      }
+    });
+  }
+
+  private async pollDeveloperPendingDeviceCode(showPendingToast: boolean, enforceThrottle: boolean): Promise<void> {
+    const deviceCode = this.developerPendingDeviceCode ?? await this.loadDeveloperPendingDeviceCode();
+    if (!deviceCode) {
+      if (showPendingToast) {
+        ToastQueue.show({ message: 'GitHub 授权已过期，请重新开始', duration: 2500 });
+      }
+      return;
+    }
+
+    const nowMs = Date.now();
+    if (enforceThrottle && nowMs - this.developerLastPollMs < 1500) {
+      return;
+    }
+    this.developerLastPollMs = nowMs;
+    this.developerUnlockBusy = true;
+
+    try {
+      const poll = await GitHubStarVerifier.pollAccessToken(deviceCode);
+      await this.handleDeveloperTokenPollResult(poll, deviceCode, showPendingToast);
+    } catch (err) {
+      const message = (err as Error).message ?? String(err);
+      await this.failDeveloperUnlockVerification(message);
+    } finally {
+      this.developerUnlockBusy = false;
+    }
+  }
+
+  private async handleDeveloperTokenPollResult(
+    poll: GitHubTokenPollResult,
+    deviceCode: GitHubDeviceCode,
+    showPendingToast: boolean
+  ): Promise<void> {
+    switch (poll.status) {
+      case GitHubTokenPollStatus.AUTHORIZED:
+        if (!poll.accessToken) {
+          await this.failDeveloperUnlockVerification('GitHub 未返回 access token');
+          return;
+        }
+        const starCheck = await GitHubStarVerifier.checkStar(poll.accessToken);
+        await this.completeDeveloperUnlockVerification(starCheck);
+        break;
+      case GitHubTokenPollStatus.PENDING:
+      case GitHubTokenPollStatus.SLOW_DOWN:
+        if (poll.intervalSeconds) {
+          deviceCode.intervalSeconds = poll.intervalSeconds;
+          await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_INTERVAL, deviceCode.intervalSeconds);
+        }
+        if (showPendingToast) {
+          ToastQueue.show({ message: '仍在等待 GitHub 授权，请稍后再试', duration: 2500 });
+        }
+        break;
+      case GitHubTokenPollStatus.FAILED:
+        await this.failDeveloperUnlockVerification(poll.message ?? 'GitHub 授权失败');
+        break;
+    }
+  }
+
+  private async completeDeveloperUnlockVerification(starCheck: GitHubStarCheck): Promise<void> {
+    await this.clearDeveloperPendingDeviceCode();
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_LOGIN, starCheck.login ?? '');
+
+    if (starCheck.starred) {
+      this.developerMode = true;
+      this.devKeyActivated = true;
+      await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_VERIFIED_AT, Date.now());
+      await this.saveSetting(SettingsKeys.DEVELOPER_MODE, true);
+      await this.saveSetting(SettingsKeys.DEV_KEY_ACTIVATED, true);
+      const suffix = starCheck.login ? `，${starCheck.login}` : '';
+      ToastQueue.show({ message: `开发者模式已激活${suffix}`, duration: 2500 });
+      return;
+    }
+
+    this.developerMode = false;
+    this.devKeyActivated = false;
+    await this.saveSetting(SettingsKeys.DEVELOPER_MODE, false);
+    await this.saveSetting(SettingsKeys.DEV_KEY_ACTIVATED, false);
+    promptAction.showDialog({
+      title: '未检测到 Star',
+      message: `GitHub 授权成功，但当前账号尚未 Star ${GitHubStarVerifier.projectFullName()}。如果刚刚 Star，请稍等片刻后重新验证。`,
+      buttons: [
+        { text: '打开项目', color: AppColors.Primary },
+        { text: '取消', color: AppColors.TextSecondary }
+      ]
+    }).then((result) => {
+      if (result.index === 0) {
+        this.openUrl(GitHubStarVerifier.projectUrl());
+      }
+    });
+  }
+
+  private async failDeveloperUnlockVerification(message: string): Promise<void> {
+    await this.clearDeveloperPendingDeviceCode();
+    this.developerMode = false;
+    ToastQueue.show({ message: `开发者模式验证失败: ${message}`, duration: 3000 });
+  }
+
+  private async saveDeveloperPendingDeviceCode(deviceCode: GitHubDeviceCode): Promise<void> {
+    const expiresAt = Date.now() + deviceCode.expiresInSeconds * 1000;
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_DEVICE_CODE, deviceCode.deviceCode);
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_USER_CODE, deviceCode.userCode);
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_VERIFICATION_URI, deviceCode.verificationUri);
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_VERIFICATION_URI_COMPLETE, deviceCode.verificationUriComplete ?? '');
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_EXPIRES_AT, expiresAt);
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_INTERVAL, deviceCode.intervalSeconds);
+  }
+
+  private async loadDeveloperPendingDeviceCode(): Promise<GitHubDeviceCode | null> {
+    const expiresAt = await PreferencesUtil.get<number>(SettingsKeys.DEV_GITHUB_PENDING_EXPIRES_AT, 0);
+    const remainingSeconds = Math.floor((expiresAt - Date.now()) / 1000);
+    if (remainingSeconds <= 0) {
+      await this.clearDeveloperPendingDeviceCode();
+      return null;
+    }
+
+    const deviceCode = await PreferencesUtil.get<string>(SettingsKeys.DEV_GITHUB_PENDING_DEVICE_CODE, '');
+    const userCode = await PreferencesUtil.get<string>(SettingsKeys.DEV_GITHUB_PENDING_USER_CODE, '');
+    const verificationUri = await PreferencesUtil.get<string>(SettingsKeys.DEV_GITHUB_PENDING_VERIFICATION_URI, '');
+    if (!deviceCode || !userCode || !verificationUri) {
+      await this.clearDeveloperPendingDeviceCode();
+      return null;
+    }
+
+    const verificationUriComplete = await PreferencesUtil.get<string>(
+      SettingsKeys.DEV_GITHUB_PENDING_VERIFICATION_URI_COMPLETE,
+      ''
+    );
+    const intervalSeconds = await PreferencesUtil.get<number>(SettingsKeys.DEV_GITHUB_PENDING_INTERVAL, 5);
+    return new GitHubDeviceCode(
+      deviceCode,
+      userCode,
+      verificationUri,
+      verificationUriComplete || undefined,
+      remainingSeconds,
+      Math.max(1, intervalSeconds)
+    );
+  }
+
+  private async restoreDeveloperPendingDeviceCode(): Promise<void> {
+    this.developerPendingDeviceCode = await this.loadDeveloperPendingDeviceCode();
+  }
+
+  private async clearDeveloperPendingDeviceCode(): Promise<void> {
+    this.developerPendingDeviceCode = null;
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_DEVICE_CODE, '');
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_USER_CODE, '');
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_VERIFICATION_URI, '');
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_VERIFICATION_URI_COMPLETE, '');
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_EXPIRES_AT, 0);
+    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_INTERVAL, 0);
+  }
+
   /**
    * 显示开发者模式激活码输入
    */
@@ -3885,11 +4152,11 @@ struct PrivacyPolicyDialog {
   private sections: PrivacySection[] = [
     { 
       title: '数据收集', 
-      content: '本应用不会主动收集、存储或传输任何用户的个人身份信息。所有配置数据（如服务器地址、偏好设置）仅存储在您的设备本地。'
+      content: '本应用不会主动收集、存储或传输任何用户的个人身份信息。所有配置数据（如服务器地址、偏好设置）仅存储在您的设备本地。若您主动使用 GitHub Star 验证开发者模式，仅会本地保存验证状态和 GitHub 登录名。'
     } as PrivacySection,
     { 
       title: '网络通信', 
-      content: '应用仅在您的本地网络内与电脑建立连接，用于传输游戏音视频流和输入指令。不涉及任何互联网数据传输。'
+      content: '应用主要在您的本地网络内与电脑建立连接，用于传输游戏音视频流和输入指令。仅当您主动使用开发者模式的 GitHub Star 验证时，应用会连接 GitHub OAuth 与 GitHub API。'
     } as PrivacySection,
     { 
       title: '权限使用', 
@@ -3897,7 +4164,7 @@ struct PrivacyPolicyDialog {
     } as PrivacySection,
     { 
       title: '第三方服务', 
-      content: '本应用不集成任何第三方分析或广告服务。'
+      content: '本应用不集成任何第三方分析或广告服务。GitHub OAuth Device Flow 和 GitHub API 仅用于可选的开发者模式 Star 验证，不参与游戏串流核心功能。'
     } as PrivacySection,
     { 
       title: '开源合规', 

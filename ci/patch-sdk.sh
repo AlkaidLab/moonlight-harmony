@@ -122,15 +122,24 @@ fi
 echo "Patching hmos-sdk-loader fallback..."
 LOADER_ROOTS="$(printf '%s\n' "$CMDLINE_ROOTS" | loader_patch_roots | awk '/^  Using official DevEco loader:/ {next} {print}')"
 CMDLINE_TOOL_ROOTS="$LOADER_ROOTS" python3 - <<'PY'
-import glob
 import os
 import re
 
 patched = False
 candidates = []
 roots = [p for p in os.environ.get('CMDLINE_TOOL_ROOTS', '').splitlines() if p]
+
+def iter_loader_files(root):
+  for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    dirnames[:] = [
+      name for name in dirnames
+      if not os.path.islink(os.path.join(dirpath, name))
+    ]
+    if 'hmos-sdk-loader.js' in filenames:
+      yield os.path.join(dirpath, 'hmos-sdk-loader.js')
+
 for root in roots:
-  for loader in glob.glob(os.path.join(root, '**', 'hmos-sdk-loader.js'), recursive=True):
+  for loader in iter_loader_files(root):
     candidates.append(loader)
     with open(loader, encoding='utf-8') as f:
         text = f.read()
@@ -303,6 +312,41 @@ else
   echo "  Using SDK ScanKit declarations"
 fi
 
+SCAN_KIT_CONFIG_FOUND=0
+for SCAN_KIT_CONFIG in "$OH_KIT_CONFIGS/@kit.ScanKit.json" "$HMS_KIT_CONFIGS/@kit.ScanKit.json"; do
+  [ -f "$SCAN_KIT_CONFIG" ] || continue
+  SCAN_KIT_CONFIG_FOUND=1
+  SCAN_KIT_CONFIG="$SCAN_KIT_CONFIG" python3 - <<'PY'
+import json
+import os
+
+p = os.environ['SCAN_KIT_CONFIG']
+with open(p) as f:
+    data = json.load(f)
+symbols = data.setdefault('symbols', {})
+if 'generateBarcode' in symbols:
+    print('  ScanKit generateBarcode export already present: ' + p)
+else:
+    symbols['generateBarcode'] = {
+        'source': '@ohos.scan.generateBarcode.d.ts',
+        'bindings': 'default',
+    }
+    with open(p, 'w') as f:
+        json.dump(data, f, indent=2)
+    print('  Patched ScanKit generateBarcode export: ' + p)
+PY
+done
+if [ "$SCAN_KIT_CONFIG_FOUND" -eq 0 ]; then
+  mkdir -p "$HMS_KIT_CONFIGS"
+  cp "$STUBS_DIR/kit.ScanKit.json" "$HMS_KIT_CONFIGS/@kit.ScanKit.json"
+  echo "  Created ScanKit kit config"
+fi
+for SCAN_KIT_API in "$OH_ETS_API" "$HMS_ETS_API"; do
+  [ -d "$SCAN_KIT_API" ] || continue
+  [ ! -f "$SCAN_KIT_API/@ohos.scan.generateBarcode.d.ts" ] && \
+    cp "$STUBS_DIR/ohos.scan.generateBarcode.d.ts" "$SCAN_KIT_API/@ohos.scan.generateBarcode.d.ts"
+done
+
 # ─── @kit.ShareKit ───
 if ! kit_decl_exists "@kit.ShareKit"; then
   [ ! -f "$HMS_KIT_CONFIGS/@kit.ShareKit.json" ] && \
@@ -320,6 +364,14 @@ if [ ! -f "$DEV_KEY_SECRET" ]; then
   mkdir -p "$(dirname "$DEV_KEY_SECRET")"
   cp "${DEV_KEY_SECRET}.example" "$DEV_KEY_SECRET"
   echo "  Created DevKeySecret from example"
+fi
+
+# ─── GitHubOAuthConfig (CI/local placeholder) ───
+GITHUB_OAUTH_CONFIG="entry/src/main/ets/config/GitHubOAuthConfig.ets"
+if [ ! -f "$GITHUB_OAUTH_CONFIG" ]; then
+  mkdir -p "$(dirname "$GITHUB_OAUTH_CONFIG")"
+  cp "${GITHUB_OAUTH_CONFIG}.example" "$GITHUB_OAUTH_CONFIG"
+  echo "  Created GitHubOAuthConfig from example"
 fi
 
 echo "✅ SDK patches applied"
