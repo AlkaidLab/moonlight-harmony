@@ -3784,25 +3784,6 @@ struct SettingsPageV2 {
       return;
     }
 
-    const savedToken = await PreferencesUtil.get<string>(SettingsKeys.DEV_GITHUB_ACCESS_TOKEN, '');
-    if (savedToken) {
-      this.developerUnlockBusy = true;
-      ToastQueue.show({ message: '正在检查 GitHub Star...', duration: 2000 });
-      try {
-        const starCheck = await GitHubStarVerifier.checkStar(savedToken);
-        await this.completeDeveloperUnlockVerification(savedToken, starCheck);
-      } catch (err) {
-        console.warn(`GitHubStarVerifier: 已保存 token 验证失败，重新授权: ${err}`);
-        await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_ACCESS_TOKEN, '');
-        this.developerUnlockBusy = false;
-        await this.requestDeveloperDeviceCode();
-        return;
-      } finally {
-        this.developerUnlockBusy = false;
-      }
-      return;
-    }
-
     await this.requestDeveloperDeviceCode();
   }
 
@@ -3881,13 +3862,13 @@ struct SettingsPageV2 {
           return;
         }
         const starCheck = await GitHubStarVerifier.checkStar(poll.accessToken);
-        await this.completeDeveloperUnlockVerification(poll.accessToken, starCheck);
+        await this.completeDeveloperUnlockVerification(starCheck);
         break;
       case GitHubTokenPollStatus.PENDING:
       case GitHubTokenPollStatus.SLOW_DOWN:
         if (poll.intervalSeconds) {
           deviceCode.intervalSeconds = poll.intervalSeconds;
-          await this.saveDeveloperPendingDeviceCode(deviceCode);
+          await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_PENDING_INTERVAL, deviceCode.intervalSeconds);
         }
         if (showPendingToast) {
           ToastQueue.show({ message: '仍在等待 GitHub 授权，请稍后再试', duration: 2500 });
@@ -3899,9 +3880,8 @@ struct SettingsPageV2 {
     }
   }
 
-  private async completeDeveloperUnlockVerification(accessToken: string, starCheck: GitHubStarCheck): Promise<void> {
+  private async completeDeveloperUnlockVerification(starCheck: GitHubStarCheck): Promise<void> {
     await this.clearDeveloperPendingDeviceCode();
-    await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_ACCESS_TOKEN, accessToken);
     await PreferencesUtil.put(SettingsKeys.DEV_GITHUB_LOGIN, starCheck.login ?? '');
 
     if (starCheck.starred) {
@@ -4172,11 +4152,11 @@ struct PrivacyPolicyDialog {
   private sections: PrivacySection[] = [
     { 
       title: '数据收集', 
-      content: '本应用不会主动收集、存储或传输任何用户的个人身份信息。所有配置数据（如服务器地址、偏好设置）仅存储在您的设备本地。'
+      content: '本应用不会主动收集、存储或传输任何用户的个人身份信息。所有配置数据（如服务器地址、偏好设置）仅存储在您的设备本地。若您主动使用 GitHub Star 验证开发者模式，仅会本地保存验证状态和 GitHub 登录名。'
     } as PrivacySection,
     { 
       title: '网络通信', 
-      content: '应用仅在您的本地网络内与电脑建立连接，用于传输游戏音视频流和输入指令。不涉及任何互联网数据传输。'
+      content: '应用主要在您的本地网络内与电脑建立连接，用于传输游戏音视频流和输入指令。仅当您主动使用开发者模式的 GitHub Star 验证时，应用会连接 GitHub OAuth 与 GitHub API。'
     } as PrivacySection,
     { 
       title: '权限使用', 
@@ -4184,7 +4164,7 @@ struct PrivacyPolicyDialog {
     } as PrivacySection,
     { 
       title: '第三方服务', 
-      content: '本应用不集成任何第三方分析或广告服务。'
+      content: '本应用不集成任何第三方分析或广告服务。GitHub OAuth Device Flow 和 GitHub API 仅用于可选的开发者模式 Star 验证，不参与游戏串流核心功能。'
     } as PrivacySection,
     { 
       title: '开源合规', 

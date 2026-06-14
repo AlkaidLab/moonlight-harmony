@@ -83,6 +83,7 @@ export class GitHubStarVerifier {
   private static readonly ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
   private static readonly API_USER_URL = 'https://api.github.com/user';
   private static readonly API_VERSION = '2022-11-28';
+  private static readonly USER_AGENT = 'Moonlight-Harmony';
 
   static isConfigured(): boolean {
     return GITHUB_OAUTH_CLIENT_ID.trim().length > 0;
@@ -229,6 +230,7 @@ export class GitHubStarVerifier {
     const headers: Record<string, string> = {};
     headers.Accept = 'application/json';
     headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    headers['User-Agent'] = GitHubStarVerifier.USER_AGENT;
 
     return HttpClient.requestRaw(url, 'POST', body, {
       connectTimeout: 10000,
@@ -243,6 +245,7 @@ export class GitHubStarVerifier {
     headers.Accept = 'application/vnd.github+json';
     headers.Authorization = `Bearer ${accessToken}`;
     headers['X-GitHub-Api-Version'] = GitHubStarVerifier.API_VERSION;
+    headers['User-Agent'] = GitHubStarVerifier.USER_AGENT;
     return headers;
   }
 
