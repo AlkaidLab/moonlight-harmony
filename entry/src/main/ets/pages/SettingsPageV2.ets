@@ -3883,6 +3883,9 @@ struct SettingsPageV2 {
       case DeveloperUnlockStatus.PENDING:
         if (showPendingToast) {
           ToastQueue.show({ message: '仍在等待 GitHub 授权，请稍后再试', duration: 2500 });
+          if (result.deviceCode && !this.devKeyActivated && !this.developerMode) {
+            this.showDeveloperDeviceCodeDialog(result.deviceCode);
+          }
         }
         break;
       case DeveloperUnlockStatus.VERIFIED:

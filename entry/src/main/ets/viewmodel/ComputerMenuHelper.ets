@@ -30,6 +30,8 @@ export interface ComputerMenuCallbacks {
   onQuitGame: (computer: ObservableComputer) => void;
   /** 应用列表 */
   onAppList: (computer: ObservableComputer) => void;
+  /** 访问主机 WebUI */
+  onHostWebUi: (computer: ObservableComputer) => void;
   /** 取消配对 */
   onUnpair: (computer: ObservableComputer) => void;
   /** 休眠电脑 */
@@ -112,6 +114,14 @@ export class ComputerMenuHelper {
         title: '应用列表',
         subtitle: '查看可串流的应用',
         value: appListKey
+      });
+
+      const hostWebUiKey = `action_${actionIndex++}`;
+      actionMap.set(hostWebUiKey, () => callbacks.onHostWebUi(computer));
+      options.push({
+        title: 'host Settings',
+        subtitle: '打开 Sunshine 主机管理页面',
+        value: hostWebUiKey
       });
       
       // 取消配对
