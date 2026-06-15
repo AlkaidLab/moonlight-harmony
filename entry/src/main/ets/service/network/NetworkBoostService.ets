@@ -223,6 +223,12 @@ export class NetworkBoostService {
     if (!this.supported || !this.active || deviceInfo.sdkApiVersion < 26) {
       return false;
     }
+    if (this.activeDataFlow) {
+      const cleared = this.setDataFlowDescApi26(this.activeDataFlow, true);
+      if (!cleared) {
+        return false;
+      }
+    }
     return this.setDataFlowDescApi26(flow, false);
   }
 

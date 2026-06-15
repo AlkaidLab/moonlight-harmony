@@ -70,21 +70,27 @@ with open(path, encoding="utf-8") as f:
     text = f.read()
 
 target_version = os.environ["TARGET_SDK_VERSION"]
-text = re.sub(
+has_compile_sdk_version = re.search(r'"compileSdkVersion"\s*:', text) is not None
+text, compile_hits = re.subn(
     r'("compileSdkVersion"\s*:\s*")[^"]+(")',
     rf'\g<1>{target_version}\2',
     text,
 )
-text = re.sub(
+text, target_hits = re.subn(
     r'("targetSdkVersion"\s*:\s*")[^"]+(")',
     rf'\g<1>{target_version}\2',
     text,
 )
-text = re.sub(
+text, compatible_hits = re.subn(
     r'("compatibleSdkVersion"\s*:\s*")([0-9]+\.[0-9]+\.[0-9]+)(?:\([0-9]+\))?(")',
     r'\g<1>\2(12)\3',
     text,
 )
+if target_hits == 0 or compatible_hits == 0 or (has_compile_sdk_version and compile_hits == 0):
+    raise SystemExit(
+        "build-profile.json5 patch failed: "
+        f"compile_hits={compile_hits}, target_hits={target_hits}, compatible_hits={compatible_hits}"
+    )
 
 with open(path, "w", encoding="utf-8") as f:
     f.write(text)
