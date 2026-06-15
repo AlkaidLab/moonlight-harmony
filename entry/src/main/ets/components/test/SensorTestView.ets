@@ -345,7 +345,7 @@ export struct SensorTestView {
 
       Row({ space: 16 }) {
         Row({ space: 8 }) {
-          Circle()
+          Ellipse()
             .width(12)
             .height(12)
             .fill(this.gyroAvailable
@@ -364,7 +364,7 @@ export struct SensorTestView {
         }
 
         Row({ space: 8 }) {
-          Circle()
+          Ellipse()
             .width(12)
             .height(12)
             .fill(this.accelAvailable
@@ -383,7 +383,7 @@ export struct SensorTestView {
         }
 
         Row({ space: 8 }) {
-          Circle()
+          Ellipse()
             .width(12)
             .height(12)
             .fill('#2196F3')

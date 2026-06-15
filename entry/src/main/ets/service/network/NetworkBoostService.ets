@@ -19,8 +19,8 @@
  *   Step 4: 引入 netHandover 多网切换（远程串流场景，需 LINKTURBO 受限权限）
  */
 
-import { netQuality } from '@kit.NetworkBoostKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { netBoost, netQuality } from '@kit.NetworkBoostKit';
+import { Available, BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 
 const STREAMING_SERVICE_TYPE: netQuality.ServiceType = 'realtimeGame';
 
@@ -73,6 +73,43 @@ export interface SystemNetScene {
 
 export type SystemNetSceneListener = (scene: SystemNetScene) => void;
 
+export type NetworkBoostTransportProtocol = 'udp' | 'tcp';
+export type NetworkBoostFlowPriority = 'normal' | 'high';
+
+export interface NetworkBoostEndpoint {
+  address: string;
+  port: number;
+}
+
+export interface NetworkBoostFlowExpectation {
+  /** 上行带宽，单位 Kbps */
+  uplinkBandwidthKbps?: number;
+  /** 下行带宽，单位 Kbps */
+  downlinkBandwidthKbps?: number;
+  /** 期望时延，单位毫秒 */
+  latencyMs?: number;
+  /** 请求/上传对象大小，单位 KB */
+  objectSizeKb?: number;
+  /** 流优先级 */
+  priority?: NetworkBoostFlowPriority;
+  /** 是否倾向低功耗传输 */
+  lowPowerMode?: boolean;
+}
+
+export interface NetworkBoostFiveTupleFlow {
+  flowType: 'fiveTuple';
+  protocol: NetworkBoostTransportProtocol;
+  local: NetworkBoostEndpoint;
+  remote: NetworkBoostEndpoint;
+  expectations?: NetworkBoostFlowExpectation;
+}
+
+export interface NetworkBoostSocketFlow {
+  flowType: 'socket';
+  socketFd: number;
+  expectations?: NetworkBoostFlowExpectation;
+}
+
 export class NetworkBoostService {
   private static instance: NetworkBoostService | null = null;
 
@@ -87,6 +124,7 @@ export class NetworkBoostService {
   private sceneCallback: ((list: Array<netQuality.NetworkScene>) => void) | null = null;
   private latestScene: SystemNetScene | null = null;
   private sceneListeners: Set<SystemNetSceneListener> = new Set();
+  private activeDataFlow: NetworkBoostFiveTupleFlow | NetworkBoostSocketFlow | null = null;
 
   static getInstance(): NetworkBoostService {
     if (!NetworkBoostService.instance) {
@@ -116,6 +154,7 @@ export class NetworkBoostService {
     this.lastState = null;
     this.unsubscribeQos();
     this.unsubscribeScene();
+    this.clearDataFlowDesc();
     this.latestQos = null;
     this.latestScene = null;
   }
@@ -172,6 +211,25 @@ export class NetworkBoostService {
   /** 设备是否支持 NetworkBoostKit（一次失败后置 false） */
   isSupported(): boolean {
     return this.supported;
+  }
+
+  /**
+   * HarmonyOS 26.0.0: 为关键串流 socket 标记实时游戏流。
+   *
+   * 只有在调用方能提供 native socket fd 或完整五元组时才调用；
+   * 当前 ArkTS 层没有可靠本地端口/fd，因此先作为可选入口保留。
+   */
+  setDataFlowDesc(flow: NetworkBoostFiveTupleFlow | NetworkBoostSocketFlow): boolean {
+    if (!this.supported || !this.active || deviceInfo.sdkApiVersion < 26) {
+      return false;
+    }
+    if (this.activeDataFlow) {
+      const cleared = this.setDataFlowDescApi26(this.activeDataFlow, true);
+      if (!cleared) {
+        return false;
+      }
+    }
+    return this.setDataFlowDescApi26(flow, false);
   }
 
   // ───── reportQoe ─────
@@ -312,6 +370,69 @@ export class NetworkBoostService {
       console.warn(`[NetworkBoost] off(netSceneChange) 失败: ${(err as Error).message}`);
     }
     this.sceneCallback = null;
+  }
+
+  @Available({ minApiVersion: '26' })
+  private setDataFlowDescApi26(flow: NetworkBoostFiveTupleFlow | NetworkBoostSocketFlow, leaving: boolean): boolean {
+    try {
+      const desc: netBoost.DataFlowDesc = {
+        dataFlowInfo: this.toDataFlowInfo(flow),
+        scene: STREAMING_SERVICE_TYPE,
+        sceneEvent: leaving ? netBoost.SceneEvent.SCENE_EVENT_LEAVE : netBoost.SceneEvent.SCENE_EVENT_ENTER,
+        expectations: leaving ? undefined : this.toExpectedDescription(flow.expectations)
+      };
+      netBoost.setDataFlowDesc(desc);
+      this.activeDataFlow = leaving ? null : flow;
+      console.info('[NetworkBoost] setDataFlowDesc scene=realtimeGame event=' +
+        (leaving ? 'leave' : 'enter'));
+      return true;
+    } catch (err) {
+      this.handleErr('setDataFlowDesc', err);
+      return false;
+    }
+  }
+
+  private clearDataFlowDesc(): void {
+    if (!this.activeDataFlow || deviceInfo.sdkApiVersion < 26) {
+      this.activeDataFlow = null;
+      return;
+    }
+    this.setDataFlowDescApi26(this.activeDataFlow, true);
+  }
+
+  @Available({ minApiVersion: '26' })
+  private toDataFlowInfo(flow: NetworkBoostFiveTupleFlow | NetworkBoostSocketFlow): netBoost.DataFlowInfo | netBoost.SocketFd {
+    if (flow.flowType === 'socket') {
+      return flow.socketFd;
+    }
+    const dataFlowInfo: netBoost.DataFlowInfo = {
+      protocol: flow.protocol === 'udp' ? netBoost.ProtocolType.PROTOCOL_UDP : netBoost.ProtocolType.PROTOCOL_TCP,
+      local: {
+        address: flow.local.address,
+        port: flow.local.port
+      },
+      remote: {
+        address: flow.remote.address,
+        port: flow.remote.port
+      }
+    };
+    return dataFlowInfo;
+  }
+
+  @Available({ minApiVersion: '26' })
+  private toExpectedDescription(expectation?: NetworkBoostFlowExpectation): netBoost.ExpectedDescription | undefined {
+    if (!expectation) {
+      return undefined;
+    }
+    const desc: netBoost.ExpectedDescription = {
+      uplinkBandwidth: expectation.uplinkBandwidthKbps,
+      downlinkBandwidth: expectation.downlinkBandwidthKbps,
+      latency: expectation.latencyMs,
+      objectSize: expectation.objectSizeKb,
+      priority: expectation.priority === 'high' ? netBoost.PriorityLevel.PRIO_HIGH : netBoost.PriorityLevel.PRIO_NORMAL,
+      lowPowerMode: expectation.lowPowerMode
+    };
+    return desc;
   }
 
   private handleErr(api: string, err: object): void {

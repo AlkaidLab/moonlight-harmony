@@ -134,7 +134,7 @@ struct AddPcPageV2 {
       // 电佬角色区域
       Stack() {
         // 底层脉冲光晕
-        Circle()
+        Ellipse()
           .width(120)
           .height(120)
           .fill(AppColors.PrimaryGlow)

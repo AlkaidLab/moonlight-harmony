@@ -191,7 +191,7 @@ export struct ComputerCard {
 
       // 第三行：状态圆点 + 状态文本
       Row() {
-        Circle()
+        Ellipse()
           .width(8)
           .height(8)
           .fill(this.getStatusDotColor())

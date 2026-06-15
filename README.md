@@ -118,9 +118,12 @@
 
 ### 开发环境
 
-- **DevEco Studio**: 5.0.0 或更高版本
-- **HarmonyOS SDK**: API 12 (HarmonyOS 5.0)
-- **Node.js**: 16.x 或更高版本
+- **DevEco Studio**: 6.1 或更高版本；已验证 HarmonyOS 26.0.0 Beta1 SDK 可进入编译流程
+- **HarmonyOS SDK**: 兼容 API 12+；当前 targetSdkVersion 保持 6.1.1(24)
+- **Node.js**: 20.x 或更高版本
+- **JDK/JBR**: 本地打包 HAP 需要可用的 Java Runtime；可直接使用 DevEco Studio 自带 JBR
+
+> 说明：暂不直接把 targetSdkVersion 升到 API 26。API 26 会启用新的 ArkUI/权限/系统行为门控，当前优先保持运行行为稳定，同时让 CI 和本地 SDK 工具链先识别 HarmonyOS 26.0.0。
 
 ### 项目结构
 

@@ -457,7 +457,7 @@ export struct GameControllerTestView {
       Column({ space: 16 }) {
         // 状态标题
         Row({ space: 8 }) {
-          Circle()
+          Ellipse()
             .width(12)
             .height(12)
             .fill(this.isAvailable ? (this.isMonitoring ? AppColors.Success : AppColors.Warning) : AppColors.Error)

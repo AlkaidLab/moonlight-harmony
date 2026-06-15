@@ -118,7 +118,7 @@ export struct InvisibleJoystick {
           .borderRadius(4)
 
         // 编辑模式下在中心画预览摇杆轮廓
-        Circle()
+        Ellipse()
           .width(this.stickRadius * 2)
           .height(this.stickRadius * 2)
           .fill('transparent')
@@ -134,7 +134,7 @@ export struct InvisibleJoystick {
       // 按下时在触摸点显示摇杆
       if (this.isPressed) {
         // 外圆环
-        Circle()
+        Ellipse()
           .width(this.stickRadius * 2)
           .height(this.stickRadius * 2)
           .fill('transparent')
@@ -146,7 +146,7 @@ export struct InvisibleJoystick {
           })
 
         // 死区圆
-        Circle()
+        Ellipse()
           .width(this.stickRadius * 2 * this.deadzone)
           .height(this.stickRadius * 2 * this.deadzone)
           .fill('transparent')
@@ -159,7 +159,7 @@ export struct InvisibleJoystick {
           })
 
         // 内摇杆头
-        Circle()
+        Ellipse()
           .width(this.innerRadius * 2)
           .height(this.innerRadius * 2)
           .fill(this.pressedColor)
