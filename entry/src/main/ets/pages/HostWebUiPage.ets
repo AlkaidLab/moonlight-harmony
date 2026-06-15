@@ -117,14 +117,14 @@ struct HostWebUiPage {
     ToastQueue.show({ message: 'WebUI 地址已复制' });
   }
 
-  private openInBrowser(): void {
+  private async openInBrowser(): Promise<void> {
     if (!this.webUiUrl) {
       return;
     }
     try {
       const context = getContext(this) as common.UIAbilityContext;
       const want: Want = { action: 'ohos.want.action.viewData', uri: this.webUiUrl };
-      context.startAbility(want);
+      await context.startAbility(want);
     } catch (_e) {
       ToastQueue.show({ message: '无法打开外部浏览器' });
     }
@@ -176,7 +176,7 @@ struct HostWebUiPage {
             .height('100%')
             .javaScriptAccess(true)
             .domStorageAccess(true)
-            .mixedMode(MixedMode.All)
+            .mixedMode(MixedMode.None)
             .zoomAccess(true)
             .onPageBegin(() => {
               this.isLoading = true;
@@ -193,9 +193,6 @@ struct HostWebUiPage {
             .onHttpAuthRequest((event) => this.requestHttpAuth(event))
             .onErrorReceive((event) => {
               if (event?.request && !event.request.isMainFrame()) {
-                return;
-              }
-              if (this.acceptedSslError) {
                 return;
               }
               this.isLoading = false;
