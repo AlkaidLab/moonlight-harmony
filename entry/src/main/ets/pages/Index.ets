@@ -61,7 +61,7 @@ struct Index {
       title: '3. 网络通信',
       content: '• 应用仅在您的本地网络内与电脑建立连接，传输游戏音视频流和输入指令\n' +
         '• 使用 mDNS 协议在局域网内自动发现运行 GameStream/Sunshine 的电脑\n' +
-        '• 不涉及任何互联网数据上传'
+        '• 仅当您主动使用开发者模式的 GitHub Star 验证时，应用会连接 GitHub OAuth 与 GitHub API'
     } as PrivacySection,
     {
       title: '4. 权限使用',
@@ -74,7 +74,7 @@ struct Index {
     } as PrivacySection,
     {
       title: '5. 第三方服务',
-      content: '本应用不集成任何第三方分析、广告或数据追踪服务。'
+      content: '本应用不集成任何第三方分析、广告或数据追踪服务。GitHub OAuth Device Flow 和 GitHub API 仅用于可选的开发者模式 Star 验证。'
     } as PrivacySection,
     {
       title: '6. 开源合规',
