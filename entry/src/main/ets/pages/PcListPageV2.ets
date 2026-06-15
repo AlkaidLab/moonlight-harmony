@@ -984,6 +984,10 @@ struct PcListPageV2 {
         url: 'pages/AppListPageV2',
         params: { computerId: c.uuid }
       }),
+      onHostWebUi: (c) => router.pushUrl({
+        url: 'pages/HostWebUiPage',
+        params: { computerId: c.uuid }
+      }),
       onUnpair: (c) => this.actions!.unpairComputer(c),
       onSleep: (c) => this.actions!.sleepComputer(c),
       onTestNetwork: (c) => this.actions!.testNetwork(c),

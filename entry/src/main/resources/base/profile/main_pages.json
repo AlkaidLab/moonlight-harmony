@@ -4,6 +4,7 @@
     "pages/StreamPage",
     "pages/PcListPageV2",
     "pages/AppListPageV2",
+    "pages/HostWebUiPage",
     "pages/SettingsPageV2",
     "pages/AddPcPageV2",
     "pages/ControllerTestPage"
