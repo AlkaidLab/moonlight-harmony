@@ -4,7 +4,7 @@
 #   1. Copies type declaration stubs from ci/sdk-stubs/
 #   2. Creates missing shared libraries
 #   3. Deduplicates id_defined.json
-#   4. Patches hos-config.json for HarmonyOS 6.1.1(API 24)
+#   4. Patches hos-config.json for HarmonyOS 26.0.0(API 26) / 6.x targets
 set -euo pipefail
 
 SDK_HOME="${1:-$HOME/ohos-sdk}"
@@ -72,7 +72,7 @@ loader_patch_roots() {
   done
 }
 
-# ─── Patch hos-config.json for API 24 targetSdkVersion ───
+# ─── Patch hos-config.json for HarmonyOS targetSdkVersion aliases ───
 echo "Patching hos-config.json..."
 CMDLINE_ROOTS="$(cmdline_tool_roots || true)"
 if [ -n "$CMDLINE_ROOTS" ]; then
@@ -88,6 +88,11 @@ before = json.dumps(c, sort_keys=True)
 os_versions = c.setdefault('osVersionMapper', {})
 os_names = c.setdefault('osNameMapper', {})
 path_versions = c.setdefault('pathVersionMapper', {})
+
+# Keep older CI command-line-tools aware of the latest local HarmonyOS Beta SDK.
+os_versions.setdefault('26.0.0', '26')
+os_names.setdefault('26.0.0', 'HarmonyOS 26.0.0')
+path_versions.setdefault('26.0.0', 'HarmonyOS-26.0.0')
 
 # Keep older CI command-line-tools aware of the API 24 target used by build-profile.json5.
 os_versions.setdefault('6.1.1', '24')
@@ -280,10 +285,20 @@ if ! kit_decl_exists "@kit.NetworkBoostKit"; then
     cp "$STUBS_DIR/kit.NetworkBoostKit.json" "$HMS_KIT_CONFIGS/@kit.NetworkBoostKit.json"
   [ ! -f "$HMS_ETS_API/@ohos.networkBoost.netQuality.d.ts" ] && \
     cp "$STUBS_DIR/ohos.networkBoost.netQuality.d.ts" "$HMS_ETS_API/@ohos.networkBoost.netQuality.d.ts"
+  [ ! -f "$HMS_ETS_API/@ohos.networkBoost.netBoost.d.ts" ] && \
+    cp "$STUBS_DIR/ohos.networkBoost.netBoost.d.ts" "$HMS_ETS_API/@ohos.networkBoost.netBoost.d.ts"
   cp "$STUBS_DIR/kit.NetworkBoostKit.d.ts" "$HMS_ETS_API/@kit.NetworkBoostKit.d.ts"
   echo "  Applied NetworkBoostKit stubs"
 else
   echo "  Using SDK NetworkBoostKit declarations"
+  NETBOOST_DTS=""
+  for candidate in "$HMS_ETS_API/@hms.networkboost.netBoost.d.ts" "$HMS_ETS_API/@ohos.networkBoost.netBoost.d.ts"; do
+    [ -f "$candidate" ] && NETBOOST_DTS="$candidate" && break
+  done
+  if [ -n "$NETBOOST_DTS" ] && ! grep -q "setDataFlowDesc" "$NETBOOST_DTS"; then
+    cat "$STUBS_DIR/networkboost-dataflow-patch.d.ts" >> "$NETBOOST_DTS"
+    echo "  Patched NetworkBoost data-flow declarations"
+  fi
 fi
 
 # ─── Socket stub (only if SDK is missing the file) ───

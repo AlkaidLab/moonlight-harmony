@@ -73,7 +73,7 @@ export struct AppCard {
         // 运行中指示器
         if (this.app.isRunning) {
           Row() {
-            Circle()
+            Ellipse()
               .width(6)
               .height(6)
               .fill(AppColors.Online)

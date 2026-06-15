@@ -103,7 +103,7 @@ export struct VirtualJoystick {
       }
 
       // 外圆环
-      Circle()
+      Ellipse()
         .width(this.stickOuterRadius * 2)
         .height(this.stickOuterRadius * 2)
         .fill('#01000000')
@@ -113,7 +113,7 @@ export struct VirtualJoystick {
         .opacity(this.invisibleMode && !this.isPressed ? 0 : 1)
 
       // 内摇杆头
-      Circle()
+      Ellipse()
         .width(this.stickInnerRadius * 2)
         .height(this.stickInnerRadius * 2)
         .fill(this.isPressed ? this.pressedColor : this.stickColor)

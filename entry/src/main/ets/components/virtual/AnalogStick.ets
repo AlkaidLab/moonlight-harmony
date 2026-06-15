@@ -80,7 +80,7 @@ export struct AnalogStick {
   build() {
     Stack() {
       // 外圈（全透明 + 细边框）
-      Circle()
+      Ellipse()
         .width(this.stickOuterRadius * 2)
         .height(this.stickOuterRadius * 2)
         .fill('transparent')
@@ -89,7 +89,7 @@ export struct AnalogStick {
         .strokeOpacity(0.15)
       
       // 摇杆头（全透明 + 轮廓）
-      Circle()
+      Ellipse()
         .width(this.stickInnerRadius * 2)
         .height(this.stickInnerRadius * 2)
         .fill(this.isPressed ? '#005090FF' : 'transparent')
@@ -107,7 +107,7 @@ export struct AnalogStick {
       
       // 点击反馈
       if (this.showClickFeedback) {
-        Circle()
+        Ellipse()
           .width(this.stickInnerRadius * 2 + 16)
           .height(this.stickInnerRadius * 2 + 16)
           .fill('transparent')

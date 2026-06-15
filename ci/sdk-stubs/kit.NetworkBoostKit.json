@@ -3,6 +3,10 @@
     "netQuality": {
       "source": "@ohos.networkBoost.netQuality.d.ts",
       "bindings": "default"
+    },
+    "netBoost": {
+      "source": "@ohos.networkBoost.netBoost.d.ts",
+      "bindings": "default"
     }
   }
 }

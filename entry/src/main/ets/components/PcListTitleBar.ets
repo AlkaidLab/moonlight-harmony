@@ -70,7 +70,7 @@ export struct PcListTitleBar {
 
             if (this.config.totalCount > 0) {
               Row() {
-                Circle()
+                Ellipse()
                   .width(6)
                   .height(6)
                   .fill(AppColors.Online)

@@ -4,7 +4,8 @@
  * just enough surface for the codebase to compile under CI. Real device runtime
  * loads the actual HMS implementation (richer than this stub).
  *
- * Field set kept aligned with HarmonyOS NEXT3 SDK 6.0.0 (API 20):
+ * Field set kept aligned with HarmonyOS NetworkBoostKit APIs used by this repo
+ * through HarmonyOS 26.0.0 (API 26):
  *   NetworkQos: linkUp/DownBandwidth, linkUp/DownRate, rttMs,
  *               linkUpBufferDelayMs, linkUpBufferCongestionPercent.
  */

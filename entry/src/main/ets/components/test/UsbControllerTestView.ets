@@ -728,7 +728,7 @@ export struct UsbControllerTestView {
   StickVisualizer($$: StickVisualizerParams) {
     Stack() {
       // 外圈 - 柔和边框
-      Circle()
+      Ellipse()
         .width(76)
         .height(76)
         .fill('#0A808080')
@@ -746,7 +746,7 @@ export struct UsbControllerTestView {
         .backgroundColor('#15808080')
 
       // 死区范围
-      Circle()
+      Ellipse()
         .width(12)
         .height(12)
         .fill(Color.Transparent)
@@ -754,7 +754,7 @@ export struct UsbControllerTestView {
         .strokeWidth(0.5)
       
       // 指示点 — 渐变发光
-      Circle()
+      Ellipse()
         .width(18)
         .height(18)
         .fill($$.isRight ? '#E81123' : '#3D8ECF')

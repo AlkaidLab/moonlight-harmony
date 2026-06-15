@@ -104,7 +104,7 @@ struct ControllerTestPage {
         
         // 模式指示器
         Row({ space: 4 }) {
-          Circle()
+          Ellipse()
             .width(8)
             .height(8)
             .fill(this.currentTabIndex === 0 ? '#4CAF50' : this.currentTabIndex === 1 ? '#2196F3' : '#FF9800')

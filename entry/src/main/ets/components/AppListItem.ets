@@ -60,7 +60,7 @@ export struct AppListItem {
   @Builder
   private RunningIndicator() {
     Row() {
-      Circle()
+      Ellipse()
         .width(6)
         .height(6)
         .fill(AppColors.Online)
