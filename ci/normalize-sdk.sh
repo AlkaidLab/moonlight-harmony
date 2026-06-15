@@ -116,13 +116,17 @@ echo "Target SDK API version: $API_VER"
 echo "SDK package version: $SDK_PKG_VERSION"
 
 case "$API_VER" in
-  26) HOS_PLATFORM_VERSION="26.0.0"; HOS_TARGET_SDK_VERSION="26.0.0" ;;
-  24) HOS_PLATFORM_VERSION="6.1.1"; HOS_TARGET_SDK_VERSION="6.1.1(24)" ;;
-  23) HOS_PLATFORM_VERSION="6.1.0"; HOS_TARGET_SDK_VERSION="6.1.0(23)" ;;
-  22) HOS_PLATFORM_VERSION="6.0.2"; HOS_TARGET_SDK_VERSION="6.0.2(22)" ;;
-  20) HOS_PLATFORM_VERSION="6.0.0"; HOS_TARGET_SDK_VERSION="6.0.0(20)" ;;
+  26) HOS_PLATFORM_VERSION="26.0.0"; HOS_COMPILE_SDK_VERSION="26.0.0"; HOS_TARGET_SDK_VERSION="26.0.0" ;;
+  24) HOS_PLATFORM_VERSION="6.1.1"; HOS_COMPILE_SDK_VERSION="6.1.1"; HOS_TARGET_SDK_VERSION="6.1.1(24)" ;;
+  23) HOS_PLATFORM_VERSION="6.1.0"; HOS_COMPILE_SDK_VERSION="6.1.0"; HOS_TARGET_SDK_VERSION="6.1.0(23)" ;;
+  22) HOS_PLATFORM_VERSION="6.0.2"; HOS_COMPILE_SDK_VERSION="6.0.2"; HOS_TARGET_SDK_VERSION="6.0.2(22)" ;;
+  20) HOS_PLATFORM_VERSION="6.0.0"; HOS_COMPILE_SDK_VERSION="6.0.0"; HOS_TARGET_SDK_VERSION="6.0.0(20)" ;;
   *) echo "ERROR: Unsupported SDK API version: $API_VER"; exit 1 ;;
 esac
+
+# GitHub Actions writes this value into both compileSdkVersion and targetSdkVersion.
+# Older command-line tools reject decorated values such as 6.1.1(24) for compileSdkVersion.
+[ "${GITHUB_ACTIONS:-}" = "true" ] && HOS_TARGET_SDK_VERSION="$HOS_COMPILE_SDK_VERSION"
 
 # ─── Step 1: Flatten nested openharmony/<ver> layout to root ───
 # hvigor 6.24 treats a sdk-pkg.json with apiVersion as a platform container and
@@ -200,5 +204,6 @@ done
 echo "SDK_API_VERSION=$API_VER"
 echo "SDK_SOURCE_API_VERSION=$SOURCE_API_VER"
 echo "HOS_PLATFORM_VERSION=$HOS_PLATFORM_VERSION"
+echo "HOS_COMPILE_SDK_VERSION=$HOS_COMPILE_SDK_VERSION"
 echo "HOS_TARGET_SDK_VERSION=$HOS_TARGET_SDK_VERSION"
 echo "✅ SDK layout normalized"
