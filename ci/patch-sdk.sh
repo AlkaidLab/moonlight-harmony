@@ -47,6 +47,53 @@ TOOLCHAINS="$OH_TOOLCHAINS"
 
 echo "=== Applying SDK patches ==="
 
+patch_ci_build_profile_versions() {
+  [ "${GITHUB_ACTIONS:-}" = "true" ] || return 0
+  [ -f "build-profile.json5" ] || return 0
+
+  local target_version
+  case "${CI_TARGET_API_VERSION:-}" in
+    26) target_version="26.0.0" ;;
+    24) target_version="6.1.1(24)" ;;
+    23) target_version="6.1.0(23)" ;;
+    22) target_version="6.0.2(22)" ;;
+    20) target_version="6.0.0(20)" ;;
+    *) return 0 ;;
+  esac
+
+  TARGET_SDK_VERSION="$target_version" python3 - <<'PY'
+import os
+import re
+
+path = "build-profile.json5"
+with open(path, encoding="utf-8") as f:
+    text = f.read()
+
+target_version = os.environ["TARGET_SDK_VERSION"]
+text = re.sub(
+    r'("compileSdkVersion"\s*:\s*")[^"]+(")',
+    rf'\g<1>{target_version}\2',
+    text,
+)
+text = re.sub(
+    r'("targetSdkVersion"\s*:\s*")[^"]+(")',
+    rf'\g<1>{target_version}\2',
+    text,
+)
+text = re.sub(
+    r'("compatibleSdkVersion"\s*:\s*")([0-9]+\.[0-9]+\.[0-9]+)(?:\([0-9]+\))?(")',
+    r'\g<1>\2(12)\3',
+    text,
+)
+
+with open(path, "w", encoding="utf-8") as f:
+    f.write(text)
+print(f"  Patched CI build-profile.json5 SDK versions: compile={target_version}, target={target_version}")
+PY
+}
+
+patch_ci_build_profile_versions
+
 kit_decl_exists() {
   local kit_name="$1"
   [ -f "$OH_ETS_KITS/$kit_name.d.ts" ] || [ -f "$OH_ETS_KITS/$kit_name.d.ets" ] || \
@@ -85,14 +132,16 @@ p = os.environ['CONFIG_PATH']
 with open(p) as f:
     c = json.load(f)
 before = json.dumps(c, sort_keys=True)
+target_api = os.environ.get('CI_TARGET_API_VERSION', '24')
 os_versions = c.setdefault('osVersionMapper', {})
 os_names = c.setdefault('osNameMapper', {})
 path_versions = c.setdefault('pathVersionMapper', {})
 
-# Keep older CI command-line-tools aware of the latest local HarmonyOS Beta SDK.
-os_versions.setdefault('26.0.0', '26')
-os_names.setdefault('26.0.0', 'HarmonyOS 26.0.0')
-path_versions.setdefault('26.0.0', 'HarmonyOS-26.0.0')
+if target_api == '26':
+    # Keep older CI command-line-tools aware of the latest local HarmonyOS Beta SDK.
+    os_versions.setdefault('26.0.0', '26')
+    os_names.setdefault('26.0.0', 'HarmonyOS 26.0.0')
+    path_versions.setdefault('26.0.0', 'HarmonyOS-26.0.0')
 
 # Keep older CI command-line-tools aware of the API 24 target used by build-profile.json5.
 os_versions.setdefault('6.1.1', '24')
@@ -281,16 +330,31 @@ fi
 
 # ─── @kit.NetworkBoostKit ───
 if ! kit_decl_exists "@kit.NetworkBoostKit"; then
-  [ ! -f "$HMS_KIT_CONFIGS/@kit.NetworkBoostKit.json" ] && \
-    cp "$STUBS_DIR/kit.NetworkBoostKit.json" "$HMS_KIT_CONFIGS/@kit.NetworkBoostKit.json"
+  cp "$STUBS_DIR/kit.NetworkBoostKit.json" "$HMS_KIT_CONFIGS/@kit.NetworkBoostKit.json"
   [ ! -f "$HMS_ETS_API/@ohos.networkBoost.netQuality.d.ts" ] && \
     cp "$STUBS_DIR/ohos.networkBoost.netQuality.d.ts" "$HMS_ETS_API/@ohos.networkBoost.netQuality.d.ts"
   [ ! -f "$HMS_ETS_API/@ohos.networkBoost.netBoost.d.ts" ] && \
     cp "$STUBS_DIR/ohos.networkBoost.netBoost.d.ts" "$HMS_ETS_API/@ohos.networkBoost.netBoost.d.ts"
   cp "$STUBS_DIR/kit.NetworkBoostKit.d.ts" "$HMS_ETS_API/@kit.NetworkBoostKit.d.ts"
+  cp "$STUBS_DIR/kit.NetworkBoostKit.d.ts" "$HMS_ETS_KITS/@kit.NetworkBoostKit.d.ts"
   echo "  Applied NetworkBoostKit stubs"
 else
   echo "  Using SDK NetworkBoostKit declarations"
+  KIT_NETWORKBOOST_DTS="$HMS_ETS_KITS/@kit.NetworkBoostKit.d.ts"
+  KIT_NETWORKBOOST_CONFIG="$HMS_KIT_CONFIGS/@kit.NetworkBoostKit.json"
+  if [ -f "$KIT_NETWORKBOOST_DTS" ] && ! grep -q "netBoost" "$KIT_NETWORKBOOST_DTS"; then
+    cp "$STUBS_DIR/kit.NetworkBoostKit.d.ts" "$KIT_NETWORKBOOST_DTS"
+    echo "  Patched NetworkBoostKit netBoost export"
+  fi
+  if [ -f "$HMS_ETS_API/@kit.NetworkBoostKit.d.ts" ] && ! grep -q "netBoost" "$HMS_ETS_API/@kit.NetworkBoostKit.d.ts"; then
+    cp "$STUBS_DIR/kit.NetworkBoostKit.d.ts" "$HMS_ETS_API/@kit.NetworkBoostKit.d.ts"
+  fi
+  if [ -f "$KIT_NETWORKBOOST_CONFIG" ] && ! grep -q '"netBoost"' "$KIT_NETWORKBOOST_CONFIG"; then
+    cp "$STUBS_DIR/kit.NetworkBoostKit.json" "$KIT_NETWORKBOOST_CONFIG"
+    echo "  Patched NetworkBoostKit netBoost kit config"
+  fi
+  [ ! -f "$HMS_ETS_API/@ohos.networkBoost.netBoost.d.ts" ] && \
+    cp "$STUBS_DIR/ohos.networkBoost.netBoost.d.ts" "$HMS_ETS_API/@ohos.networkBoost.netBoost.d.ts"
   NETBOOST_DTS=""
   for candidate in "$HMS_ETS_API/@hms.networkboost.netBoost.d.ts" "$HMS_ETS_API/@ohos.networkBoost.netBoost.d.ts"; do
     [ -f "$candidate" ] && NETBOOST_DTS="$candidate" && break
