@@ -76,7 +76,8 @@ export class PairingManager {
     // 解析地址中可能包含的端口号
     const parsed = parseAddressAndPort(address);
     this.address = parsed.host;
-    const port = httpPort || parsed.port || PairingManager.DEFAULT_HTTP_PORT;
+    // 端口优先级与 NvHttp 保持一致：address 中显式端口 > 调用方传入端口 > 默认端口。
+    const port = parsed.port || httpPort || PairingManager.DEFAULT_HTTP_PORT;
     // IPv6 地址在 URL 中需要方括号包裹，否则冒号会与端口分隔符冲突
     const formattedHost = formatAddressForUrl(this.address);
     this.formattedHost = formattedHost;

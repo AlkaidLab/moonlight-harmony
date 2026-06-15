@@ -10,28 +10,73 @@
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { NvHttp } from '../service/streaming/NvHttp';
+import { WakeOnLan } from '../service/network/WakeOnLan';
+import {
+  AddressType,
+  detectAddressType,
+  formatAddressForUrl,
+  getBestIpv6Address,
+  isIPv4Address,
+  isIPv6Global,
+  isLanAddress,
+  isPrivateIPv4,
+  isPublicAddress,
+  parseAddressAndPort,
+} from './NetHelper';
+import { selectBestAddress } from '../model/ComputerInfo';
 
-const TAG = 'NetErrorClassifierCheck';
+const TAG = 'NetworkSelfCheck';
 const DOMAIN = 0x0000;
 
 /**
- * 网络错误分类契约自检
+ * 网络契约自检
  *
  * 鸿蒙工程没有引入 ohosTest 框架，无法跑传统单元测试。
- * 本文件作为「启动期自检」替代方案，对 NvHttp.isTransientNetworkError
- * 这种纯函数契约做断言，挂表立即在日志看到。
+ * 本文件作为「启动期自检」替代方案，对网络层的纯函数契约做断言，
+ * 挂表立即在日志看到。
  *
- * 为什么只测 isTransientNetworkError：
+ * 覆盖范围：
+ * - NvHttp.isTransientNetworkError：robust retry 是否触发
+ * - NetHelper：地址分类、端口解析、URL 格式化
+ * - WakeOnLan.isValidMacAddress：WOL 输入格式校验
+ * - selectBestAddress：连接地址优先级模型
+ *
+ * 为什么优先测这些：
  * - 它直接决定 ServerInfo 等关键路径是否进入 robust retry 兜底
+ * - 地址分类/选择错误会导致 LAN/WAN/IPv6 连接走错目标
+ * - WOL MAC 格式错误会生成无效魔术包
  * - 漏判 → 用户看到偶发失败；误判 → 浪费 retry 配额（可接受）
- * - HttpClient.isConnectionError 私有，且漏判后果较轻（最多多重连一次 session）
+ * - 所有用例均为纯函数，不触发真实 DNS/UDP/HTTP 请求
  *
- * 任何修改 isTransientNetworkError 关键词集合的人都应同步更新本文件，
+ * 任何修改网络错误关键词、地址分类规则、地址优先级的人都应同步更新本文件，
  * 否则启动 hilog 会报告契约破坏。
  */
 interface ClassifierCase {
   msg: string;
   expected: boolean;
+  reason: string;
+}
+
+type Comparable = string | number | boolean | undefined;
+
+interface BooleanCase {
+  name: string;
+  actual: boolean;
+  expected: boolean;
+  reason: string;
+}
+
+interface StringCase {
+  name: string;
+  actual: string | undefined;
+  expected: string | undefined;
+  reason: string;
+}
+
+interface AddressParseCase {
+  input: string;
+  expectedHost: string;
+  expectedPort?: number;
   reason: string;
 }
 
@@ -80,17 +125,29 @@ export class NetworkErrorClassifierSelfCheck {
    */
   static run(): number {
     let failed = 0;
-    // 1. 关键词集合契约
-    for (const c of TRANSIENT_CASES) {
-      const actual = NvHttp.isTransientNetworkError(c.msg);
-      if (actual !== c.expected) {
-        failed++;
-        hilog.error(DOMAIN, TAG,
-          'CONTRACT BROKEN: isTransientNetworkError(%{public}s) = %{public}s, expected %{public}s — %{public}s',
-          c.msg, String(actual), String(c.expected), c.reason);
-      }
+    failed += NetworkErrorClassifierSelfCheck.runTransientErrorCases();
+    failed += NetworkErrorClassifierSelfCheck.runNetHelperCases();
+    failed += NetworkErrorClassifierSelfCheck.runWakeOnLanCases();
+    failed += NetworkErrorClassifierSelfCheck.runAddressSelectionCases();
+
+    if (failed === 0) {
+      hilog.info(DOMAIN, TAG, 'network self-check passed');
+    } else {
+      hilog.error(DOMAIN, TAG, 'network self-check FAILED: %{public}d cases broken', failed);
     }
-    // 2. 子串歧义已知 trade-off（行为变化时也提醒一下）
+    return failed;
+  }
+
+  private static runTransientErrorCases(): number {
+    let failed = 0;
+    for (const c of TRANSIENT_CASES) {
+      failed += NetworkErrorClassifierSelfCheck.expectEqual(
+        'NvHttp.isTransientNetworkError',
+        `message=${c.msg}`,
+        NvHttp.isTransientNetworkError(c.msg),
+        c.expected,
+        c.reason);
+    }
     for (const c of KNOWN_AMBIGUOUS_CASES) {
       const actual = NvHttp.isTransientNetworkError(c.msg);
       if (actual !== c.expected) {
@@ -99,18 +156,213 @@ export class NetworkErrorClassifierSelfCheck {
           c.msg, String(actual), String(c.expected));
       }
     }
-    // 3. Error 对象与 string 等价性（实现里 typeof err === 'string' 分支）
     const errCase = new Error('Connection timeout');
-    if (NvHttp.isTransientNetworkError(errCase) !== NvHttp.isTransientNetworkError(errCase.message)) {
-      failed++;
-      hilog.error(DOMAIN, TAG, 'Error vs string disagreement: same payload should classify identically');
-    }
+    failed += NetworkErrorClassifierSelfCheck.expectEqual(
+      'NvHttp.isTransientNetworkError',
+      'Error vs string equivalence',
+      NvHttp.isTransientNetworkError(errCase),
+      NvHttp.isTransientNetworkError(errCase.message),
+      '同一错误负载用 Error 或 string 传入应分类一致');
 
     if (failed === 0) {
-      hilog.info(DOMAIN, TAG, 'self-check passed (%{public}d cases + Error/string equivalence)', TRANSIENT_CASES.length);
+      hilog.info(DOMAIN, TAG, 'transient error classifier self-check passed (%{public}d cases + equivalence)',
+        TRANSIENT_CASES.length);
     } else {
-      hilog.error(DOMAIN, TAG, 'self-check FAILED: %{public}d cases broken', failed);
+      hilog.error(DOMAIN, TAG, 'transient error classifier self-check FAILED: %{public}d cases broken', failed);
     }
     return failed;
+  }
+
+  private static runNetHelperCases(): number {
+    let failed = 0;
+
+    const boolCases: BooleanCase[] = [
+      { name: 'isIPv4Address 192.168.1.10', actual: isIPv4Address('192.168.1.10'), expected: true, reason: '标准 IPv4' },
+      { name: 'isIPv4Address 256.1.1.1', actual: isIPv4Address('256.1.1.1'), expected: false, reason: 'IPv4 字节不能超过 255' },
+      { name: 'isIPv4Address 01.2.3.4', actual: isIPv4Address('01.2.3.4'), expected: false, reason: '拒绝带前导零的歧义 IPv4' },
+      { name: 'isPrivateIPv4 10/8', actual: isPrivateIPv4('10.2.3.4'), expected: true, reason: 'RFC1918 10/8' },
+      { name: 'isPrivateIPv4 172.16/12 lower', actual: isPrivateIPv4('172.16.0.1'), expected: true, reason: 'RFC1918 172.16 起点' },
+      { name: 'isPrivateIPv4 172.31/12 upper', actual: isPrivateIPv4('172.31.255.254'), expected: true, reason: 'RFC1918 172.31 终点' },
+      { name: 'isPrivateIPv4 172.32 outside', actual: isPrivateIPv4('172.32.0.1'), expected: false, reason: '172.32 已是公网段' },
+      { name: 'isPrivateIPv4 192.168/16', actual: isPrivateIPv4('192.168.50.2'), expected: true, reason: 'RFC1918 192.168/16' },
+      { name: 'isLanAddress IPv4 with port', actual: isLanAddress('192.168.1.10:47989'), expected: true, reason: '解析 IPv4:port 后识别 LAN' },
+      { name: 'isLanAddress IPv4 link-local', actual: isLanAddress('169.254.1.10'), expected: true, reason: 'IPv4 link-local 视为 LAN' },
+      { name: 'isLanAddress bracket IPv6 link-local', actual: isLanAddress('[fe80::1%wlan0]:47989'), expected: true, reason: 'IPv6 link-local 带 scope/port' },
+      { name: 'isLanAddress IPv6 ULA', actual: isLanAddress('fd00::1234'), expected: true, reason: 'IPv6 ULA 视为 LAN' },
+      { name: 'isPublicAddress IPv4 WAN', actual: isPublicAddress('8.8.8.8'), expected: true, reason: '公网 IPv4' },
+      { name: 'isPublicAddress private IPv4', actual: isPublicAddress('192.168.1.10'), expected: false, reason: '私网 IPv4 不应算 WAN' },
+      { name: 'isPublicAddress IPv6 global', actual: isPublicAddress('2001:4860:4860::8888'), expected: true, reason: 'IPv6 全局单播' },
+      { name: 'isPublicAddress IPv6 6to4 tunnel', actual: isPublicAddress('2002:c000:0201::1'), expected: false, reason: '6to4 隧道不作为优选公网 IPv6' },
+      { name: 'isPublicAddress IPv6 Teredo tunnel', actual: isPublicAddress('2001:0:4136:e378:8000:63bf:3fff:fdd2'), expected: false, reason: 'Teredo 隧道不作为优选公网 IPv6' },
+      { name: 'isIPv6Global global', actual: isIPv6Global('240e:1234::1'), expected: true, reason: '普通 IPv6 全局单播' },
+      { name: 'isIPv6Global ULA', actual: isIPv6Global('fc00::1'), expected: false, reason: 'ULA 不是全局地址' },
+    ];
+
+    for (const c of boolCases) {
+      failed += NetworkErrorClassifierSelfCheck.expectEqual('NetHelper', c.name, c.actual, c.expected, c.reason);
+    }
+
+    const typeCases: StringCase[] = [
+      { name: 'detectAddressType loopback IPv4', actual: detectAddressType('127.0.0.1'), expected: AddressType.LOOPBACK, reason: 'IPv4 loopback' },
+      { name: 'detectAddressType LAN IPv4', actual: detectAddressType('10.0.0.5'), expected: AddressType.LAN_IPV4, reason: '私网 IPv4' },
+      { name: 'detectAddressType WAN IPv4', actual: detectAddressType('1.1.1.1'), expected: AddressType.WAN, reason: '公网 IPv4' },
+      { name: 'detectAddressType IPv6 loopback', actual: detectAddressType('::1'), expected: AddressType.LOOPBACK, reason: 'IPv6 loopback' },
+      { name: 'detectAddressType IPv6 link-local', actual: detectAddressType('fe80::abcd'), expected: AddressType.IPV6_LINK_LOCAL, reason: 'IPv6 link-local' },
+      { name: 'detectAddressType IPv6 ULA', actual: detectAddressType('fd12::1'), expected: AddressType.IPV6_ULA, reason: 'IPv6 ULA' },
+      { name: 'detectAddressType IPv6 tunnel', actual: detectAddressType('2002:c000:0201::1'), expected: AddressType.IPV6_TUNNEL, reason: 'IPv6 6to4 隧道' },
+      { name: 'detectAddressType IPv6 global', actual: detectAddressType('240e:1234::1'), expected: AddressType.IPV6_GLOBAL, reason: 'IPv6 全局地址' },
+      { name: 'detectAddressType hostname', actual: detectAddressType('moonlight.example.com'), expected: AddressType.UNKNOWN, reason: '域名无法静态分类' },
+      { name: 'getBestIpv6Address skips tunnels', actual: getBestIpv6Address(['fe80::1', '2002:c000:0201::1', '240e:1234::1']), expected: '240e:1234::1', reason: '优选全局 IPv6，跳过 link-local/tunnel' },
+      { name: 'formatAddressForUrl IPv4', actual: formatAddressForUrl('192.168.1.10'), expected: '192.168.1.10', reason: 'IPv4 不加方括号' },
+      { name: 'formatAddressForUrl IPv6', actual: formatAddressForUrl('fe80::1'), expected: '[fe80::1]', reason: 'URL 中 IPv6 必须加方括号' },
+      { name: 'formatAddressForUrl bracket IPv6', actual: formatAddressForUrl('[::1]'), expected: '[::1]', reason: '已有方括号不重复添加' },
+    ];
+
+    for (const c of typeCases) {
+      failed += NetworkErrorClassifierSelfCheck.expectEqual('NetHelper', c.name, c.actual, c.expected, c.reason);
+    }
+
+    const parseCases: AddressParseCase[] = [
+      { input: '192.168.1.10', expectedHost: '192.168.1.10', reason: '纯 IPv4' },
+      { input: '192.168.1.10:47989', expectedHost: '192.168.1.10', expectedPort: 47989, reason: 'IPv4:port' },
+      { input: 'sunshine.local:47989', expectedHost: 'sunshine.local', expectedPort: 47989, reason: 'hostname:port' },
+      { input: '[::1]:47989', expectedHost: '::1', expectedPort: 47989, reason: '[IPv6]:port' },
+      { input: '::1', expectedHost: '::1', reason: '裸 IPv6 不拆端口' },
+      { input: 'sunshine.local:99999', expectedHost: 'sunshine.local:99999', reason: '非法端口保留为 host 原文' },
+    ];
+
+    for (const c of parseCases) {
+      const actual = parseAddressAndPort(c.input);
+      failed += NetworkErrorClassifierSelfCheck.expectEqual('NetHelper.parseAddressAndPort', `${c.input} host`, actual.host, c.expectedHost, c.reason);
+      failed += NetworkErrorClassifierSelfCheck.expectEqual('NetHelper.parseAddressAndPort', `${c.input} port`, actual.port, c.expectedPort, c.reason);
+    }
+
+    NetworkErrorClassifierSelfCheck.logGroupResult('NetHelper', failed);
+    return failed;
+  }
+
+  private static runWakeOnLanCases(): number {
+    let failed = 0;
+    const cases: BooleanCase[] = [
+      { name: 'colon lowercase MAC', actual: WakeOnLan.isValidMacAddress('aa:bb:cc:dd:ee:ff'), expected: true, reason: '标准冒号分隔 MAC' },
+      { name: 'hyphen uppercase MAC', actual: WakeOnLan.isValidMacAddress('AA-BB-CC-DD-EE-FF'), expected: true, reason: 'Windows 常见连字符格式' },
+      { name: 'missing octet MAC', actual: WakeOnLan.isValidMacAddress('AA:BB:CC:DD:EE'), expected: false, reason: '必须 6 个字节' },
+      { name: 'non-hex MAC', actual: WakeOnLan.isValidMacAddress('GG:BB:CC:DD:EE:FF'), expected: false, reason: '必须是十六进制' },
+      { name: 'compact MAC unsupported', actual: WakeOnLan.isValidMacAddress('AABBCCDDEEFF'), expected: false, reason: '当前 UI/发送器要求显式分隔符' },
+    ];
+    for (const c of cases) {
+      failed += NetworkErrorClassifierSelfCheck.expectEqual('WakeOnLan.isValidMacAddress', c.name, c.actual, c.expected, c.reason);
+    }
+    NetworkErrorClassifierSelfCheck.logGroupResult('WakeOnLan', failed);
+    return failed;
+  }
+
+  private static runAddressSelectionCases(): number {
+    let failed = 0;
+    const cases: StringCase[] = [
+      {
+        name: 'preferred address wins',
+        actual: selectBestAddress({
+          preferredAddress: 'preferred.example.com',
+          address: 'active.example.com',
+          localAddress: '192.168.1.20',
+          remoteAddress: '203.0.113.20',
+          manualAddress: 'manual.example.com',
+          ipv6Address: 'fd00::20',
+        }),
+        expected: 'preferred.example.com',
+        reason: '用户锁定地址应跳过竞速结果',
+      },
+      {
+        name: 'active address wins',
+        actual: selectBestAddress({
+          address: 'active.example.com',
+          localAddress: '192.168.1.20',
+          remoteAddress: '203.0.113.20',
+          manualAddress: 'manual.example.com',
+          ipv6Address: 'fd00::20',
+        }),
+        expected: 'active.example.com',
+        reason: '最近验证可达地址优先',
+      },
+      {
+        name: 'manual fallback wins before LAN',
+        actual: selectBestAddress({
+          address: '',
+          localAddress: '192.168.1.20',
+          remoteAddress: '203.0.113.20',
+          manualAddress: 'manual.example.com',
+          ipv6Address: 'fd00::20',
+        }),
+        expected: 'manual.example.com',
+        reason: '无活跃地址时尊重用户手动输入',
+      },
+      {
+        name: 'LAN IPv4 before IPv6 and WAN',
+        actual: selectBestAddress({
+          address: '',
+          localAddress: '192.168.1.20',
+          remoteAddress: '203.0.113.20',
+          ipv6Address: '240e:1234::20',
+        }),
+        expected: '192.168.1.20',
+        reason: '首次添加/离线恢复优先 LAN IPv4',
+      },
+      {
+        name: 'LAN IPv6 before non-LAN local',
+        actual: selectBestAddress({
+          address: '',
+          localAddress: '203.0.113.20',
+          remoteAddress: '198.51.100.20',
+          ipv6Address: 'fd00::20',
+        }),
+        expected: 'fd00::20',
+        reason: '非 LAN localAddress 不应压过局域网 IPv6',
+      },
+      {
+        name: 'remote fallback',
+        actual: selectBestAddress({
+          address: '',
+          localAddress: '',
+          remoteAddress: '198.51.100.20',
+        }),
+        expected: '198.51.100.20',
+        reason: '只剩 WAN 地址时返回 WAN',
+      },
+      {
+        name: 'empty fallback',
+        actual: selectBestAddress({
+          address: '',
+          localAddress: '',
+          remoteAddress: '',
+        }),
+        expected: '',
+        reason: '无任何地址时返回空字符串',
+      },
+    ];
+
+    for (const c of cases) {
+      failed += NetworkErrorClassifierSelfCheck.expectEqual('selectBestAddress', c.name, c.actual, c.expected, c.reason);
+    }
+    NetworkErrorClassifierSelfCheck.logGroupResult('selectBestAddress', failed);
+    return failed;
+  }
+
+  private static expectEqual(scope: string, name: string, actual: Comparable, expected: Comparable, reason: string): number {
+    if (actual === expected) {
+      return 0;
+    }
+    hilog.error(DOMAIN, TAG,
+      'CONTRACT BROKEN [%{public}s] %{public}s = %{public}s, expected %{public}s — %{public}s',
+      scope, name, String(actual), String(expected), reason);
+    return 1;
+  }
+
+  private static logGroupResult(group: string, failed: number): void {
+    if (failed === 0) {
+      hilog.info(DOMAIN, TAG, '%{public}s self-check passed', group);
+    } else {
+      hilog.error(DOMAIN, TAG, '%{public}s self-check FAILED: %{public}d cases broken', group, failed);
+    }
   }
 }

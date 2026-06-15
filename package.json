@@ -5,6 +5,7 @@
   "description": "Moonlight for HarmonyOS - PC Game Streaming",
   "scripts": {
     "release": "node scripts/release.js",
-    "changelog": "node scripts/gen-changelog.js"
+    "changelog": "node scripts/gen-changelog.js",
+    "test:sunshine-mock": "node scripts/sunshine-mock-connection-test.js"
   }
 }

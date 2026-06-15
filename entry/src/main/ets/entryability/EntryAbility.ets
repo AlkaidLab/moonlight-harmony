@@ -45,7 +45,7 @@ export default class EntryAbility extends UIAbility {
     // 注册应用前后台状态变化监听
     this.registerAppStateCallback();
 
-    // 网络错误分类契约自检（纯函数，零开销，仅日志）
+    // 网络契约自检（纯函数，零开销，仅日志）
     NetworkErrorClassifierSelfCheck.run();
   }
 
