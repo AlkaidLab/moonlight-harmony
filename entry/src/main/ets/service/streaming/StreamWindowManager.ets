@@ -47,6 +47,9 @@ export class StreamWindowManager {
   private onWindowSizeChanged: (() => void) | null = null;
   /** windowSizeChange 监听器回调引用（用于 off 取消注册） */
   private windowSizeChangeHandler: ((size: window.Size) => void) | null = null;
+  /** 当前窗口矩形缓存（像素）；窗口模式下用于跟随系统小窗尺寸和方向 */
+  private windowWidthPx: number = 0;
+  private windowHeightPx: number = 0;
 
   /** 查询当前是否全屏 */
   get isFullscreen(): boolean {
@@ -167,6 +170,7 @@ export class StreamWindowManager {
         } catch (_e) {
           console.info('StreamWindowManager: recover() 不可用，保持最大化');
         }
+        await this.configureFloatingOrientation(win);
         this._isFullscreen = false;
         // 注册窗口大小变化监听（窗口模式下用户可能拖拽缩放）
         this.registerWindowSizeListener(win);
@@ -176,6 +180,7 @@ export class StreamWindowManager {
         this.unregisterWindowSizeListener(win);
         await this.enterImmersiveFullscreen(win);
         this._isFullscreen = true;
+        await this.configureOrientation();
         console.info('StreamWindowManager: 已切换到全屏模式');
       }
     } catch (err) {
@@ -188,8 +193,10 @@ export class StreamWindowManager {
    */
   private registerWindowSizeListener(win: window.Window): void {
     this.unregisterWindowSizeListener(win);
+    this.updateWindowSizeCache(win);
     let debounceTimer: number = -1;
-    this.windowSizeChangeHandler = (_size: window.Size) => {
+    this.windowSizeChangeHandler = (size: window.Size) => {
+      this.updateWindowSizeCacheFromSize(size);
       // 防抖：拖拽缩放时高频触发，200ms 后才真正回调
       if (debounceTimer !== -1) {
         clearTimeout(debounceTimer);
@@ -304,6 +311,49 @@ export class StreamWindowManager {
     try { win.setWindowDecorVisible(visible); } catch (_e) {}
   }
 
+  /**
+   * 更新窗口尺寸缓存。
+   */
+  private updateWindowSizeCache(win: window.Window): void {
+    try {
+      const rect = win.getWindowProperties().windowRect;
+      if (rect && rect.width > 0 && rect.height > 0) {
+        this.windowWidthPx = rect.width;
+        this.windowHeightPx = rect.height;
+      }
+    } catch (_e) {}
+  }
+
+  /**
+   * 从 windowSizeChange 事件更新窗口尺寸缓存。
+   */
+  private updateWindowSizeCacheFromSize(size: window.Size): void {
+    if (size.width > 0 && size.height > 0) {
+      this.windowWidthPx = size.width;
+      this.windowHeightPx = size.height;
+    }
+  }
+
+  /**
+   * 获取当前客户端视口是否为横向。
+   *
+   * 全屏时跟随物理显示方向；窗口/小窗模式下跟随系统给到应用窗口的实际宽高，
+   * 避免小窗里仍按整屏方向同步，导致服务端画面方向与系统窗口不一致。
+   */
+  async isCurrentViewportLandscape(): Promise<boolean> {
+    try {
+      const win = await window.getLastWindow(this.context);
+      this.updateWindowSizeCache(win);
+    } catch (_e) {}
+
+    if (!this._isFullscreen && this.windowWidthPx > 0 && this.windowHeightPx > 0) {
+      return this.windowWidthPx >= this.windowHeightPx;
+    }
+
+    const displayInfo = display.getDefaultDisplaySync();
+    return displayInfo.width >= displayInfo.height;
+  }
+
   // ==================== 屏幕方向 ====================
 
   /**
@@ -329,6 +379,21 @@ export class StreamWindowManager {
   }
 
   /**
+   * 窗口/小窗模式下恢复系统管理的方向策略。
+   */
+  private async configureFloatingOrientation(win: window.Window): Promise<void> {
+    try {
+      await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED);
+      console.info('StreamWindowManager: 窗口模式使用系统受限自动旋转');
+    } catch (_e) {
+      try {
+        await win.setPreferredOrientation(window.Orientation.UNSPECIFIED);
+        console.info('StreamWindowManager: 窗口模式恢复未指定方向');
+      } catch (_e2) {}
+    }
+  }
+
+  /**
    * 更新屏幕尺寸（在屏幕旋转后调用）
    */
   async updateScreenSize(): Promise<DisplaySize> {
@@ -336,7 +401,14 @@ export class StreamWindowManager {
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
       const displayInfo = display.getDefaultDisplaySync();
 
-      if (this.streamWidth > this.streamHeight) {
+      if (!this._isFullscreen) {
+        const win = await window.getLastWindow(this.context);
+        this.updateWindowSizeCache(win);
+        if (this.windowWidthPx > 0 && this.windowHeightPx > 0) {
+          this.screenWidth = this.windowWidthPx / displayInfo.densityPixels;
+          this.screenHeight = this.windowHeightPx / displayInfo.densityPixels;
+        }
+      } else if (this.streamWidth > this.streamHeight) {
         this.screenWidth = Math.max(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
         this.screenHeight = Math.min(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
       } else {
@@ -394,8 +466,8 @@ export class StreamWindowManager {
 
     try {
       const displayInfo = display.getDefaultDisplaySync();
-      const screenWidth = displayInfo.width;
-      const screenHeight = displayInfo.height;
+      const screenWidth = !this._isFullscreen && this.windowWidthPx > 0 ? this.windowWidthPx : displayInfo.width;
+      const screenHeight = !this._isFullscreen && this.windowHeightPx > 0 ? this.windowHeightPx : displayInfo.height;
       const density = displayInfo.densityPixels;
       const videoAspectRatio = this.streamWidth / this.streamHeight;
       const screenAspectRatio = screenWidth / screenHeight;

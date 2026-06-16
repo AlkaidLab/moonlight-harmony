@@ -724,7 +724,7 @@ export class StreamViewModel {
    * 
    * @param isLandscape 是否为横屏
    */
-  handleRotationChange(isLandscape: boolean): void {
+  handleRotationChange(isLandscape: boolean, force: boolean = false): void {
     // 检查是否启用了屏幕旋转同步
     if (!this.displaySettings?.rotableScreen) {
       console.info('StreamViewModel: 屏幕旋转同步未启用');
@@ -732,7 +732,7 @@ export class StreamViewModel {
     }
     
     // 检查是否是服务器触发的旋转，避免循环通知
-    if (this.isServerInitiatedRotation) {
+    if (this.isServerInitiatedRotation && !force) {
       console.info('StreamViewModel: 跳过服务器触发的旋转');
       this.isServerInitiatedRotation = false;
       return;
@@ -754,7 +754,7 @@ export class StreamViewModel {
     }
     
     // 方向未变化
-    if (currentOrientation === this.lastRotation) {
+    if (currentOrientation === this.lastRotation && !force) {
       return;
     }
     
@@ -809,7 +809,8 @@ export class StreamViewModel {
     
     if (clientIsLandscape !== serverIsLandscape) {
       console.info('StreamViewModel: 方向不匹配，通知服务器同步');
-      this.handleRotationChange(clientIsLandscape);
+      this.isServerInitiatedRotation = false;
+      this.handleRotationChange(clientIsLandscape, true);
     } else {
       console.info('StreamViewModel: 方向匹配');
       // 初始化上次旋转方向

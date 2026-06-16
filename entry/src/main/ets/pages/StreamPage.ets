@@ -310,7 +310,11 @@ struct StreamPage {
 
     // 初始化窗口管理器
     this.windowManager = new StreamWindowManager(this.context);
-    this.windowManager.setOnWindowSizeChanged(() => this.recalculateXComponentSize());
+    this.windowManager.setOnWindowSizeChanged(() => {
+      this.handleStreamWindowSizeChanged().catch((err: Error) => {
+        console.warn(`[StreamPage] 处理窗口尺寸变化失败: ${err?.message}`);
+      });
+    });
 
     // 注册 Network Boost 网络场景监听（弱信号/拥塞 提示）
     this.netSceneListener = (scene: SystemNetScene): void => {
@@ -912,7 +916,7 @@ struct StreamPage {
       },
       onToggleWindowMode: async () => {
         await this.windowManager?.toggleWindowMode();
-        this.recalculateXComponentSize();
+        await this.handleStreamWindowSizeChanged();
       },
       onTogglePanZoom: () => {
         this.isTouchOverrideEnabled = !this.isTouchOverrideEnabled;
@@ -1036,20 +1040,27 @@ struct StreamPage {
   private async recalculateXComponentSize(): Promise<void> {
     if (!this.windowManager) return;
 
-    if (this.windowManager.isFullscreen) {
-      // 全屏：按屏幕尺寸精确计算 letterbox/pillarbox
-      const size = this.windowManager.calculateXComponentSize(
-        this.viewModel.displayInfo.stretchVideo
-      );
-      this.xComponentWidth = size.width;
-      this.xComponentHeight = size.height;
-    } else {
-      // 窗口模式：直接填满窗口，视频缩放由 Surface 处理
-      this.xComponentWidth = '100%';
-      this.xComponentHeight = '100%';
-    }
+    const size = this.windowManager.calculateXComponentSize(
+      this.viewModel.displayInfo.stretchVideo
+    );
+    this.xComponentWidth = size.width;
+    this.xComponentHeight = size.height;
     // 更新画面位置和偏移
     this.updateDisplayPosition();
+  }
+
+  /**
+   * 处理串流窗口尺寸变化（小窗/窗口拖拽/全屏切换）。
+   */
+  private async handleStreamWindowSizeChanged(): Promise<void> {
+    if (!this.windowManager) return;
+
+    const screenSize = await this.windowManager.updateScreenSize();
+    this.viewModel.displayInfo.screenWidth = screenSize.width;
+    this.viewModel.displayInfo.screenHeight = screenSize.height;
+
+    await this.recalculateXComponentSize();
+    await this.lifecycleManager.handleClientViewportChanged();
   }
 
   /**
