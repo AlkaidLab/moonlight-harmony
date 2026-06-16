@@ -12,10 +12,14 @@ local.properties
 entry/.preview/
 nativelib/.preview/
 .appanalyzer/
+.github/appmod/
 
 # Build profile (contains signing config)
 build-profile.json5
 nativelib/BuildProfile.ets
+nativelib/src/main/cpp/aubio/src/config.h
+nativelib/src/main/cpp/include/
+nativelib/src/main/cpp/rs_include/
 
 # Dev key secret (contains activation salt)
 entry/src/main/ets/config/DevKeySecret.ets

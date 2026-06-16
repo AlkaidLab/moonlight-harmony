@@ -220,16 +220,24 @@ export class NetworkBoostService {
    * 当前 ArkTS 层没有可靠本地端口/fd，因此先作为可选入口保留。
    */
   setDataFlowDesc(flow: NetworkBoostFiveTupleFlow | NetworkBoostSocketFlow): boolean {
-    if (!this.supported || !this.active || deviceInfo.sdkApiVersion < 26) {
+    if (!this.supported || !this.active) {
       return false;
     }
-    if (this.activeDataFlow) {
-      const cleared = this.setDataFlowDescApi26(this.activeDataFlow, true);
-      if (!cleared) {
-        return false;
+    try {
+      netBoost.setSceneDesc({
+        scene: STREAMING_SERVICE_TYPE,
+        sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER
+      });
+      if (flow.expectations?.lowPowerMode !== undefined && deviceInfo.sdkApiVersion >= 24) {
+        netBoost.setLowPowerMode(flow.expectations.lowPowerMode);
       }
+      this.activeDataFlow = flow;
+      console.info('[NetworkBoost] setSceneDesc scene=realtimeGame event=enter');
+      return true;
+    } catch (err) {
+      this.handleErr('setDataFlowDesc', err);
+      return false;
     }
-    return this.setDataFlowDescApi26(flow, false);
   }
 
   // ───── reportQoe ─────
@@ -372,67 +380,21 @@ export class NetworkBoostService {
     this.sceneCallback = null;
   }
 
-  @Available({ minApiVersion: '26' })
-  private setDataFlowDescApi26(flow: NetworkBoostFiveTupleFlow | NetworkBoostSocketFlow, leaving: boolean): boolean {
-    try {
-      const desc: netBoost.DataFlowDesc = {
-        dataFlowInfo: this.toDataFlowInfo(flow),
-        scene: STREAMING_SERVICE_TYPE,
-        sceneEvent: leaving ? netBoost.SceneEvent.SCENE_EVENT_LEAVE : netBoost.SceneEvent.SCENE_EVENT_ENTER,
-        expectations: leaving ? undefined : this.toExpectedDescription(flow.expectations)
-      };
-      netBoost.setDataFlowDesc(desc);
-      this.activeDataFlow = leaving ? null : flow;
-      console.info('[NetworkBoost] setDataFlowDesc scene=realtimeGame event=' +
-        (leaving ? 'leave' : 'enter'));
-      return true;
-    } catch (err) {
-      this.handleErr('setDataFlowDesc', err);
-      return false;
-    }
-  }
-
   private clearDataFlowDesc(): void {
-    if (!this.activeDataFlow || deviceInfo.sdkApiVersion < 26) {
+    if (!this.activeDataFlow) {
       this.activeDataFlow = null;
       return;
     }
-    this.setDataFlowDescApi26(this.activeDataFlow, true);
-  }
-
-  @Available({ minApiVersion: '26' })
-  private toDataFlowInfo(flow: NetworkBoostFiveTupleFlow | NetworkBoostSocketFlow): netBoost.DataFlowInfo | netBoost.SocketFd {
-    if (flow.flowType === 'socket') {
-      return flow.socketFd;
+    try {
+      netBoost.setSceneDesc({
+        scene: STREAMING_SERVICE_TYPE,
+        sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
+      });
+      console.info('[NetworkBoost] setSceneDesc scene=realtimeGame event=leave');
+    } catch (err) {
+      console.warn(`[NetworkBoost] clearDataFlowDesc 澶辫触: ${(err as Error).message}`);
     }
-    const dataFlowInfo: netBoost.DataFlowInfo = {
-      protocol: flow.protocol === 'udp' ? netBoost.ProtocolType.PROTOCOL_UDP : netBoost.ProtocolType.PROTOCOL_TCP,
-      local: {
-        address: flow.local.address,
-        port: flow.local.port
-      },
-      remote: {
-        address: flow.remote.address,
-        port: flow.remote.port
-      }
-    };
-    return dataFlowInfo;
-  }
-
-  @Available({ minApiVersion: '26' })
-  private toExpectedDescription(expectation?: NetworkBoostFlowExpectation): netBoost.ExpectedDescription | undefined {
-    if (!expectation) {
-      return undefined;
-    }
-    const desc: netBoost.ExpectedDescription = {
-      uplinkBandwidth: expectation.uplinkBandwidthKbps,
-      downlinkBandwidth: expectation.downlinkBandwidthKbps,
-      latency: expectation.latencyMs,
-      objectSize: expectation.objectSizeKb,
-      priority: expectation.priority === 'high' ? netBoost.PriorityLevel.PRIO_HIGH : netBoost.PriorityLevel.PRIO_NORMAL,
-      lowPowerMode: expectation.lowPowerMode
-    };
-    return desc;
+    this.activeDataFlow = null;
   }
 
   private handleErr(api: string, err: object): void {

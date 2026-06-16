@@ -16,6 +16,10 @@
   
   [功能特性](#-功能特性) • [下载安装](#-下载安装) • [使用说明](#-使用说明) • [相关项目](#-相关项目) • [开发指南](#-开发指南)
   
+  <a href="https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream">
+    <img src="store-assets/appgallery-screenshot-1.jpg" width="900" alt="Moonlight V+ 鸿蒙应用商店宣传图">
+  </a>
+  
 </div>
 
 ---
@@ -30,14 +34,14 @@
 |------|:-:|:-:|
 | HDR10 | ✅ | ✅ 亮度映射同步 |
 | **HLG (HDR Vivid)** | ❌ | ✅ 独家 |
-| **虚拟显示器** | ❌ | ✅ 无缝连接，不抢主屏 |
+| **虚拟显示器** | ❌ | ✅ 无缝连接，自由排列 |
 | **服务端指令** | ❌ | ✅ 串流中直接执行 |
-| **动态码率调节** | ❌ | ✅ 串流中任意尝试大小 |
+| **智能码率(ABR)** | ❌ | ✅ 结合LLM与网络环境决策码率 |
 | 空间音频 | ❌ | ✅ HarmonyOS 5.0+ |
 | **体感助手 (Gyro Aim)** | ❌ | ✅ 陀螺仪→右摇杆辅助瞄准 |
 | Game Controller Kit | ❌ | ✅ 鸿蒙原生手柄 API |
-| VRR 可变刷新率 | ❌ | ✅ 告别撕裂 |
-| 性能覆盖层 | 基础 | ✅ 可拖拽/自定义项目 |
+| **音频振动反馈** | ❌ | ✅ 低频/节拍驱动触感反馈 |
+| 性能覆盖层 | 基础 | ✅ 可拖可锁/自定义项目 |
 | 麦克风重定向 | ❌ | ✅ 语音开黑 |
 
 ### 视频串流
@@ -70,17 +74,40 @@
 
 ### 安装方式
 
-1. **从 Release 下载**
-   - 前往 [Releases](https://github.com/AlkaidLab/moonlight-harmony/releases) 页面
-   - 下载最新版本的 HAP 文件
-   - 使用 HDC 安装到设备
+<table>
+  <tr>
+    <td width="100%" valign="top">
+      <h4>从鸿蒙应用商店安装</h4>
+      <ol>
+        <li>在华为/鸿蒙设备上打开「应用市场」</li>
+        <li>搜索 <code>Moonlight V+</code></li>
+        <li>进入应用详情页后点击安装</li>
+      </ol>
+      <p>
+        也可以先在浏览器打开
+        <a href="https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream"><strong>应用市场详情页</strong></a>。
+        若未能自动唤起应用市场，请复制链接到华为浏览器打开，或回到应用市场内搜索应用名。
+      </p>
+      <p><strong>请优先通过鸿蒙应用商店下载，不建议从非官方网盘或镜像站安装。</strong></p>
+      <h4>从源码编译</h4>
+      <pre><code>git clone https://github.com/AlkaidLab/moonlight-harmony.git
+cd moonlight-harmony
+# 使用 DevEco Studio 打开并编译</code></pre>
+    </td>
+  </tr>
+</table>
 
-2. **从源码编译**
-   ```bash
-   git clone https://github.com/AlkaidLab/moonlight-harmony.git
-   cd moonlight-harmony
-   # 使用 DevEco Studio 打开并编译
-   ```
+<p align="center">
+  <a href="https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream">
+    <img src="store-assets/appgallery-screenshot-2.jpg" width="31%" alt="Moonlight V+ 应用市场截图 1">
+  </a>
+  <a href="https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream">
+    <img src="store-assets/appgallery-screenshot-3.jpg" width="31%" alt="Moonlight V+ 应用市场截图 2">
+  </a>
+  <a href="https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream">
+    <img src="store-assets/appgallery-screenshot-4.jpg" width="31%" alt="Moonlight V+ 应用市场截图 3">
+  </a>
+</p>
 
 ## 📖 使用说明
 
@@ -211,6 +238,6 @@ git clone https://github.com/AlkaidLab/moonlight-harmony.git
   
   **Powered by AlkaidLab** ✨
   
-  如果这个项目对您有帮助，欢迎给一个 ⭐️
+  如果这个项目对您有帮助，欢迎给一个 ⭐️，也可以通过 [GitHub Sponsors](https://github.com/sponsors/AlkaidLab) 赞助我们
   
 </div>

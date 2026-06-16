@@ -25,6 +25,17 @@
   - 最新版本放在最前面
 -->
 
+## [1.0.0.776] - 2026-06-15
+主机 WebUI 访问与 HarmonyOS API 26 适配准备
+
+### 新增
+- **主机 WebUI 快捷入口**：电脑列表/主机菜单新增 Sunshine WebUI 访问能力，自动根据主机地址和 GameStream HTTP 端口推导 WebUI 地址，并支持应用内查看、外部浏览器打开和地址复制。
+- **WebUI 登录与证书兼容**：内置 WebUI 页面支持 Sunshine 的 HTTP 认证弹窗，并自动确认自签名 HTTPS 证书，减少访问本地主机管理页时的额外跳转。
+
+### 优化
+- **HarmonyOS API 26 网络增强预备**：补齐 NetworkBoost `netBoost` / data flow 相关 SDK stub 和补丁流程，为后续在 API 26+ 上给关键串流连接标记实时游戏流做准备。
+- **ArkUI 组件兼容性收敛**：将多个圆形指示器和虚拟摇杆绘制从 `Circle` 调整为 `Ellipse`，贴合新 SDK 组件接口变化，降低 API 升级后的构建风险。
+
 ## [1.0.0.775] - 2026-06-14
 开发者模式解锁与手动添加主机稳定性优化
 
