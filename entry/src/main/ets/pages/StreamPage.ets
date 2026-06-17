@@ -197,6 +197,10 @@ struct StreamPage {
   @State videoTranslateX: number = 0;
   /** 视频垂直平移 (vp) */
   @State videoTranslateY: number = 0;
+
+  /** 三指触摸唤出系统 IME：触发后吞掉本组三指，直到所有手指抬起 */
+  private threeFingerImeGestureActive: boolean = false;
+  private threeFingerImeResetTimer: number | null = null;
   
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
@@ -716,6 +720,10 @@ struct StreamPage {
     if (this.aiProbeTimer !== null) {
       clearTimeout(this.aiProbeTimer);
       this.aiProbeTimer = null;
+    }
+    if (this.threeFingerImeResetTimer !== null) {
+      clearTimeout(this.threeFingerImeResetTimer);
+      this.threeFingerImeResetTimer = null;
     }
     this.aiKeyNvHttp = null;
 
@@ -1764,6 +1772,76 @@ struct StreamPage {
   }
 
   /**
+   * 处理本地系统触摸手势。
+   *
+   * 三指同时触摸用于唤出 HarmonyOS IME，优先于远端触摸输入和双指缩放。
+   * 触发后持续吞掉本组三指，避免远端收到半截多指触摸或鼠标拖拽。
+   */
+  private handleSystemTouchGesture(event: TouchEvent): boolean {
+    if (event.source === SourceType.Mouse) {
+      return false;
+    }
+
+    const activeFingerCount = this.getActiveFingerCount(event);
+    if (this.threeFingerImeGestureActive) {
+      if (activeFingerCount === 0) {
+        this.resetThreeFingerImeGesture();
+      }
+      return true;
+    }
+
+    if (!this.viewModel.isConnected || activeFingerCount < 3) {
+      return false;
+    }
+
+    this.threeFingerImeGestureActive = true;
+    this.scheduleThreeFingerImeReset();
+    this.touchInputHandler.cancelActiveInput();
+    this.panZoomHandler.cancelActiveGesture();
+    this.showVirtualKeyboard = false;
+    this.imeManager.show();
+    return true;
+  }
+
+  private scheduleThreeFingerImeReset(): void {
+    if (this.threeFingerImeResetTimer !== null) {
+      clearTimeout(this.threeFingerImeResetTimer);
+    }
+    this.threeFingerImeResetTimer = setTimeout(() => {
+      this.resetThreeFingerImeGesture();
+    }, 3000);
+  }
+
+  private resetThreeFingerImeGesture(): void {
+    this.threeFingerImeGestureActive = false;
+    if (this.threeFingerImeResetTimer !== null) {
+      clearTimeout(this.threeFingerImeResetTimer);
+      this.threeFingerImeResetTimer = null;
+    }
+  }
+
+  private getActiveFingerCount(event: TouchEvent): number {
+    if (event.type !== TouchType.Up && event.type !== TouchType.Cancel) {
+      return event.touches.length;
+    }
+
+    let count = 0;
+    for (let i = 0; i < event.touches.length; i++) {
+      let isChanged: boolean = false;
+      for (let j = 0; j < event.changedTouches.length; j++) {
+        if (event.touches[i].id === event.changedTouches[j].id) {
+          isChanged = true;
+          break;
+        }
+      }
+      if (!isChanged) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
    * 设置触摸模式
    */
   setTouchMode(mode: string): void {
@@ -1825,6 +1903,7 @@ struct StreamPage {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
             // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
             if (event.source === SourceType.Mouse) return;
+            if (this.handleSystemTouchGesture(event)) return;
             // 双指缩放模式：触摸事件完全由 PanZoomHandler 消费
             if (this.isTouchOverrideEnabled) {
               this.panZoomHandler.handleTouchEvent(event);
@@ -1921,6 +2000,9 @@ struct StreamPage {
           halfHeightPortrait: this.viewModel.inputSettings?.halfHeightOscPortrait ?? true,
           onInput: (input) => {
             this.viewModel.sendInput(input);
+          },
+          onSystemTouchGesture: (event: TouchEvent): boolean => {
+            return this.handleSystemTouchGesture(event);
           }
         })
       }
