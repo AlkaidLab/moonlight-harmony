@@ -132,6 +132,12 @@ set(ENET_SOURCES
 # ---- aubio 音频分析库 (onset detection 最小集) ----
 # 编译为独立静态库，避免 include 路径污染主项目
 set(AUBIO_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/aubio/src)
+set(AUBIO_CONFIG_HEADER ${CMAKE_CURRENT_BINARY_DIR}/generated/config.h)
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../ci/sdk-stubs/aubio-config.h
+    ${AUBIO_CONFIG_HEADER}
+    COPYONLY
+)
 
 add_library(aubio_static STATIC
     # core
@@ -162,7 +168,10 @@ add_library(aubio_static STATIC
 )
 
 # aubio 编译配置 — 仅对 aubio 静态库生效，不污染主项目
-target_include_directories(aubio_static PRIVATE ${AUBIO_SRC_DIR})
+target_include_directories(aubio_static PRIVATE
+    ${AUBIO_SRC_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
+)
 target_compile_definitions(aubio_static PRIVATE HAVE_CONFIG_H)
 target_compile_options(aubio_static PRIVATE
     -Wno-sign-compare -Wno-unused-parameter -Wno-missing-field-initializers
