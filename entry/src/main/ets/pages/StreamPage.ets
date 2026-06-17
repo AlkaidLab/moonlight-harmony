@@ -200,6 +200,7 @@ struct StreamPage {
 
   /** 三指触摸唤出系统 IME：触发后吞掉本组三指，直到所有手指抬起 */
   private threeFingerImeGestureActive: boolean = false;
+  private threeFingerImeLastActiveCount: number = 0;
   private threeFingerImeResetTimer: number | null = null;
   
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
@@ -1783,6 +1784,7 @@ struct StreamPage {
     }
 
     const activeFingerCount = this.getActiveFingerCount(event);
+    this.threeFingerImeLastActiveCount = activeFingerCount;
     if (this.threeFingerImeGestureActive) {
       if (activeFingerCount === 0) {
         this.resetThreeFingerImeGesture();
@@ -1808,12 +1810,21 @@ struct StreamPage {
       clearTimeout(this.threeFingerImeResetTimer);
     }
     this.threeFingerImeResetTimer = setTimeout(() => {
-      this.resetThreeFingerImeGesture();
+      this.threeFingerImeResetTimer = null;
+      if (!this.threeFingerImeGestureActive) {
+        return;
+      }
+      if (this.threeFingerImeLastActiveCount === 0) {
+        this.resetThreeFingerImeGesture();
+        return;
+      }
+      this.scheduleThreeFingerImeReset();
     }, 3000);
   }
 
   private resetThreeFingerImeGesture(): void {
     this.threeFingerImeGestureActive = false;
+    this.threeFingerImeLastActiveCount = 0;
     if (this.threeFingerImeResetTimer !== null) {
       clearTimeout(this.threeFingerImeResetTimer);
       this.threeFingerImeResetTimer = null;
