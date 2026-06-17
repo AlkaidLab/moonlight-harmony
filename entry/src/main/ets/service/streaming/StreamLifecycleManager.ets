@@ -158,14 +158,15 @@ export class StreamLifecycleManager {
    * 处理屏幕变化事件
    * @param displayId 发生变化的显示器 ID
    */
-  private async handleDisplayChange(displayId: number): Promise<void> {
+  private handleDisplayChange(displayId: number): void {
     // 只处理连接状态
     if (!this.viewModel?.isConnected) {
       return;
     }
 
     try {
-      const isLandscape = await this.getCurrentViewportLandscape();
+      const displayInfo = display.getDefaultDisplaySync();
+      const isLandscape = displayInfo.width > displayInfo.height;
 
       // 只有方向真正变化时才处理
       if (this.lastDisplayOrientation !== null && this.lastDisplayOrientation === isLandscape) {
@@ -175,59 +176,14 @@ export class StreamLifecycleManager {
       console.info(`[StreamPage] 屏幕方向变化: ${isLandscape ? '横屏' : '竖屏'}, displayId=${displayId}`);
       this.lastDisplayOrientation = isLandscape;
 
-      // 通知 ViewModel 按当前串流分辨率检查并同步方向
-      this.viewModel?.checkAndSyncOrientation(
-        this.viewModel.displayInfo.streamWidth,
-        this.viewModel.displayInfo.streamHeight,
-        isLandscape
-      );
+      // 通知 ViewModel 处理旋转
+      this.viewModel?.handleRotationChange(isLandscape);
 
       // 更新屏幕尺寸
-      await this.updateScreenSizeAfterRotation();
+      this.updateScreenSizeAfterRotation();
     } catch (err) {
       console.warn('[StreamPage] 处理屏幕变化失败:', err);
     }
-  }
-
-  /**
-   * 处理客户端视口变化。
-   *
-   * 窗口/小窗模式不会总是触发 display change，因此需要在 windowSizeChange 后
-   * 用实际窗口宽高重新判断方向，确保服务端方向跟随系统窗口形态。
-   */
-  async handleClientViewportChanged(): Promise<void> {
-    if (!this.viewModel?.isConnected) {
-      return;
-    }
-
-    try {
-      const isLandscape = await this.getCurrentViewportLandscape();
-      if (this.lastDisplayOrientation !== null && this.lastDisplayOrientation === isLandscape) {
-        return;
-      }
-
-      console.info(`[StreamPage] 客户端视口方向变化: ${isLandscape ? '横屏' : '竖屏'}`);
-      this.lastDisplayOrientation = isLandscape;
-      this.viewModel.checkAndSyncOrientation(
-        this.viewModel.displayInfo.streamWidth,
-        this.viewModel.displayInfo.streamHeight,
-        isLandscape
-      );
-    } catch (err) {
-      console.warn('[StreamPage] 处理客户端视口变化失败:', err);
-    }
-  }
-
-  /**
-   * 获取当前客户端视口方向。
-   */
-  private async getCurrentViewportLandscape(): Promise<boolean> {
-    if (this.windowManager) {
-      return await this.windowManager.isCurrentViewportLandscape();
-    }
-
-    const displayInfo = display.getDefaultDisplaySync();
-    return displayInfo.width >= displayInfo.height;
   }
 
   /**
@@ -265,13 +221,8 @@ export class StreamLifecycleManager {
     // 更新窗口管理器的串流分辨率
     this.windowManager?.setStreamResolution(width, height);
 
-    const isFullscreen = this.windowManager?.isFullscreen ?? true;
-    // 全屏才重新配置窗口方向；窗口/小窗模式跟随系统窗口形态，避免抢回竖屏/横屏。
-    if (isFullscreen) {
-      await this.windowManager?.configureOrientation();
-    } else {
-      this.viewModel?.setServerInitiatedRotation(false);
-    }
+    // 重新配置窗口方向（可能会触发屏幕旋转）
+    await this.windowManager?.configureOrientation();
 
     // 更新屏幕尺寸（等待旋转完成后获取正确的屏幕尺寸）
     const screenSize = await this.windowManager?.updateScreenSize();
@@ -288,10 +239,6 @@ export class StreamLifecycleManager {
       this.callbacks?.updateXComponentSize(xComponentSize.width, xComponentSize.height);
       console.info(`[StreamPage] XComponent 尺寸更新: ${JSON.stringify(xComponentSize)}`);
     }
-
-    const clientIsLandscape = await this.getCurrentViewportLandscape();
-    this.lastDisplayOrientation = clientIsLandscape;
-    this.viewModel?.checkAndSyncOrientation(width, height, clientIsLandscape);
   }
 
   // ==================== 后台保活 (AVSession + 长时任务) ====================
