@@ -69,10 +69,11 @@ export class GamepadVibrationService {
     mode: string
   ): void {
     const wasEnabled = this.vibrationFeedbackEnabled;
+    const previousStrength = this.gameVibrationStrength;
     this.vibrationFeedbackEnabled = enabled;
     this.gameVibrationStrength = normalizeGameVibrationStrength(strength);
     this.vibrationMode = mode;
-    if (wasEnabled && !enabled) {
+    if ((wasEnabled && !enabled) || (previousStrength > 0 && this.gameVibrationStrength === 0)) {
       this.stopAll();
     }
   }

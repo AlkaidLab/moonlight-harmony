@@ -529,9 +529,14 @@ export class SettingsService {
   private async getNumber(key: string, defaultValue: number): Promise<number> {
     const value = await PreferencesUtil.get<number | string>(key, defaultValue.toString());
     if (typeof value === 'number') {
-      return value;
+      return Number.isFinite(value) ? value : defaultValue;
     }
-    return parseInt(value) || defaultValue;
+    const trimmedValue = value.trim();
+    if (trimmedValue.length === 0) {
+      return defaultValue;
+    }
+    const parsed = Number(trimmedValue);
+    return Number.isFinite(parsed) ? parsed : defaultValue;
   }
 
   /**
