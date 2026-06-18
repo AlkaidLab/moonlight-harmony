@@ -61,18 +61,26 @@ const TAP_MOVEMENT_THRESHOLD = 40;
 const TAP_DISTANCE_THRESHOLD = 50;
 /** 轻触最大时长 (ms) */
 const TAP_TIME_THRESHOLD = 250;
-/** 长按拖拽时间 (ms) */
-const DRAG_TIME_THRESHOLD = 650;
+/** 标准长按拖拽时间 (ms) */
+const DRAG_TIME_THRESHOLD_NORMAL = 650;
+/** 低延迟长按拖拽时间 (ms) */
+const DRAG_TIME_THRESHOLD_LOW_LATENCY = 500;
 /** 双击待定态下开始拖拽的移动阈值 (px) */
 const DRAG_START_THRESHOLD = 10;
-/** 双击按住确认拖拽时间 (ms) */
-const DOUBLE_TAP_HOLD_THRESHOLD = 200;
+/** 标准双击按住确认拖拽时间 (ms) */
+const DOUBLE_TAP_HOLD_THRESHOLD_NORMAL = 200;
+/** 低延迟双击按住确认拖拽时间 (ms) */
+const DOUBLE_TAP_HOLD_THRESHOLD_LOW_LATENCY = 120;
 /** 双击两次位置最大偏差 (px) */
 const DOUBLE_TAP_MOVEMENT_THRESHOLD = 40;
 /** 双指移动阈值 — 超过后视为滚轮 (px) */
 const TWO_FINGER_MOVE_THRESHOLD = 30;
 /** 滚轮速度因子 */
 const SCROLL_SPEED_FACTOR = 5;
+/** 标准点击释放延迟 (ms) */
+const CLICK_RELEASE_DELAY_NORMAL = 100;
+/** 低延迟点击释放延迟 (ms) */
+const CLICK_RELEASE_DELAY_LOW_LATENCY = 40;
 
 export class TrackpadGestureHandler {
   private sink: TrackpadInputSink;
@@ -106,6 +114,9 @@ export class TrackpadGestureHandler {
   private twoFingerStartX = 0;
   private twoFingerStartY = 0;
   private confirmedScroll = false;
+  private dragTimeThreshold: number = DRAG_TIME_THRESHOLD_NORMAL;
+  private doubleTapHoldThreshold: number = DOUBLE_TAP_HOLD_THRESHOLD_NORMAL;
+  private clickReleaseDelay: number = CLICK_RELEASE_DELAY_NORMAL;
 
   constructor(sink: TrackpadInputSink, config: TrackpadConfig) {
     this.sink = sink;
@@ -118,6 +129,12 @@ export class TrackpadGestureHandler {
     if (sensitivity !== undefined) this.config.sensitivity = sensitivity;
     if (tapTimeThreshold !== undefined) this.config.tapTimeThreshold = tapTimeThreshold;
     if (enableDoubleClickDrag !== undefined) this.config.enableDoubleClickDrag = enableDoubleClickDrag;
+  }
+
+  updateLatencyMode(enable: boolean): void {
+    this.dragTimeThreshold = enable ? DRAG_TIME_THRESHOLD_LOW_LATENCY : DRAG_TIME_THRESHOLD_NORMAL;
+    this.doubleTapHoldThreshold = enable ? DOUBLE_TAP_HOLD_THRESHOLD_LOW_LATENCY : DOUBLE_TAP_HOLD_THRESHOLD_NORMAL;
+    this.clickReleaseDelay = enable ? CLICK_RELEASE_DELAY_LOW_LATENCY : CLICK_RELEASE_DELAY_NORMAL;
   }
 
   // ==================== 事件入口 ====================
@@ -437,7 +454,7 @@ export class TrackpadGestureHandler {
 
   private sendClick(button: number): void {
     this.sink.sendMouseButton(BUTTON_ACTION_PRESS, button);
-    setTimeout(() => this.sink.sendMouseButton(BUTTON_ACTION_RELEASE, button), 100);
+    setTimeout(() => this.sink.sendMouseButton(BUTTON_ACTION_RELEASE, button), this.clickReleaseDelay);
   }
 
   private sendRightClick(): void {
@@ -449,7 +466,7 @@ export class TrackpadGestureHandler {
     this.sink.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
     this.sink.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
     this.sink.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
-    setTimeout(() => this.sink.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT), 100);
+    setTimeout(() => this.sink.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT), this.clickReleaseDelay);
   }
 
   // ---- 手指管理 ----
@@ -472,7 +489,7 @@ export class TrackpadGestureHandler {
       if (this.confirmedMove || this.maxCountInGesture !== 1) return;
       this.confirmedDrag = true;
       this.sink.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
-    }, DRAG_TIME_THRESHOLD);
+    }, this.dragTimeThreshold);
   }
 
   private cancelDragTimer(): void {
@@ -490,7 +507,7 @@ export class TrackpadGestureHandler {
       this.isDoubleClickDrag = true;
       this.confirmedMove = true;
       this.sink.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
-    }, DOUBLE_TAP_HOLD_THRESHOLD);
+    }, this.doubleTapHoldThreshold);
   }
 
   private cancelDoubleTapHoldTimer(): void {

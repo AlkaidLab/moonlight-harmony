@@ -1349,6 +1349,7 @@ struct StreamPage {
       if (streamConfig) {
         this.touchInputHandler.setDoubleTapTimeThreshold(streamConfig.doubleTapTimeThreshold);
         this.touchInputHandler.setEnableDoubleClickDrag(streamConfig.enableDoubleClickDrag);
+        this.touchInputHandler.setLowLatencyTouch(streamConfig.lowLatencyTouch);
       }
       
       // 设置连接终止回调
