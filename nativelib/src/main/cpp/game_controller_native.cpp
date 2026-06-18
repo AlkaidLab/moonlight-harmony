@@ -455,7 +455,7 @@ static void OnDeviceChanged(const struct GameDevice_DeviceEvent* deviceEvent) {
         free(physicalAddress);
     }
     
-    GameDevice_DeviceType deviceType;
+    GameDevice_DeviceType deviceType = (GameDevice_DeviceType)0;
     OH_GameDevice_DeviceInfo_GetDeviceType(deviceInfo, &deviceType);
     info.deviceType = (int32_t)deviceType;
     
@@ -1021,7 +1021,7 @@ int GameController_StartMonitor(void) {
                     free(physicalAddress);
                 }
 
-                GameDevice_DeviceType deviceType;
+                GameDevice_DeviceType deviceType = (GameDevice_DeviceType)0;
                 OH_GameDevice_DeviceInfo_GetDeviceType(deviceInfo, &deviceType);
                 info.deviceType = (int32_t)deviceType;
                 
@@ -1187,7 +1187,7 @@ int GameController_RefreshDevices(void) {
             free(physicalAddress);
         }
 
-        GameDevice_DeviceType deviceType;
+        GameDevice_DeviceType deviceType = (GameDevice_DeviceType)0;
         OH_GameDevice_DeviceInfo_GetDeviceType(deviceInfo, &deviceType);
         info.deviceType = (int32_t)deviceType;
 
