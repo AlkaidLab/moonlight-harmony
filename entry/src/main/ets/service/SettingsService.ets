@@ -108,6 +108,7 @@ export class SettingsKeys {
   // 输入 - 鼠标/触控
   static readonly SHOW_LOCAL_CURSOR: string = 'settings_show_local_cursor';
   static readonly TOUCHSCREEN_TRACKPAD: string = 'settings_touchscreen_trackpad';
+  static readonly LOW_LATENCY_TOUCH: string = 'settings_low_latency_touch';
   static readonly ENABLE_DOUBLE_CLICK_DRAG: string = 'settings_enable_double_click_drag';
   static readonly DOUBLE_TAP_TIME_THRESHOLD: string = 'settings_double_tap_time_threshold';
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
@@ -221,6 +222,7 @@ export interface InputSettings {
   // 鼠标/触控
   showLocalCursor: boolean;
   touchscreenTrackpad: boolean;
+  lowLatencyTouch: boolean;
   enableDoubleClickDrag: boolean;
   doubleTapTimeThreshold: number;
   mouseNavButtons: boolean;
@@ -617,6 +619,7 @@ export class SettingsService {
     // 获取鼠标/触控设置
     const showLocalCursor = await this.getBoolean(SettingsKeys.SHOW_LOCAL_CURSOR, false);  // 默认不显示本地光标
     const touchscreenTrackpad = await this.getBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false);
+    const lowLatencyTouch = await this.getBoolean(SettingsKeys.LOW_LATENCY_TOUCH, false);
     const enableDoubleClickDrag = await this.getBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false);
     const doubleTapTimeThreshold = await this.getNumber(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125);
 
@@ -698,6 +701,7 @@ export class SettingsService {
       // 鼠标/触控设置
       showLocalCursor: showLocalCursor,
       touchscreenTrackpad: touchscreenTrackpad,
+      lowLatencyTouch: lowLatencyTouch,
       enableDoubleClickDrag: enableDoubleClickDrag,
       doubleTapTimeThreshold: doubleTapTimeThreshold,
 
@@ -788,6 +792,7 @@ export class SettingsService {
       // 鼠标/触控
       showLocalCursor: await this.getBoolean(SettingsKeys.SHOW_LOCAL_CURSOR, false),
       touchscreenTrackpad: await this.getBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false),
+      lowLatencyTouch: await this.getBoolean(SettingsKeys.LOW_LATENCY_TOUCH, false),
       enableDoubleClickDrag: await this.getBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false),
       doubleTapTimeThreshold: await this.getNumber(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125),
       mouseNavButtons: await this.getBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false),

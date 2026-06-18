@@ -213,6 +213,7 @@ struct SettingsPageV2 {
   // 输入 - 鼠标/触控
   @State showLocalCursor: boolean = false;   // 显示本地指针（双光标模式）
   @State touchscreenTrackpad: boolean = false;
+  @State lowLatencyTouch: boolean = false;
   @State enableDoubleClickDrag: boolean = false;
   @State doubleTapTimeThreshold: number = 125;
   @State mouseNavButtons: boolean = false;
@@ -561,6 +562,7 @@ struct SettingsPageV2 {
       // 输入 - 鼠标/触控
       this.showLocalCursor = await this.loadBoolean(SettingsKeys.SHOW_LOCAL_CURSOR, false);
       this.touchscreenTrackpad = await this.loadBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false);
+      this.lowLatencyTouch = await this.loadBoolean(SettingsKeys.LOW_LATENCY_TOUCH, false);
       this.enableDoubleClickDrag = await this.loadBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false);
       this.doubleTapTimeThreshold = await PreferencesUtil.get<number>(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125);
       this.mouseNavButtons = await this.loadBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false);
@@ -1695,6 +1697,16 @@ struct SettingsPageV2 {
                   this.saveSetting(SettingsKeys.TOUCHSCREEN_TRACKPAD, this.touchscreenTrackpad);
                   // 清除菜单中选择的触摸模式，使设置页的选项在下次串流时生效
                   this.saveSetting(SettingsKeys.LAST_TOUCH_MODE, '');
+                }
+              },
+              {
+                title: '低延迟触摸参数',
+                subtitle: '缩短触摸点击确认和释放等待，响应更快但更敏感',
+                type: 'toggle',
+                value: this.lowLatencyTouch,
+                action: () => {
+                  this.lowLatencyTouch = !this.lowLatencyTouch;
+                  this.saveSetting(SettingsKeys.LOW_LATENCY_TOUCH, this.lowLatencyTouch);
                 }
               },
               {

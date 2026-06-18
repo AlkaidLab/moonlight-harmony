@@ -70,6 +70,7 @@ export interface StreamConfig {
   // 鼠标/触控设置
   showLocalCursor: boolean;
   touchscreenTrackpad: boolean;
+  lowLatencyTouch: boolean;
   enableDoubleClickDrag: boolean;
   doubleTapTimeThreshold: number;
 
@@ -253,6 +254,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     // 鼠标/触控设置
     showLocalCursor: false,
     touchscreenTrackpad: false,
+    lowLatencyTouch: false,
     enableDoubleClickDrag: false,
     doubleTapTimeThreshold: 125,
 

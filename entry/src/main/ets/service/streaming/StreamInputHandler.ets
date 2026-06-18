@@ -332,7 +332,6 @@ export class StreamInputHandler {
     // 归一化后的值 / scrollStep 为每格原始值，× 8 = 120 units（Windows WHEEL_DELTA）
     if (vertical !== 0) {
       const scrollAmount = Math.round(-vertical / scrollStep * 8);
-      console.info(`滚轮: vertical=${vertical.toFixed(2)}, scrollStep=${scrollStep}, send=${scrollAmount}`);
       MoonBridge.sendMouseHighResScroll(scrollAmount);
     }
 

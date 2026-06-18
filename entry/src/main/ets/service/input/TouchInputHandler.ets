@@ -162,13 +162,13 @@ export class TouchInputHandler {
   private mouseCancelled: boolean = false;
   /** 是否已确认为点击（死区时间/距离超过后） */
   private mouseConfirmedTap: boolean = false;
-  /** 是否已确认为长按（650ms 后切换为右键） */
+  /** 是否已确认为长按（默认 650ms 后切换为右键） */
   private mouseConfirmedLongPress: boolean = false;
   /** 长按定时器 */
   private mouseLongPressTimer: number = -1;
-  /** 死区定时器（100ms 后确认点击） */
+  /** 死区定时器（默认 100ms 后确认点击） */
   private mouseTapDownTimer: number = -1;
-  /** 左键释放延迟定时器（快速点击时延迟 100ms 释放） */
+  /** 左键释放延迟定时器（快速点击时默认延迟 100ms 释放） */
   private mouseLeftButtonUpTimer: number = -1;
   /** 主手指 ID */
   private mousePrimaryFingerId: number = -1;
@@ -184,14 +184,22 @@ export class TouchInputHandler {
   private coordinateTransform: ((x: number, y: number) => PointXY) | null = null;
 
   // 鼠标模式常量（与 Android AbsoluteTouchContext 一致）
-  /** 长按时间阈值（ms） */
-  private static readonly MOUSE_LONG_PRESS_TIME = 650;
+  /** 标准长按时间阈值（ms） */
+  private static readonly MOUSE_LONG_PRESS_TIME_NORMAL = 650;
+  /** 低延迟长按时间阈值（ms） */
+  private static readonly MOUSE_LONG_PRESS_TIME_LOW_LATENCY = 500;
   /** 长按移动距离阈值（px）—— 超过后取消长按 */
   private static readonly MOUSE_LONG_PRESS_DISTANCE = 30;
-  /** 死区时间阈值（ms）—— 按下后此时间内不响应移动 */
-  private static readonly MOUSE_DEADZONE_TIME = 100;
+  /** 标准死区时间阈值（ms）—— 按下后此时间内不响应移动 */
+  private static readonly MOUSE_DEADZONE_TIME_NORMAL = 100;
+  /** 低延迟死区时间阈值（ms） */
+  private static readonly MOUSE_DEADZONE_TIME_LOW_LATENCY = 50;
   /** 死区距离阈值（px）—— 移动超过此距离立即确认点击 */
   private static readonly MOUSE_DEADZONE_DISTANCE = 20;
+  /** 标准点击释放延迟（ms） */
+  private static readonly MOUSE_CLICK_RELEASE_DELAY_NORMAL = 100;
+  /** 低延迟点击释放延迟（ms） */
+  private static readonly MOUSE_CLICK_RELEASE_DELAY_LOW_LATENCY = 40;
   /** 双击时间阈值（ms）—— 两次点击间隔小于此值视为双击 */
   private mouseDoubleTapTime: number = 250;
   /** 双击距离阈值（px）—— 两次点击位置距离小于此值视为双击 */
@@ -200,6 +208,12 @@ export class TouchInputHandler {
   private static readonly MOUSE_SCROLL_SPEED_FACTOR = 3;
   /** 是否启用双击拖动 */
   private enableDoubleClickDrag: boolean = false;
+  /** 当前长按时间阈值（ms） */
+  private mouseLongPressTime: number = TouchInputHandler.MOUSE_LONG_PRESS_TIME_NORMAL;
+  /** 当前死区时间阈值（ms） */
+  private mouseDeadzoneTime: number = TouchInputHandler.MOUSE_DEADZONE_TIME_NORMAL;
+  /** 当前点击释放延迟（ms） */
+  private mouseClickReleaseDelay: number = TouchInputHandler.MOUSE_CLICK_RELEASE_DELAY_NORMAL;
 
   // 默认配置
   private static readonly DEFAULT_SENSITIVITY = 1.5;
@@ -233,6 +247,22 @@ export class TouchInputHandler {
   setEnableDoubleClickDrag(enable: boolean): void {
     this.trackpad.updateConfig(undefined, undefined, enable);
     this.enableDoubleClickDrag = enable;
+  }
+
+  /**
+   * 配置低延迟触摸参数（从设置读取后调用）
+   */
+  setLowLatencyTouch(enable: boolean): void {
+    this.mouseLongPressTime = enable
+      ? TouchInputHandler.MOUSE_LONG_PRESS_TIME_LOW_LATENCY
+      : TouchInputHandler.MOUSE_LONG_PRESS_TIME_NORMAL;
+    this.mouseDeadzoneTime = enable
+      ? TouchInputHandler.MOUSE_DEADZONE_TIME_LOW_LATENCY
+      : TouchInputHandler.MOUSE_DEADZONE_TIME_NORMAL;
+    this.mouseClickReleaseDelay = enable
+      ? TouchInputHandler.MOUSE_CLICK_RELEASE_DELAY_LOW_LATENCY
+      : TouchInputHandler.MOUSE_CLICK_RELEASE_DELAY_NORMAL;
+    this.trackpad.updateLatencyMode(enable);
   }
 
   /**
@@ -574,7 +604,7 @@ export class TouchInputHandler {
         this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
       }
       this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_RIGHT);
-    }, TouchInputHandler.MOUSE_LONG_PRESS_TIME);
+    }, this.mouseLongPressTime);
   }
 
   private cancelMouseLongPressTimer(): void {
@@ -588,7 +618,7 @@ export class TouchInputHandler {
     this.cancelMouseTapDownTimer();
     this.mouseTapDownTimer = setTimeout(() => {
       this.mouseTapConfirmed();
-    }, TouchInputHandler.MOUSE_DEADZONE_TIME);
+    }, this.mouseDeadzoneTime);
   }
 
   private cancelMouseTapDownTimer(): void {
@@ -738,7 +768,7 @@ export class TouchInputHandler {
       } else if (this.mouseConfirmedTap) {
         this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
       } else {
-        // 死区时间内完成的快速点击：立即按下，延迟 100ms 释放
+        // 死区时间内完成的快速点击：立即按下，按当前触摸参数延迟释放
         this.mouseTapConfirmed();
         if (this.mouseLeftButtonUpTimer !== -1) {
           clearTimeout(this.mouseLeftButtonUpTimer);
@@ -746,7 +776,7 @@ export class TouchInputHandler {
         this.mouseLeftButtonUpTimer = setTimeout(() => {
           this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
           this.mouseLeftButtonUpTimer = -1;
-        }, 100);
+        }, this.mouseClickReleaseDelay);
       }
     }
 
