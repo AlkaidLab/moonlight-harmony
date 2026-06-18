@@ -526,12 +526,7 @@ struct SettingsPageV2 {
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
       this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
-      const rawVibrationStrength =
-        await PreferencesUtil.get<number>(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, GAME_VIBRATION_STRENGTH_DEFAULT);
-      this.gameVibrationStrength = normalizeGameVibrationStrength(rawVibrationStrength);
-      if (this.gameVibrationStrength !== rawVibrationStrength) {
-        this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, this.gameVibrationStrength);
-      }
+      this.gameVibrationStrength = await this.loadGameVibrationStrength();
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
       this.audioVibrationSceneMode = await PreferencesUtil.get<string>(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, '游戏/电影');
@@ -652,6 +647,38 @@ struct SettingsPageV2 {
     const val = await PreferencesUtil.get<boolean>(key, defaultVal);
     if (typeof val === 'boolean') return val;
     return String(val) === 'true';
+  }
+
+  private async loadGameVibrationStrength(): Promise<number> {
+    const rawValue = await PreferencesUtil.get<number | string>(
+      SettingsKeys.VIBRATE_FALLBACK_STRENGTH,
+      GAME_VIBRATION_STRENGTH_DEFAULT.toString()
+    );
+    let parsedValue = GAME_VIBRATION_STRENGTH_DEFAULT;
+    let shouldRepair = false;
+
+    if (typeof rawValue === 'number') {
+      parsedValue = Number.isFinite(rawValue) ? rawValue : GAME_VIBRATION_STRENGTH_DEFAULT;
+      shouldRepair = parsedValue !== rawValue;
+    } else {
+      const trimmedValue = rawValue.trim();
+      if (trimmedValue.length === 0) {
+        shouldRepair = true;
+      } else {
+        const numberValue = Number(trimmedValue);
+        if (Number.isFinite(numberValue)) {
+          parsedValue = numberValue;
+        } else {
+          shouldRepair = true;
+        }
+      }
+    }
+
+    const normalizedValue = normalizeGameVibrationStrength(parsedValue);
+    if (shouldRepair || normalizedValue !== parsedValue) {
+      this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, normalizedValue);
+    }
+    return normalizedValue;
   }
 
   private async saveSetting(key: string, value: string | boolean | number): Promise<void> {

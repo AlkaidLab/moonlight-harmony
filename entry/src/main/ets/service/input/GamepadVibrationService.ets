@@ -138,11 +138,7 @@ export class GamepadVibrationService {
 
     // USB 停止确认: 100ms 后重发 stop(0,0)，防止首次 USB 传输被覆盖或丢失
     if (lowFreqMotor === 0 && highFreqMotor === 0 && hasUsbController) {
-      this.stopConfirmTimer = setTimeout(() => {
-        this.stopConfirmTimer = -1;
-        const ctrls = this.usbDriverService.getControllers();
-        this.rumbleUsbControllers(ctrls, controllerNumber, 0, 0);
-      }, 100);
+      this.scheduleUsbStopConfirm(controllerNumber);
     }
   }
 
@@ -208,6 +204,9 @@ export class GamepadVibrationService {
         controller.rumble(0, 0);
         controller.rumbleTriggers(0, 0);
       }
+      if (controllers.length > 0) {
+        this.scheduleUsbStopConfirm(this.lastRumbleControllerNumber);
+      }
     } catch (_) { /* ignore */ }
   }
 
@@ -260,6 +259,14 @@ export class GamepadVibrationService {
   private clampRumbleValue(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(RUMBLE_MAX, Math.floor(value)));
+  }
+
+  private scheduleUsbStopConfirm(controllerNumber: number): void {
+    this.stopConfirmTimer = setTimeout(() => {
+      this.stopConfirmTimer = -1;
+      const controllers = this.usbDriverService.getControllers();
+      this.rumbleUsbControllers(controllers, controllerNumber, 0, 0);
+    }, 100);
   }
 
   /**
