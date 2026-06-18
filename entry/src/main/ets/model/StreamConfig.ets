@@ -13,6 +13,20 @@
  *
  * 参考 Android 版本 StreamConfiguration.java
  */
+export const GAME_VIBRATION_STRENGTH_MIN = 0;
+export const GAME_VIBRATION_STRENGTH_MAX = 200;
+export const GAME_VIBRATION_STRENGTH_ORIGINAL = 100;
+export const GAME_VIBRATION_STRENGTH_DEFAULT = GAME_VIBRATION_STRENGTH_ORIGINAL;
+export const GAME_VIBRATION_STRENGTH_STEP = 5;
+
+export function normalizeGameVibrationStrength(value: number): number {
+  if (!Number.isFinite(value)) {
+    return GAME_VIBRATION_STRENGTH_DEFAULT;
+  }
+  const roundedValue = Math.round(value);
+  return Math.max(GAME_VIBRATION_STRENGTH_MIN, Math.min(GAME_VIBRATION_STRENGTH_MAX, roundedValue));
+}
+
 export interface StreamConfig {
   // 视频设置
   width: number;
@@ -46,7 +60,7 @@ export interface StreamConfig {
   attachedGamepadMask: number;
   enableVibration: boolean;
   vibrationMode: string;  // 震动模式：自动/仅手柄/仅设备/同时
-  vibrateFallbackStrength: number;
+  gameVibrationStrength: number;  // 串流游戏震动强度百分比（100=原始强度，100 以上为 app 侧放大）
   enableAudioVibration: boolean;  // 音频振动（低频驱动）
   audioVibrationStrength: number;  // 音频振动强度 (0-100)
   audioVibrationSceneMode: string;  // 音频振动场景模式: 游戏/电影, 音乐/节奏, 自动
@@ -229,7 +243,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     attachedGamepadMask: 0,
     enableVibration: true,
     vibrationMode: '自动',
-    vibrateFallbackStrength: 100,
+    gameVibrationStrength: GAME_VIBRATION_STRENGTH_DEFAULT,
     enableAudioVibration: false,
     audioVibrationStrength: 60,
     audioVibrationSceneMode: '游戏/电影',

@@ -19,7 +19,7 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, UsbClass, ControllerType, ControllerCapabilities } from './ControllerConstants';
-import { AXIS_MAX, TRIGGER_MAX, RUMBLE_MAX } from '../input/GamepadTypes';
+import { AXIS_MAX, TRIGGER_MAX } from '../input/GamepadTypes';
 import { NativeHidParserService, NativeGamepadState, NativeGamepadType, NativeButtonFlags } from './NativeHidParserService';
 import { createUsbError, UsbError } from './UsbErrorCodes';
 
@@ -664,17 +664,22 @@ export class NativeHidController extends AbstractController {
       return;
     }
 
-    // 获取震动命令
+    // Native parser expects Moonlight rumble values in the same 0..65535 range as AbstractController.
     const cmd = this.nativeParser.createRumbleCommand(
       this.vendorId,
       this.productId,
-      Math.round(lowFreqMotor * RUMBLE_MAX),
-      Math.round(highFreqMotor * RUMBLE_MAX)
+      this.clampRumbleValue(lowFreqMotor),
+      this.clampRumbleValue(highFreqMotor)
     );
 
     if (cmd) {
       this.sendOutputReport(cmd);
     }
+  }
+
+  private clampRumbleValue(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(65535, Math.round(value)));
   }
 
   private async sendOutputReport(data: Uint8Array): Promise<void> {

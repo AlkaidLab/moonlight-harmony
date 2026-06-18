@@ -10,7 +10,7 @@
 
 import { inputDevice } from '@kit.InputKit';
 import { UsbDriverService, UsbDriverListener, AbstractController, ButtonFlags, KnownUsbGamepadInfo } from '../usbdriver/index';
-import { 
+import {
   gameControllerService, 
   AxisType, 
   GameControllerDeviceInfo 
@@ -645,12 +645,16 @@ export class GamepadManager implements UsbDriverListener {
   }
   
   /**
-   * 设置设备模拟震动
-   * @param enabled 是否启用震动
-   * @param strength 设备震动强度 (0-100)
+   * 设置串流游戏震动
+   * @param enabled 是否启用串流游戏震动反馈
+   * @param strength 串流游戏震动强度 (0-200, 100=原始强度)
    * @param mode 震动模式：自动/仅手柄/仅设备/同时
    */
-  setDeviceVibrate(enabled: boolean, strength: number, mode: string): void {
+  setGameVibration(
+    enabled: boolean,
+    strength: number,
+    mode: string
+  ): void {
     this.vibrationService.setSettings(enabled, strength, mode);
   }
 

@@ -270,11 +270,10 @@ export class StreamViewModel {
     console.info(`StreamViewModel: 触摸模式=${this.touchMode}`);
     console.info(`StreamViewModel: 性能覆盖层=${this.showOverlay}, 虚拟控制器=${this.showController}`);
     
-    // 配置震动设置
-    const deviceVibrateEnabled = this.streamConfig.enableVibration && this.streamConfig.vibrateFallbackStrength > 0;
-    GamepadManager.getInstance().setDeviceVibrate(
-      deviceVibrateEnabled,
-      this.streamConfig.vibrateFallbackStrength,
+    // 配置串流游戏震动；100% 以上作为外接手柄 app 侧放大，设备马达仍按 100% 封顶。
+    GamepadManager.getInstance().setGameVibration(
+      this.streamConfig.enableVibration,
+      this.streamConfig.gameVibrationStrength,
       this.streamConfig.vibrationMode
     );
   }

@@ -15,7 +15,15 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { StreamingSession, DecoderCapabilities } from '../service/streaming/StreamingSession';
-import { getRecommendedBitrate } from '../model/StreamConfig';
+import {
+  getRecommendedBitrate,
+  GAME_VIBRATION_STRENGTH_DEFAULT,
+  GAME_VIBRATION_STRENGTH_MAX,
+  GAME_VIBRATION_STRENGTH_MIN,
+  GAME_VIBRATION_STRENGTH_ORIGINAL,
+  GAME_VIBRATION_STRENGTH_STEP,
+  normalizeGameVibrationStrength
+} from '../model/StreamConfig';
 import { PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
 import { SettingsBackupService } from '../service/SettingsBackupService';
@@ -175,7 +183,7 @@ struct SettingsPageV2 {
   // 输入 - 手柄设置
   @State enableVibration: boolean = true;
   @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/同时
-  @State vibrateFallbackStrength: number = 100;
+  @State gameVibrationStrength: number = GAME_VIBRATION_STRENGTH_DEFAULT;
   @State enableAudioVibration: boolean = false;
   @State audioVibrationStrength: number = 60;
   @State audioVibrationSceneMode: string = '游戏/电影';
@@ -518,7 +526,7 @@ struct SettingsPageV2 {
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
       this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
-      this.vibrateFallbackStrength = await PreferencesUtil.get<number>(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100);
+      this.gameVibrationStrength = await this.loadGameVibrationStrength();
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
       this.audioVibrationSceneMode = await PreferencesUtil.get<string>(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, '游戏/电影');
@@ -639,6 +647,38 @@ struct SettingsPageV2 {
     const val = await PreferencesUtil.get<boolean>(key, defaultVal);
     if (typeof val === 'boolean') return val;
     return String(val) === 'true';
+  }
+
+  private async loadGameVibrationStrength(): Promise<number> {
+    const rawValue = await PreferencesUtil.get<number | string>(
+      SettingsKeys.VIBRATE_FALLBACK_STRENGTH,
+      GAME_VIBRATION_STRENGTH_DEFAULT.toString()
+    );
+    let parsedValue = GAME_VIBRATION_STRENGTH_DEFAULT;
+    let shouldRepair = false;
+
+    if (typeof rawValue === 'number') {
+      parsedValue = Number.isFinite(rawValue) ? rawValue : GAME_VIBRATION_STRENGTH_DEFAULT;
+      shouldRepair = parsedValue !== rawValue;
+    } else {
+      const trimmedValue = rawValue.trim();
+      if (trimmedValue.length === 0) {
+        shouldRepair = true;
+      } else {
+        const numberValue = Number(trimmedValue);
+        if (Number.isFinite(numberValue)) {
+          parsedValue = numberValue;
+        } else {
+          shouldRepair = true;
+        }
+      }
+    }
+
+    const normalizedValue = normalizeGameVibrationStrength(parsedValue);
+    if (shouldRepair || normalizedValue !== parsedValue) {
+      this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, normalizedValue);
+    }
+    return normalizedValue;
   }
 
   private async saveSetting(key: string, value: string | boolean | number): Promise<void> {
@@ -1341,7 +1381,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '振动反馈',
-                subtitle: '手柄振动反馈',
+                subtitle: '串流游戏震动反馈',
                 type: 'toggle',
                 value: this.enableVibration,
                 action: () => {
@@ -1361,18 +1401,20 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '设备振动强度',
-                subtitle: '使用设备震动时的强度',
+                title: '震动强度',
+                subtitle: this.gameVibrationStrength > GAME_VIBRATION_STRENGTH_ORIGINAL ?
+                  '超过 100% 为 app 侧放大，不突破系统/硬件上限' :
+                  '串流游戏震动强度，100% 为原始强度',
                 type: 'slider',
                 visible: this.enableVibration,
-                value: this.vibrateFallbackStrength,
-                min: 0,
-                max: 100,
-                step: 5,
+                value: this.gameVibrationStrength,
+                min: GAME_VIBRATION_STRENGTH_MIN,
+                max: GAME_VIBRATION_STRENGTH_MAX,
+                step: GAME_VIBRATION_STRENGTH_STEP,
                 unit: '%',
                 onSliderChange: (value: number) => {
-                  this.vibrateFallbackStrength = value;
-                  this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, value);
+                  this.gameVibrationStrength = normalizeGameVibrationStrength(value);
+                  this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, this.gameVibrationStrength);
                 }
               },
               {
