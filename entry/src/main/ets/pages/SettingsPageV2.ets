@@ -17,11 +17,11 @@ import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../co
 import { StreamingSession, DecoderCapabilities } from '../service/streaming/StreamingSession';
 import {
   getRecommendedBitrate,
-  GAMEPAD_VIBRATION_GAIN_DEFAULT,
-  GAMEPAD_VIBRATION_GAIN_MAX,
-  GAMEPAD_VIBRATION_GAIN_MIN,
-  GAMEPAD_VIBRATION_GAIN_STEP,
-  normalizeGamepadVibrationGain
+  GAME_VIBRATION_STRENGTH_DEFAULT,
+  GAME_VIBRATION_STRENGTH_MAX,
+  GAME_VIBRATION_STRENGTH_MIN,
+  GAME_VIBRATION_STRENGTH_STEP,
+  normalizeGameVibrationStrength
 } from '../model/StreamConfig';
 import { PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
@@ -182,8 +182,7 @@ struct SettingsPageV2 {
   // 输入 - 手柄设置
   @State enableVibration: boolean = true;
   @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/同时
-  @State vibrateFallbackStrength: number = 100;
-  @State gamepadVibrationGain: number = GAMEPAD_VIBRATION_GAIN_DEFAULT;
+  @State vibrateFallbackStrength: number = GAME_VIBRATION_STRENGTH_DEFAULT;
   @State enableAudioVibration: boolean = false;
   @State audioVibrationStrength: number = 60;
   @State audioVibrationSceneMode: string = '游戏/电影';
@@ -526,12 +525,11 @@ struct SettingsPageV2 {
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
       this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
-      this.vibrateFallbackStrength = await PreferencesUtil.get<number>(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100);
-      const rawGamepadVibrationGain =
-        await PreferencesUtil.get<number>(SettingsKeys.GAMEPAD_VIBRATION_GAIN, GAMEPAD_VIBRATION_GAIN_DEFAULT);
-      this.gamepadVibrationGain = normalizeGamepadVibrationGain(rawGamepadVibrationGain);
-      if (this.gamepadVibrationGain !== rawGamepadVibrationGain) {
-        this.saveSetting(SettingsKeys.GAMEPAD_VIBRATION_GAIN, this.gamepadVibrationGain);
+      const rawVibrationStrength =
+        await PreferencesUtil.get<number>(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, GAME_VIBRATION_STRENGTH_DEFAULT);
+      this.vibrateFallbackStrength = normalizeGameVibrationStrength(rawVibrationStrength);
+      if (this.vibrateFallbackStrength !== rawVibrationStrength) {
+        this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, this.vibrateFallbackStrength);
       }
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
@@ -1375,33 +1373,20 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '手柄震动增益',
-                subtitle: '放大串流游戏发往外接手柄的震动，仍受硬件上限限制',
-                type: 'slider',
-                visible: this.enableVibration,
-                value: this.gamepadVibrationGain,
-                min: GAMEPAD_VIBRATION_GAIN_MIN,
-                max: GAMEPAD_VIBRATION_GAIN_MAX,
-                step: GAMEPAD_VIBRATION_GAIN_STEP,
-                unit: '%',
-                onSliderChange: (value: number) => {
-                  this.gamepadVibrationGain = value;
-                  this.saveSetting(SettingsKeys.GAMEPAD_VIBRATION_GAIN, value);
-                }
-              },
-              {
-                title: '设备振动强度',
-                subtitle: '无外接手柄或同时模式下的设备震动强度',
+                title: '震动强度',
+                subtitle: this.vibrateFallbackStrength > 100 ?
+                  '超过 100% 为 app 增益，仍受硬件上限限制' :
+                  '串流游戏震动强度，100% 为原始强度',
                 type: 'slider',
                 visible: this.enableVibration,
                 value: this.vibrateFallbackStrength,
-                min: 0,
-                max: 100,
-                step: 5,
+                min: GAME_VIBRATION_STRENGTH_MIN,
+                max: GAME_VIBRATION_STRENGTH_MAX,
+                step: GAME_VIBRATION_STRENGTH_STEP,
                 unit: '%',
                 onSliderChange: (value: number) => {
-                  this.vibrateFallbackStrength = value;
-                  this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, value);
+                  this.vibrateFallbackStrength = normalizeGameVibrationStrength(value);
+                  this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, this.vibrateFallbackStrength);
                 }
               },
               {

@@ -10,13 +10,12 @@
 
 import { inputDevice } from '@kit.InputKit';
 import { UsbDriverService, UsbDriverListener, AbstractController, ButtonFlags, KnownUsbGamepadInfo } from '../usbdriver/index';
-import { 
+import {
   gameControllerService, 
   AxisType, 
   GameControllerDeviceInfo 
 } from './GameControllerService';
 import { SettingsService, SettingsKeys } from '../SettingsService';
-import { GAMEPAD_VIBRATION_GAIN_DEFAULT } from '../../model/StreamConfig';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
 import { MoonBridge } from '../streaming/MoonBridge';
@@ -648,17 +647,15 @@ export class GamepadManager implements UsbDriverListener {
   /**
    * 设置串流游戏震动
    * @param enabled 是否启用串流游戏震动反馈
-   * @param strength 设备马达回退强度 (0-100)
+   * @param strength 串流游戏震动强度 (0-200, 100=原始强度)
    * @param mode 震动模式：自动/仅手柄/仅设备/同时
-   * @param gamepadGain 外接手柄震动增益 (100=原始强度)
    */
   setDeviceVibrate(
     enabled: boolean,
     strength: number,
-    mode: string,
-    gamepadGain: number = GAMEPAD_VIBRATION_GAIN_DEFAULT
+    mode: string
   ): void {
-    this.vibrationService.setSettings(enabled, strength, mode, gamepadGain);
+    this.vibrationService.setSettings(enabled, strength, mode);
   }
 
   /**

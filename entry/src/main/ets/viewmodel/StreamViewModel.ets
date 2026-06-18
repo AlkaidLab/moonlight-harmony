@@ -270,12 +270,11 @@ export class StreamViewModel {
     console.info(`StreamViewModel: 触摸模式=${this.touchMode}`);
     console.info(`StreamViewModel: 性能覆盖层=${this.showOverlay}, 虚拟控制器=${this.showController}`);
     
-    // 配置串流游戏震动设置；设备强度为 0 时仅关闭设备马达回退，不影响外接手柄。
+    // 配置串流游戏震动；100% 以上作为外接手柄 app 增益，设备马达仍按 100% 封顶。
     GamepadManager.getInstance().setDeviceVibrate(
       this.streamConfig.enableVibration,
       this.streamConfig.vibrateFallbackStrength,
-      this.streamConfig.vibrationMode,
-      this.streamConfig.gamepadVibrationGain
+      this.streamConfig.vibrationMode
     );
   }
   

@@ -21,8 +21,8 @@ import { vibrator } from '@kit.SensorServiceKit';
 import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { RUMBLE_MAX } from './GamepadTypes';
 import {
-  GAMEPAD_VIBRATION_GAIN_DEFAULT,
-  normalizeGamepadVibrationGain
+  GAME_VIBRATION_STRENGTH_DEFAULT,
+  normalizeGameVibrationStrength
 } from '../../model/StreamConfig';
 
 // ==================== 震动服务 ====================
@@ -32,8 +32,7 @@ export class GamepadVibrationService {
   
   // 设置
   private vibrationFeedbackEnabled = true;
-  private deviceVibrateStrength = 100;
-  private gamepadVibrationGain = GAMEPAD_VIBRATION_GAIN_DEFAULT;
+  private gameVibrationStrength = GAME_VIBRATION_STRENGTH_DEFAULT;
   private vibrationMode = '自动';
   
   // 槽位→设备键的查找函数（由 GamepadManager 提供）
@@ -66,13 +65,11 @@ export class GamepadVibrationService {
   setSettings(
     enabled: boolean,
     strength: number,
-    mode: string,
-    gamepadGain: number = GAMEPAD_VIBRATION_GAIN_DEFAULT
+    mode: string
   ): void {
     const wasEnabled = this.vibrationFeedbackEnabled;
     this.vibrationFeedbackEnabled = enabled;
-    this.deviceVibrateStrength = strength;
-    this.gamepadVibrationGain = normalizeGamepadVibrationGain(gamepadGain);
+    this.gameVibrationStrength = normalizeGameVibrationStrength(strength);
     this.vibrationMode = mode;
     if (wasEnabled && !enabled) {
       this.stopAll();
@@ -155,7 +152,10 @@ export class GamepadVibrationService {
 
     const controllers = this.usbDriverService.getControllers();
     const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumbleTriggers(this.applyGamepadGain(leftTrigger), this.applyGamepadGain(rightTrigger));
+    controller?.rumbleTriggers(
+      this.applyGameVibrationStrength(leftTrigger),
+      this.applyGameVibrationStrength(rightTrigger)
+    );
   }
 
   /**
@@ -241,17 +241,17 @@ export class GamepadVibrationService {
     applyGain: boolean = true
   ): void {
     const controller = this.findControllerBySlot(controllers, controllerNumber);
-    const lowValue = applyGain ? this.applyGamepadGain(lowFreqMotor) : this.clampRumbleValue(lowFreqMotor);
-    const highValue = applyGain ? this.applyGamepadGain(highFreqMotor) : this.clampRumbleValue(highFreqMotor);
+    const lowValue = applyGain ? this.applyGameVibrationStrength(lowFreqMotor) : this.clampRumbleValue(lowFreqMotor);
+    const highValue = applyGain ? this.applyGameVibrationStrength(highFreqMotor) : this.clampRumbleValue(highFreqMotor);
     controller?.rumble(lowValue, highValue);
   }
 
-  private applyGamepadGain(value: number): number {
+  private applyGameVibrationStrength(value: number): number {
     if (value <= 0) return 0;
-    if (this.gamepadVibrationGain === GAMEPAD_VIBRATION_GAIN_DEFAULT) {
+    if (this.gameVibrationStrength === GAME_VIBRATION_STRENGTH_DEFAULT) {
       return this.clampRumbleValue(value);
     }
-    const gained = Math.floor(value * this.gamepadVibrationGain / 100);
+    const gained = Math.floor(value * this.gameVibrationStrength / 100);
     return this.clampRumbleValue(gained);
   }
 
@@ -269,7 +269,7 @@ export class GamepadVibrationService {
    * 3. 使用 stopVibrationSync 同步停止确保即时性
    */
   private triggerDeviceVibrate(lowFreqMotor: number, highFreqMotor: number): void {
-    if (!this.vibrationFeedbackEnabled || this.deviceVibrateStrength <= 0) return;
+    if (!this.vibrationFeedbackEnabled || this.gameVibrationStrength <= 0) return;
 
     // 停止震动
     if (lowFreqMotor === 0 && highFreqMotor === 0) {
@@ -294,7 +294,7 @@ export class GamepadVibrationService {
     this.lastHighFreq = highFreqMotor;
 
     // 计算用户强度系数
-    const userStrength = this.deviceVibrateStrength / 100;
+    const userStrength = Math.min(this.gameVibrationStrength, 100) / 100;
 
     // 计算低频和高频马达的强度 (0-100)
     const lowIntensity = Math.floor((lowFreqMotor / RUMBLE_MAX) * userStrength * 100);
