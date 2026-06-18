@@ -297,6 +297,30 @@ export class TouchInputHandler {
   }
 
   /**
+   * 取消当前触摸/鼠标手势。
+   *
+   * 用于本地系统手势（如三指唤出 IME）接管输入前，防止远端保留
+   * 已按下的触摸点、鼠标左键/右键或触控板拖拽状态。
+   */
+  cancelActiveInput(): void {
+    this.trackpad.dispose();
+    this.resetMouseState(true);
+    this.touchStates.clear();
+    this.lastForce.clear();
+    this.lastSize.clear();
+    this.nativeInput.sendTouchEvent(
+      TOUCH_EVENT_CANCEL_ALL,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    );
+  }
+
+  /**
    * 重置 MOUSE 模式状态 + 释放可能卡住的鼠标键
    * @param releaseButtons 是否向主机发送 LEFT/RIGHT RELEASE（防御性释放）
    */

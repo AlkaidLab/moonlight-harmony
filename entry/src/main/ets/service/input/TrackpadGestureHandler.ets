@@ -140,10 +140,19 @@ export class TrackpadGestureHandler {
   }
 
   dispose(): void {
+    if (this.confirmedDrag || this.isDoubleClickDrag) {
+      this.sink.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+    }
     this.cancelDragTimer();
     this.cancelSingleTapTimer();
     this.cancelDoubleTapHoldTimer();
     this.fingers.clear();
+    this.activeCount = 0;
+    this.maxCountInGesture = 0;
+    this.resetGestureFlags();
+    this.twoFingerTapPending = false;
+    this.twoFingerMoved = false;
+    this.lastTapUpTime = 0;
   }
 
   // ==================== Down ====================
