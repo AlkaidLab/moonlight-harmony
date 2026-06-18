@@ -26,7 +26,8 @@ import {
   PerfOverlayOrientation,
   PerfOverlayPosition,
   getRecommendedBitrate,
-  GAMEPAD_VIBRATION_GAIN_DEFAULT
+  GAMEPAD_VIBRATION_GAIN_DEFAULT,
+  normalizeGamepadVibrationGain
 } from '../model/StreamConfig';
 
 /**
@@ -602,7 +603,9 @@ export class SettingsService {
     const enableVibration = await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true);
     const vibrationMode = await this.getString(SettingsKeys.VIBRATION_MODE, '自动');
     const vibrateFallbackStrength = await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100);
-    const gamepadVibrationGain = await this.getNumber(SettingsKeys.GAMEPAD_VIBRATION_GAIN, GAMEPAD_VIBRATION_GAIN_DEFAULT);
+    const gamepadVibrationGain = normalizeGamepadVibrationGain(
+      await this.getNumber(SettingsKeys.GAMEPAD_VIBRATION_GAIN, GAMEPAD_VIBRATION_GAIN_DEFAULT)
+    );
     const enableAudioVibration = await this.getBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
     const audioVibrationStrength = await this.getNumber(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
     const audioVibrationSceneMode = await this.getString(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, '游戏/电影');
@@ -747,7 +750,9 @@ export class SettingsService {
       enableVibration: await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true),
       vibrationMode: await this.getString(SettingsKeys.VIBRATION_MODE, '自动'),
       vibrateFallbackStrength: await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100),
-      gamepadVibrationGain: await this.getNumber(SettingsKeys.GAMEPAD_VIBRATION_GAIN, GAMEPAD_VIBRATION_GAIN_DEFAULT),
+      gamepadVibrationGain: normalizeGamepadVibrationGain(
+        await this.getNumber(SettingsKeys.GAMEPAD_VIBRATION_GAIN, GAMEPAD_VIBRATION_GAIN_DEFAULT)
+      ),
       enableAudioVibration: await this.getBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false),
       audioVibrationStrength: await this.getNumber(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60),
       audioVibrationSceneMode: await this.getString(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, '游戏/电影'),

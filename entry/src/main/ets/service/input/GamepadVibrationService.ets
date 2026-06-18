@@ -22,8 +22,7 @@ import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { RUMBLE_MAX } from './GamepadTypes';
 import {
   GAMEPAD_VIBRATION_GAIN_DEFAULT,
-  GAMEPAD_VIBRATION_GAIN_MAX,
-  GAMEPAD_VIBRATION_GAIN_MIN
+  normalizeGamepadVibrationGain
 } from '../../model/StreamConfig';
 
 // ==================== 震动服务 ====================
@@ -72,7 +71,7 @@ export class GamepadVibrationService {
   ): void {
     this.deviceVibrateEnabled = enabled;
     this.deviceVibrateStrength = strength;
-    this.gamepadVibrationGain = Math.max(GAMEPAD_VIBRATION_GAIN_MIN, Math.min(GAMEPAD_VIBRATION_GAIN_MAX, gamepadGain));
+    this.gamepadVibrationGain = normalizeGamepadVibrationGain(gamepadGain);
     this.vibrationMode = mode;
   }
 
@@ -240,6 +239,7 @@ export class GamepadVibrationService {
   }
 
   private clampRumbleValue(value: number): number {
+    if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(RUMBLE_MAX, Math.floor(value)));
   }
 

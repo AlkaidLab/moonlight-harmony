@@ -20,7 +20,8 @@ import {
   GAMEPAD_VIBRATION_GAIN_DEFAULT,
   GAMEPAD_VIBRATION_GAIN_MAX,
   GAMEPAD_VIBRATION_GAIN_MIN,
-  GAMEPAD_VIBRATION_GAIN_STEP
+  GAMEPAD_VIBRATION_GAIN_STEP,
+  normalizeGamepadVibrationGain
 } from '../model/StreamConfig';
 import { PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
@@ -526,8 +527,12 @@ struct SettingsPageV2 {
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
       this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
       this.vibrateFallbackStrength = await PreferencesUtil.get<number>(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100);
-      this.gamepadVibrationGain =
+      const rawGamepadVibrationGain =
         await PreferencesUtil.get<number>(SettingsKeys.GAMEPAD_VIBRATION_GAIN, GAMEPAD_VIBRATION_GAIN_DEFAULT);
+      this.gamepadVibrationGain = normalizeGamepadVibrationGain(rawGamepadVibrationGain);
+      if (this.gamepadVibrationGain !== rawGamepadVibrationGain) {
+        this.saveSetting(SettingsKeys.GAMEPAD_VIBRATION_GAIN, this.gamepadVibrationGain);
+      }
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
       this.audioVibrationSceneMode = await PreferencesUtil.get<string>(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, '游戏/电影');

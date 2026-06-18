@@ -668,13 +668,18 @@ export class NativeHidController extends AbstractController {
     const cmd = this.nativeParser.createRumbleCommand(
       this.vendorId,
       this.productId,
-      Math.round(lowFreqMotor),
-      Math.round(highFreqMotor)
+      this.clampRumbleValue(lowFreqMotor),
+      this.clampRumbleValue(highFreqMotor)
     );
 
     if (cmd) {
       this.sendOutputReport(cmd);
     }
+  }
+
+  private clampRumbleValue(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(65535, Math.round(value)));
   }
 
   private async sendOutputReport(data: Uint8Array): Promise<void> {

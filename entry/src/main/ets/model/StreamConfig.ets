@@ -18,6 +18,14 @@ export const GAMEPAD_VIBRATION_GAIN_MAX = 200;
 export const GAMEPAD_VIBRATION_GAIN_DEFAULT = 100;
 export const GAMEPAD_VIBRATION_GAIN_STEP = 10;
 
+export function normalizeGamepadVibrationGain(value: number): number {
+  if (!Number.isFinite(value)) {
+    return GAMEPAD_VIBRATION_GAIN_DEFAULT;
+  }
+  const roundedValue = Math.round(value);
+  return Math.max(GAMEPAD_VIBRATION_GAIN_MIN, Math.min(GAMEPAD_VIBRATION_GAIN_MAX, roundedValue));
+}
+
 export interface StreamConfig {
   // 视频设置
   width: number;
