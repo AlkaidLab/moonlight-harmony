@@ -455,7 +455,7 @@ static void OnDeviceChanged(const struct GameDevice_DeviceEvent* deviceEvent) {
         free(physicalAddress);
     }
     
-    GameDevice_DeviceType deviceType;
+    GameDevice_DeviceType deviceType = (GameDevice_DeviceType)0;
     OH_GameDevice_DeviceInfo_GetDeviceType(deviceInfo, &deviceType);
     info.deviceType = (int32_t)deviceType;
     
@@ -1005,6 +1005,25 @@ int GameController_StartMonitor(void) {
                     strncpy(info.name, name, sizeof(info.name) - 1);
                     free(name);
                 }
+
+                int product = 0;
+                OH_GameDevice_DeviceInfo_GetProduct(deviceInfo, &product);
+                info.product = product;
+
+                int version = 0;
+                OH_GameDevice_DeviceInfo_GetVersion(deviceInfo, &version);
+                info.version = version;
+
+                char* physicalAddress = nullptr;
+                OH_GameDevice_DeviceInfo_GetPhysicalAddress(deviceInfo, &physicalAddress);
+                if (physicalAddress) {
+                    strncpy(info.physicalAddress, physicalAddress, sizeof(info.physicalAddress) - 1);
+                    free(physicalAddress);
+                }
+
+                GameDevice_DeviceType deviceType = (GameDevice_DeviceType)0;
+                OH_GameDevice_DeviceInfo_GetDeviceType(deviceInfo, &deviceType);
+                info.deviceType = (int32_t)deviceType;
                 
                 info.isConnected = true;
                 
@@ -1168,7 +1187,7 @@ int GameController_RefreshDevices(void) {
             free(physicalAddress);
         }
 
-        GameDevice_DeviceType deviceType;
+        GameDevice_DeviceType deviceType = (GameDevice_DeviceType)0;
         OH_GameDevice_DeviceInfo_GetDeviceType(deviceInfo, &deviceType);
         info.deviceType = (int32_t)deviceType;
 
