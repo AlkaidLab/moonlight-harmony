@@ -273,7 +273,7 @@ export class StreamViewModel {
     // 配置串流游戏震动；100% 以上作为外接手柄 app 侧放大，设备马达仍按 100% 封顶。
     GamepadManager.getInstance().setDeviceVibrate(
       this.streamConfig.enableVibration,
-      this.streamConfig.vibrateFallbackStrength,
+      this.streamConfig.gameVibrationStrength,
       this.streamConfig.vibrationMode
     );
   }

@@ -22,6 +22,7 @@ import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { RUMBLE_MAX } from './GamepadTypes';
 import {
   GAME_VIBRATION_STRENGTH_DEFAULT,
+  GAME_VIBRATION_STRENGTH_ORIGINAL,
   normalizeGameVibrationStrength
 } from '../../model/StreamConfig';
 
@@ -251,7 +252,7 @@ export class GamepadVibrationService {
     if (this.gameVibrationStrength === GAME_VIBRATION_STRENGTH_DEFAULT) {
       return this.clampRumbleValue(value);
     }
-    const gained = Math.floor(value * this.gameVibrationStrength / 100);
+    const gained = Math.floor(value * this.gameVibrationStrength / GAME_VIBRATION_STRENGTH_ORIGINAL);
     return this.clampRumbleValue(gained);
   }
 
@@ -294,7 +295,8 @@ export class GamepadVibrationService {
     this.lastHighFreq = highFreqMotor;
 
     // 计算用户强度系数
-    const userStrength = Math.min(this.gameVibrationStrength, 100) / 100;
+    const userStrength = Math.min(this.gameVibrationStrength, GAME_VIBRATION_STRENGTH_ORIGINAL) /
+      GAME_VIBRATION_STRENGTH_ORIGINAL;
 
     // 计算低频和高频马达的强度 (0-100)
     const lowIntensity = Math.floor((lowFreqMotor / RUMBLE_MAX) * userStrength * 100);
