@@ -15,7 +15,13 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { StreamingSession, DecoderCapabilities } from '../service/streaming/StreamingSession';
-import { getRecommendedBitrate } from '../model/StreamConfig';
+import {
+  getRecommendedBitrate,
+  GAMEPAD_VIBRATION_GAIN_DEFAULT,
+  GAMEPAD_VIBRATION_GAIN_MAX,
+  GAMEPAD_VIBRATION_GAIN_MIN,
+  GAMEPAD_VIBRATION_GAIN_STEP
+} from '../model/StreamConfig';
 import { PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
 import { SettingsBackupService } from '../service/SettingsBackupService';
@@ -176,6 +182,7 @@ struct SettingsPageV2 {
   @State enableVibration: boolean = true;
   @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/同时
   @State vibrateFallbackStrength: number = 100;
+  @State gamepadVibrationGain: number = GAMEPAD_VIBRATION_GAIN_DEFAULT;
   @State enableAudioVibration: boolean = false;
   @State audioVibrationStrength: number = 60;
   @State audioVibrationSceneMode: string = '游戏/电影';
@@ -519,6 +526,8 @@ struct SettingsPageV2 {
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
       this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
       this.vibrateFallbackStrength = await PreferencesUtil.get<number>(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100);
+      this.gamepadVibrationGain =
+        await PreferencesUtil.get<number>(SettingsKeys.GAMEPAD_VIBRATION_GAIN, GAMEPAD_VIBRATION_GAIN_DEFAULT);
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
       this.audioVibrationSceneMode = await PreferencesUtil.get<string>(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, '游戏/电影');
@@ -1358,6 +1367,21 @@ struct SettingsPageV2 {
                 onSegmentChange: (value: string) => {
                   this.vibrationMode = value;
                   this.saveSetting(SettingsKeys.VIBRATION_MODE, value);
+                }
+              },
+              {
+                title: '手柄震动增益',
+                subtitle: '放大发往外接手柄的震动，仍受硬件上限限制',
+                type: 'slider',
+                visible: this.enableVibration,
+                value: this.gamepadVibrationGain,
+                min: GAMEPAD_VIBRATION_GAIN_MIN,
+                max: GAMEPAD_VIBRATION_GAIN_MAX,
+                step: GAMEPAD_VIBRATION_GAIN_STEP,
+                unit: '%',
+                onSliderChange: (value: number) => {
+                  this.gamepadVibrationGain = value;
+                  this.saveSetting(SettingsKeys.GAMEPAD_VIBRATION_GAIN, value);
                 }
               },
               {

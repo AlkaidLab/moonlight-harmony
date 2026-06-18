@@ -275,7 +275,8 @@ export class StreamViewModel {
     GamepadManager.getInstance().setDeviceVibrate(
       deviceVibrateEnabled,
       this.streamConfig.vibrateFallbackStrength,
-      this.streamConfig.vibrationMode
+      this.streamConfig.vibrationMode,
+      this.streamConfig.gamepadVibrationGain
     );
   }
   

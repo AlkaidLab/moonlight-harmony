@@ -25,7 +25,8 @@ import {
   ScreenCombinationMode,
   PerfOverlayOrientation,
   PerfOverlayPosition,
-  getRecommendedBitrate
+  getRecommendedBitrate,
+  GAMEPAD_VIBRATION_GAIN_DEFAULT
 } from '../model/StreamConfig';
 
 /**
@@ -68,6 +69,7 @@ export class SettingsKeys {
   static readonly ENABLE_VIBRATION: string = 'settings_enable_vibration';
   static readonly VIBRATION_MODE: string = 'settings_vibration_mode';  // 震动模式：自动/仅手柄/仅设备/同时
   static readonly VIBRATE_FALLBACK_STRENGTH: string = 'settings_vibrate_fallback_strength';
+  static readonly GAMEPAD_VIBRATION_GAIN: string = 'settings_gamepad_vibration_gain';
   static readonly ENABLE_AUDIO_VIBRATION: string = 'settings_enable_audio_vibration';  // 音频振动（低频驱动）
   static readonly AUDIO_VIBRATION_STRENGTH: string = 'settings_audio_vibration_strength';  // 音频振动强度 (0-100)
   static readonly AUDIO_VIBRATION_SCENE_MODE: string = 'settings_audio_vibration_scene_mode';  // 音频振动场景模式
@@ -184,6 +186,7 @@ export interface InputSettings {
   enableVibration: boolean;
   vibrationMode: string;  // 自动/仅手柄/仅设备/同时
   vibrateFallbackStrength: number;
+  gamepadVibrationGain: number;
   enableAudioVibration: boolean;  // 音频振动（低频驱动）
   audioVibrationStrength: number;  // 音频振动强度 (0-100)
   audioVibrationSceneMode: string;  // 音频振动场景模式
@@ -599,6 +602,7 @@ export class SettingsService {
     const enableVibration = await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true);
     const vibrationMode = await this.getString(SettingsKeys.VIBRATION_MODE, '自动');
     const vibrateFallbackStrength = await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100);
+    const gamepadVibrationGain = await this.getNumber(SettingsKeys.GAMEPAD_VIBRATION_GAIN, GAMEPAD_VIBRATION_GAIN_DEFAULT);
     const enableAudioVibration = await this.getBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
     const audioVibrationStrength = await this.getNumber(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
     const audioVibrationSceneMode = await this.getString(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, '游戏/电影');
@@ -680,6 +684,7 @@ export class SettingsService {
       enableVibration: enableVibration,
       vibrationMode: vibrationMode,
       vibrateFallbackStrength: vibrateFallbackStrength,
+      gamepadVibrationGain: gamepadVibrationGain,
       enableAudioVibration: enableAudioVibration,
       audioVibrationStrength: audioVibrationStrength,
       audioVibrationSceneMode: audioVibrationSceneMode,
@@ -742,6 +747,7 @@ export class SettingsService {
       enableVibration: await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true),
       vibrationMode: await this.getString(SettingsKeys.VIBRATION_MODE, '自动'),
       vibrateFallbackStrength: await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, 100),
+      gamepadVibrationGain: await this.getNumber(SettingsKeys.GAMEPAD_VIBRATION_GAIN, GAMEPAD_VIBRATION_GAIN_DEFAULT),
       enableAudioVibration: await this.getBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false),
       audioVibrationStrength: await this.getNumber(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60),
       audioVibrationSceneMode: await this.getString(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, '游戏/电影'),

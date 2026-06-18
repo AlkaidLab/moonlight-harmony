@@ -20,6 +20,11 @@
 import { vibrator } from '@kit.SensorServiceKit';
 import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { RUMBLE_MAX } from './GamepadTypes';
+import {
+  GAMEPAD_VIBRATION_GAIN_DEFAULT,
+  GAMEPAD_VIBRATION_GAIN_MAX,
+  GAMEPAD_VIBRATION_GAIN_MIN
+} from '../../model/StreamConfig';
 
 // ==================== 震动服务 ====================
 
@@ -29,6 +34,7 @@ export class GamepadVibrationService {
   // 设置
   private deviceVibrateEnabled = false;
   private deviceVibrateStrength = 100;
+  private gamepadVibrationGain = GAMEPAD_VIBRATION_GAIN_DEFAULT;
   private vibrationMode = '自动';
   
   // 槽位→设备键的查找函数（由 GamepadManager 提供）
@@ -58,9 +64,15 @@ export class GamepadVibrationService {
   /**
    * 更新震动设置
    */
-  setSettings(enabled: boolean, strength: number, mode: string): void {
+  setSettings(
+    enabled: boolean,
+    strength: number,
+    mode: string,
+    gamepadGain: number = GAMEPAD_VIBRATION_GAIN_DEFAULT
+  ): void {
     this.deviceVibrateEnabled = enabled;
     this.deviceVibrateStrength = strength;
+    this.gamepadVibrationGain = Math.max(GAMEPAD_VIBRATION_GAIN_MIN, Math.min(GAMEPAD_VIBRATION_GAIN_MAX, gamepadGain));
     this.vibrationMode = mode;
   }
 
@@ -136,7 +148,7 @@ export class GamepadVibrationService {
   handleRumbleTriggers(controllerNumber: number, leftTrigger: number, rightTrigger: number): void {
     const controllers = this.usbDriverService.getControllers();
     const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumbleTriggers(leftTrigger, rightTrigger);
+    controller?.rumbleTriggers(this.applyGamepadGain(leftTrigger), this.applyGamepadGain(rightTrigger));
   }
 
   /**
@@ -215,7 +227,20 @@ export class GamepadVibrationService {
    */
   private rumbleUsbControllers(controllers: AbstractController[], controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
     const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumble(lowFreqMotor, highFreqMotor);
+    controller?.rumble(this.applyGamepadGain(lowFreqMotor), this.applyGamepadGain(highFreqMotor));
+  }
+
+  private applyGamepadGain(value: number): number {
+    if (value <= 0) return 0;
+    if (this.gamepadVibrationGain === GAMEPAD_VIBRATION_GAIN_DEFAULT) {
+      return this.clampRumbleValue(value);
+    }
+    const gained = Math.floor(value * this.gamepadVibrationGain / 100);
+    return this.clampRumbleValue(gained);
+  }
+
+  private clampRumbleValue(value: number): number {
+    return Math.max(0, Math.min(RUMBLE_MAX, Math.floor(value)));
   }
 
   /**

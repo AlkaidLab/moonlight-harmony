@@ -13,6 +13,11 @@
  *
  * 参考 Android 版本 StreamConfiguration.java
  */
+export const GAMEPAD_VIBRATION_GAIN_MIN = 50;
+export const GAMEPAD_VIBRATION_GAIN_MAX = 200;
+export const GAMEPAD_VIBRATION_GAIN_DEFAULT = 100;
+export const GAMEPAD_VIBRATION_GAIN_STEP = 10;
+
 export interface StreamConfig {
   // 视频设置
   width: number;
@@ -47,6 +52,7 @@ export interface StreamConfig {
   enableVibration: boolean;
   vibrationMode: string;  // 震动模式：自动/仅手柄/仅设备/同时
   vibrateFallbackStrength: number;
+  gamepadVibrationGain: number;  // 手柄震动增益百分比（默认 100，最高不突破硬件上限）
   enableAudioVibration: boolean;  // 音频振动（低频驱动）
   audioVibrationStrength: number;  // 音频振动强度 (0-100)
   audioVibrationSceneMode: string;  // 音频振动场景模式: 游戏/电影, 音乐/节奏, 自动
@@ -230,6 +236,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     enableVibration: true,
     vibrationMode: '自动',
     vibrateFallbackStrength: 100,
+    gamepadVibrationGain: GAMEPAD_VIBRATION_GAIN_DEFAULT,
     enableAudioVibration: false,
     audioVibrationStrength: 60,
     audioVibrationSceneMode: '游戏/电影',

@@ -16,6 +16,7 @@ import {
   GameControllerDeviceInfo 
 } from './GameControllerService';
 import { SettingsService, SettingsKeys } from '../SettingsService';
+import { GAMEPAD_VIBRATION_GAIN_DEFAULT } from '../../model/StreamConfig';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
 import { MoonBridge } from '../streaming/MoonBridge';
@@ -649,9 +650,15 @@ export class GamepadManager implements UsbDriverListener {
    * @param enabled 是否启用震动
    * @param strength 设备震动强度 (0-100)
    * @param mode 震动模式：自动/仅手柄/仅设备/同时
+   * @param gamepadGain 手柄震动增益 (100=原始强度)
    */
-  setDeviceVibrate(enabled: boolean, strength: number, mode: string): void {
-    this.vibrationService.setSettings(enabled, strength, mode);
+  setDeviceVibrate(
+    enabled: boolean,
+    strength: number,
+    mode: string,
+    gamepadGain: number = GAMEPAD_VIBRATION_GAIN_DEFAULT
+  ): void {
+    this.vibrationService.setSettings(enabled, strength, mode, gamepadGain);
   }
 
   /**
