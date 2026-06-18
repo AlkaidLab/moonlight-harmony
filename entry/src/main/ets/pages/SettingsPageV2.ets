@@ -1375,7 +1375,7 @@ struct SettingsPageV2 {
               {
                 title: '震动强度',
                 subtitle: this.vibrateFallbackStrength > 100 ?
-                  '超过 100% 为 app 增益，仍受硬件上限限制' :
+                  '超过 100% 为 app 侧放大，不突破系统/硬件上限' :
                   '串流游戏震动强度，100% 为原始强度',
                 type: 'slider',
                 visible: this.enableVibration,
