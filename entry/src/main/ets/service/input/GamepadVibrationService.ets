@@ -31,7 +31,7 @@ export class GamepadVibrationService {
   private usbDriverService: UsbDriverService;
   
   // 设置
-  private deviceVibrateEnabled = false;
+  private vibrationFeedbackEnabled = true;
   private deviceVibrateStrength = 100;
   private gamepadVibrationGain = GAMEPAD_VIBRATION_GAIN_DEFAULT;
   private vibrationMode = '自动';
@@ -69,10 +69,14 @@ export class GamepadVibrationService {
     mode: string,
     gamepadGain: number = GAMEPAD_VIBRATION_GAIN_DEFAULT
   ): void {
-    this.deviceVibrateEnabled = enabled;
+    const wasEnabled = this.vibrationFeedbackEnabled;
+    this.vibrationFeedbackEnabled = enabled;
     this.deviceVibrateStrength = strength;
     this.gamepadVibrationGain = normalizeGamepadVibrationGain(gamepadGain);
     this.vibrationMode = mode;
+    if (wasEnabled && !enabled) {
+      this.stopAll();
+    }
   }
 
   // ==================== 公开 API ====================
@@ -91,6 +95,8 @@ export class GamepadVibrationService {
       clearTimeout(this.stopConfirmTimer);
       this.stopConfirmTimer = -1;
     }
+    if (!this.vibrationFeedbackEnabled) return;
+
     if (lowFreqMotor !== 0 || highFreqMotor !== 0) {
       this.lastRumbleControllerNumber = controllerNumber;
       this.rumbleWatchdogTimer = setTimeout(() => {
@@ -145,6 +151,8 @@ export class GamepadVibrationService {
    * 处理扳机震动
    */
   handleRumbleTriggers(controllerNumber: number, leftTrigger: number, rightTrigger: number): void {
+    if (!this.vibrationFeedbackEnabled) return;
+
     const controllers = this.usbDriverService.getControllers();
     const controller = this.findControllerBySlot(controllers, controllerNumber);
     controller?.rumbleTriggers(this.applyGamepadGain(leftTrigger), this.applyGamepadGain(rightTrigger));
@@ -158,7 +166,7 @@ export class GamepadVibrationService {
   rumbleUsbControllersOnly(controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
     const controllers = this.usbDriverService.getControllers();
     if (controllers.length > 0) {
-      this.rumbleUsbControllers(controllers, controllerNumber, lowFreqMotor, highFreqMotor);
+      this.rumbleUsbControllers(controllers, controllerNumber, lowFreqMotor, highFreqMotor, false);
     }
   }
 
@@ -196,6 +204,7 @@ export class GamepadVibrationService {
       const controllers = this.usbDriverService.getControllers();
       for (const controller of controllers) {
         controller.rumble(0, 0);
+        controller.rumbleTriggers(0, 0);
       }
     } catch (_) { /* ignore */ }
   }
@@ -224,9 +233,17 @@ export class GamepadVibrationService {
   /**
    * 向 USB 控制器发送震动
    */
-  private rumbleUsbControllers(controllers: AbstractController[], controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
+  private rumbleUsbControllers(
+    controllers: AbstractController[],
+    controllerNumber: number,
+    lowFreqMotor: number,
+    highFreqMotor: number,
+    applyGain: boolean = true
+  ): void {
     const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumble(this.applyGamepadGain(lowFreqMotor), this.applyGamepadGain(highFreqMotor));
+    const lowValue = applyGain ? this.applyGamepadGain(lowFreqMotor) : this.clampRumbleValue(lowFreqMotor);
+    const highValue = applyGain ? this.applyGamepadGain(highFreqMotor) : this.clampRumbleValue(highFreqMotor);
+    controller?.rumble(lowValue, highValue);
   }
 
   private applyGamepadGain(value: number): number {
@@ -252,7 +269,7 @@ export class GamepadVibrationService {
    * 3. 使用 stopVibrationSync 同步停止确保即时性
    */
   private triggerDeviceVibrate(lowFreqMotor: number, highFreqMotor: number): void {
-    if (!this.deviceVibrateEnabled) return;
+    if (!this.vibrationFeedbackEnabled || this.deviceVibrateStrength <= 0) return;
 
     // 停止震动
     if (lowFreqMotor === 0 && highFreqMotor === 0) {

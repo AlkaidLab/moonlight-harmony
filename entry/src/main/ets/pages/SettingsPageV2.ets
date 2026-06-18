@@ -1355,7 +1355,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '振动反馈',
-                subtitle: '手柄振动反馈',
+                subtitle: '串流游戏震动反馈',
                 type: 'toggle',
                 value: this.enableVibration,
                 action: () => {
@@ -1376,7 +1376,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '手柄震动增益',
-                subtitle: '放大发往外接手柄的震动，仍受硬件上限限制',
+                subtitle: '放大串流游戏发往外接手柄的震动，仍受硬件上限限制',
                 type: 'slider',
                 visible: this.enableVibration,
                 value: this.gamepadVibrationGain,
@@ -1391,7 +1391,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '设备振动强度',
-                subtitle: '使用设备震动时的强度',
+                subtitle: '无外接手柄或同时模式下的设备震动强度',
                 type: 'slider',
                 visible: this.enableVibration,
                 value: this.vibrateFallbackStrength,

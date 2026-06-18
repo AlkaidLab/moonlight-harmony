@@ -646,11 +646,11 @@ export class GamepadManager implements UsbDriverListener {
   }
   
   /**
-   * 设置设备模拟震动
-   * @param enabled 是否启用震动
-   * @param strength 设备震动强度 (0-100)
+   * 设置串流游戏震动
+   * @param enabled 是否启用串流游戏震动反馈
+   * @param strength 设备马达回退强度 (0-100)
    * @param mode 震动模式：自动/仅手柄/仅设备/同时
-   * @param gamepadGain 手柄震动增益 (100=原始强度)
+   * @param gamepadGain 外接手柄震动增益 (100=原始强度)
    */
   setDeviceVibrate(
     enabled: boolean,
