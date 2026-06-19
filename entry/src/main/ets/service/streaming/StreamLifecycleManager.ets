@@ -191,20 +191,30 @@ export class StreamLifecycleManager {
    */
   async updateScreenSizeAfterRotation(): Promise<void> {
     try {
-      const screenSize = await this.windowManager?.updateScreenSize();
-      if (screenSize) {
-        if (this.viewModel) {
-          this.viewModel.displayInfo.screenWidth = screenSize.width;
-          this.viewModel.displayInfo.screenHeight = screenSize.height;
-        }
+      if (!this.windowManager) return;
 
-        // 重新计算 XComponent 尺寸
-        const xComponentSize = this.windowManager?.calculateXComponentSize(
+      let viewportSize = await this.windowManager.updateScreenSize();
+      if (!this.windowManager.isFullscreen) {
+        viewportSize = await this.windowManager.getCurrentWindowViewportSize();
+      }
+
+      if (this.viewModel) {
+        this.viewModel.displayInfo.screenWidth = viewportSize.width;
+        this.viewModel.displayInfo.screenHeight = viewportSize.height;
+      }
+
+      // 重新计算 XComponent 尺寸
+      const xComponentSize = this.windowManager.isFullscreen
+        ? this.windowManager.calculateXComponentSize(
+          this.viewModel?.displayInfo.stretchVideo ?? false
+        )
+        : this.windowManager.calculateXComponentSizeForViewport(
+          viewportSize.width,
+          viewportSize.height,
           this.viewModel?.displayInfo.stretchVideo ?? false
         );
-        if (xComponentSize) {
-          this.callbacks?.updateXComponentSize(xComponentSize.width, xComponentSize.height);
-        }
+      if (xComponentSize) {
+        this.callbacks?.updateXComponentSize(xComponentSize.width, xComponentSize.height);
       }
     } catch (err) {
       console.warn('[StreamPage] 更新屏幕尺寸失败:', err);
@@ -217,24 +227,34 @@ export class StreamLifecycleManager {
    */
   async handleServerResolutionChanged(width: number, height: number): Promise<void> {
     console.info(`[StreamPage] 服务端分辨率变化: ${width}x${height}`);
+    if (!this.windowManager) return;
 
     // 更新窗口管理器的串流分辨率
-    this.windowManager?.setStreamResolution(width, height);
+    this.windowManager.setStreamResolution(width, height);
 
     // 重新配置窗口方向（可能会触发屏幕旋转）
-    await this.windowManager?.configureOrientation();
+    await this.windowManager.configureOrientation();
 
-    // 更新屏幕尺寸（等待旋转完成后获取正确的屏幕尺寸）
-    const screenSize = await this.windowManager?.updateScreenSize();
-    if (screenSize && this.viewModel) {
-      this.viewModel.displayInfo.screenWidth = screenSize.width;
-      this.viewModel.displayInfo.screenHeight = screenSize.height;
+    // 更新视口尺寸（浮窗模式下使用实际窗口内容区）
+    let viewportSize = await this.windowManager.updateScreenSize();
+    if (!this.windowManager.isFullscreen) {
+      viewportSize = await this.windowManager.getCurrentWindowViewportSize();
+    }
+    if (this.viewModel) {
+      this.viewModel.displayInfo.screenWidth = viewportSize.width;
+      this.viewModel.displayInfo.screenHeight = viewportSize.height;
     }
 
-    // 重新计算 XComponent 尺寸以避免画面拉伸
-    const xComponentSize = this.windowManager?.calculateXComponentSize(
-      this.viewModel?.displayInfo.stretchVideo ?? false
-    );
+    // 重新计算 XComponent 尺寸以避免画面拉伸/裁剪
+    const xComponentSize = this.windowManager.isFullscreen
+      ? this.windowManager.calculateXComponentSize(
+        this.viewModel?.displayInfo.stretchVideo ?? false
+      )
+      : this.windowManager.calculateXComponentSizeForViewport(
+        viewportSize.width,
+        viewportSize.height,
+        this.viewModel?.displayInfo.stretchVideo ?? false
+      );
     if (xComponentSize) {
       this.callbacks?.updateXComponentSize(xComponentSize.width, xComponentSize.height);
       console.info(`[StreamPage] XComponent 尺寸更新: ${JSON.stringify(xComponentSize)}`);

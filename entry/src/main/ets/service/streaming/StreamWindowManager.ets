@@ -47,6 +47,8 @@ export class StreamWindowManager {
   private onWindowSizeChanged: (() => void) | null = null;
   /** windowSizeChange 监听器回调引用（用于 off 取消注册） */
   private windowSizeChangeHandler: ((size: window.Size) => void) | null = null;
+  /** windowSizeChange 防抖定时器 */
+  private windowSizeDebounceTimer: number = -1;
 
   /** 查询当前是否全屏 */
   get isFullscreen(): boolean {
@@ -161,6 +163,8 @@ export class StreamWindowManager {
       const win = await window.getLastWindow(this.context);
 
       if (this._isFullscreen) {
+        // 先注册监听，再执行 recover，避免窗口恢复过程中的首个尺寸事件丢失
+        this.registerWindowSizeListener(win);
         await this.exitImmersiveFullscreen(win);
         try {
           await win.recover();
@@ -168,14 +172,14 @@ export class StreamWindowManager {
           console.info('StreamWindowManager: recover() 不可用，保持最大化');
         }
         this._isFullscreen = false;
-        // 注册窗口大小变化监听（窗口模式下用户可能拖拽缩放）
-        this.registerWindowSizeListener(win);
+        this.notifyWindowSizeChanged();
         console.info('StreamWindowManager: 已切换到窗口模式');
       } else {
         // 取消窗口大小变化监听
         this.unregisterWindowSizeListener(win);
         await this.enterImmersiveFullscreen(win);
         this._isFullscreen = true;
+        this.notifyWindowSizeChanged();
         console.info('StreamWindowManager: 已切换到全屏模式');
       }
     } catch (err) {
@@ -188,16 +192,8 @@ export class StreamWindowManager {
    */
   private registerWindowSizeListener(win: window.Window): void {
     this.unregisterWindowSizeListener(win);
-    let debounceTimer: number = -1;
     this.windowSizeChangeHandler = (_size: window.Size) => {
-      // 防抖：拖拽缩放时高频触发，200ms 后才真正回调
-      if (debounceTimer !== -1) {
-        clearTimeout(debounceTimer);
-      }
-      debounceTimer = Number(setTimeout(() => {
-        debounceTimer = -1;
-        this.onWindowSizeChanged?.();
-      }, 200));
+      this.notifyWindowSizeChanged();
     };
     try {
       win.on('windowSizeChange', this.windowSizeChangeHandler);
@@ -213,6 +209,51 @@ export class StreamWindowManager {
         win.off('windowSizeChange', this.windowSizeChangeHandler);
       } catch (_e) {}
       this.windowSizeChangeHandler = null;
+    }
+    if (this.windowSizeDebounceTimer !== -1) {
+      clearTimeout(this.windowSizeDebounceTimer);
+      this.windowSizeDebounceTimer = -1;
+    }
+  }
+
+  /**
+   * 防抖通知布局重算。窗口 recover/maximize、用户拖拽和系统布局 settle
+   * 都从这里汇总，避免页面层用固定延时猜窗口何时稳定。
+   */
+  private notifyWindowSizeChanged(): void {
+    if (this.windowSizeDebounceTimer !== -1) {
+      clearTimeout(this.windowSizeDebounceTimer);
+    }
+    this.windowSizeDebounceTimer = Number(setTimeout(() => {
+      this.windowSizeDebounceTimer = -1;
+      this.onWindowSizeChanged?.();
+    }, 120));
+  }
+
+  /**
+   * 获取当前窗口内容区域尺寸（vp）。
+   *
+   * 浮窗/自由窗口下默认屏幕尺寸不等于实际可绘制窗口尺寸，继续按屏幕计算会导致
+   * XComponent 超出窗口后被父容器裁剪，看起来像画面被放大裁切。
+   */
+  async getCurrentWindowViewportSize(): Promise<DisplaySize> {
+    try {
+      const win = await window.getLastWindow(this.context);
+      const properties = win.getWindowProperties();
+      let rect: window.Rect = properties.windowRect;
+      if (properties.drawableRect.width > 0 && properties.drawableRect.height > 0) {
+        rect = properties.drawableRect;
+      }
+      const displayInfo = display.getDefaultDisplaySync();
+      const density = displayInfo.densityPixels;
+
+      return {
+        width: rect.width / density,
+        height: rect.height / density
+      };
+    } catch (err) {
+      console.warn('StreamWindowManager: 获取窗口内容区尺寸失败:', err);
+      return this.getScreenSize();
     }
   }
 
@@ -422,6 +463,40 @@ export class StreamWindowManager {
       console.error('计算视频尺寸失败:', err);
       return { width: '100%', height: '100%' };
     }
+  }
+
+  /**
+   * 按指定视口尺寸计算 XComponent 尺寸。
+   * 全屏和浮窗共用同一套等比适配逻辑，避免窗口模式下 Surface 拉伸/裁剪。
+   */
+  calculateXComponentSizeForViewport(viewportWidth: number, viewportHeight: number,
+    stretchVideo: boolean = false): XComponentSize {
+    if (stretchVideo) {
+      return { width: '100%', height: '100%' };
+    }
+    if (viewportWidth <= 0 || viewportHeight <= 0) {
+      return { width: '100%', height: '100%' };
+    }
+
+    const videoAspectRatio = this.streamWidth / this.streamHeight;
+    const viewportAspectRatio = viewportWidth / viewportHeight;
+    let measuredWidth: number;
+    let measuredHeight: number;
+
+    if (viewportAspectRatio > videoAspectRatio) {
+      measuredHeight = viewportHeight;
+      measuredWidth = Math.floor(measuredHeight * videoAspectRatio);
+    } else {
+      measuredWidth = viewportWidth;
+      measuredHeight = Math.floor(measuredWidth / videoAspectRatio);
+    }
+
+    console.info('StreamWindowManager: 视口视频尺寸计算 - 视口=' +
+      viewportWidth.toFixed(1) + 'x' + viewportHeight.toFixed(1) + 'vp, 视频=' +
+      this.streamWidth.toString() + 'x' + this.streamHeight.toString() + ', XComponent=' +
+      measuredWidth.toFixed(1) + 'x' + measuredHeight.toFixed(1) + 'vp');
+
+    return { width: measuredWidth, height: measuredHeight };
   }
 
   // ==================== 初始化 ====================

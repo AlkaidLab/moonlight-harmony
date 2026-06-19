@@ -912,7 +912,7 @@ struct StreamPage {
       },
       onToggleWindowMode: async () => {
         await this.windowManager?.toggleWindowMode();
-        this.recalculateXComponentSize();
+        await this.recalculateXComponentSize();
       },
       onTogglePanZoom: () => {
         this.isTouchOverrideEnabled = !this.isTouchOverrideEnabled;
@@ -1038,15 +1038,28 @@ struct StreamPage {
 
     if (this.windowManager.isFullscreen) {
       // 全屏：按屏幕尺寸精确计算 letterbox/pillarbox
+      const screenSize = await this.windowManager.updateScreenSize();
+      this.viewModel.displayInfo.screenWidth = screenSize.width;
+      this.viewModel.displayInfo.screenHeight = screenSize.height;
+      this.panZoomHandler.setParentSize(screenSize.width, screenSize.height);
       const size = this.windowManager.calculateXComponentSize(
         this.viewModel.displayInfo.stretchVideo
       );
       this.xComponentWidth = size.width;
       this.xComponentHeight = size.height;
     } else {
-      // 窗口模式：直接填满窗口，视频缩放由 Surface 处理
-      this.xComponentWidth = '100%';
-      this.xComponentHeight = '100%';
+      // 窗口/浮窗：按实际窗口内容区等比适配，避免 Surface 被父容器裁剪
+      const viewportSize = await this.windowManager.getCurrentWindowViewportSize();
+      const size = this.windowManager.calculateXComponentSizeForViewport(
+        viewportSize.width,
+        viewportSize.height,
+        this.viewModel.displayInfo.stretchVideo
+      );
+      this.viewModel.displayInfo.screenWidth = viewportSize.width;
+      this.viewModel.displayInfo.screenHeight = viewportSize.height;
+      this.panZoomHandler.setParentSize(viewportSize.width, viewportSize.height);
+      this.xComponentWidth = size.width;
+      this.xComponentHeight = size.height;
     }
     // 更新画面位置和偏移
     this.updateDisplayPosition();
