@@ -21,6 +21,7 @@
 #include "video_decoder.h"
 #include "audio_renderer.h"
 #include "bass_energy_analyzer.h"
+#include "moonlight_bridge.h"
 #include <hilog/log.h>
 #include <cstring>
 
@@ -963,6 +964,7 @@ void BridgeClConnectionStarted(void) {
 
 void BridgeClConnectionTerminated(int errorCode) {
     OH_LOG_INFO(LOG_APP, "Connection terminated: %{public}d", errorCode);
+    MoonBridge_OnConnectionTerminated();
     if (g_connCallbacks.tsfn_connectionTerminated) {
         CallbackData* data = new CallbackData();
         data->intParams[0] = errorCode;

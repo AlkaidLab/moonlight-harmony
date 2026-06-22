@@ -46,6 +46,11 @@ napi_value MoonBridge_Init(napi_env env, napi_callback_info info);
 napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info);
 
 /**
+ * 异步开始串流连接
+ */
+napi_value MoonBridge_StartConnectionAsync(napi_env env, napi_callback_info info);
+
+/**
  * 停止连接
  *
  * 注意：必须在主线程调用。曾尝试用 napi_async_work 放到工作线程以缓解模拟器
@@ -59,6 +64,11 @@ napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info);
  * 中断连接
  */
 napi_value MoonBridge_InterruptConnection(napi_env env, napi_callback_info info);
+
+/**
+ * native 连接终止回调通知，用于释放连接启动 guard 的运行态。
+ */
+void MoonBridge_OnConnectionTerminated(void);
 
 /**
  * 从后台恢复解码器

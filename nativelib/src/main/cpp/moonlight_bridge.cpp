@@ -44,6 +44,9 @@ int LiSendClipboardData(const void* payload, int length);
 #include <unordered_map>
 #include <memory>
 #include <dlfcn.h>
+#include <cstdlib>
+#include <cerrno>
+#include <mutex>
 
 #define LOG_TAG "MoonlightBridge"
 
@@ -56,6 +59,42 @@ static STREAM_CONFIGURATION g_streamConfig;
 static SERVER_INFORMATION g_serverInfo;
 static int g_videoCapabilities = 0;
 static bool g_performanceMode = false;  // 性能模式
+static constexpr int MOONBRIDGE_ERROR_BUSY = EBUSY;
+
+enum class ConnectionState {
+    Idle,
+    Starting,
+    Started,
+    Terminated,
+    Stopping
+};
+
+static std::mutex g_connectionStateMutex;
+static ConnectionState g_connectionState = ConnectionState::Idle;
+static bool g_connectionTerminatedDuringStart = false;
+
+struct StartSlot {
+    bool acquired = false;
+    bool needsCleanup = false;
+};
+
+enum class StopAction {
+    None,
+    InterruptStart,
+    Cleanup
+};
+
+struct StartConnectionContext {
+    napi_env env = nullptr;
+    napi_async_work work = nullptr;
+    napi_deferred deferred = nullptr;
+    int result = -1;
+    int32_t videoCapabilities = 0;
+    bool ownsServerInfo = false;
+    bool ownsStartSlot = false;
+    SERVER_INFORMATION serverInfo = {};
+    STREAM_CONFIGURATION streamConfig = {};
+};
 
 // Opus 编码器管理
 static std::mutex g_opusEncoderMutex;
@@ -119,6 +158,17 @@ static napi_value GetUndefined(napi_env env) {
     napi_value undefined;
     napi_get_undefined(env, &undefined);
     return undefined;
+}
+
+static napi_value CreateResolvedInt32Promise(napi_env env, int32_t value) {
+    napi_deferred deferred;
+    napi_value promise;
+    napi_create_promise(env, &deferred, &promise);
+
+    napi_value result;
+    napi_create_int32(env, value, &result);
+    napi_resolve_deferred(env, deferred, result);
+    return promise;
 }
 
 static napi_value GetNull(napi_env env) {
@@ -225,6 +275,269 @@ static bool GetByteArrayData(napi_env env, napi_value value, void** data, size_t
     return false;
 }
 
+static void FreeServerInfo(SERVER_INFORMATION* serverInfo) {
+    if (serverInfo == nullptr) {
+        return;
+    }
+
+    if (serverInfo->address) {
+        free((void*)serverInfo->address);
+        serverInfo->address = nullptr;
+    }
+    if (serverInfo->serverInfoAppVersion) {
+        free((void*)serverInfo->serverInfoAppVersion);
+        serverInfo->serverInfoAppVersion = nullptr;
+    }
+    if (serverInfo->serverInfoGfeVersion) {
+        free((void*)serverInfo->serverInfoGfeVersion);
+        serverInfo->serverInfoGfeVersion = nullptr;
+    }
+    if (serverInfo->rtspSessionUrl) {
+        free((void*)serverInfo->rtspSessionUrl);
+        serverInfo->rtspSessionUrl = nullptr;
+    }
+}
+
+static void MoveServerInfo(SERVER_INFORMATION* dest, SERVER_INFORMATION* src) {
+    if (dest == nullptr || src == nullptr) {
+        return;
+    }
+
+    FreeServerInfo(dest);
+    *dest = *src;
+    memset(src, 0, sizeof(*src));
+}
+
+static bool PrepareStartConnection(napi_env env, napi_value* args, size_t argc, SERVER_INFORMATION* serverInfo,
+                                   STREAM_CONFIGURATION* streamConfig, int32_t* videoCapabilities,
+                                   int32_t* hdrMode) {
+    if (argc < 19 || serverInfo == nullptr || streamConfig == nullptr ||
+        videoCapabilities == nullptr || hdrMode == nullptr) {
+        return false;
+    }
+
+    char address[256] = {0};
+    char appVersion[64] = {0};
+    char gfeVersion[64] = {0};
+    char rtspSessionUrl[512] = {0};
+
+    if (!GetString(env, args[0], address, sizeof(address)) ||
+        !GetString(env, args[1], appVersion, sizeof(appVersion))) {
+        return false;
+    }
+    GetString(env, args[2], gfeVersion, sizeof(gfeVersion));
+    GetString(env, args[3], rtspSessionUrl, sizeof(rtspSessionUrl));
+
+    int32_t serverCodecModeSupport = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+    int32_t fps = 0;
+    int32_t bitrate = 0;
+    int32_t packetSize = 0;
+    int32_t streamingRemotely = 0;
+    int32_t audioConfiguration = 0;
+    int32_t supportedVideoFormats = 0;
+    int32_t clientRefreshRateX100 = 0;
+    int32_t colorSpace = 0;
+    int32_t colorRange = 0;
+    bool enableMic = false;
+    bool controlOnly = false;
+
+    if (!GetInt32(env, args[4], &serverCodecModeSupport) ||
+        !GetInt32(env, args[5], &width) ||
+        !GetInt32(env, args[6], &height) ||
+        !GetInt32(env, args[7], &fps) ||
+        !GetInt32(env, args[8], &bitrate) ||
+        !GetInt32(env, args[9], &packetSize) ||
+        !GetInt32(env, args[10], &streamingRemotely) ||
+        !GetInt32(env, args[11], &audioConfiguration) ||
+        !GetInt32(env, args[12], &supportedVideoFormats) ||
+        !GetInt32(env, args[13], &clientRefreshRateX100) ||
+        !GetInt32(env, args[16], videoCapabilities) ||
+        !GetInt32(env, args[17], &colorSpace) ||
+        !GetInt32(env, args[18], &colorRange)) {
+        return false;
+    }
+
+    if (argc > 19) {
+        GetInt32(env, args[19], hdrMode);
+    } else {
+        *hdrMode = 0;
+    }
+
+    if (argc > 20) {
+        GetBool(env, args[20], &enableMic);
+    }
+    if (argc > 21) {
+        GetBool(env, args[21], &controlOnly);
+    }
+
+    void* aesKeyData = nullptr;
+    size_t aesKeyLength = 0;
+    void* aesIvData = nullptr;
+    size_t aesIvLength = 0;
+    GetByteArrayData(env, args[14], &aesKeyData, &aesKeyLength);
+    GetByteArrayData(env, args[15], &aesIvData, &aesIvLength);
+
+    memset(serverInfo, 0, sizeof(*serverInfo));
+    memset(streamConfig, 0, sizeof(*streamConfig));
+
+    serverInfo->address = strdup(address);
+    serverInfo->serverInfoAppVersion = strdup(appVersion);
+    serverInfo->serverInfoGfeVersion = strlen(gfeVersion) > 0 ? strdup(gfeVersion) : nullptr;
+    serverInfo->rtspSessionUrl = strlen(rtspSessionUrl) > 0 ? strdup(rtspSessionUrl) : nullptr;
+    if (serverInfo->address == nullptr || serverInfo->serverInfoAppVersion == nullptr ||
+        (strlen(gfeVersion) > 0 && serverInfo->serverInfoGfeVersion == nullptr) ||
+        (strlen(rtspSessionUrl) > 0 && serverInfo->rtspSessionUrl == nullptr)) {
+        FreeServerInfo(serverInfo);
+        return false;
+    }
+    serverInfo->serverCodecModeSupport = serverCodecModeSupport;
+
+    streamConfig->width = width;
+    streamConfig->height = height;
+    streamConfig->fps = fps;
+    streamConfig->bitrate = bitrate;
+    streamConfig->packetSize = packetSize;
+    streamConfig->streamingRemotely = streamingRemotely;
+    streamConfig->audioConfiguration = audioConfiguration;
+    streamConfig->supportedVideoFormats = supportedVideoFormats;
+    streamConfig->clientRefreshRateX100 = clientRefreshRateX100;
+    streamConfig->encryptionFlags = ENCFLG_AUDIO | ENCFLG_MICROPHONE;
+    streamConfig->colorSpace = colorSpace;
+    streamConfig->colorRange = colorRange;
+    streamConfig->enableMic = enableMic;
+    streamConfig->controlOnly = controlOnly;
+
+    if (aesKeyData && aesKeyLength >= 16) {
+        memcpy(streamConfig->remoteInputAesKey, aesKeyData, 16);
+    } else {
+        OH_LOG_ERROR(LOG_APP, "  riKey: INVALID (data=%{public}p, len=%{public}zu)", aesKeyData, aesKeyLength);
+        FreeServerInfo(serverInfo);
+        return false;
+    }
+    if (aesIvData && aesIvLength >= 16) {
+        memcpy(streamConfig->remoteInputAesIv, aesIvData, 16);
+    } else {
+        OH_LOG_ERROR(LOG_APP, "  riIv: INVALID (data=%{public}p, len=%{public}zu)", aesIvData, aesIvLength);
+        FreeServerInfo(serverInfo);
+        return false;
+    }
+
+    bool enableHdr = (supportedVideoFormats & 0xAA00) != 0;
+    int hdrType = 0;
+    if (enableHdr) {
+        hdrType = *hdrMode == 2 ? 2 : 1;
+    }
+    streamConfig->hdrMode = hdrType;
+
+    OH_LOG_INFO(LOG_APP, "HDR config: enabled=%{public}d, hdrMode=%{public}d (client request=%{public}d), hdrType=%{public}d (0=SDR,1=HDR10,2=HLG), colorSpace=%{public}d, colorRange=%{public}d, videoFormats=0x%{public}x",
+                enableHdr ? 1 : 0, streamConfig->hdrMode, *hdrMode, hdrType, colorSpace, colorRange,
+                supportedVideoFormats);
+
+    return true;
+}
+
+static StartSlot TryAcquireStartSlot() {
+    std::lock_guard<std::mutex> lock(g_connectionStateMutex);
+    if (g_connectionState == ConnectionState::Idle) {
+        g_connectionState = ConnectionState::Starting;
+        g_connectionTerminatedDuringStart = false;
+        return { true, false };
+    }
+
+    if (g_connectionState == ConnectionState::Terminated) {
+        g_connectionState = ConnectionState::Stopping;
+        g_connectionTerminatedDuringStart = false;
+        return { true, true };
+    }
+
+    return { false, false };
+}
+
+static void PromoteStartSlotAfterCleanup() {
+    std::lock_guard<std::mutex> lock(g_connectionStateMutex);
+    if (g_connectionState == ConnectionState::Stopping) {
+        g_connectionState = ConnectionState::Starting;
+        g_connectionTerminatedDuringStart = false;
+    }
+}
+
+static void CompleteStartSlot(int result) {
+    std::lock_guard<std::mutex> lock(g_connectionStateMutex);
+    if (result == 0) {
+        g_connectionState = g_connectionTerminatedDuringStart
+            ? ConnectionState::Terminated
+            : ConnectionState::Started;
+    } else {
+        g_connectionState = ConnectionState::Idle;
+    }
+    g_connectionTerminatedDuringStart = false;
+}
+
+static StopAction BeginStopConnection() {
+    std::lock_guard<std::mutex> lock(g_connectionStateMutex);
+    if (g_connectionState == ConnectionState::Starting) {
+        return StopAction::InterruptStart;
+    }
+    if (g_connectionState == ConnectionState::Stopping) {
+        return StopAction::None;
+    }
+    if (g_connectionState == ConnectionState::Idle || g_connectionState == ConnectionState::Started ||
+        g_connectionState == ConnectionState::Terminated) {
+        g_connectionState = ConnectionState::Stopping;
+        return StopAction::Cleanup;
+    }
+    return StopAction::None;
+}
+
+static void MarkConnectionIdle() {
+    std::lock_guard<std::mutex> lock(g_connectionStateMutex);
+    g_connectionState = ConnectionState::Idle;
+    g_connectionTerminatedDuringStart = false;
+}
+
+void MoonBridge_OnConnectionTerminated(void) {
+    std::lock_guard<std::mutex> lock(g_connectionStateMutex);
+    if (g_connectionState == ConnectionState::Started) {
+        g_connectionState = ConnectionState::Terminated;
+    } else if (g_connectionState == ConnectionState::Starting) {
+        g_connectionTerminatedDuringStart = true;
+    }
+}
+
+static void DoStopConnectionCleanup();
+
+// Threading: LiStartConnection()/LiStopConnection() are not thread-safe, and this helper also updates
+// global stream state. Callers must acquire the native start slot before invoking this helper.
+static int StartConnectionWithPreparedInfo(SERVER_INFORMATION* serverInfo, STREAM_CONFIGURATION* streamConfig,
+                                           int32_t videoCapabilities) {
+    g_streamConfig = *streamConfig;
+    g_videoCapabilities = videoCapabilities;
+    g_videoCallbacksStruct.capabilities = videoCapabilities;
+
+    bool enableHdr = (streamConfig->supportedVideoFormats & 0xAA00) != 0;
+    VideoDecoderInstance::SetHdrConfig(enableHdr, streamConfig->hdrMode,
+                                       streamConfig->colorSpace, streamConfig->colorRange);
+
+    OH_LOG_INFO(LOG_APP, "Starting connection to %{public}s (%{public}dx%{public}d@%{public}d, bitrate=%{public}d)",
+                serverInfo->address ? serverInfo->address : "",
+                streamConfig->width, streamConfig->height, streamConfig->fps, streamConfig->bitrate);
+
+    int ret = LiStartConnection(
+        serverInfo,
+        streamConfig,
+        &g_connCallbacksStruct,
+        &g_videoCallbacksStruct,
+        &g_audioCallbacksStruct,
+        nullptr, 0,
+        nullptr, 0
+    );
+
+    OH_LOG_INFO(LOG_APP, "LiStartConnection returned: %{public}d", ret);
+    return ret;
+}
+
 // =============================================================================
 // 模块初始化
 // =============================================================================
@@ -265,178 +578,145 @@ napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info) {
     napi_value args[22];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
-    if (argc < 19) {
+    StartSlot startSlot = TryAcquireStartSlot();
+    if (!startSlot.acquired) {
+        OH_LOG_WARN(LOG_APP, "MoonBridge_StartConnection: connection already active or starting");
+        napi_value result;
+        napi_create_int32(env, MOONBRIDGE_ERROR_BUSY, &result);
+        return result;
+    }
+    if (startSlot.needsCleanup) {
+        DoStopConnectionCleanup();
+        PromoteStartSlotAfterCleanup();
+    }
+
+    int32_t videoCapabilities = 0;
+    int32_t hdrMode = 0;
+    FreeServerInfo(&g_serverInfo);
+    if (!PrepareStartConnection(env, args, argc, &g_serverInfo, &g_streamConfig,
+                                &videoCapabilities, &hdrMode)) {
+        MarkConnectionIdle();
         napi_throw_error(env, nullptr, "参数不足");
         napi_value result;
         napi_create_int32(env, -1, &result);
         return result;
     }
-    
-    // 解析参数
-    char address[256] = {0};
-    char appVersion[64] = {0};
-    char gfeVersion[64] = {0};
-    char rtspSessionUrl[512] = {0};
-    
-    GetString(env, args[0], address, sizeof(address));
-    GetString(env, args[1], appVersion, sizeof(appVersion));
-    GetString(env, args[2], gfeVersion, sizeof(gfeVersion));
-    GetString(env, args[3], rtspSessionUrl, sizeof(rtspSessionUrl));
-    
-    int32_t serverCodecModeSupport, width, height, fps;
-    int32_t bitrate, packetSize, streamingRemotely, audioConfiguration;
-    int32_t supportedVideoFormats, clientRefreshRateX100;
-    int32_t videoCapabilities, colorSpace, colorRange, hdrMode;
-    bool enableMic, controlOnly;
-    
-    GetInt32(env, args[4], &serverCodecModeSupport);
-    GetInt32(env, args[5], &width);
-    GetInt32(env, args[6], &height);
-    GetInt32(env, args[7], &fps);
-    GetInt32(env, args[8], &bitrate);
-    GetInt32(env, args[9], &packetSize);
-    GetInt32(env, args[10], &streamingRemotely);
-    GetInt32(env, args[11], &audioConfiguration);
-    GetInt32(env, args[12], &supportedVideoFormats);
-    GetInt32(env, args[13], &clientRefreshRateX100);
-    
-    // AES Key 和 IV - 支持 ArrayBuffer 和 TypedArray（如 Uint8Array）
-    void* aesKeyData = nullptr;
-    size_t aesKeyLength = 0;
-    void* aesIvData = nullptr;
-    size_t aesIvLength = 0;
-    
-    // 获取 AES Key - 先尝试 ArrayBuffer，失败则尝试 TypedArray
-    napi_valuetype keyType;
-    napi_typeof(env, args[14], &keyType);
-    bool isKeyTypedArray = false;
-    napi_is_typedarray(env, args[14], &isKeyTypedArray);
-    
-    if (isKeyTypedArray) {
-        napi_typedarray_type type;
-        size_t byteOffset;
-        napi_value arrayBuffer;
-        napi_get_typedarray_info(env, args[14], &type, &aesKeyLength, &aesKeyData, &arrayBuffer, &byteOffset);
-    } else {
-        napi_get_arraybuffer_info(env, args[14], &aesKeyData, &aesKeyLength);
-    }
-    
-    // 获取 AES IV - 先尝试 ArrayBuffer，失败则尝试 TypedArray
-    napi_valuetype ivType;
-    napi_typeof(env, args[15], &ivType);
-    bool isIvTypedArray = false;
-    napi_is_typedarray(env, args[15], &isIvTypedArray);
-    
-    if (isIvTypedArray) {
-        napi_typedarray_type type;
-        size_t byteOffset;
-        napi_value arrayBuffer;
-        napi_get_typedarray_info(env, args[15], &type, &aesIvLength, &aesIvData, &arrayBuffer, &byteOffset);
-    } else {
-        napi_get_arraybuffer_info(env, args[15], &aesIvData, &aesIvLength);
-    }
-    
-    GetInt32(env, args[16], &videoCapabilities);
-    GetInt32(env, args[17], &colorSpace);
-    GetInt32(env, args[18], &colorRange);
-    
-    // hdrMode: 0=SDR, 1=HDR10/PQ, 2=HLG
-    if (argc > 19) GetInt32(env, args[19], &hdrMode);
-    else hdrMode = 0;  // 默认 SDR
-    
-    if (argc > 20) GetBool(env, args[20], &enableMic);
-    else enableMic = false;
-    
-    if (argc > 21) GetBool(env, args[21], &controlOnly);
-    else controlOnly = false;
-    
-    // 设置服务器信息
-    g_serverInfo.address = strdup(address);
-    g_serverInfo.serverInfoAppVersion = strdup(appVersion);
-    g_serverInfo.serverInfoGfeVersion = strlen(gfeVersion) > 0 ? strdup(gfeVersion) : nullptr;
-    g_serverInfo.rtspSessionUrl = strlen(rtspSessionUrl) > 0 ? strdup(rtspSessionUrl) : nullptr;
-    g_serverInfo.serverCodecModeSupport = serverCodecModeSupport;
-    
-    // 设置串流配置
-    memset(&g_streamConfig, 0, sizeof(g_streamConfig));
-    g_streamConfig.width = width;
-    g_streamConfig.height = height;
-    g_streamConfig.fps = fps;
-    g_streamConfig.bitrate = bitrate;
-    g_streamConfig.packetSize = packetSize;
-    g_streamConfig.streamingRemotely = streamingRemotely;
-    g_streamConfig.audioConfiguration = audioConfiguration;
-    g_streamConfig.supportedVideoFormats = supportedVideoFormats;
-    g_streamConfig.clientRefreshRateX100 = clientRefreshRateX100;
-    g_streamConfig.encryptionFlags = ENCFLG_AUDIO | ENCFLG_MICROPHONE;
-    g_streamConfig.colorSpace = colorSpace;
-    g_streamConfig.colorRange = colorRange;
-    g_streamConfig.enableMic = enableMic;
-    g_streamConfig.controlOnly = controlOnly;
-    
-    // 复制 AES 密钥和 IV
-    if (aesKeyData && aesKeyLength >= 16) {
-        memcpy(g_streamConfig.remoteInputAesKey, aesKeyData, 16);
-    } else {
-        OH_LOG_ERROR(LOG_APP, "  riKey: INVALID (data=%{public}p, len=%{public}zu)", aesKeyData, aesKeyLength);
-    }
-    if (aesIvData && aesIvLength >= 16) {
-        memcpy(g_streamConfig.remoteInputAesIv, aesIvData, 16);
-    } else {
-        OH_LOG_ERROR(LOG_APP, "  riIv: INVALID (data=%{public}p, len=%{public}zu)", aesIvData, aesIvLength);
-    }
-    
-    g_videoCapabilities = videoCapabilities;
-    g_videoCallbacksStruct.capabilities = videoCapabilities;
-    
-    // 判断是否启用 HDR（10位色深视频格式表示 HDR）
-    // VIDEO_FORMAT_MASK_10BIT = 0xAA00
-    // 0x0200 = HEVC MAIN10 (HDR), 0x2000 = AV1 MAIN10 (HDR)
-    bool enableHdr = (supportedVideoFormats & 0xAA00) != 0;
-    
-    // 确定 HDR 类型
-    // hdrMode 来自客户端设置: 0=SDR, 1=HDR10 (PQ), 2=HLG
-    // 如果启用 HDR 但没有指定 hdrMode，默认使用 HDR10 (PQ)
-    // 如果 hdrMode 是 HLG (2) 但 HDR 未启用，回退到 SDR
-    int hdrType = 0;  // SDR
-    if (enableHdr) {
-        if (hdrMode == 2) {
-            // HLG 模式 - 需要 Sunshine 支持
-            hdrType = 2;
-        } else {
-            // HDR10/PQ 模式 (默认)
-            hdrType = 1;
-        }
-    }
-    
-    // 设置 StreamConfig 的 hdrMode，这会在 RTSP ANNOUNCE 中发送给 Sunshine
-    g_streamConfig.hdrMode = hdrType;
-    
-    OH_LOG_INFO(LOG_APP, "HDR config: enabled=%{public}d, hdrMode=%{public}d (client request=%{public}d), hdrType=%{public}d (0=SDR,1=HDR10,2=HLG), colorSpace=%{public}d, colorRange=%{public}d, videoFormats=0x%{public}x",
-                enableHdr ? 1 : 0, g_streamConfig.hdrMode, hdrMode, hdrType, colorSpace, colorRange, supportedVideoFormats);
-    
-    // 配置视频解码器的 HDR 设置
-    VideoDecoderInstance::SetHdrConfig(enableHdr, hdrType, colorSpace, colorRange);
-    
-    OH_LOG_INFO(LOG_APP, "Starting connection to %{public}s (%{public}dx%{public}d@%{public}d, bitrate=%{public}d)", 
-                address, width, height, fps, bitrate);
-    
-    // 开始连接
-    int ret = LiStartConnection(
-        &g_serverInfo,
-        &g_streamConfig,
-        &g_connCallbacksStruct,
-        &g_videoCallbacksStruct,
-        &g_audioCallbacksStruct,
-        nullptr, 0,  // 平台信息
-        nullptr, 0   // HDR 信息
-    );
-    
-    OH_LOG_INFO(LOG_APP, "LiStartConnection returned: %{public}d", ret);
+
+    int ret = StartConnectionWithPreparedInfo(&g_serverInfo, &g_streamConfig, videoCapabilities);
+    CompleteStartSlot(ret);
     
     napi_value result;
     napi_create_int32(env, ret, &result);
     return result;
+}
+
+static void ExecuteStartConnectionAsync(napi_env env, void* data) {
+    StartConnectionContext* context = static_cast<StartConnectionContext*>(data);
+    context->result = StartConnectionWithPreparedInfo(&context->serverInfo, &context->streamConfig,
+                                                      context->videoCapabilities);
+    if (context->result == 0 && context->ownsServerInfo) {
+        MoveServerInfo(&g_serverInfo, &context->serverInfo);
+        context->ownsServerInfo = false;
+    }
+    if (context->ownsStartSlot) {
+        CompleteStartSlot(context->result);
+        context->ownsStartSlot = false;
+    }
+}
+
+static void CompleteStartConnectionAsync(napi_env env, napi_status status, void* data) {
+    StartConnectionContext* context = static_cast<StartConnectionContext*>(data);
+    if (context->ownsStartSlot) {
+        CompleteStartSlot(status == napi_ok ? context->result : -1);
+    }
+
+    napi_value result;
+    napi_create_int32(env, status == napi_ok ? context->result : -1, &result);
+    napi_resolve_deferred(env, context->deferred, result);
+
+    if (context->work != nullptr) {
+        napi_delete_async_work(env, context->work);
+    }
+    if (context->ownsServerInfo) {
+        FreeServerInfo(&context->serverInfo);
+    }
+    delete context;
+}
+
+napi_value MoonBridge_StartConnectionAsync(napi_env env, napi_callback_info info) {
+    OH_LOG_INFO(LOG_APP, "MoonBridge_StartConnectionAsync");
+
+    size_t argc = 22;
+    napi_value args[22];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    StartSlot startSlot = TryAcquireStartSlot();
+    if (!startSlot.acquired) {
+        OH_LOG_WARN(LOG_APP, "MoonBridge_StartConnectionAsync: connection already active or starting");
+        return CreateResolvedInt32Promise(env, MOONBRIDGE_ERROR_BUSY);
+    }
+    if (startSlot.needsCleanup) {
+        DoStopConnectionCleanup();
+        PromoteStartSlotAfterCleanup();
+    }
+
+    StartConnectionContext* context = new StartConnectionContext();
+    context->env = env;
+    context->ownsServerInfo = true;
+    context->ownsStartSlot = true;
+
+    int32_t videoCapabilities = 0;
+    int32_t hdrMode = 0;
+    if (!PrepareStartConnection(env, args, argc, &context->serverInfo, &context->streamConfig,
+                                &videoCapabilities, &hdrMode)) {
+        MarkConnectionIdle();
+        delete context;
+        napi_throw_error(env, nullptr, "参数不足");
+        napi_value result;
+        napi_create_int32(env, -1, &result);
+        return result;
+    }
+
+    context->videoCapabilities = videoCapabilities;
+
+    napi_value promise;
+    napi_create_promise(env, &context->deferred, &promise);
+
+    napi_value resourceName;
+    napi_create_string_utf8(env, "MoonBridgeStartConnectionAsync", NAPI_AUTO_LENGTH, &resourceName);
+
+    napi_status status = napi_create_async_work(
+        env,
+        nullptr,
+        resourceName,
+        ExecuteStartConnectionAsync,
+        CompleteStartConnectionAsync,
+        context,
+        &context->work
+    );
+    if (status != napi_ok) {
+        napi_value errorResult;
+        napi_create_int32(env, -1, &errorResult);
+        napi_resolve_deferred(env, context->deferred, errorResult);
+        MarkConnectionIdle();
+        FreeServerInfo(&context->serverInfo);
+        delete context;
+        return promise;
+    }
+
+    status = napi_queue_async_work(env, context->work);
+    if (status != napi_ok) {
+        napi_value errorResult;
+        napi_create_int32(env, -1, &errorResult);
+        napi_resolve_deferred(env, context->deferred, errorResult);
+        napi_delete_async_work(env, context->work);
+        MarkConnectionIdle();
+        FreeServerInfo(&context->serverInfo);
+        delete context;
+        return promise;
+    }
+
+    return promise;
 }
 
 // 执行停止连接的核心清理逻辑
@@ -447,27 +727,23 @@ static void DoStopConnectionCleanup() {
     VideoDecoderInstance::ResetHdrConfig();
 
     // 清理服务器信息
-    if (g_serverInfo.address) {
-        free((void*)g_serverInfo.address);
-        g_serverInfo.address = nullptr;
-    }
-    if (g_serverInfo.serverInfoAppVersion) {
-        free((void*)g_serverInfo.serverInfoAppVersion);
-        g_serverInfo.serverInfoAppVersion = nullptr;
-    }
-    if (g_serverInfo.serverInfoGfeVersion) {
-        free((void*)g_serverInfo.serverInfoGfeVersion);
-        g_serverInfo.serverInfoGfeVersion = nullptr;
-    }
-    if (g_serverInfo.rtspSessionUrl) {
-        free((void*)g_serverInfo.rtspSessionUrl);
-        g_serverInfo.rtspSessionUrl = nullptr;
-    }
+    FreeServerInfo(&g_serverInfo);
 }
 
 napi_value MoonBridge_StopConnection(napi_env env, napi_callback_info info) {
     OH_LOG_INFO(LOG_APP, "MoonBridge_StopConnection");
+    StopAction action = BeginStopConnection();
+    if (action == StopAction::InterruptStart) {
+        LiInterruptConnection();
+        OH_LOG_INFO(LOG_APP, "Stop requested while connection is starting; interrupted pending start");
+        return GetUndefined(env);
+    }
+    if (action == StopAction::None) {
+        return GetUndefined(env);
+    }
+
     DoStopConnectionCleanup();
+    MarkConnectionIdle();
     return GetUndefined(env);
 }
 
