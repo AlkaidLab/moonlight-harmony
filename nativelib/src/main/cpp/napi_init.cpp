@@ -150,6 +150,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         
         // XComponent 帧率设置（通过 FrameNode → ArkUI_NodeHandle，无需 libraryname）
         { "setXComponentFrameRate", nullptr, MoonBridge_SetXComponentFrameRate, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "setDisplayFramePacerEnabled", nullptr, MoonBridge_SetDisplayFramePacerEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "refreshFrameRateHints", nullptr, MoonBridge_RefreshFrameRateHints, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
     
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);

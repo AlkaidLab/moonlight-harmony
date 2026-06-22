@@ -336,6 +336,17 @@ napi_value MoonBridge_SetBassVibrationConfig(napi_env env, napi_callback_info in
  */
 napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info info);
 
+/**
+ * 启动/停止显示层高刷保持（DisplaySoloist）
+ * @param enabled boolean 是否启用
+ */
+napi_value MoonBridge_SetDisplayFramePacerEnabled(napi_env env, napi_callback_info info);
+
+/**
+ * 重新应用 NativeVSync / NativeWindow / DisplaySoloist 帧率提示
+ */
+napi_value MoonBridge_RefreshFrameRateHints(napi_env env, napi_callback_info info);
+
 // =============================================================================
 // 常量定义
 // =============================================================================

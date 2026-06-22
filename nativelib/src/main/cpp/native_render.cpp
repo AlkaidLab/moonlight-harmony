@@ -19,7 +19,8 @@
  * - 高帧率优化：
  *   1. NativeVSync SetExpectedFrameRateRange（VSync 回调频率，API 20+）
  *   2. NativeWindow SetFrameRateRange（Surface buffer queue 帧率偏好，API 12+）
- *   3. XComponent SetExpectedFrameRateRange（ArkUI 框架层，由 MoonBridge 独立设置）
+ *   3. DisplaySoloist SetExpectedFrameRateRange（显示层持续 vsync 请求，API 12+）
+ *   4. XComponent SetExpectedFrameRateRange（ArkUI 框架层，由 MoonBridge 独立设置）
  */
 
 #include "native_render.h"
@@ -93,6 +94,85 @@ static bool CheckAndLoadApi20() {
 }
 
 // =============================================================================
+// DisplaySoloist 动态加载（API 12+，避免低版本硬依赖）
+// =============================================================================
+
+struct DisplaySoloistExpectedRateRange {
+    int32_t min;
+    int32_t max;
+    int32_t expected;
+};
+
+typedef void (*PFN_DisplaySoloistFrameCallback)(long long timestamp, long long targetTimestamp, void* data);
+typedef void* (*PFN_DisplaySoloistCreate)(bool useExclusiveThread);
+typedef int32_t (*PFN_DisplaySoloistDestroy)(void* displaySoloist);
+typedef int32_t (*PFN_DisplaySoloistStart)(void* displaySoloist, PFN_DisplaySoloistFrameCallback callback, void* data);
+typedef int32_t (*PFN_DisplaySoloistStop)(void* displaySoloist);
+typedef int32_t (*PFN_DisplaySoloistSetExpectedFrameRateRange)(
+    void* displaySoloist, DisplaySoloistExpectedRateRange* range);
+
+static PFN_DisplaySoloistCreate g_pfnDisplaySoloistCreate = nullptr;
+static PFN_DisplaySoloistDestroy g_pfnDisplaySoloistDestroy = nullptr;
+static PFN_DisplaySoloistStart g_pfnDisplaySoloistStart = nullptr;
+static PFN_DisplaySoloistStop g_pfnDisplaySoloistStop = nullptr;
+static PFN_DisplaySoloistSetExpectedFrameRateRange g_pfnDisplaySoloistSetRate = nullptr;
+static bool g_displaySoloistChecked = false;
+
+static void DisplaySoloistFrameCallback(long long, long long, void*) {
+    // 空回调即可让 DisplaySoloist 按期望帧率持续请求 vsync。
+}
+
+static bool CheckAndLoadDisplaySoloistApi() {
+    if (g_displaySoloistChecked) {
+        return g_pfnDisplaySoloistCreate && g_pfnDisplaySoloistDestroy && g_pfnDisplaySoloistStart &&
+               g_pfnDisplaySoloistStop && g_pfnDisplaySoloistSetRate;
+    }
+    g_displaySoloistChecked = true;
+
+    g_pfnDisplaySoloistCreate = (PFN_DisplaySoloistCreate)dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_Create");
+    g_pfnDisplaySoloistDestroy = (PFN_DisplaySoloistDestroy)dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_Destroy");
+    g_pfnDisplaySoloistStart = (PFN_DisplaySoloistStart)dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_Start");
+    g_pfnDisplaySoloistStop = (PFN_DisplaySoloistStop)dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_Stop");
+    g_pfnDisplaySoloistSetRate = (PFN_DisplaySoloistSetExpectedFrameRateRange)
+        dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_SetExpectedFrameRateRange");
+
+    if (!g_pfnDisplaySoloistCreate || !g_pfnDisplaySoloistDestroy || !g_pfnDisplaySoloistStart ||
+        !g_pfnDisplaySoloistStop || !g_pfnDisplaySoloistSetRate) {
+        void* handle = dlopen("libnative_display_soloist.so", RTLD_NOW);
+        if (!handle) {
+            handle = dlopen("libnative_display_soloist.z.so", RTLD_NOW);
+        }
+        if (handle) {
+            if (!g_pfnDisplaySoloistCreate) {
+                g_pfnDisplaySoloistCreate = (PFN_DisplaySoloistCreate)dlsym(handle, "OH_DisplaySoloist_Create");
+            }
+            if (!g_pfnDisplaySoloistDestroy) {
+                g_pfnDisplaySoloistDestroy = (PFN_DisplaySoloistDestroy)dlsym(handle, "OH_DisplaySoloist_Destroy");
+            }
+            if (!g_pfnDisplaySoloistStart) {
+                g_pfnDisplaySoloistStart = (PFN_DisplaySoloistStart)dlsym(handle, "OH_DisplaySoloist_Start");
+            }
+            if (!g_pfnDisplaySoloistStop) {
+                g_pfnDisplaySoloistStop = (PFN_DisplaySoloistStop)dlsym(handle, "OH_DisplaySoloist_Stop");
+            }
+            if (!g_pfnDisplaySoloistSetRate) {
+                g_pfnDisplaySoloistSetRate = (PFN_DisplaySoloistSetExpectedFrameRateRange)
+                    dlsym(handle, "OH_DisplaySoloist_SetExpectedFrameRateRange");
+            }
+        }
+    }
+
+    bool available = g_pfnDisplaySoloistCreate && g_pfnDisplaySoloistDestroy && g_pfnDisplaySoloistStart &&
+                     g_pfnDisplaySoloistStop && g_pfnDisplaySoloistSetRate;
+    if (available) {
+        OH_LOG_INFO(LOG_APP, "DisplaySoloist frame pacing API available");
+    } else {
+        OH_LOG_WARN(LOG_APP, "DisplaySoloist frame pacing API not available");
+    }
+    return available;
+}
+
+// =============================================================================
 // 静态成员初始化
 // =============================================================================
 
@@ -126,6 +206,7 @@ NativeRender::NativeRender() {
 
 NativeRender::~NativeRender() {
     OH_LOG_INFO(LOG_APP, "NativeRender destroyed");
+    ReleaseDisplaySoloist();
     ReleaseNativeVSync();
     window_ = nullptr;
     surfaceReady_ = false;
@@ -158,11 +239,73 @@ void NativeRender::ReleaseNativeVSync() {
     }
 }
 
+void NativeRender::InitDisplaySoloist() {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    if (displaySoloist_ != nullptr || configuredFps_ <= 60 || !displayFramePacerEnabled_.load()) {
+        return;
+    }
+
+    if (!CheckAndLoadDisplaySoloistApi()) {
+        return;
+    }
+
+    displaySoloist_ = g_pfnDisplaySoloistCreate(true);
+    if (!displaySoloist_) {
+        OH_LOG_WARN(LOG_APP, "DisplaySoloist create failed");
+        return;
+    }
+
+    ApplyDisplaySoloistFrameRate();
+    int32_t ret = g_pfnDisplaySoloistStart(displaySoloist_, DisplaySoloistFrameCallback, this);
+    if (ret == 0) {
+        displaySoloistStarted_ = true;
+        OH_LOG_INFO(LOG_APP, "DisplaySoloist started for %{public}d fps keepalive", configuredFps_);
+    } else {
+        OH_LOG_WARN(LOG_APP, "DisplaySoloist start failed: ret=%{public}d", ret);
+        g_pfnDisplaySoloistDestroy(displaySoloist_);
+        displaySoloist_ = nullptr;
+        displaySoloistStarted_ = false;
+    }
+}
+
+void NativeRender::ReleaseDisplaySoloist() {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    if (displaySoloist_ == nullptr) {
+        return;
+    }
+
+    if (displaySoloistStarted_ && g_pfnDisplaySoloistStop) {
+        g_pfnDisplaySoloistStop(displaySoloist_);
+    }
+    if (g_pfnDisplaySoloistDestroy) {
+        g_pfnDisplaySoloistDestroy(displaySoloist_);
+    }
+    displaySoloist_ = nullptr;
+    displaySoloistStarted_ = false;
+    OH_LOG_INFO(LOG_APP, "DisplaySoloist stopped");
+}
+
+void NativeRender::SetDisplayFramePacerEnabled(bool enable) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    displayFramePacerEnabled_.store(enable);
+    OH_LOG_INFO(LOG_APP, "Display frame pacer %{public}s for configured fps=%{public}d",
+                enable ? "enabled" : "disabled", configuredFps_);
+
+    if (enable && configuredFps_ > 60) {
+        InitDisplaySoloist();
+        RefreshFrameRateHints(true);
+    } else {
+        ReleaseDisplaySoloist();
+        ResetFrameRateHintsToDefault();
+    }
+}
+
 // =============================================================================
 // NativeWindow 管理
 // =============================================================================
 
 void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint64_t height) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
     window_ = window;
     surfaceWidth_ = width;
     surfaceHeight_ = height;
@@ -177,7 +320,7 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
         // 如果帧率已配置，立即应用帧率范围
         // 这处理 SetConfiguredFps 在 SetNativeWindow 之前调用的情况
         if (configuredFps_ > 0 && nativeVSync_ != nullptr) {
-            ApplyFrameRateRange();
+            RefreshFrameRateHints(true);
         }
         
         surfaceReady_ = true;
@@ -185,12 +328,15 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
                     static_cast<void*>(window), width, height);
     } else {
         surfaceReady_ = false;
+        ReleaseDisplaySoloist();
         ReleaseNativeVSync();
         OH_LOG_INFO(LOG_APP, "NativeWindow cleared");
     }
 }
 
 void NativeRender::SetConfiguredFps(int fps) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    int oldFps = configuredFps_;
     configuredFps_ = fps;
     OH_LOG_INFO(LOG_APP, "Configured FPS set to: %{public}d", fps);
     
@@ -202,6 +348,16 @@ void NativeRender::SetConfiguredFps(int fps) {
     
     // 应用帧率范围（NativeWindow/Surface 层）
     ApplyNativeWindowFrameRate();
+
+    if (displayFramePacerEnabled_.load() && configuredFps_ > 60) {
+        ReleaseDisplaySoloist();
+        InitDisplaySoloist();
+    } else if (configuredFps_ <= 60) {
+        ReleaseDisplaySoloist();
+        if (oldFps > 60) {
+            ResetFrameRateHintsToDefault();
+        }
+    }
 }
 
 void NativeRender::SetVsyncEnabled(bool enable) {
@@ -214,6 +370,7 @@ void NativeRender::SetVsyncEnabled(bool enable) {
 }
 
 void NativeRender::ConfigureNativeWindow() {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
     if (window_ == nullptr) {
         return;
     }
@@ -226,7 +383,7 @@ void NativeRender::ConfigureNativeWindow() {
     
     // 如果帧率已配置，立即在 NativeWindow 层设置帧率偏好
     if (configuredFps_ > 60) {
-        ApplyNativeWindowFrameRate();
+        RefreshFrameRateHints(true);
     }
 }
 
@@ -271,7 +428,12 @@ static bool CheckAndLoadNWFrameRateApi() {
 }
 
 void NativeRender::ApplyNativeWindowFrameRate() {
-    if (window_ == nullptr || configuredFps_ <= 60) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    ApplyNativeWindowFrameRateValue(configuredFps_, true);
+}
+
+void NativeRender::ApplyNativeWindowFrameRateValue(int fps, bool exact) {
+    if (window_ == nullptr || fps <= 0) {
         return;
     }
     
@@ -279,33 +441,95 @@ void NativeRender::ApplyNativeWindowFrameRate() {
         return;
     }
     
-    // strategy = 0 (DEFAULT): 让系统根据能力选择最佳刷新率
-    int32_t ret = g_pfnNWSetFrameRateRange(window_, configuredFps_, configuredFps_, configuredFps_, 0);
+    // strategy = 1 (EXACT): 高帧率串流时明确请求固定刷新率，避免智能帧率回落到 60Hz。
+    constexpr int32_t NATIVE_WINDOW_FRAME_RATE_STRATEGY_EXACT = 1;
+    constexpr int32_t NATIVE_WINDOW_FRAME_RATE_STRATEGY_DEFAULT = 0;
+    int32_t strategy = exact ? NATIVE_WINDOW_FRAME_RATE_STRATEGY_EXACT : NATIVE_WINDOW_FRAME_RATE_STRATEGY_DEFAULT;
+    int32_t ret = g_pfnNWSetFrameRateRange(
+        window_, fps, fps, fps, strategy);
     if (ret == 0) {
-        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d fps (Surface level)", configuredFps_);
+        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d/%{public}d/%{public}d fps (%{public}s)",
+                    fps, fps, fps, exact ? "EXACT" : "DEFAULT");
     } else {
         OH_LOG_WARN(LOG_APP, "NativeWindow SetFrameRateRange failed: ret=%{public}d, fps=%{public}d", 
-                    ret, configuredFps_);
+                    ret, fps);
+    }
+}
+
+void NativeRender::ApplyDisplaySoloistFrameRate() {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    ApplyDisplaySoloistFrameRateValue(configuredFps_);
+}
+
+void NativeRender::ApplyDisplaySoloistFrameRateValue(int fps) {
+    if (displaySoloist_ == nullptr || fps <= 60 || !g_pfnDisplaySoloistSetRate) {
+        return;
+    }
+
+    DisplaySoloistExpectedRateRange range = { fps, fps, fps };
+    int32_t ret = g_pfnDisplaySoloistSetRate(displaySoloist_, &range);
+    if (ret == 0) {
+        OH_LOG_INFO(LOG_APP, "DisplaySoloist FrameRateRange set to %{public}d/%{public}d/%{public}d fps",
+                    fps, fps, fps);
+    } else {
+        OH_LOG_WARN(LOG_APP, "DisplaySoloist SetExpectedFrameRateRange failed: ret=%{public}d, fps=%{public}d",
+                    ret, fps);
     }
 }
 
 void NativeRender::ApplyFrameRateRange() {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    ApplyFrameRateRangeValue(configuredFps_);
+}
+
+void NativeRender::ApplyFrameRateRangeValue(int fps) {
     // NativeVSync SetExpectedFrameRateRange (API 20+)
     // 设置 VSync 回调的期望帧率，影响 VSync 信号频率
     // 注意：XComponent 帧率提示由 MoonBridge_SetXComponentFrameRate 通过 ArkUI_NodeHandle 独立设置
     if (nativeVSync_ != nullptr && CheckAndLoadApi20()) {
         OH_NativeVSync_ExpectedRateRange range;
-        range.min = configuredFps_;
-        range.max = configuredFps_;
-        range.expected = configuredFps_;
+        range.min = fps;
+        range.max = fps;
+        range.expected = fps;
         
         int32_t ret = g_pfnSetExpectedFrameRateRange(nativeVSync_, &range);
         if (ret == 0) {
             OH_LOG_INFO(LOG_APP, "NativeVSync FrameRateRange set to fixed %{public}d fps",
-                        configuredFps_);
+                        fps);
         } else {
             OH_LOG_WARN(LOG_APP, "Failed to set NativeVSync FrameRateRange to %{public}d: ret=%{public}d", 
-                        configuredFps_, ret);
+                        fps, ret);
+        }
+    }
+}
+
+void NativeRender::ResetFrameRateHintsToDefault() {
+    OH_LOG_INFO(LOG_APP, "Resetting frame rate hints to default 60 fps");
+    ApplyFrameRateRangeValue(60);
+    ApplyNativeWindowFrameRateValue(60, false);
+}
+
+void NativeRender::RefreshFrameRateHints(bool force) {
+    std::lock_guard<std::recursive_mutex> lock(frameRateMutex_);
+    if (configuredFps_ <= 60) {
+        return;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (!force && (now - lastFrameRateHintTime_) < std::chrono::seconds(2)) {
+        return;
+    }
+    lastFrameRateHintTime_ = now;
+
+    OH_LOG_INFO(LOG_APP, "Refreshing frame rate hints: configured fps=%{public}d", configuredFps_);
+    ApplyFrameRateRange();
+    ApplyNativeWindowFrameRate();
+
+    if (displayFramePacerEnabled_.load()) {
+        if (displaySoloist_ == nullptr) {
+            InitDisplaySoloist();
+        } else {
+            ApplyDisplaySoloistFrameRate();
         }
     }
 }
@@ -355,6 +579,7 @@ int64_t NativeRender::CalculatePresentTime(int64_t pts) const {
 
 void NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts, int64_t enqueueTimeMs) {
     int32_t renderResult;
+    RefreshFrameRateHints(false);
     
     if (vsyncEnabled_.load()) {
         // VSync 模式：使用 RenderOutputBufferAtTime 精确控制呈现时间

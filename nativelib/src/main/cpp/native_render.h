@@ -19,7 +19,8 @@
  * - 高帧率优化：
  *   1. NativeVSync SetExpectedFrameRateRange（VSync 回调频率，API 20+）
  *   2. NativeWindow SetFrameRateRange（Surface buffer queue 帧率偏好，API 12+）
- *   3. XComponent SetExpectedFrameRateRange（ArkUI 框架层，由 MoonBridge 独立设置）
+ *   3. DisplaySoloist SetExpectedFrameRateRange（显示层持续 vsync 请求，API 12+）
+ *   4. XComponent SetExpectedFrameRateRange（ArkUI 框架层，由 MoonBridge 独立设置）
  */
 
 #ifndef NATIVE_RENDER_H
@@ -71,6 +72,16 @@ public:
      * 获取配置的帧率
      */
     int GetConfiguredFps() const { return configuredFps_; }
+
+    /**
+     * 启动/停止显示高刷保持（DisplaySoloist）
+     */
+    void SetDisplayFramePacerEnabled(bool enable);
+
+    /**
+     * 重新应用各 native 层帧率提示（用于前后台/Surface 恢复/智能帧率保活）
+     */
+    void RefreshFrameRateHints(bool force = false);
     
     /**
      * 启用/禁用 VSync 渲染模式
@@ -115,9 +126,11 @@ private:
     
     // 应用帧率范围（通过 NativeVSync，API 20+）
     void ApplyFrameRateRange();
+    void ApplyFrameRateRangeValue(int fps);
     
     // 应用 NativeWindow 帧率（Surface buffer queue 级别，API 12+）
     void ApplyNativeWindowFrameRate();
+    void ApplyNativeWindowFrameRateValue(int fps, bool exact);
     
     // 初始化 NativeVSync
     void InitNativeVSync();
@@ -125,12 +138,24 @@ private:
     // 释放 NativeVSync
     void ReleaseNativeVSync();
 
+    // 初始化/释放 DisplaySoloist
+    void InitDisplaySoloist();
+    void ReleaseDisplaySoloist();
+
+    // 应用 DisplaySoloist 帧率（显示层持续 vsync 请求，API 12+）
+    void ApplyDisplaySoloistFrameRate();
+    void ApplyDisplaySoloistFrameRateValue(int fps);
+
+    // 将 NativeVSync / NativeWindow 帧率提示恢复到 60Hz 默认值
+    void ResetFrameRateHintsToDefault();
+
 private:
     // 单例
     static NativeRender* instance_;
     static std::mutex instanceMutex_;
     
     // Surface 相关
+    std::recursive_mutex frameRateMutex_;
     OHNativeWindow* window_ = nullptr;
     uint64_t surfaceWidth_ = 0;
     uint64_t surfaceHeight_ = 0;
@@ -138,6 +163,7 @@ private:
     
     // 帧率配置
     int configuredFps_ = 60;
+    std::atomic<bool> displayFramePacerEnabled_{false};
     
     // VSync 模式
     std::atomic<bool> vsyncEnabled_{false};
@@ -152,9 +178,14 @@ private:
     
     // NativeVSync（用于设置期望帧率范围，API 20+）
     OH_NativeVSync* nativeVSync_ = nullptr;
+
+    // DisplaySoloist（用于智能帧率下持续请求高刷新率，API 12+，动态加载）
+    void* displaySoloist_ = nullptr;
+    bool displaySoloistStarted_ = false;
     
     // 上一帧渲染时间（用于帧率控制）
     std::chrono::steady_clock::time_point lastFrameTime_;
+    std::chrono::steady_clock::time_point lastFrameRateHintTime_;
 };
 
 #endif // NATIVE_RENDER_H

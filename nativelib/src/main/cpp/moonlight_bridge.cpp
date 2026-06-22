@@ -1875,12 +1875,20 @@ typedef int32_t (*PFN_GetNodeHandleFromNapiValue)(napi_env, napi_value, void** /
 typedef void* (*PFN_GetNativeXComponent)(void* /* ArkUI_NodeHandle */);
 typedef int32_t (*PFN_XCSetFrameRateOld)(void* /* OH_NativeXComponent* */, XCFrameRateRange* /* range* */);
 typedef int32_t (*PFN_XCSetFrameRateNew)(void* /* ArkUI_NodeHandle */, XCFrameRateRange /* range */);
+typedef int32_t (*PFN_XCRegisterOnFrameCallback)(
+    void* /* OH_NativeXComponent* */,
+    void (*callback)(void* /* OH_NativeXComponent* */, uint64_t /* timestamp */, uint64_t /* targetTimestamp */));
 
 static PFN_GetNodeHandleFromNapiValue g_pfnGetNodeHandle = nullptr;
 static PFN_GetNativeXComponent g_pfnGetNativeXC = nullptr;
 static PFN_XCSetFrameRateOld g_pfnXCSetFrameRateOld = nullptr;
 static PFN_XCSetFrameRateNew g_pfnXCSetFrameRateNew = nullptr;
+static PFN_XCRegisterOnFrameCallback g_pfnXCRegisterOnFrame = nullptr;
 static bool g_xcFrameRateChecked = false;
+
+static void XComponentOnFrameCallback(void*, uint64_t, uint64_t) {
+    // 空回调用于保持 XComponent/ArkUI 层有持续帧节奏提示。
+}
 
 static void CheckAndLoadXCFrameRateApis() {
     if (g_xcFrameRateChecked) return;
@@ -1902,7 +1910,7 @@ static void CheckAndLoadXCFrameRateApis() {
         return;
     }
     
-    // 方式1 (API 20): OH_ArkUI_XComponent_SetExpectedFrameRateRange — 直接通过 NodeHandle
+    // 方式1 (API 20): OH_ArkUI_XComponent_SetExpectedFrameRateRange - 直接通过 NodeHandle
     g_pfnXCSetFrameRateNew = (PFN_XCSetFrameRateNew)dlsym(RTLD_DEFAULT, 
         "OH_ArkUI_XComponent_SetExpectedFrameRateRange");
     if (!g_pfnXCSetFrameRateNew) {
@@ -1912,18 +1920,15 @@ static void CheckAndLoadXCFrameRateApis() {
                 "OH_ArkUI_XComponent_SetExpectedFrameRateRange");
         }
     }
-    if (g_pfnXCSetFrameRateNew) {
-        OH_LOG_INFO(LOG_APP, "XCFrameRate: API 20 OH_ArkUI_XComponent_SetExpectedFrameRateRange available");
-        return;  // 优先方式，不需要继续查找
-    }
-    
     // 方式2 (API 12+11): OH_NativeXComponent_GetNativeXComponent + SetExpectedFrameRateRange
     g_pfnGetNativeXC = (PFN_GetNativeXComponent)dlsym(RTLD_DEFAULT, 
         "OH_NativeXComponent_GetNativeXComponent");
     g_pfnXCSetFrameRateOld = (PFN_XCSetFrameRateOld)dlsym(RTLD_DEFAULT, 
         "OH_NativeXComponent_SetExpectedFrameRateRange");
+    g_pfnXCRegisterOnFrame = (PFN_XCRegisterOnFrameCallback)dlsym(RTLD_DEFAULT,
+        "OH_NativeXComponent_RegisterOnFrameCallback");
     // 回退 dlopen
-    if (!g_pfnGetNativeXC || !g_pfnXCSetFrameRateOld) {
+    if (!g_pfnGetNativeXC || !g_pfnXCSetFrameRateOld || !g_pfnXCRegisterOnFrame) {
         void* aceHandle = dlopen("libace_ndk.z.so", RTLD_NOW);
         if (aceHandle) {
             if (!g_pfnGetNativeXC)
@@ -1932,13 +1937,22 @@ static void CheckAndLoadXCFrameRateApis() {
             if (!g_pfnXCSetFrameRateOld)
                 g_pfnXCSetFrameRateOld = (PFN_XCSetFrameRateOld)dlsym(aceHandle,
                     "OH_NativeXComponent_SetExpectedFrameRateRange");
+            if (!g_pfnXCRegisterOnFrame)
+                g_pfnXCRegisterOnFrame = (PFN_XCRegisterOnFrameCallback)dlsym(aceHandle,
+                    "OH_NativeXComponent_RegisterOnFrameCallback");
         }
     }
     
+    if (g_pfnXCSetFrameRateNew) {
+        OH_LOG_INFO(LOG_APP, "XCFrameRate: API 20 OH_ArkUI_XComponent_SetExpectedFrameRateRange available");
+    }
     if (g_pfnGetNativeXC && g_pfnXCSetFrameRateOld) {
         OH_LOG_INFO(LOG_APP, "XCFrameRate: API 12 GetNativeXComponent + API 11 SetExpectedFrameRateRange available");
     } else {
         OH_LOG_WARN(LOG_APP, "XCFrameRate: No XComponent frame rate API available");
+    }
+    if (g_pfnGetNativeXC && g_pfnXCRegisterOnFrame) {
+        OH_LOG_INFO(LOG_APP, "XCFrameRate: OH_NativeXComponent_RegisterOnFrameCallback available");
     }
 }
 
@@ -1971,23 +1985,35 @@ napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info in
         return GetUndefined(env);
     }
     
+    void* xComp = nullptr;
+    if (g_pfnGetNativeXC) {
+        xComp = g_pfnGetNativeXC(nodeHandle);
+    }
+
+    if (xComp && g_pfnXCRegisterOnFrame) {
+        int32_t cbRet = g_pfnXCRegisterOnFrame(xComp, XComponentOnFrameCallback);
+        OH_LOG_INFO(LOG_APP, "XComponent onFrame callback registered for frame pacing: ret=%{public}d", cbRet);
+    }
+
     // 方式1 (API 20): 直接通过 ArkUI_NodeHandle 设置
     if (g_pfnXCSetFrameRateNew) {
         XCFrameRateRange range = { fps, fps, fps };
         int32_t xcRet = g_pfnXCSetFrameRateNew(nodeHandle, range);
-        OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via ArkUI_NodeHandle (API 20): ret=%{public}d",
-                    fps, xcRet);
-        return GetUndefined(env);
+        OH_LOG_INFO(LOG_APP, "XComponent FrameRateRange set to %{public}d/%{public}d/%{public}d fps via ArkUI_NodeHandle (API 20): ret=%{public}d",
+                    fps, fps, fps, xcRet);
+        if (xcRet == 0) {
+            return GetUndefined(env);
+        }
+        OH_LOG_WARN(LOG_APP, "XComponent API 20 frame rate path failed, trying NativeXComponent fallback");
     }
     
     // 方式2 (API 12+11): NodeHandle → OH_NativeXComponent → SetExpectedFrameRateRange
     if (g_pfnGetNativeXC && g_pfnXCSetFrameRateOld) {
-        void* xComp = g_pfnGetNativeXC(nodeHandle);
         if (xComp) {
             XCFrameRateRange range = { fps, fps, fps };
             int32_t xcRet = g_pfnXCSetFrameRateOld(xComp, &range);
-            OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via NativeXComponent (API 12+11): ret=%{public}d",
-                        fps, xcRet);
+            OH_LOG_INFO(LOG_APP, "XComponent FrameRateRange set to %{public}d/%{public}d/%{public}d fps via NativeXComponent (API 12+11): ret=%{public}d",
+                        fps, fps, fps, xcRet);
         } else {
             OH_LOG_ERROR(LOG_APP, "SetXComponentFrameRate: GetNativeXComponent returned null");
         }
@@ -1995,5 +2021,24 @@ napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info in
     }
     
     OH_LOG_WARN(LOG_APP, "SetXComponentFrameRate: No API path available for fps=%{public}d", fps);
+    return GetUndefined(env);
+}
+
+napi_value MoonBridge_SetDisplayFramePacerEnabled(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    bool enabled = false;
+    if (argc >= 1) {
+        napi_get_value_bool(env, argv[0], &enabled);
+    }
+
+    NativeRender::GetInstance()->SetDisplayFramePacerEnabled(enabled);
+    return GetUndefined(env);
+}
+
+napi_value MoonBridge_RefreshFrameRateHints(napi_env env, napi_callback_info info) {
+    NativeRender::GetInstance()->RefreshFrameRateHints(true);
     return GetUndefined(env);
 }
