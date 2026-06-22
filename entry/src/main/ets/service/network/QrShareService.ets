@@ -93,6 +93,11 @@ const QR_MAX_CHARS = 4000;
 /** 压缩数据前缀 — Moonlight Compressed */
 const COMPRESSED_PREFIX = 'MLC:';
 
+/** 系统扫码 UI 能力。HarmonyOS PC/2in1 只提供生成二维码能力，不提供 ScanBarcode。 */
+const SCAN_BARCODE_SYSCAP = 'SystemCapability.Multimedia.Scan.ScanBarcode';
+
+const SCAN_UNSUPPORTED_MESSAGE = '当前设备不支持扫码';
+
 // =============================================================================
 // zlib 压缩 / 解压
 // =============================================================================
@@ -549,6 +554,22 @@ function fromCompactV1(raw: Record<string, Object>): CustomKeyDef {
 export class QrShareService {
 
   /**
+   * 当前设备是否支持拉起系统扫码 UI。
+   * 例如 MateBook/2in1 设备缺少 ScanBarcode syscap，直接调用会返回取消或失败。
+   */
+  static isScanQrCodeSupported(): boolean {
+    try {
+      return canIUse(SCAN_BARCODE_SYSCAP);
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  static getScanUnsupportedMessage(): string {
+    return SCAN_UNSUPPORTED_MESSAGE;
+  }
+
+  /**
    * 将配置序列化为 v3 管道格式（QR/压缩用，最紧凑）
    */
   static serialize(profileName: string, keys: CustomKeyDef[]): string {
@@ -697,6 +718,11 @@ export class QrShareService {
    * @returns 扫码内容字符串，失败返回 null
    */
   static async scanQrCode(): Promise<string | null> {
+    if (!QrShareService.isScanQrCodeSupported()) {
+      console.warn('[QrShareService] 当前设备不支持 ScanBarcode 系统能力');
+      return null;
+    }
+
     try {
       const options: scanBarcode.ScanOptions = {
         scanTypes: [scanCore.ScanType.QR_CODE],

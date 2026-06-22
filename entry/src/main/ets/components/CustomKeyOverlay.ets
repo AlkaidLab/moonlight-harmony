@@ -154,6 +154,7 @@ export struct CustomKeyOverlay {
   @State private qrError: string = '';
   @State private shareJson: string = '';
   @State private qrDataLen: number = 0;
+  @State private canScanQrCode: boolean = true;
   /** 扫码导入预览 */
   @State private importPreviewName: string = '';
   @State private importPreviewCount: number = 0;
@@ -237,6 +238,7 @@ export struct CustomKeyOverlay {
     await CustomKeyStore.init();
     this.keys = await CustomKeyStore.getKeys();
     this.activeProfileName = await CustomKeyStore.getActiveProfileName();
+    this.canScanQrCode = QrShareService.isScanQrCodeSupported();
 
     // 延迟刷新命中测试区域（与 VirtualControllerOverlay 同理）
     setTimeout(() => {
@@ -2112,6 +2114,15 @@ export struct CustomKeyOverlay {
 
   /** 调用系统相机扫码导入 */
   private async scanAndImport(): Promise<void> {
+    if (!QrShareService.isScanQrCodeSupported()) {
+      ToastQueue.show({
+        message: QrShareService.getScanUnsupportedMessage() + '，请使用剪贴板导入',
+        duration: 2500
+      });
+      this.canScanQrCode = false;
+      return;
+    }
+
     const result = await QrShareService.scanQrCode();
     if (!result) {
       ToastQueue.show({ message: '扫码取消或失败', duration: 1500 });
@@ -2453,12 +2464,14 @@ export struct CustomKeyOverlay {
               Text('导入配置')
                 .fontSize(12).fontColor(OV_TEXT_MEDIUM)
 
-              Text('扫码导入')
-                .fontSize(13).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
-                .width(130).height(36).textAlign(TextAlign.Center)
-                .borderRadius(18).backgroundColor('#6098C0')
-                .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-                .onClick(() => { this.scanAndImport(); })
+              if (this.canScanQrCode) {
+                Text('扫码导入')
+                  .fontSize(13).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+                  .width(130).height(36).textAlign(TextAlign.Center)
+                  .borderRadius(18).backgroundColor('#6098C0')
+                  .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                  .onClick(() => { this.scanAndImport(); })
+              }
 
               Text('从剪贴板导入')
                 .fontSize(13).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
@@ -2469,10 +2482,17 @@ export struct CustomKeyOverlay {
 
               Divider().color('#20FFFFFF').width(100).margin({ top: 4, bottom: 4 })
 
-              Text('扫描其他设备上的')
-                .fontSize(10).fontColor(OV_TEXT_DIM)
-              Text('配置二维码即可导入')
-                .fontSize(10).fontColor(OV_TEXT_DIM)
+              if (this.canScanQrCode) {
+                Text('扫描其他设备上的')
+                  .fontSize(10).fontColor(OV_TEXT_DIM)
+                Text('配置二维码即可导入')
+                  .fontSize(10).fontColor(OV_TEXT_DIM)
+              } else {
+                Text('当前设备可使用')
+                  .fontSize(10).fontColor(OV_TEXT_DIM)
+                Text('剪贴板导入配置')
+                  .fontSize(10).fontColor(OV_TEXT_DIM)
+              }
             }
           }
           .padding({ left: 16, right: 16, top: 8, bottom: 16 })
