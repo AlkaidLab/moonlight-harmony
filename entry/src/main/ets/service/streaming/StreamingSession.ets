@@ -115,6 +115,15 @@ interface NativeModule {
     colorSpace: number, colorRange: number, hdrMode: number,
     enableMic: boolean, controlOnly: boolean
   ): number;
+  startConnectionAsync(
+    address: string, appVersion: string, gfeVersion: string, rtspSessionUrl: string,
+    serverCodecModeSupportFlags: number, width: number, height: number, fps: number,
+    bitrate: number, packetSize: number, streamingRemotely: number,
+    audioConfiguration: number, supportedVideoFormats: number, clientRefreshRateX100: number,
+    riAesKey: ArrayBuffer, riAesIv: ArrayBuffer, videoCapabilities: number,
+    colorSpace: number, colorRange: number, hdrMode: number,
+    enableMic: boolean, controlOnly: boolean
+  ): Promise<number>;
   stopConnection(): void;
   interruptConnection(): void;
   resumeDecoder(): void;
@@ -322,6 +331,8 @@ export class StreamingSession {
   private isRunning: boolean = false;
   /** 用户主动发起的停止（菜单断开/退出游戏），抑制 connectionTerminated 回调弹窗 */
   private userInitiatedStop: boolean = false;
+  private isStartingConnection: boolean = false;
+  private connectionStartPromise: Promise<number> | null = null;
   private computer: ComputerInfo | null = null;
   /** 本次串流最终选中的连接地址（手动/锁定/轮询胜出地址），保证 HTTP 与原生串流阶段一致 */
   private connectionAddress: string = '';
@@ -474,6 +485,7 @@ export class StreamingSession {
     this.displayGuid = displayGuid || '';
     this.useVdd = useVdd || false;
     this.abilityContext = context;
+    this.userInitiatedStop = false;
 
     console.info(`开始串流: computer=${computerId}, app=${appId}`);
     console.info(`配置: ${config.width}x${config.height}@${config.fps}fps, ${config.bitrate}kbps, ${config.codec}`);
@@ -504,6 +516,9 @@ export class StreamingSession {
       // 让缓存立即失效，避免下次进入串流复用陈旧的 currentGame 导致误判
       ComputerManager.getInstance().invalidateServerInfoCache(this.computerId);
       await this.connectToServer();
+      if (this.userInitiatedStop) {
+        return;
+      }
       this.applyPostConnectionSettings(config);
 
       this.isRunning = true;
@@ -1266,29 +1281,39 @@ export class StreamingSession {
     console.info(`解码器: buffers=${this.config.decoderBufferCount}, sync=${this.config.enableSyncDecode}, ` +
       `vsync=${this.config.enableVsync}, vrr=${this.config.enableVrr}`);
 
-    const callStart = (): number => this.nativeModule.startConnection(
-      this.connectionAddress,
-      this.serverAppVersion,
-      this.serverGfeVersion,
-      this.rtspSessionUrl,
-      this.serverCodecModeSupport,
-      this.config!.width, this.config!.height, this.config!.fps,
-      this.config!.bitrate,
-      1392, // packetSize (will be capped by moonlight-common-c for remote)
-      2,    // streamingRemotely: STREAM_CFG_AUTO - let moonlight-common-c auto-detect
-      this.config!.audioConfig,
-      supportedVideoFormats,
-      this.config!.clientRefreshRateX100,
-      this.riKey!, riAesIv,
-      0x01 | 0x02, // videoCapabilities: DIRECT_SUBMIT | RFI_AVC
-      this.config!.hdr ? 2 : 1, // colorSpace: REC_2020 / REC_709
-      this.config!.colorRange,
-      this.config!.hdr ? this.config!.hdrMode : HdrMode.SDR,
-      this.config!.microphoneEnabled,
-      this.config!.controlOnly
-    );
+    const callStart = async (): Promise<number> => {
+      this.isStartingConnection = true;
+      try {
+        const pendingStart: Promise<number> = this.nativeModule.startConnectionAsync(
+          this.connectionAddress,
+          this.serverAppVersion,
+          this.serverGfeVersion,
+          this.rtspSessionUrl,
+          this.serverCodecModeSupport,
+          this.config!.width, this.config!.height, this.config!.fps,
+          this.config!.bitrate,
+          1392, // packetSize (will be capped by moonlight-common-c for remote)
+          2,    // streamingRemotely: STREAM_CFG_AUTO - let moonlight-common-c auto-detect
+          this.config!.audioConfig,
+          supportedVideoFormats,
+          this.config!.clientRefreshRateX100,
+          this.riKey!, riAesIv,
+          0x01 | 0x02, // videoCapabilities: DIRECT_SUBMIT | RFI_AVC
+          this.config!.hdr ? 2 : 1, // colorSpace: REC_2020 / REC_709
+          this.config!.colorRange,
+          this.config!.hdr ? this.config!.hdrMode : HdrMode.SDR,
+          this.config!.microphoneEnabled,
+          this.config!.controlOnly
+        );
+        this.connectionStartPromise = pendingStart;
+        return await pendingStart;
+      } finally {
+        this.isStartingConnection = false;
+        this.connectionStartPromise = null;
+      }
+    };
 
-    let result = callStart();
+    let result = await callStart();
     // RTSP/ENet 瞬态错误自动重试 1 次：errno 4=EINTR、110=ETIMEDOUT、104=ECONNRESET、32=EPIPE
     // 这类错误通常是 ENet service 循环被打断或网络抖动，host 端不需要重新 launchApp，
     // 只需 stopConnection 释放 native 资源后等待短暂窗口再重试即可恢复。
@@ -1307,10 +1332,14 @@ export class StreamingSession {
       if (this.userInitiatedStop) {
         return;
       }
-      result = callStart();
+      result = await callStart();
       if (result === 0) {
         console.info('StreamingSession: 重试成功');
       }
+    }
+
+    if (this.userInitiatedStop) {
+      return;
     }
 
     if (result !== 0) {
@@ -1497,6 +1526,17 @@ export class StreamingSession {
     await this.stopAbr();
     this.nativeModule.setPerformanceModeEnabled(false);
     try {
+      if (this.isStartingConnection) {
+        const pendingStart = this.connectionStartPromise;
+        if (pendingStart !== null) {
+          this.nativeModule.interruptConnection();
+          try {
+            await pendingStart;
+          } catch (err) {
+            console.warn(`等待启动中断完成失败: ${err}`);
+          }
+        }
+      }
       this.nativeModule.stopConnection();
       this.nativeModule.releaseVideoSurface();
     } catch (err) {

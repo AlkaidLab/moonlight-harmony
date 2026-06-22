@@ -329,6 +329,36 @@ class MoonBridgeClass {
   }
 
   /**
+   * 异步开始连接
+   */
+  startConnectionAsync(config: StreamConfiguration): Promise<number> {
+    return nativeLib.startConnectionAsync(
+      config.address,
+      config.appVersion,
+      config.gfeVersion || '',
+      config.rtspSessionUrl || '',
+      config.serverCodecModeSupport,
+      config.width,
+      config.height,
+      config.fps,
+      config.bitrate,
+      config.packetSize,
+      config.streamingRemotely,
+      config.audioConfiguration,
+      config.supportedVideoFormats,
+      config.clientRefreshRateX100,
+      config.riAesKey,
+      config.riAesIv,
+      config.videoCapabilities,
+      config.colorSpace,
+      config.colorRange,
+      config.hdrMode || HDR_MODE_SDR,
+      config.enableMic || false,
+      config.controlOnly || false
+    );
+  }
+
+  /**
    * 停止连接
    */
   stopConnection(): void {
