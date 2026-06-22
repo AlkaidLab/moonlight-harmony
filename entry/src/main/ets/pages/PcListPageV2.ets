@@ -59,6 +59,7 @@ struct PcListPageV2 {
   @State showAboutDialog: boolean = false;
   @State isLandscape: boolean = false;  // 横屏检测
   @State screenWidth: number = 0;       // 屏幕宽度
+  @State canScanQrCode: boolean = true; // 当前设备是否支持系统扫码
   @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
   
   // LazyForEach 数据源
@@ -130,6 +131,7 @@ struct PcListPageV2 {
     // 先设置 context 以便后续使用本地缓存
     const context = getContext(this) as common.UIAbilityContext;
     this.backgroundUtil.setContext(context);
+    this.canScanQrCode = QrShareService.isScanQrCodeSupported();
 
     // 初始化业务逻辑处理类
     this.actions = new PcListActions({
@@ -461,6 +463,7 @@ struct PcListPageV2 {
           config: {
             onlineCount: this.viewModel.onlineCount,
             totalCount: this.viewModel.computerCount,
+            showScanImport: this.canScanQrCode,
             onAboutClick: () => { this.showAboutDialog = true; },
             onScanImport: () => { this.scanAndImportKeys(); },
             onSettingsClick: () => { router.pushUrl({ url: 'pages/SettingsPageV2' }); }
@@ -840,6 +843,15 @@ struct PcListPageV2 {
 
   /** 扫码：自动识别配对 URL 或按键配置 */
   private async scanAndImportKeys(): Promise<void> {
+    if (!QrShareService.isScanQrCodeSupported()) {
+      ToastQueue.show({
+        message: QrShareService.getScanUnsupportedMessage() + '，请使用扫描网络或手动添加',
+        duration: 2500
+      });
+      this.canScanQrCode = false;
+      return;
+    }
+
     const result = await QrShareService.scanQrCode();
     if (!result) {
       ToastQueue.show({ message: '扫码取消或失败', duration: 1500 });
