@@ -400,6 +400,9 @@ struct StreamPage {
         this.xComponentWidth = width;
         this.xComponentHeight = height;
       },
+      updatePanZoomParentSize: (width: number, height: number) => {
+        this.panZoomHandler.setParentSize(width, height);
+      },
       stopStreaming: () => {
         this.stopStreaming();
       },
