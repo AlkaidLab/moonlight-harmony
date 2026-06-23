@@ -58,3 +58,7 @@ scripts/*
 !scripts/gen-changelog.js
 !scripts/release.js
 !scripts/sunshine-mock-connection-test.js
+!scripts/archive-native-symbols.js
+
+# Local release artifacts
+release-symbols/
