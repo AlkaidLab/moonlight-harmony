@@ -92,7 +92,21 @@ export class PanZoomHandler {
     this.translateX = 0;
     this.translateY = 0;
     this.pointers.clear();
+    this.initialPinchDistance = 0;
     this.notifyStateChanged();
+  }
+
+  /**
+   * 取消当前缩放/平移手势，但保留已经应用的视频缩放状态。
+   */
+  cancelActiveGesture(): void {
+    this.pointers.clear();
+    this.initialPinchDistance = 0;
+    this.initialScaleFactor = this.scaleFactor;
+    this.initialTranslateX = this.translateX;
+    this.initialTranslateY = this.translateY;
+    this.lastPanX = 0;
+    this.lastPanY = 0;
   }
 
   /**

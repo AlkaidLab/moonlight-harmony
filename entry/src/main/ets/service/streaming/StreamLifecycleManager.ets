@@ -30,6 +30,8 @@ import { ToastQueue } from '../../utils/ToastQueue';
 export interface LifecycleCallbacks {
   /** 更新 XComponent 尺寸（@State 变量） */
   updateXComponentSize: (width: Length, height: Length) => void;
+  /** 更新缩放处理器父容器尺寸 */
+  updatePanZoomParentSize: (width: number, height: number) => void;
   /** 停止串流并返回菜单页 */
   stopStreaming: () => void;
   /** 重连串流（无后台保活时从后台恢复） */
@@ -215,6 +217,7 @@ export class StreamLifecycleManager {
         );
       if (xComponentSize) {
         this.callbacks?.updateXComponentSize(xComponentSize.width, xComponentSize.height);
+        this.callbacks?.updatePanZoomParentSize(viewportSize.width, viewportSize.height);
       }
     } catch (err) {
       console.warn('[StreamPage] 更新屏幕尺寸失败:', err);
@@ -257,6 +260,7 @@ export class StreamLifecycleManager {
       );
     if (xComponentSize) {
       this.callbacks?.updateXComponentSize(xComponentSize.width, xComponentSize.height);
+      this.callbacks?.updatePanZoomParentSize(viewportSize.width, viewportSize.height);
       console.info(`[StreamPage] XComponent 尺寸更新: ${JSON.stringify(xComponentSize)}`);
     }
   }

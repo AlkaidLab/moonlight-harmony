@@ -640,6 +640,8 @@ export struct VirtualController {
 export struct VirtualControllerOverlay {
   /** 输入事件回调 */
   onInput: (input: InputEvent) => void = () => {};
+  /** 本地多指系统手势回调（如三指唤出 IME） */
+  onSystemTouchGesture: (event: TouchEvent) => boolean = () => false;
 
   /** 触摸穿透状态（双向 — 外部需读取来控制 XComponent hitTest） */
   @Link touchPassthrough: boolean;
@@ -712,6 +714,11 @@ export struct VirtualControllerOverlay {
     .width('100%')
     .height('100%')
     .hitTestBehavior(this.touchPassthrough ? HitTestMode.Transparent : HitTestMode.Default)
+    .onTouch((event: TouchEvent) => {
+      if (this.onSystemTouchGesture(event)) {
+        event.stopPropagation();
+      }
+    })
     // hitTestReady: 父层重渲染触发 ArkUI 重算命中测试区域（opacity 微变不可见）
     .opacity(this.hitTestReady > 0 ? 1 : 0.99)
   }

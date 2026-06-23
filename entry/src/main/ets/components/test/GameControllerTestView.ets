@@ -16,7 +16,7 @@
 import { gameControllerService, GameControllerService, ButtonCode } from '../../service/input/GameControllerService';
 import { GamepadManager } from '../../service/input/GamepadManager';
 import { UsbDriverService } from '../../service/usbdriver';
-import { gcButtonMap, AXIS_MAX, TRIGGER_MAX } from '../../service/input/GamepadTypes';
+import { gcButtonMap, AXIS_MAX, TRIGGER_MAX, MoonlightButton } from '../../service/input/GamepadTypes';
 import { AppColors } from '../../common/Theme';
 
 // @Builder 按引用传参接口
@@ -428,6 +428,13 @@ export struct GameControllerTestView {
       case 1: // 右摇杆
         state.rightStickX = Math.floor(x * AXIS_MAX);
         state.rightStickY = Math.floor(-y * AXIS_MAX);
+        break;
+      case 2: // D-Pad
+        state.buttons &= ~MoonlightButton.DPAD_MASK;
+        if (y < -0.5) state.buttons |= MoonlightButton.UP;
+        if (y > 0.5) state.buttons |= MoonlightButton.DOWN;
+        if (x < -0.5) state.buttons |= MoonlightButton.LEFT;
+        if (x > 0.5) state.buttons |= MoonlightButton.RIGHT;
         break;
       case 3: // 左扳机
         state.leftTrigger = Math.floor(x * TRIGGER_MAX);

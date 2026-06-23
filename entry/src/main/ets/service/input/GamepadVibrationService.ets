@@ -20,6 +20,11 @@
 import { vibrator } from '@kit.SensorServiceKit';
 import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { RUMBLE_MAX } from './GamepadTypes';
+import {
+  GAME_VIBRATION_STRENGTH_DEFAULT,
+  GAME_VIBRATION_STRENGTH_ORIGINAL,
+  normalizeGameVibrationStrength
+} from '../../model/StreamConfig';
 
 // ==================== 震动服务 ====================
 
@@ -27,8 +32,8 @@ export class GamepadVibrationService {
   private usbDriverService: UsbDriverService;
   
   // 设置
-  private deviceVibrateEnabled = false;
-  private deviceVibrateStrength = 100;
+  private vibrationFeedbackEnabled = true;
+  private gameVibrationStrength = GAME_VIBRATION_STRENGTH_DEFAULT;
   private vibrationMode = '自动';
   
   // 槽位→设备键的查找函数（由 GamepadManager 提供）
@@ -58,10 +63,19 @@ export class GamepadVibrationService {
   /**
    * 更新震动设置
    */
-  setSettings(enabled: boolean, strength: number, mode: string): void {
-    this.deviceVibrateEnabled = enabled;
-    this.deviceVibrateStrength = strength;
+  setSettings(
+    enabled: boolean,
+    strength: number,
+    mode: string
+  ): void {
+    const wasEnabled = this.vibrationFeedbackEnabled;
+    const previousStrength = this.gameVibrationStrength;
+    this.vibrationFeedbackEnabled = enabled;
+    this.gameVibrationStrength = normalizeGameVibrationStrength(strength);
     this.vibrationMode = mode;
+    if ((wasEnabled && !enabled) || (previousStrength > 0 && this.gameVibrationStrength === 0)) {
+      this.stopAll();
+    }
   }
 
   // ==================== 公开 API ====================
@@ -80,6 +94,8 @@ export class GamepadVibrationService {
       clearTimeout(this.stopConfirmTimer);
       this.stopConfirmTimer = -1;
     }
+    if (!this.vibrationFeedbackEnabled) return;
+
     if (lowFreqMotor !== 0 || highFreqMotor !== 0) {
       this.lastRumbleControllerNumber = controllerNumber;
       this.rumbleWatchdogTimer = setTimeout(() => {
@@ -122,11 +138,7 @@ export class GamepadVibrationService {
 
     // USB 停止确认: 100ms 后重发 stop(0,0)，防止首次 USB 传输被覆盖或丢失
     if (lowFreqMotor === 0 && highFreqMotor === 0 && hasUsbController) {
-      this.stopConfirmTimer = setTimeout(() => {
-        this.stopConfirmTimer = -1;
-        const ctrls = this.usbDriverService.getControllers();
-        this.rumbleUsbControllers(ctrls, controllerNumber, 0, 0);
-      }, 100);
+      this.scheduleUsbStopConfirm(controllerNumber);
     }
   }
 
@@ -134,9 +146,14 @@ export class GamepadVibrationService {
    * 处理扳机震动
    */
   handleRumbleTriggers(controllerNumber: number, leftTrigger: number, rightTrigger: number): void {
+    if (!this.vibrationFeedbackEnabled) return;
+
     const controllers = this.usbDriverService.getControllers();
     const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumbleTriggers(leftTrigger, rightTrigger);
+    controller?.rumbleTriggers(
+      this.applyGameVibrationStrength(leftTrigger),
+      this.applyGameVibrationStrength(rightTrigger)
+    );
   }
 
   /**
@@ -147,7 +164,7 @@ export class GamepadVibrationService {
   rumbleUsbControllersOnly(controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
     const controllers = this.usbDriverService.getControllers();
     if (controllers.length > 0) {
-      this.rumbleUsbControllers(controllers, controllerNumber, lowFreqMotor, highFreqMotor);
+      this.rumbleUsbControllers(controllers, controllerNumber, lowFreqMotor, highFreqMotor, false);
     }
   }
 
@@ -185,6 +202,10 @@ export class GamepadVibrationService {
       const controllers = this.usbDriverService.getControllers();
       for (const controller of controllers) {
         controller.rumble(0, 0);
+        controller.rumbleTriggers(0, 0);
+      }
+      if (controllers.length > 0) {
+        this.scheduleUsbStopConfirm(this.lastRumbleControllerNumber);
       }
     } catch (_) { /* ignore */ }
   }
@@ -213,9 +234,39 @@ export class GamepadVibrationService {
   /**
    * 向 USB 控制器发送震动
    */
-  private rumbleUsbControllers(controllers: AbstractController[], controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
+  private rumbleUsbControllers(
+    controllers: AbstractController[],
+    controllerNumber: number,
+    lowFreqMotor: number,
+    highFreqMotor: number,
+    applyGain: boolean = true
+  ): void {
     const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumble(lowFreqMotor, highFreqMotor);
+    const lowValue = applyGain ? this.applyGameVibrationStrength(lowFreqMotor) : this.clampRumbleValue(lowFreqMotor);
+    const highValue = applyGain ? this.applyGameVibrationStrength(highFreqMotor) : this.clampRumbleValue(highFreqMotor);
+    controller?.rumble(lowValue, highValue);
+  }
+
+  private applyGameVibrationStrength(value: number): number {
+    if (value <= 0) return 0;
+    if (this.gameVibrationStrength === GAME_VIBRATION_STRENGTH_DEFAULT) {
+      return this.clampRumbleValue(value);
+    }
+    const gained = Math.floor(value * this.gameVibrationStrength / GAME_VIBRATION_STRENGTH_ORIGINAL);
+    return this.clampRumbleValue(gained);
+  }
+
+  private clampRumbleValue(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(RUMBLE_MAX, Math.floor(value)));
+  }
+
+  private scheduleUsbStopConfirm(controllerNumber: number): void {
+    this.stopConfirmTimer = setTimeout(() => {
+      this.stopConfirmTimer = -1;
+      const controllers = this.usbDriverService.getControllers();
+      this.rumbleUsbControllers(controllers, controllerNumber, 0, 0);
+    }, 100);
   }
 
   /**
@@ -227,7 +278,7 @@ export class GamepadVibrationService {
    * 3. 使用 stopVibrationSync 同步停止确保即时性
    */
   private triggerDeviceVibrate(lowFreqMotor: number, highFreqMotor: number): void {
-    if (!this.deviceVibrateEnabled) return;
+    if (!this.vibrationFeedbackEnabled || this.gameVibrationStrength <= 0) return;
 
     // 停止震动
     if (lowFreqMotor === 0 && highFreqMotor === 0) {
@@ -252,7 +303,8 @@ export class GamepadVibrationService {
     this.lastHighFreq = highFreqMotor;
 
     // 计算用户强度系数
-    const userStrength = this.deviceVibrateStrength / 100;
+    const userStrength = Math.min(this.gameVibrationStrength, GAME_VIBRATION_STRENGTH_ORIGINAL) /
+      GAME_VIBRATION_STRENGTH_ORIGINAL;
 
     // 计算低频和高频马达的强度 (0-100)
     const lowIntensity = Math.floor((lowFreqMotor / RUMBLE_MAX) * userStrength * 100);

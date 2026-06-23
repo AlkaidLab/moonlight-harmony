@@ -53,6 +53,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         
         // 连接管理
         { "startConnection", nullptr, MoonBridge_StartConnection, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "startConnectionAsync", nullptr, MoonBridge_StartConnectionAsync, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "stopConnection", nullptr, MoonBridge_StopConnection, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "interruptConnection", nullptr, MoonBridge_InterruptConnection, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "resumeDecoder", nullptr, MoonBridge_ResumeDecoder, nullptr, nullptr, nullptr, napi_default, nullptr },

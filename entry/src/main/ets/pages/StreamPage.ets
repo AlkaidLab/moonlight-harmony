@@ -55,6 +55,7 @@ import { NetworkBoostService, SystemNetScene, SystemNetSceneListener } from '../
 import { ClipboardSyncObserver, ClipboardSyncService } from '../service/clipboard/ClipboardSyncService';
 import { ClipboardSyncConfig } from '../service/clipboard/ClipboardSyncConfig';
 import { SunshineClipboardBlobTransport } from '../service/clipboard/SunshineClipboardBlobTransport';
+import { ThreeFingerImeGestureHandler, ThreeFingerImeGestureResult } from '../service/input/ThreeFingerImeGestureHandler';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -197,7 +198,7 @@ struct StreamPage {
   @State videoTranslateX: number = 0;
   /** 视频垂直平移 (vp) */
   @State videoTranslateY: number = 0;
-  
+
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
   // 解决无触摸时 ArkUI .onMouse 降至 ~30Hz 的问题
@@ -235,6 +236,7 @@ struct StreamPage {
   private gamepadManager: GamepadManager = GamepadManager.getInstance();
   private customKeyManager: CustomKeyManager | null = null;
   private panZoomHandler: PanZoomHandler = new PanZoomHandler();
+  private threeFingerImeGestureHandler: ThreeFingerImeGestureHandler = new ThreeFingerImeGestureHandler();
   private controllerTypes: Map<number, number> = new Map();  // slot → MoonlightControllerType
   private aiKeyService: AiKeyService | null = null;
   private aiKeyNvHttp: NvHttp | null = null;
@@ -397,6 +399,9 @@ struct StreamPage {
       updateXComponentSize: (width: Length, height: Length) => {
         this.xComponentWidth = width;
         this.xComponentHeight = height;
+      },
+      updatePanZoomParentSize: (width: number, height: number) => {
+        this.panZoomHandler.setParentSize(width, height);
       },
       stopStreaming: () => {
         this.stopStreaming();
@@ -717,6 +722,7 @@ struct StreamPage {
       clearTimeout(this.aiProbeTimer);
       this.aiProbeTimer = null;
     }
+    this.threeFingerImeGestureHandler.dispose();
     this.aiKeyNvHttp = null;
 
     this.stopClipboardSync();
@@ -1359,6 +1365,7 @@ struct StreamPage {
       if (streamConfig) {
         this.touchInputHandler.setDoubleTapTimeThreshold(streamConfig.doubleTapTimeThreshold);
         this.touchInputHandler.setEnableDoubleClickDrag(streamConfig.enableDoubleClickDrag);
+        this.touchInputHandler.setLowLatencyTouch(streamConfig.lowLatencyTouch);
       }
       
       // 设置连接终止回调
@@ -1777,6 +1784,23 @@ struct StreamPage {
   }
 
   /**
+   * 处理本地系统触摸手势。
+   *
+   * 三指同时触摸用于唤出 HarmonyOS IME，优先于远端触摸输入和双指缩放。
+   * 触发后持续吞掉本组三指，避免远端收到半截多指触摸或鼠标拖拽。
+   */
+  private handleSystemTouchGesture(event: TouchEvent): boolean {
+    const result = this.threeFingerImeGestureHandler.handleTouchEvent(event, this.viewModel.isConnected);
+    if (result === ThreeFingerImeGestureResult.TRIGGERED) {
+      this.touchInputHandler.cancelActiveInput();
+      this.panZoomHandler.cancelActiveGesture();
+      this.showVirtualKeyboard = false;
+      this.imeManager.show();
+    }
+    return result !== ThreeFingerImeGestureResult.PASS_THROUGH;
+  }
+
+  /**
    * 设置触摸模式
    */
   setTouchMode(mode: string): void {
@@ -1838,6 +1862,7 @@ struct StreamPage {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
             // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
             if (event.source === SourceType.Mouse) return;
+            if (this.handleSystemTouchGesture(event)) return;
             // 双指缩放模式：触摸事件完全由 PanZoomHandler 消费
             if (this.isTouchOverrideEnabled) {
               this.panZoomHandler.handleTouchEvent(event);
@@ -1934,6 +1959,9 @@ struct StreamPage {
           halfHeightPortrait: this.viewModel.inputSettings?.halfHeightOscPortrait ?? true,
           onInput: (input) => {
             this.viewModel.sendInput(input);
+          },
+          onSystemTouchGesture: (event: TouchEvent): boolean => {
+            return this.handleSystemTouchGesture(event);
           }
         })
       }

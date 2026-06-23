@@ -22,6 +22,8 @@ export interface TitleBarConfig {
   onlineCount: number;
   /** 总设备数量 */
   totalCount: number;
+  /** 是否显示扫码导入入口 */
+  showScanImport?: boolean;
   /** 关于按钮点击回调 */
   onAboutClick: () => void;
   /** 扫码导入按钮点击回调 */
@@ -39,6 +41,7 @@ export struct PcListTitleBar {
   @Prop config: TitleBarConfig = {
     onlineCount: 0,
     totalCount: 0,
+    showScanImport: true,
     onAboutClick: () => {},
     onScanImport: () => {},
     onSettingsClick: () => {}
@@ -111,23 +114,25 @@ export struct PcListTitleBar {
         this.config.onAboutClick();
       })
 
-      // 扫码导入按钮
-      Button({ type: ButtonType.Circle }) {
-        Image($r('app.media.ic_scan'))
-          .width(AppSizes.IconMedium)
-          .height(AppSizes.IconMedium)
-          .fillColor(AppColors.Primary)
+      if (this.config.showScanImport !== false) {
+        // 扫码导入按钮
+        Button({ type: ButtonType.Circle }) {
+          Image($r('app.media.ic_scan'))
+            .width(AppSizes.IconMedium)
+            .height(AppSizes.IconMedium)
+            .fillColor(AppColors.Primary)
+        }
+        .width(44)
+        .height(44)
+        .backgroundColor(AppColors.Surface)
+        .borderWidth(1)
+        .borderColor(AppColors.CardBorder)
+        .flexShrink(0)
+        .margin({ right: AppSpacing.Small })
+        .onClick(() => {
+          this.config.onScanImport();
+        })
       }
-      .width(44)
-      .height(44)
-      .backgroundColor(AppColors.Surface)
-      .borderWidth(1)
-      .borderColor(AppColors.CardBorder)
-      .flexShrink(0)
-      .margin({ right: AppSpacing.Small })
-      .onClick(() => {
-        this.config.onScanImport();
-      })
 
       // 设置按钮
       Button({ type: ButtonType.Circle }) {

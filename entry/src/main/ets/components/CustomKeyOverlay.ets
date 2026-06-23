@@ -136,6 +136,8 @@ export struct CustomKeyOverlay {
   @State private snapEnabled: boolean = false;
   /** 吸附阈值 (vp) */
   private static readonly SNAP_THRESHOLD_VP = 8;
+  /** 编辑工具栏避让按键时保留的缓冲距离 (vp) */
+  private static readonly EDIT_TOOLBAR_AVOID_MARGIN_VP = 12;
   /** 对齐辅助线位置 (vp)，-1 表示隐藏 */
   @State private alignGuideX: number = -1;
   @State private alignGuideY: number = -1;
@@ -145,6 +147,9 @@ export struct CustomKeyOverlay {
   @State private groupDragKeyId: string = ''; // 正在被直接拖拽的键 ID
   @State private groupDragX: number = 0;
   @State private groupDragY: number = 0;
+  /** 正在拖拽的按键，用于让编辑工具栏避让当前操作区域 */
+  @State private activeDragKeyId: string = '';
+  @State private activeDragY: number = 0;
 
   /** 二维码分享面板 */
   @State private showSharePanel: boolean = false;
@@ -154,6 +159,7 @@ export struct CustomKeyOverlay {
   @State private qrError: string = '';
   @State private shareJson: string = '';
   @State private qrDataLen: number = 0;
+  @State private canScanQrCode: boolean = true;
   /** 扫码导入预览 */
   @State private importPreviewName: string = '';
   @State private importPreviewCount: number = 0;
@@ -204,6 +210,90 @@ export struct CustomKeyOverlay {
     return this.keys.slice().sort((a: CustomKeyDef, b: CustomKeyDef) => a.layer - b.layer);
   }
 
+  private isEditToolbarVisible(): boolean {
+    return this.editMode &&
+      !this.showAddPanel &&
+      !this.showPropertyPanel &&
+      !this.showSharePanel &&
+      !this.showThemePanel &&
+      !this.showProfilePanel &&
+      !this.showAiPanel;
+  }
+
+  private getToolbarTargetKeyId(): string {
+    return this.activeDragKeyId !== '' ? this.activeDragKeyId : this.selectedKeyId;
+  }
+
+  private getToolbarTargetGroupId(): string {
+    const keyId = this.getToolbarTargetKeyId();
+    if (keyId === '') return '';
+    const key = this.keys.find((item: CustomKeyDef): boolean => item.id === keyId);
+    return key?.groupId ?? '';
+  }
+
+  private isToolbarTargetKey(key: CustomKeyDef): boolean {
+    const keyId = this.getToolbarTargetKeyId();
+    if (keyId === '') return false;
+    if (key.id === keyId) return true;
+    const groupId = this.getToolbarTargetGroupId();
+    return groupId !== '' && key.groupId === groupId;
+  }
+
+  private getToolbarKeyVisualDy(key: CustomKeyDef): number {
+    if (this.activeDragKeyId === '') return 0;
+    if (key.id === this.activeDragKeyId) return this.activeDragY;
+    const groupId = this.getToolbarTargetGroupId();
+    if (groupId !== '' && key.groupId === groupId) {
+      return this.activeDragY;
+    }
+    return 0;
+  }
+
+  private getToolbarDockOverlapScore(dockTop: boolean, targetOnly: boolean): number {
+    if (this.screenHeightVp <= 0) return 0;
+    const margin = CustomKeyOverlay.EDIT_TOOLBAR_AVOID_MARGIN_VP;
+    const bandTop = dockTop ? 0 : Math.max(0, this.screenHeightVp - EDIT_TOOLBAR_HEIGHT - margin);
+    const bandBottom = dockTop ? Math.min(this.screenHeightVp, EDIT_TOOLBAR_HEIGHT + margin) : this.screenHeightVp;
+    let score = 0;
+
+    for (const key of this.keys) {
+      if (targetOnly && !this.isToolbarTargetKey(key)) continue;
+      const dy = this.getToolbarKeyVisualDy(key);
+      const keyTop = key.yPercent * this.screenHeightVp - key.height / 2 + dy;
+      const keyBottom = key.yPercent * this.screenHeightVp + key.height / 2 + dy;
+      const overlapTop = Math.max(keyTop, bandTop);
+      const overlapBottom = Math.min(keyBottom, bandBottom);
+      if (overlapBottom > overlapTop) {
+        score += overlapBottom - overlapTop;
+      }
+    }
+
+    return score;
+  }
+
+  private shouldDockToolbarToTop(): boolean {
+    if (this.screenHeightVp <= 0) return false;
+
+    const bottomTargetScore = this.getToolbarDockOverlapScore(false, true);
+    const topTargetScore = this.getToolbarDockOverlapScore(true, true);
+    if (bottomTargetScore !== topTargetScore) {
+      return topTargetScore < bottomTargetScore;
+    }
+
+    const bottomScore = this.getToolbarDockOverlapScore(false, false);
+    const topScore = this.getToolbarDockOverlapScore(true, false);
+    if (bottomScore !== topScore) {
+      return topScore < bottomScore;
+    }
+
+    return false;
+  }
+
+  private getEditToolbarY(): number {
+    if (this.shouldDockToolbarToTop()) return 0;
+    return Math.max(0, this.screenHeightVp - EDIT_TOOLBAR_HEIGHT);
+  }
+
   /** 屏幕变化监听回调引用，用于注销 */
   private displayChangeCallback: ((displayId: number) => void) | null = null;
 
@@ -237,6 +327,7 @@ export struct CustomKeyOverlay {
     await CustomKeyStore.init();
     this.keys = await CustomKeyStore.getKeys();
     this.activeProfileName = await CustomKeyStore.getActiveProfileName();
+    this.canScanQrCode = QrShareService.isScanQrCodeSupported();
 
     // 延迟刷新命中测试区域（与 VirtualControllerOverlay 同理）
     setTimeout(() => {
@@ -262,7 +353,7 @@ export struct CustomKeyOverlay {
   }
 
   build() {
-    Column() {
+    Stack() {
       // 主区域
       Stack() {
         // 对齐辅助线（拖拽吸附时显示）
@@ -398,6 +489,8 @@ export struct CustomKeyOverlay {
                   this.onKeyAction(action, isDown);
                 },
                 onGroupDragMove: (keyId: string, deltaX: number, deltaY: number): void => {
+                  this.activeDragKeyId = deltaX === 0 && deltaY === 0 ? '' : keyId;
+                  this.activeDragY = deltaY;
                   // 更新组拖拽视觉偏移
                   const dragKey = this.keys.find(k => k.id === keyId);
                   if (dragKey && dragKey.groupId) {
@@ -417,6 +510,8 @@ export struct CustomKeyOverlay {
                   this.groupDragKeyId = '';
                   this.groupDragX = 0;
                   this.groupDragY = 0;
+                  this.activeDragKeyId = '';
+                  this.activeDragY = 0;
                   this.alignGuideX = -1;
                   this.alignGuideY = -1;
                   this.handleDragEnd(keyId, deltaX, deltaY);
@@ -564,14 +659,14 @@ export struct CustomKeyOverlay {
         }
       }
       .width('100%')
-      .layoutWeight(1)
+      .height('100%')
       .alignContent(Alignment.BottomStart)
       .hitTestBehavior(HitTestMode.Transparent)
       // hitTestReady: 微小 opacity 变化触发父层重渲染，刷新命中测试树
       .opacity(this.hidingForCapture ? 0 : (this.hitTestReady > 0 ? 1 : 0.99))
 
       // 编辑模式工具栏（面板打开时隐藏，避免遮挡面板）
-      if (this.editMode && !this.showAddPanel && !this.showPropertyPanel && !this.showSharePanel && !this.showThemePanel && !this.showProfilePanel && !this.showAiPanel) {
+      if (this.isEditToolbarVisible()) {
         Row({ space: 12 }) {
           Row({ space: 4 }) {
             SymbolGlyph($r('sys.symbol.plus_circle'))
@@ -728,6 +823,8 @@ export struct CustomKeyOverlay {
         .backgroundColor('#CC1A1A2E')
         .backdropBlur(30)
         .border({ width: { top: 1 }, color: '#20FFFFFF' })
+        .position({ x: 0, y: this.getEditToolbarY() })
+        .hitTestBehavior(HitTestMode.Transparent)
       }
     }
     .width('100%')
@@ -2112,6 +2209,15 @@ export struct CustomKeyOverlay {
 
   /** 调用系统相机扫码导入 */
   private async scanAndImport(): Promise<void> {
+    if (!QrShareService.isScanQrCodeSupported()) {
+      ToastQueue.show({
+        message: QrShareService.getScanUnsupportedMessage() + '，请使用剪贴板导入',
+        duration: 2500
+      });
+      this.canScanQrCode = false;
+      return;
+    }
+
     const result = await QrShareService.scanQrCode();
     if (!result) {
       ToastQueue.show({ message: '扫码取消或失败', duration: 1500 });
@@ -2453,12 +2559,14 @@ export struct CustomKeyOverlay {
               Text('导入配置')
                 .fontSize(12).fontColor(OV_TEXT_MEDIUM)
 
-              Text('扫码导入')
-                .fontSize(13).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
-                .width(130).height(36).textAlign(TextAlign.Center)
-                .borderRadius(18).backgroundColor('#6098C0')
-                .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-                .onClick(() => { this.scanAndImport(); })
+              if (this.canScanQrCode) {
+                Text('扫码导入')
+                  .fontSize(13).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+                  .width(130).height(36).textAlign(TextAlign.Center)
+                  .borderRadius(18).backgroundColor('#6098C0')
+                  .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                  .onClick(() => { this.scanAndImport(); })
+              }
 
               Text('从剪贴板导入')
                 .fontSize(13).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
@@ -2469,10 +2577,17 @@ export struct CustomKeyOverlay {
 
               Divider().color('#20FFFFFF').width(100).margin({ top: 4, bottom: 4 })
 
-              Text('扫描其他设备上的')
-                .fontSize(10).fontColor(OV_TEXT_DIM)
-              Text('配置二维码即可导入')
-                .fontSize(10).fontColor(OV_TEXT_DIM)
+              if (this.canScanQrCode) {
+                Text('扫描其他设备上的')
+                  .fontSize(10).fontColor(OV_TEXT_DIM)
+                Text('配置二维码即可导入')
+                  .fontSize(10).fontColor(OV_TEXT_DIM)
+              } else {
+                Text('当前设备可使用')
+                  .fontSize(10).fontColor(OV_TEXT_DIM)
+                Text('剪贴板导入配置')
+                  .fontSize(10).fontColor(OV_TEXT_DIM)
+              }
             }
           }
           .padding({ left: 16, right: 16, top: 8, bottom: 16 })
