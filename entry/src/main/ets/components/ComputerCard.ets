@@ -14,7 +14,7 @@ import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 
 /**
  * 电脑卡片组件
- * 
+ *
  * 功能特性：
  * - 显示电脑头像（boxArt）或默认图标
  * - 状态指示器（在线/离线/配对/游戏中）
@@ -27,33 +27,46 @@ import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 export struct ComputerCard {
   // ========== 必需属性 ==========
   @ObjectLink computer: ObservableComputer;
-  
+
   // ========== 回调函数 ==========
   onTap: () => void = () => {};
   onLongPress: () => void = () => {};
   onQuickStream: () => void = () => {};  // 快速串流回调
-  
+
   // ========== 私有状态 ==========
   @State private isPressed: boolean = false;
   @State private cardScale: number = 1;
   @State private boxArtLoadFailed: boolean = false;
   @State private quickStreamPressed: boolean = false;
   @State private quickStreamClicked: boolean = false;  // 标记快速串流按钮是否被点击
+  @Prop @Watch('onOnlineTransitionChanged') onlineTransitionVersion: number = 0;
+  @State private onlineHintActive: boolean = false;
+  @State private onlinePulseScale: number = 0.45;
+  @State private onlinePulseOpacity: number = 0;
+  @State private onlineDotScale: number = 1;
+  @State private onlineTextOffset: number = 0;
+  @State private onlineTextOpacity: number = 1;
+  private onlineHintResetTimer: number = -1;
+  private onlineDotSettleTimer: number = -1;
 
   // ========== 常量定义 ==========
   private readonly AVATAR_SIZE: number = AppSizes.AvatarLarge;
   private readonly ICON_SIZE: number = 40;
-  private readonly STATUS_DOT_SIZE: number = 14;
   private readonly PRESS_SCALE: number = 0.98;
 
   // ========== 生命周期 ==========
   aboutToAppear() {
     // 组件初始化时重置加载状态
     this.boxArtLoadFailed = false;
+    this.consumePendingOnlineHint();
+  }
+
+  aboutToDisappear(): void {
+    this.clearOnlineHintTimer();
   }
 
   // ========== 辅助方法 ==========
-  
+
   /**
    * 获取 boxArt 图片源（本地路径需要加 file:// 前缀）
    */
@@ -80,19 +93,125 @@ export struct ComputerCard {
     if (this.computer.isGaming) return StatusColors.GamingDark;
     return StatusColors.OnlineDark;
   }
-  
+
   /**
    * 获取图片透明度（离线时半透明）
    */
   private getImageOpacity(): number {
     return this.computer.isOnline ? 1 : 0.5;
   }
-  
+
   /**
    * 是否显示快速串流按钮
    */
   private canQuickStream(): boolean {
     return this.computer.isOnline && this.computer.isPaired;
+  }
+
+  private clearOnlineHintTimer(): void {
+    if (this.onlineHintResetTimer !== -1) {
+      clearTimeout(this.onlineHintResetTimer);
+      this.onlineHintResetTimer = -1;
+    }
+    if (this.onlineDotSettleTimer !== -1) {
+      clearTimeout(this.onlineDotSettleTimer);
+      this.onlineDotSettleTimer = -1;
+    }
+  }
+
+  private onOnlineTransitionChanged(): void {
+    this.consumePendingOnlineHint();
+  }
+
+  private consumePendingOnlineHint(): void {
+    if (!this.computer.shouldPlayOnlineTransition()) {
+      return;
+    }
+    this.computer.markOnlineTransitionPlayed();
+    this.playOnlineHint();
+  }
+
+  private playOnlineHint(): void {
+    this.clearOnlineHintTimer();
+    this.onlineHintActive = true;
+    this.onlinePulseScale = 0.45;
+    this.onlinePulseOpacity = 0.48;
+    this.onlineDotScale = 0.76;
+    this.onlineTextOffset = 6;
+    this.onlineTextOpacity = 0;
+
+    animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
+      this.onlineDotScale = 1.42;
+      this.onlineTextOffset = 0;
+      this.onlineTextOpacity = 1;
+    });
+
+    this.onlineDotSettleTimer = setTimeout(() => {
+      this.onlineDotSettleTimer = -1;
+      animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+        this.onlineDotScale = 1;
+      });
+    }, 260);
+
+    animateTo({ duration: 1150, curve: Curve.EaseOut }, () => {
+      this.onlinePulseScale = 3.4;
+      this.onlinePulseOpacity = 0;
+    });
+
+    this.onlineHintResetTimer = setTimeout(() => {
+      this.onlineHintActive = false;
+      this.onlineDotScale = 1;
+      this.onlineTextOffset = 0;
+      this.onlineTextOpacity = 1;
+      this.onlinePulseScale = 0.45;
+      this.onlinePulseOpacity = 0;
+      this.onlineHintResetTimer = -1;
+    }, 1250);
+  }
+
+  private getOnlineHintPulseFill(): string {
+    if (!this.computer.isPaired) {
+      return 'rgba(255, 183, 77, 0.32)';
+    }
+    if (this.computer.isGaming) {
+      return 'rgba(255, 112, 67, 0.30)';
+    }
+    return 'rgba(139, 195, 74, 0.30)';
+  }
+
+  private getOnlineHintShadowColor(): string {
+    if (!this.computer.isPaired) {
+      return 'rgba(255, 183, 77, 0.42)';
+    }
+    if (this.computer.isGaming) {
+      return 'rgba(255, 112, 67, 0.36)';
+    }
+    return 'rgba(139, 195, 74, 0.38)';
+  }
+
+  private getCardBorderColor(): ResourceColor {
+    if (this.isPressed) {
+      return AppColors.Primary;
+    }
+    if (this.onlineHintActive) {
+      return this.getStatusDotColor();
+    }
+    return AppColors.CardBorder;
+  }
+
+  private getCardShadow(): ShadowOptions {
+    if (this.isPressed) {
+      return AppShadows.GlowGreen;
+    }
+    if (this.onlineHintActive) {
+      return {
+        radius: 24,
+        color: this.getOnlineHintShadowColor(),
+        offsetX: 0,
+        offsetY: 0
+      };
+    }
+    return AppShadows.Medium;
   }
 
   // ========== UI 构建器 ==========
@@ -144,7 +263,7 @@ export struct ComputerCard {
     Stack() {
       // 底层：默认图标作为 fallback
       this.DefaultIcon()
-      
+
       // 顶层：BoxArt 图片
       Image(this.getBoxArtSource())
         .width(this.AVATAR_SIZE)
@@ -191,19 +310,39 @@ export struct ComputerCard {
 
       // 第三行：状态圆点 + 状态文本
       Row() {
-        Ellipse()
-          .width(8)
-          .height(8)
-          .fill(this.getStatusDotColor())
-          .margin({ right: 6 })
+        this.OnlineStatusDot()
         Text(this.computer.statusText)
           .fontSize(AppSizes.FontCaption)
           .fontColor(this.getStatusTextColor())
+          .opacity(this.onlineHintActive ? this.onlineTextOpacity : 1)
+          .translate({ y: this.onlineHintActive ? this.onlineTextOffset : 0 })
       }
       .margin({ top: AppSpacing.Small })
     }
     .alignItems(HorizontalAlign.Start)
     .layoutWeight(1)
+  }
+
+  @Builder
+  private OnlineStatusDot() {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.onlineHintActive && this.computer.isOnline) {
+        Ellipse()
+          .width(18)
+          .height(18)
+          .fill(this.getOnlineHintPulseFill())
+          .opacity(this.onlinePulseOpacity)
+          .scale({ x: this.onlinePulseScale, y: this.onlinePulseScale })
+      }
+      Ellipse()
+        .width(8)
+        .height(8)
+        .fill(this.getStatusDotColor())
+        .scale({ x: this.onlineHintActive ? this.onlineDotScale : 1, y: this.onlineHintActive ? this.onlineDotScale : 1 })
+    }
+    .width(24)
+    .height(24)
+    .margin({ right: 2 })
   }
 
   /**
@@ -274,8 +413,8 @@ export struct ComputerCard {
     .backgroundColor(AppColors.CardBackground)
     .borderRadius(AppSizes.RadiusLarge)
     .borderWidth(1)
-    .borderColor(this.isPressed ? AppColors.Primary : AppColors.CardBorder)
-    .shadow(this.isPressed ? AppShadows.GlowGreen : AppShadows.Medium)
+    .borderColor(this.getCardBorderColor())
+    .shadow(this.getCardShadow())
     .scale({ x: this.cardScale, y: this.cardScale })
     .animation({
       duration: AppAnimation.Fast,

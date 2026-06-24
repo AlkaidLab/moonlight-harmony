@@ -37,7 +37,7 @@ import { ToastQueue } from '../utils/ToastQueue';
 
 /**
  * 电脑列表页面 (现代化版本)
- * 
+ *
  * 功能:
  * - 显示已添加的电脑列表
  * - 支持下拉刷新
@@ -61,19 +61,19 @@ struct PcListPageV2 {
   @State screenWidth: number = 0;       // 屏幕宽度
   @State canScanQrCode: boolean = true; // 当前设备是否支持系统扫码
   @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
-  
+
   // LazyForEach 数据源
   private computerDataSource: ComputerDataSource = new ComputerDataSource();
-  
+
   private computerManager: ComputerManager = ComputerManager.getInstance();
   private backgroundUtil: BackgroundImageUtil = BackgroundImageUtil.getInstance();
   private actions: PcListActions | null = null;
-  
+
   // 摇一摇相关
   private lastShakeTime: number = 0;
   private shakeThreshold: number = 15; // 加速度阈值
   private shakeCooldown: number = 2000; // 2秒冷却时间
-  
+
   // CustomDialogController 配置
   private optionPickerDialogConfig: OptionPickerDialogConfig = {
     title: '',
@@ -89,7 +89,7 @@ struct PcListPageV2 {
     title: '',
     content: ''
   };
-  
+
   // CustomDialogController 实例
   private optionPickerDialogController: CustomDialogController | null = null;
   private confirmDialogController: CustomDialogController | null = null;
@@ -110,7 +110,7 @@ struct PcListPageV2 {
     });
     this.confirmDialogController.open();
   }
-  
+
   /**
    * 显示信息弹窗
    */
@@ -145,12 +145,12 @@ struct PcListPageV2 {
       },
       hidePinDialog: () => { this.showPinDialog = false; }
     } as PcListUICallbacks);
-    
+
     this.initializeAsync();
     this.loadBackgroundImage();
     this.startShakeDetection();
   }
-  
+
   private async loadBackgroundImage(): Promise<void> {
     try {
       // 先检查背景图类型，如果是 NONE 则不加载
@@ -168,7 +168,7 @@ struct PcListPageV2 {
         this.showBackgroundDisclaimerDialog();
         return;
       }
-      
+
       // 优先使用本地缓存的图片
       const localPath = await this.backgroundUtil.downloadToLocalCache();
       if (localPath) {
@@ -183,7 +183,7 @@ struct PcListPageV2 {
       // 忽略错误
     }
   }
-  
+
   /**
    * 页面返回时重新加载背景图设置
    * 用户可能在设置页面更改了背景图类型
@@ -236,7 +236,7 @@ struct PcListPageV2 {
     };
     this.showConfirmDialog(config);
   }
-  
+
   /**
    * 免责声明确认后加载背景图
    */
@@ -264,12 +264,12 @@ struct PcListPageV2 {
 
       this.syncViewModelFromManager();
       this.computerManager.startBackgroundScan();
-      
+
       this.isInitializing = false;
-      
+
       // 首次安装检测：提示从备份恢复
       this.checkFirstLaunchRestore();
-      
+
       // 异步刷新状态
       this.computerManager.refreshAllComputers().then(() => {
         this.syncViewModelFromManager();
@@ -285,7 +285,7 @@ struct PcListPageV2 {
       this.isInitializing = false;
     }
   }
-  
+
   /**
    * 首次安装检测：如果电脑列表为空且未提示过，弹窗询问是否从备份恢复
    */
@@ -293,12 +293,12 @@ struct PcListPageV2 {
     try {
       const prompted = await PreferencesUtil.get<boolean>('backup_restore_prompted', false);
       if (prompted) return;
-      
+
       // 标记已提示（无论用户是否恢复）
       await PreferencesUtil.put('backup_restore_prompted', true);
-      
+
       if (this.viewModel.computers.length > 0) return;
-      
+
       this.showConfirmDialog({
         title: '恢复设置',
         message: '检测到首次使用，是否从备份文件恢复设置？',
@@ -317,31 +317,36 @@ struct PcListPageV2 {
       // 静默忽略
     }
   }
-  
+
   private async syncViewModelFromManager(): Promise<void> {
     const computers = await this.computerManager.getComputers();
-    
+
     // 创建 UUID 到电脑信息的映射
     const computerMap = new Map<string, ComputerInfo>();
     for (const c of computers) {
       computerMap.set(c.uuid, c);
     }
-    
+
     // 获取现有的 ObservableComputer 列表
     const existingMap = new Map<string, ObservableComputer>();
     for (const oc of this.viewModel.computers) {
       existingMap.set(oc.uuid, oc);
     }
-    
+
     // 构建新的列表，复用现有对象以避免重新渲染
     const newList: ObservableComputer[] = [];
     let hasChanges = false;
-    
+    let shouldRefreshComputerList = false;
+
     for (const c of computers) {
       const existing = existingMap.get(c.uuid);
       if (existing) {
+        const previousOnlineTransitionVersion = existing.onlineTransitionVersion;
         // 更新现有对象的属性（@Observed 会处理响应式更新）
         existing.updateFrom(c);
+        if (existing.onlineTransitionVersion !== previousOnlineTransitionVersion) {
+          shouldRefreshComputerList = true;
+        }
         newList.push(existing);
         existingMap.delete(c.uuid);
       } else {
@@ -350,14 +355,14 @@ struct PcListPageV2 {
         hasChanges = true;
       }
     }
-    
+
     // 如果有电脑被删除
     if (existingMap.size > 0) {
       hasChanges = true;
     }
-    
-    // 只有当电脑数量变化时才替换整个数组
-    if (hasChanges || this.viewModel.computers.length !== newList.length) {
+
+    // 电脑数量、排序或上线动效事件变化时才替换数组
+    if (hasChanges || this.viewModel.computers.length !== newList.length || shouldRefreshComputerList) {
       // 排序：在线已配对 > 在线未配对 > 离线，同优先级按名称排序
       newList.sort((a, b) => {
         const getPriority = (c: ObservableComputer): number => {
@@ -376,7 +381,7 @@ struct PcListPageV2 {
       // 同步更新 LazyForEach 数据源
       this.computerDataSource.reloadData(newList);
     }
-    
+
     // 更新缓存的统计值，确保 UI 显示正确
     this.viewModel.computerCount = newList.length;
     this.viewModel.onlineCount = newList.filter(c => c.isOnline).length;
@@ -407,14 +412,14 @@ struct PcListPageV2 {
     // 重新启动摇一摇检测
     this.startShakeDetection();
   }
-  
+
   onPageHide(): void {
     // 页面隐藏时停止轮询（节省资源）
     this.computerManager.stopPolling();
     // 停止摇一摇检测
     this.stopShakeDetection();
   }
-  
+
   // 启动摇一摇检测
   private startShakeDetection(): void {
     try {
@@ -423,11 +428,11 @@ struct PcListPageV2 {
         const y = data.y;
         const z = data.z;
         const acceleration = Math.sqrt(x * x + y * y + z * z);
-        
+
         // 检测是否超过阈值（摇一摇动作）
         // 正常重力加速度约为9.8，需要减去
         const shakeForce = Math.abs(acceleration - 9.8);
-        
+
         if (shakeForce > this.shakeThreshold) {
           const now = Date.now();
           // 冷却时间检查，防止连续触发
@@ -441,7 +446,7 @@ struct PcListPageV2 {
       // 某些设备可能不支持加速度传感器
     }
   }
-  
+
   // 停止摇一摇检测
   private stopShakeDetection(): void {
     try {
@@ -455,7 +460,7 @@ struct PcListPageV2 {
     Stack() {
       // 背景图层
       BackgroundImage({ imageUrl: this.backgroundImageUrl, imageOpacity: 0.7 })
-      
+
       // 主内容
       Column() {
         // 标题栏
@@ -469,7 +474,7 @@ struct PcListPageV2 {
             onSettingsClick: () => { router.pushUrl({ url: 'pages/SettingsPageV2' }); }
           } as TitleBarConfig
         })
-        
+
         // 电脑列表或空状态
         if (this.isInitializing) {
           this.LoadingState()
@@ -478,7 +483,7 @@ struct PcListPageV2 {
         } else {
           this.ComputerList()
         }
-        
+
         // 底部操作栏 (有电脑时显示，空状态由 EmptyState 自带按钮)
         if (!this.isInitializing && this.viewModel.computers.length > 0) {
           this.BottomBar()
@@ -487,7 +492,7 @@ struct PcListPageV2 {
       .width('100%')
       .height('100%')
       .defaultFocus(true)
-      
+
       // PIN 对话框
       if (this.showPinDialog) {
         PinDialogView({
@@ -496,7 +501,7 @@ struct PcListPageV2 {
           onClose: () => { this.showPinDialog = false; }
         })
       }
-      
+
       // 关于对话框
       if (this.showAboutDialog) {
         AboutDialogView({
@@ -638,6 +643,7 @@ struct PcListPageV2 {
             GridItem() {
               ComputerCard({
                 computer: computer,
+                onlineTransitionVersion: computer.onlineTransitionVersion,
                 onTap: () => {
                   if (!computer.isOnline) {
                     this.showComputerMenu(computer);
@@ -665,6 +671,7 @@ struct PcListPageV2 {
             ListItem() {
               ComputerCard({
                 computer: computer,
+                onlineTransitionVersion: computer.onlineTransitionVersion,
                 onTap: () => {
                   if (!computer.isOnline) {
                     this.showComputerMenu(computer);
@@ -732,12 +739,12 @@ struct PcListPageV2 {
       })
       .margin({ left: AppSpacing.XLarge, right: AppSpacing.XLarge })
       .onClick(() => router.pushUrl({ url: 'pages/AddPcPageV2' }))
-      
+
       // 下载壁纸到相册 - 使用 SaveButton 安全控件
       // 注意：SaveButton 作为安全控件，背景色透明度有最低限制 (α >= 0x1A)
-      SaveButton({ 
-        icon: SaveIconStyle.FULL_FILLED, 
-        buttonType: ButtonType.Circle 
+      SaveButton({
+        icon: SaveIconStyle.FULL_FILLED,
+        buttonType: ButtonType.Circle
       })
         .width(44)
         .height(44)
@@ -756,7 +763,7 @@ struct PcListPageV2 {
       bottom: AppSpacing.Medium
     })
   }
-  
+
   // 刷新壁纸（获取新的随机图片）- 由摇一摇触发
   private async refreshWallpaper(): Promise<void> {
     try {
@@ -773,14 +780,14 @@ struct PcListPageV2 {
       ToastQueue.show({ message: '刷新壁纸失败' });
     }
   }
-  
+
   /**
    * SaveButton 保存壁纸点击回调
    * 使用安全控件授权后保存图片到相册
    */
   handleSaveWallpaperClick: SaveButtonCallback = async (
-    event: ClickEvent, 
-    result: SaveButtonOnClickResult, 
+    event: ClickEvent,
+    result: SaveButtonOnClickResult,
     error?: BusinessError
   ) => {
     if (result === SaveButtonOnClickResult.SUCCESS) {
@@ -789,32 +796,32 @@ struct PcListPageV2 {
         ToastQueue.show({ message: '没有可下载的壁纸' });
         return;
       }
-      
+
       try {
         const context = getContext(this) as common.UIAbilityContext;
         ToastQueue.show({ message: '正在保存壁纸...' });
-        
+
         // 读取本地缓存文件
         const stat = fileIo.statSync(localPath);
         if (!stat || stat.size === 0) {
           ToastQueue.show({ message: '缓存图片不存在' });
           return;
         }
-        
+
         const file = fileIo.openSync(localPath, fileIo.OpenMode.READ_ONLY);
         const imageData = new ArrayBuffer(stat.size);
         fileIo.readSync(file.fd, imageData);
         fileIo.closeSync(file.fd);
-        
+
         // 使用 SaveButton 授权后创建图片资源
         const helper = photoAccessHelper.getPhotoAccessHelper(context);
         const uri = await helper.createAsset(photoAccessHelper.PhotoType.IMAGE, 'jpg');
-        
+
         // 写入图片数据
         const photoFile = await fileIo.open(uri, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
         await fileIo.write(photoFile.fd, imageData);
         await fileIo.close(photoFile.fd);
-        
+
         ToastQueue.show({ message: '壁纸已保存到相册' });
       } catch (err) {
         console.error('下载壁纸失败', err);
@@ -828,7 +835,7 @@ struct PcListPageV2 {
   };
 
   // ==================== 业务逻辑 ====================
-  
+
   private async refreshComputers(): Promise<void> {
     this.isRefreshing = true;
     try {
@@ -1006,7 +1013,7 @@ struct PcListPageV2 {
       onShowDetails: (c) => this.actions!.showComputerDetails(c),
       onDelete: (c) => this.actions!.deleteComputer(c)
     };
-    
+
     const menuResult = ComputerMenuHelper.generateMenu(computer, callbacks);
 
     // 设置配置
@@ -1022,7 +1029,7 @@ struct PcListPageV2 {
         }
       }
     };
-    
+
     // 创建并打开弹窗
     this.optionPickerDialogController = new CustomDialogController({
       builder: OptionPickerDialog({

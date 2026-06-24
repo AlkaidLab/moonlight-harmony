@@ -40,20 +40,36 @@ export class ObservableComputer implements NvHttpHost {
   httpPort: number | undefined = undefined;
   // 缓存的 HTTPS 端口
   httpsPort: number | undefined = undefined;
-  
+
   // 缓存的状态值 - 避免使用 getter 引起的性能问题
   isOnline: boolean = false;
   isPaired: boolean = false;
   isGaming: boolean = false;
   statusText: string = '离线';
-  
+  onlineTransitionVersion: number = 0;
+  private presentedOnlineTransitionVersion: number = 0;
+
   constructor(info?: ComputerInfo) {
     if (info) {
-      this.updateFrom(info);
+      this.copyFrom(info);
+      this.updateCachedValues();
     }
   }
-  
+
   updateFrom(info: ComputerInfo): void {
+    const wasOnline = this.isOnline;
+
+    this.copyFrom(info);
+
+    // 更新缓存的计算值
+    this.updateCachedValues();
+
+    if (!wasOnline && this.isOnline) {
+      this.onlineTransitionVersion++;
+    }
+  }
+
+  private copyFrom(info: ComputerInfo): void {
     this.uuid = info.uuid;
     this.name = info.name;
     this.address = info.address;
@@ -73,17 +89,22 @@ export class ObservableComputer implements NvHttpHost {
     this.boxArtUrl = info.boxArtUrl || '';
     this.httpPort = info.httpPort;
     this.httpsPort = info.httpsPort;
-    
-    // 更新缓存的计算值
-    this.updateCachedValues();
   }
-  
+
+  shouldPlayOnlineTransition(): boolean {
+    return this.isOnline && this.onlineTransitionVersion > this.presentedOnlineTransitionVersion;
+  }
+
+  markOnlineTransitionPlayed(): void {
+    this.presentedOnlineTransitionVersion = this.onlineTransitionVersion;
+  }
+
   // 更新缓存的计算值
   private updateCachedValues(): void {
     this.isOnline = this.state === ComputerState.ONLINE;
     this.isPaired = this.pairState === PairState.PAIRED;
     this.isGaming = this.runningGameId > 0;
-    
+
     if (!this.isOnline) {
       this.statusText = '离线';
     } else if (!this.isPaired) {
@@ -94,7 +115,7 @@ export class ObservableComputer implements NvHttpHost {
       this.statusText = '在线';
     }
   }
-  
+
   toComputerInfo(): ComputerInfo {
     const info: ComputerInfo = {
       uuid: this.uuid,
@@ -124,44 +145,44 @@ export class ObservableComputer implements NvHttpHost {
 
 /**
  * 电脑列表 ViewModel
- * 
+ *
  * 管理电脑列表的状态和业务逻辑
  */
 @Observed
 export class ComputerListViewModel {
   // 电脑列表
   computers: ObservableComputer[] = [];
-  
+
   // 加载状态
   isLoading: boolean = false;
   isRefreshing: boolean = false;
-  
+
   // 错误信息
   errorMessage: string = '';
-  
+
   // 选中的电脑（用于详情/操作）
   selectedComputer: ObservableComputer | null = null;
-  
+
   // 配对相关
   isPairing: boolean = false;
   pairingPin: string = '';
   pairingComputer: ObservableComputer | null = null;
-  
+
   private computerManager: ComputerManager;
-  
+
   constructor() {
     this.computerManager = ComputerManager.getInstance();
   }
-  
+
   /**
    * 加载电脑列表
    */
   async loadComputers(): Promise<void> {
     if (this.isLoading) return;
-    
+
     this.isLoading = true;
     this.errorMessage = '';
-    
+
     try {
       const computerInfos = await this.computerManager.getComputers();
       this.updateComputerList(computerInfos);
@@ -172,15 +193,15 @@ export class ComputerListViewModel {
       this.isLoading = false;
     }
   }
-  
+
   /**
    * 刷新电脑列表（重新轮询）
    */
   async refreshComputers(): Promise<void> {
     if (this.isRefreshing) return;
-    
+
     this.isRefreshing = true;
-    
+
     try {
       // 轮询所有电脑获取最新状态
       const computers = await this.computerManager.getComputers();
@@ -195,7 +216,7 @@ export class ComputerListViewModel {
       this.isRefreshing = false;
     }
   }
-  
+
   /**
    * 更新电脑列表
    */
@@ -203,7 +224,7 @@ export class ComputerListViewModel {
     // 更新现有项或添加新项
     const existingUuids = new Set(this.computers.map(c => c.uuid));
     const newUuids = new Set(infos.map(i => i.uuid));
-    
+
     // 更新现有电脑
     for (const computer of this.computers) {
       const info = infos.find(i => i.uuid === computer.uuid);
@@ -211,21 +232,21 @@ export class ComputerListViewModel {
         computer.updateFrom(info);
       }
     }
-    
+
     // 添加新电脑
     for (const info of infos) {
       if (!existingUuids.has(info.uuid)) {
         this.computers.push(new ObservableComputer(info));
       }
     }
-    
+
     // 移除已删除的电脑
     this.computers = this.computers.filter(c => newUuids.has(c.uuid));
-    
+
     // 更新缓存的统计值，触发 UI 更新
     this.updateCachedCounts();
   }
-  
+
   /**
    * 更新缓存的统计值（触发 @Observed 响应式更新）
    */
@@ -233,14 +254,14 @@ export class ComputerListViewModel {
     this.computerCount = this.computers.length;
     this.onlineCount = this.computers.filter(c => c.isOnline).length;
   }
-  
+
   /**
    * 添加电脑
    */
   async addComputer(address: string): Promise<boolean> {
     this.isLoading = true;
     this.errorMessage = '';
-    
+
     try {
       const result = await this.computerManager.addComputer(address);
       if (result) {
@@ -258,7 +279,7 @@ export class ComputerListViewModel {
       this.isLoading = false;
     }
   }
-  
+
   /**
    * 移除电脑
    */
@@ -266,14 +287,14 @@ export class ComputerListViewModel {
     await this.computerManager.removeComputer(uuid);
     this.computers = this.computers.filter(c => c.uuid !== uuid);
   }
-  
+
   /**
    * 开始配对
    */
   async startPairing(computer: ObservableComputer): Promise<string> {
     this.isPairing = true;
     this.pairingComputer = computer;
-    
+
     try {
       const pin = await this.computerManager.pairComputer(computer.uuid);
       this.pairingPin = pin;
@@ -286,7 +307,7 @@ export class ComputerListViewModel {
       throw new Error(err.message);
     }
   }
-  
+
   /**
    * 取消配对
    */
@@ -295,32 +316,32 @@ export class ComputerListViewModel {
     this.pairingPin = '';
     this.pairingComputer = null;
   }
-  
+
   /**
    * 唤醒电脑
    */
   async wakeComputer(computer: ObservableComputer): Promise<void> {
     await this.computerManager.wakeComputer(computer.uuid);
   }
-  
+
   /**
    * 选择电脑
    */
   selectComputer(computer: ObservableComputer): void {
     this.selectedComputer = computer;
   }
-  
+
   /**
    * 清除选择
    */
   clearSelection(): void {
     this.selectedComputer = null;
   }
-  
+
   // 缓存的统计值（避免 getter 不触发 UI 更新的问题）
   computerCount: number = 0;
   onlineCount: number = 0;
-  
+
   /**
    * 是否为空
    */
@@ -336,24 +357,24 @@ export class ComputerListViewModel {
 export class ComputerDataSource implements IDataSource {
   private listeners: DataChangeListener[] = [];
   private dataArray: ObservableComputer[] = [];
-  
+
   // 获取数据总数
   totalCount(): number {
     return this.dataArray.length;
   }
-  
+
   // 获取指定索引的数据
   getData(index: number): ObservableComputer {
     return this.dataArray[index];
   }
-  
+
   // 注册数据变化监听器
   registerDataChangeListener(listener: DataChangeListener): void {
     if (this.listeners.indexOf(listener) < 0) {
       this.listeners.push(listener);
     }
   }
-  
+
   // 注销数据变化监听器
   unregisterDataChangeListener(listener: DataChangeListener): void {
     const pos = this.listeners.indexOf(listener);
@@ -361,52 +382,52 @@ export class ComputerDataSource implements IDataSource {
       this.listeners.splice(pos, 1);
     }
   }
-  
+
   // 重新加载所有数据
   reloadData(data: ObservableComputer[]): void {
     this.dataArray = data;
     this.notifyDataReload();
   }
-  
+
   // 更新单个数据项（不重建组件，只更新内容）
   updateItem(index: number): void {
     this.notifyDataChange(index);
   }
-  
+
   // 通知数据重新加载
   private notifyDataReload(): void {
     this.listeners.forEach(listener => {
       listener.onDataReloaded();
     });
   }
-  
+
   // 通知单个数据变化
   private notifyDataChange(index: number): void {
     this.listeners.forEach(listener => {
       listener.onDataChange(index);
     });
   }
-  
+
   // 通知数据添加
   notifyDataAdd(index: number): void {
     this.listeners.forEach(listener => {
       listener.onDataAdd(index);
     });
   }
-  
+
   // 通知数据删除
   notifyDataDelete(index: number): void {
     this.listeners.forEach(listener => {
       listener.onDataDelete(index);
     });
   }
-  
+
   // 添加数据
   pushData(data: ObservableComputer): void {
     this.dataArray.push(data);
     this.notifyDataAdd(this.dataArray.length - 1);
   }
-  
+
   // 删除数据
   deleteData(index: number): void {
     this.dataArray.splice(index, 1);
