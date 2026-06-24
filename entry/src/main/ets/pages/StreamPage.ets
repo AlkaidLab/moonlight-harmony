@@ -1253,6 +1253,7 @@ struct StreamPage {
     if (viewportSize) {
       this.viewModel.displayInfo.screenWidth = viewportSize.width;
       this.viewModel.displayInfo.screenHeight = viewportSize.height;
+      this.panZoomHandler.setParentSize(viewportSize.width, viewportSize.height);
     }
 
     // 计算 XComponent 尺寸（letterbox/pillarbox）
