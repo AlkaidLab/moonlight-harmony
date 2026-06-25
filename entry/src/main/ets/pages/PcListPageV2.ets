@@ -562,7 +562,7 @@ struct PcListPageV2 {
         .fontColor(AppColors.Primary)
         .margin({ bottom: AppSpacing.Small })
 
-      Text('扫描网络发现运行 Foundation Sunshine 的电脑')
+      Text('自动发现局域网内运行 Foundation Sunshine 的电脑')
         .fontSize(AppSizes.FontBody)
         .fontColor(AppColors.TextSecondary)
         .textAlign(TextAlign.Center)
@@ -582,7 +582,7 @@ struct PcListPageV2 {
               .height(20)
               .fillColor(AppColors.TextOnPrimary)
               .margin({ right: 8 })
-            Text('扫描网络')
+            Text('刷新')
               .fontSize(AppSizes.FontBody)
               .fontWeight(FontWeight.Medium)
               .fontColor(AppColors.TextOnPrimary)
@@ -592,7 +592,7 @@ struct PcListPageV2 {
         .padding({ left: AppSpacing.XLarge, right: AppSpacing.XLarge })
         .borderRadius(AppSizes.RadiusLarge)
         .backgroundColor(AppColors.Primary)
-        .onClick(() => this.scanNetwork())
+        .onClick(() => this.refreshKnownHosts())
 
         Button({ type: ButtonType.Normal }) {
           Row() {
@@ -701,7 +701,7 @@ struct PcListPageV2 {
   @Builder
   BottomBar() {
     Row() {
-      // 扫描按钮 - 搜索网络电脑
+      // 刷新按钮 - 重新轮询已知主机状态
       Button({ type: ButtonType.Circle }) {
         if (this.isScanning) {
           LoadingProgress()
@@ -719,7 +719,7 @@ struct PcListPageV2 {
       .height(44)
       .backgroundColor(0x1A000000)  // 与 SaveButton 保持一致的半透明背景
       .enabled(!this.isScanning)
-      .onClick(() => this.scanNetwork())
+      .onClick(() => this.refreshKnownHosts())
 
       // 添加按钮 - 突出显示的中央大按钮
       Button({ type: ButtonType.Circle }) {
@@ -978,15 +978,21 @@ struct PcListPageV2 {
     }
   }
 
-  private async scanNetwork(): Promise<void> {
+  /**
+   * 手动刷新：重新轮询所有已知主机的在线状态（不发起 mDNS 发现）。
+   * 局域网内的新主机由 startBackgroundScan 持续自动发现；
+   * 这里若改调 mdnsDiscovery.discover() 会反过来 stopDiscovery() 把后台扫描杀掉
+   * （见 MdnsDiscovery.discover 的实现），因此按钮只做状态刷新。
+   */
+  private async refreshKnownHosts(): Promise<void> {
     this.isScanning = true;
     try {
-      await this.computerManager.scanNetwork();
+      await this.computerManager.refreshAllComputers();
       this.syncViewModelFromManager();
-      ToastQueue.show({ message: '扫描完成' });
+      ToastQueue.show({ message: '刷新完成' });
     } catch (err) {
-      console.error('扫描失败', err);
-      ToastQueue.show({ message: '扫描失败' });
+      console.error('刷新失败', err);
+      ToastQueue.show({ message: '刷新失败' });
     } finally {
       this.isScanning = false;
     }
