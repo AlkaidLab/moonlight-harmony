@@ -577,7 +577,7 @@ struct PcListPageV2 {
       Row() {
         Button({ type: ButtonType.Normal }) {
           Row() {
-            Image($r('app.media.ic_scan'))
+            Image($r('app.media.ic_refresh'))
               .width(20)
               .height(20)
               .fillColor(AppColors.TextOnPrimary)
@@ -592,6 +592,7 @@ struct PcListPageV2 {
         .padding({ left: AppSpacing.XLarge, right: AppSpacing.XLarge })
         .borderRadius(AppSizes.RadiusLarge)
         .backgroundColor(AppColors.Primary)
+        .enabled(!this.isScanning)
         .onClick(() => this.refreshKnownHosts())
 
         Button({ type: ButtonType.Normal }) {
@@ -709,7 +710,7 @@ struct PcListPageV2 {
             .height(22)
             .color(AppColors.TextSecondary)
         } else {
-          Image($r('app.media.ic_search_network'))
+          Image($r('app.media.ic_refresh'))
             .width(22)
             .height(22)
             .fillColor(AppColors.TextSecondary)
@@ -852,7 +853,7 @@ struct PcListPageV2 {
   private async scanAndImportKeys(): Promise<void> {
     if (!QrShareService.isScanQrCodeSupported()) {
       ToastQueue.show({
-        message: QrShareService.getScanUnsupportedMessage() + '，请使用扫描网络或手动添加',
+        message: QrShareService.getScanUnsupportedMessage() + '，请使用刷新或手动添加',
         duration: 2500
       });
       this.canScanQrCode = false;
@@ -985,6 +986,10 @@ struct PcListPageV2 {
    * （见 MdnsDiscovery.discover 的实现），因此按钮只做状态刷新。
    */
   private async refreshKnownHosts(): Promise<void> {
+    if (this.isScanning) {
+      return;
+    }
+
     this.isScanning = true;
     try {
       await this.computerManager.refreshAllComputers();
