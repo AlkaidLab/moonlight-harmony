@@ -212,6 +212,7 @@ static const char* TryLoadAv1MimeType() {
 namespace {
     Smpte2086Metadata g_hdrStaticMetadata = {};
     bool g_hasHdrStaticMetadata = false;
+    std::mutex g_hdrStaticMetadataMutex;
 }
 
 static OH_NativeBuffer_StaticMetadata BuildDefaultHdrStaticMetadata() {
@@ -830,15 +831,24 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
             // 5. 设置 HDR 静态元数据（SMPTE 2086 + CTA 861.3）
             // Sunshine 会通过控制流传递主机显示器/内容元数据；缺失时才使用 BT.2020 默认值。
             OH_NativeBuffer_StaticMetadata staticMetadata;
-            if (g_hasHdrStaticMetadata) {
-                staticMetadata = ToNativeHdrStaticMetadata(g_hdrStaticMetadata);
+            bool hasHostHdrStaticMetadata = false;
+            {
+                std::lock_guard<std::mutex> lock(g_hdrStaticMetadataMutex);
+                if (g_hasHdrStaticMetadata) {
+                    staticMetadata = ToNativeHdrStaticMetadata(g_hdrStaticMetadata);
+                    hasHostHdrStaticMetadata = true;
+                } else {
+                    staticMetadata = BuildDefaultHdrStaticMetadata();
+                }
+            }
+
+            if (hasHostHdrStaticMetadata) {
                 OH_LOG_INFO(LOG_APP, "{Init} Using host HDR static metadata: maxLum=%.3f, minLum=%.4f, maxCLL=%.3f, maxFALL=%.3f",
                             staticMetadata.smpte2086.maxLuminance,
                             staticMetadata.smpte2086.minLuminance,
                             staticMetadata.cta861.maxContentLightLevel,
                             staticMetadata.cta861.maxFrameAverageLightLevel);
             } else {
-                staticMetadata = BuildDefaultHdrStaticMetadata();
                 OH_LOG_INFO(LOG_APP, "{Init} Host HDR metadata unavailable, using BT.2020 fallback static metadata");
             }
 
@@ -2508,7 +2518,7 @@ void SetHdrConfig(bool enableHdr, int hdrType, int colorSpace, int colorRange) {
 }
 
 void SetHdrStaticMetadata(const Smpte2086Metadata* metadata) {
-    std::lock_guard<std::mutex> lock(g_videoDecoderMutex);
+    std::lock_guard<std::mutex> lock(g_hdrStaticMetadataMutex);
 
     if (metadata == nullptr) {
         g_hasHdrStaticMetadata = false;
@@ -2531,8 +2541,11 @@ void ResetHdrConfig() {
     g_hdrType = HdrType::SDR;
     g_colorSpace = 1;   // REC_709
     g_colorRange = 0;   // LIMITED
-    g_hasHdrStaticMetadata = false;
-    g_hdrStaticMetadata = {};
+    {
+        std::lock_guard<std::mutex> metadataLock(g_hdrStaticMetadataMutex);
+        g_hasHdrStaticMetadata = false;
+        g_hdrStaticMetadata = {};
+    }
 }
 
 void SetBufferCount(int count) {
