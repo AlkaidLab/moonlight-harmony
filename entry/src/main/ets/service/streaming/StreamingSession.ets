@@ -319,6 +319,14 @@ export class StreamingSession {
     return [minBrightness, maxBrightness, maxAverageBrightness];
   }
 
+  private static applyBrightnessOverride(range: number[], peakBrightnessNits: number): number[] {
+    const rawMinBrightness = range.length > 0 ? range[0] : 1;
+    const minBrightness = Math.max(1, Math.round(rawMinBrightness));
+    const peakBrightness = Math.max(minBrightness + 1, Math.max(300, Math.min(4000, Math.round(peakBrightnessNits))));
+    const maxAverageBrightness = Math.max(minBrightness, Math.max(100, Math.min(1000, Math.round(peakBrightness * 0.2))));
+    return [minBrightness, peakBrightness, maxAverageBrightness];
+  }
+
   // ---------------------------------------------------------------------------
   // 成员变量 — 连接与配置
   // ---------------------------------------------------------------------------
@@ -1175,7 +1183,13 @@ export class StreamingSession {
       this.config.hdr = effectiveHdr;
     }
 
-    const brightnessRange = StreamingSession.getBrightnessRange();
+    let brightnessRange = StreamingSession.getBrightnessRange();
+    if (effectiveHdr && this.config.hdrBrightnessOverride) {
+      brightnessRange = StreamingSession.applyBrightnessOverride(brightnessRange, this.config.hdrPeakBrightnessNits);
+      console.info('[Brightness] HDR override: min=' + brightnessRange[0].toString() +
+        ', max=' + brightnessRange[1].toString() +
+        ', avg=' + brightnessRange[2].toString() + ' nits');
+    }
 
     const launchConfig: LaunchConfig = {
       appId: this.appId,

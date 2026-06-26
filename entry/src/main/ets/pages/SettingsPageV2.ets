@@ -158,6 +158,8 @@ struct SettingsPageV2 {
   @State enableHdr: boolean = false;
   @State hdrMode: string = 'HDR10';  // 'HDR10' or 'HLG'
   @State enableHdrHighBrightness: boolean = false;
+  @State hdrBrightnessOverride: boolean = false;
+  @State hdrPeakBrightnessNits: number = 1000;
   @State videoFormat: string = '自动';
   @State stretchVideo: boolean = false;
   @State screenPosition: string = '居中';
@@ -502,6 +504,8 @@ struct SettingsPageV2 {
       this.enableHdr = await this.loadBoolean(SettingsKeys.ENABLE_HDR, false);
       this.hdrMode = await PreferencesUtil.get<string>(SettingsKeys.HDR_MODE, 'HDR10');
       this.enableHdrHighBrightness = await this.loadBoolean(SettingsKeys.ENABLE_HDR_HIGH_BRIGHTNESS, false);
+      this.hdrBrightnessOverride = await this.loadBoolean(SettingsKeys.HDR_BRIGHTNESS_OVERRIDE, false);
+      this.hdrPeakBrightnessNits = await PreferencesUtil.get<number>(SettingsKeys.HDR_PEAK_BRIGHTNESS_NITS, 1000);
       this.videoFormat = await PreferencesUtil.get<string>(SettingsKeys.VIDEO_FORMAT, '自动');
       this.stretchVideo = await this.loadBoolean(SettingsKeys.STRETCH_VIDEO, false);
       this.screenPosition = await PreferencesUtil.get<string>(SettingsKeys.SCREEN_POSITION, '居中');
@@ -1106,7 +1110,9 @@ struct SettingsPageV2 {
                   this.saveSetting(SettingsKeys.VIDEO_FORMAT, value);
                   if (value === 'H.264' && this.enableHdr) {
                     this.enableHdr = false;
+                    this.hdrBrightnessOverride = false;
                     this.saveSetting(SettingsKeys.ENABLE_HDR, false);
+                    this.saveSetting(SettingsKeys.HDR_BRIGHTNESS_OVERRIDE, false);
                     this.showToast('H.264 不支持 HDR，已自动关闭');
                   }
                 }
@@ -1126,6 +1132,10 @@ struct SettingsPageV2 {
                   }
                   this.enableHdr = !this.enableHdr;
                   this.saveSetting(SettingsKeys.ENABLE_HDR, this.enableHdr);
+                  if (!this.enableHdr && this.hdrBrightnessOverride) {
+                    this.hdrBrightnessOverride = false;
+                    this.saveSetting(SettingsKeys.HDR_BRIGHTNESS_OVERRIDE, false);
+                  }
                 }
               },
               {
@@ -1160,6 +1170,43 @@ struct SettingsPageV2 {
                   }
                   this.enableHdrHighBrightness = !this.enableHdrHighBrightness;
                   this.saveSetting(SettingsKeys.ENABLE_HDR_HIGH_BRIGHTNESS, this.enableHdrHighBrightness);
+                }
+              },
+              {
+                title: '手动 HDR 亮度校准',
+                subtitle: this.hdrBrightnessOverride
+                  ? '上报峰值 ' + this.hdrPeakBrightnessNits.toString() + ' nits，重新连接后生效'
+                  : 'HDR 发灰或偏暗时覆盖上报给 Sunshine 的屏幕亮度',
+                type: 'toggle',
+                visible: this.enableHdr,
+                value: this.hdrBrightnessOverride,
+                disabled: this.videoFormat === 'H.264' || !this.enableHdr,
+                action: () => {
+                  if (this.videoFormat === 'H.264') {
+                    this.showToast('H.264 编码不支持 HDR');
+                    return;
+                  }
+                  this.hdrBrightnessOverride = !this.hdrBrightnessOverride;
+                  this.saveSetting(SettingsKeys.HDR_BRIGHTNESS_OVERRIDE, this.hdrBrightnessOverride);
+                }
+              },
+              {
+                title: 'HDR 峰值亮度',
+                subtitle: '数值越高，Sunshine 会按更亮的 HDR 屏幕处理',
+                type: 'slider',
+                visible: this.enableHdr && this.hdrBrightnessOverride,
+                value: this.hdrPeakBrightnessNits,
+                min: 300,
+                max: 4000,
+                step: 50,
+                unit: ' nits',
+                disabled: this.videoFormat === 'H.264' || !this.enableHdr || !this.hdrBrightnessOverride,
+                snapValues: [300, 500, 800, 1000, 1500, 2000, 4000],
+                snapThreshold: 25,
+                formatValue: (v: number) => v.toString() + ' nits',
+                onSliderChange: (value: number) => {
+                  this.hdrPeakBrightnessNits = value;
+                  this.saveSetting(SettingsKeys.HDR_PEAK_BRIGHTNESS_NITS, value);
                 }
               },
               {

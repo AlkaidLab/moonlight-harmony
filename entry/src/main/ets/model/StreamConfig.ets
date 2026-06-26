@@ -38,6 +38,8 @@ export interface StreamConfig {
   hdr: boolean;
   hdrMode: HdrMode;         // HDR 模式: SDR=0, HDR10=1, HLG=2
   hdrHighBrightness: boolean;
+  hdrBrightnessOverride: boolean; // 手动覆盖上报给 Sunshine 的 HDR 亮度范围
+  hdrPeakBrightnessNits: number;  // 手动 HDR 峰值亮度 (300-4000 nits)
   stretchVideo: boolean;
 
   // 音频设置
@@ -222,6 +224,8 @@ export function getDefaultStreamConfig(): StreamConfig {
     hdr: false,
     hdrMode: HdrMode.SDR,  // 默认 SDR，启用 HDR 时根据用户选择使用 HDR10 或 HLG
     hdrHighBrightness: false,
+    hdrBrightnessOverride: false,
+    hdrPeakBrightnessNits: 1000,
     stretchVideo: false,
 
     // 音频设置
