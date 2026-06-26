@@ -100,12 +100,25 @@ static bool ConvertSunshineHdrMetadata(const SS_HDR_METADATA* source, Smpte2086M
 
     constexpr float kChromaticityScale = 50000.0f;
     constexpr float kMinLuminanceScale = 10000.0f;
+    constexpr uint16_t kChromaticityMax = 50000;
+    constexpr uint32_t kMinLuminanceScaleUnits = 10000;
+
+    auto isValidChromaticity = [](uint16_t value) {
+        return value > 0 && value <= kChromaticityMax;
+    };
+    uint64_t maxDisplayLuminanceInMinUnits =
+        static_cast<uint64_t>(source->maxDisplayLuminance) * kMinLuminanceScaleUnits;
 
     if (source->maxDisplayLuminance == 0 ||
-        source->displayPrimaries[0].x == 0 || source->displayPrimaries[0].y == 0 ||
-        source->displayPrimaries[1].x == 0 || source->displayPrimaries[1].y == 0 ||
-        source->displayPrimaries[2].x == 0 || source->displayPrimaries[2].y == 0 ||
-        source->whitePoint.x == 0 || source->whitePoint.y == 0) {
+        !isValidChromaticity(source->displayPrimaries[0].x) ||
+        !isValidChromaticity(source->displayPrimaries[0].y) ||
+        !isValidChromaticity(source->displayPrimaries[1].x) ||
+        !isValidChromaticity(source->displayPrimaries[1].y) ||
+        !isValidChromaticity(source->displayPrimaries[2].x) ||
+        !isValidChromaticity(source->displayPrimaries[2].y) ||
+        !isValidChromaticity(source->whitePoint.x) ||
+        !isValidChromaticity(source->whitePoint.y) ||
+        source->minDisplayLuminance > maxDisplayLuminanceInMinUnits) {
         return false;
     }
 
@@ -1040,8 +1053,8 @@ void BridgeClConnectionStatusUpdate(int connectionStatus) {
     }
 }
 
-void BridgeClSetHdrMode(int enabled, void* hdrMetadata) {
-    OH_LOG_INFO(LOG_APP, "Set HDR mode: %{public}d, metadata=%{public}p", enabled, hdrMetadata);
+void BridgeClSetHdrMode(bool enabled, void* hdrMetadata) {
+    OH_LOG_INFO(LOG_APP, "Set HDR mode: %{public}d, metadata=%{public}p", enabled ? 1 : 0, hdrMetadata);
 
     if (enabled && hdrMetadata != nullptr) {
         Smpte2086Metadata convertedMetadata = {};

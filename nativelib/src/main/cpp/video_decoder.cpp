@@ -25,6 +25,7 @@
 #include <sched.h>
 #include <unistd.h>
 #include <fstream>
+#include <mutex>
 #include <vector>
 #include <qos/qos.h>
 
@@ -185,17 +186,14 @@ static bool g_mediaKeysLoaded = false;
 
 // AV1 MIME (API 23+) must be loaded dynamically so older runtimes can still load this module.
 static const char* key_mime_video_av1 = nullptr;
-static bool g_codecMimeKeysLoaded = false;
+static std::once_flag g_codecMimeKeysOnce;
 
-static const char* TryLoadAv1MimeType() {
-    if (g_codecMimeKeysLoaded) return key_mime_video_av1;
-    g_codecMimeKeysLoaded = true;
-
+static void LoadCodecMimeKeys() {
     const char** pAv1 = (const char**)dlsym(RTLD_DEFAULT, "OH_AVCODEC_MIMETYPE_VIDEO_AV1");
     if (pAv1 != nullptr) key_mime_video_av1 = *pAv1;
 
     if (pAv1 == nullptr) {
-        void* codecbaseHandle = dlopen("libnative_media_codecbase.so", RTLD_NOW);
+        static void* codecbaseHandle = dlopen("libnative_media_codecbase.so", RTLD_NOW);
         if (codecbaseHandle != nullptr) {
             pAv1 = (const char**)dlsym(codecbaseHandle, "OH_AVCODEC_MIMETYPE_VIDEO_AV1");
             if (pAv1 != nullptr) key_mime_video_av1 = *pAv1;
@@ -204,6 +202,10 @@ static const char* TryLoadAv1MimeType() {
 
     OH_LOG_INFO(LOG_APP, "Codec MIME availability: AV1=%{public}s",
                 key_mime_video_av1 ? key_mime_video_av1 : "N/A");
+}
+
+static const char* TryLoadAv1MimeType() {
+    std::call_once(g_codecMimeKeysOnce, LoadCodecMimeKeys);
     return key_mime_video_av1;
 }
 
@@ -493,29 +495,23 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
                      static_cast<int>(config_.codec));
         return -1;
     }
-    if (GetHWDecoderCapability(mimeType) == nullptr) {
+    OH_AVCapability* hwCapability = GetHWDecoderCapability(mimeType);
+    if (hwCapability == nullptr) {
         OH_LOG_ERROR(LOG_APP, "{Init} No hardware decoder capability for mime type: %{public}s", mimeType);
         return -1;
     }
-    OH_LOG_INFO(LOG_APP, "{Init} Creating decoder with mime type: %{public}s", mimeType);
-    
-    decoder_ = OH_VideoDecoder_CreateByMime(mimeType);
+    const char* decoderName = OH_AVCapability_GetName(hwCapability);
+    if (decoderName == nullptr || decoderName[0] == '\0') {
+        OH_LOG_ERROR(LOG_APP, "{Init} Hardware decoder name unavailable for mime type: %{public}s", mimeType);
+        return -1;
+    }
+    OH_LOG_INFO(LOG_APP, "{Init} Creating hardware decoder: %{public}s (mime=%{public}s)",
+                decoderName, mimeType);
+
+    decoder_ = OH_VideoDecoder_CreateByName(decoderName);
     if (decoder_ == nullptr) {
-        OH_LOG_ERROR(LOG_APP, "{Init} Failed to create video decoder for mime type: %{public}s (may need to try H264)", mimeType);
-        
-        // 如果 HEVC 失败，尝试回退到 H264
-        if (config_.codec == VideoCodecType::HEVC) {
-            OH_LOG_INFO(LOG_APP, "{Init} HEVC failed, trying H264 fallback...");
-            mimeType = "video/avc";
-            decoder_ = OH_VideoDecoder_CreateByMime(mimeType);
-            if (decoder_ == nullptr) {
-                OH_LOG_ERROR(LOG_APP, "{Init} H264 fallback also failed");
-                return -1;
-            }
-            OH_LOG_INFO(LOG_APP, "{Init} H264 fallback succeeded");
-        } else {
-            return -1;
-        }
+        OH_LOG_ERROR(LOG_APP, "{Init} Failed to create hardware decoder: %{public}s", decoderName);
+        return -1;
     }
     
     OH_LOG_INFO(LOG_APP, "{Init} Decoder created successfully");

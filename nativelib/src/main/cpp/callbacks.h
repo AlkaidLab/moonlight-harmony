@@ -124,7 +124,7 @@ void BridgeClConnectionStarted(void);
 void BridgeClConnectionTerminated(int errorCode);
 void BridgeClRumble(unsigned short controllerNumber, unsigned short lowFreqMotor, unsigned short highFreqMotor);
 void BridgeClConnectionStatusUpdate(int connectionStatus);
-void BridgeClSetHdrMode(int enabled, void* hdrMetadata);
+void BridgeClSetHdrMode(bool enabled, void* hdrMetadata);
 void BridgeClRumbleTriggers(unsigned short controllerNumber, unsigned short leftTrigger, unsigned short rightTrigger);
 void BridgeClSetMotionEventState(unsigned short controllerNumber, unsigned char motionType, unsigned short reportRateHz);
 void BridgeClSetControllerLED(unsigned short controllerNumber, unsigned char r, unsigned char g, unsigned char b);
