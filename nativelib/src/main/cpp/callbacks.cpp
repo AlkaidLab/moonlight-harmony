@@ -93,6 +93,37 @@ static napi_status CreateThreadsafeFunction(
     );
 }
 
+static bool ConvertSunshineHdrMetadata(const SS_HDR_METADATA* source, Smpte2086Metadata* target) {
+    if (source == nullptr || target == nullptr) {
+        return false;
+    }
+
+    constexpr float kChromaticityScale = 50000.0f;
+    constexpr float kMinLuminanceScale = 10000.0f;
+
+    if (source->maxDisplayLuminance == 0 ||
+        source->displayPrimaries[0].x == 0 || source->displayPrimaries[0].y == 0 ||
+        source->displayPrimaries[1].x == 0 || source->displayPrimaries[1].y == 0 ||
+        source->displayPrimaries[2].x == 0 || source->displayPrimaries[2].y == 0 ||
+        source->whitePoint.x == 0 || source->whitePoint.y == 0) {
+        return false;
+    }
+
+    target->redX = static_cast<float>(source->displayPrimaries[0].x) / kChromaticityScale;
+    target->redY = static_cast<float>(source->displayPrimaries[0].y) / kChromaticityScale;
+    target->greenX = static_cast<float>(source->displayPrimaries[1].x) / kChromaticityScale;
+    target->greenY = static_cast<float>(source->displayPrimaries[1].y) / kChromaticityScale;
+    target->blueX = static_cast<float>(source->displayPrimaries[2].x) / kChromaticityScale;
+    target->blueY = static_cast<float>(source->displayPrimaries[2].y) / kChromaticityScale;
+    target->whiteX = static_cast<float>(source->whitePoint.x) / kChromaticityScale;
+    target->whiteY = static_cast<float>(source->whitePoint.y) / kChromaticityScale;
+    target->maxLuminance = static_cast<float>(source->maxDisplayLuminance);
+    target->minLuminance = static_cast<float>(source->minDisplayLuminance) / kMinLuminanceScale;
+    target->maxContentLightLevel = static_cast<float>(source->maxContentLightLevel);
+    target->maxFrameAverageLightLevel = static_cast<float>(source->maxFrameAverageLightLevel);
+    return true;
+}
+
 // =============================================================================
 // 回调 JS 调用函数
 // =============================================================================
@@ -1011,16 +1042,26 @@ void BridgeClConnectionStatusUpdate(int connectionStatus) {
 
 void BridgeClSetHdrMode(int enabled, void* hdrMetadata) {
     OH_LOG_INFO(LOG_APP, "Set HDR mode: %{public}d, metadata=%{public}p", enabled, hdrMetadata);
-    
-    // 如果有 HDR 元数据，可以在这里处理
-    // hdrMetadata 包含 HDR10 静态元数据（如果有的话）
+
     if (enabled && hdrMetadata != nullptr) {
-        // HDR 元数据格式（来自 moonlight-common-c）:
-        // 24 字节的 SS_HDR_METADATA 结构体
-        // 包含显示主颜色坐标、白点、亮度等信息
-        uint8_t* metadata = static_cast<uint8_t*>(hdrMetadata);
-        OH_LOG_INFO(LOG_APP, "HDR metadata received: first 4 bytes = %02x %02x %02x %02x",
-                    metadata[0], metadata[1], metadata[2], metadata[3]);
+        Smpte2086Metadata convertedMetadata = {};
+        if (ConvertSunshineHdrMetadata(static_cast<const SS_HDR_METADATA*>(hdrMetadata), &convertedMetadata)) {
+            VideoDecoderInstance::SetHdrStaticMetadata(&convertedMetadata);
+            OH_LOG_INFO(LOG_APP, "HDR metadata applied: R=(%.4f,%.4f), G=(%.4f,%.4f), B=(%.4f,%.4f), "
+                        "WP=(%.4f,%.4f), maxLum=%.3f, minLum=%.4f, maxCLL=%.3f, maxFALL=%.3f",
+                        convertedMetadata.redX, convertedMetadata.redY,
+                        convertedMetadata.greenX, convertedMetadata.greenY,
+                        convertedMetadata.blueX, convertedMetadata.blueY,
+                        convertedMetadata.whiteX, convertedMetadata.whiteY,
+                        convertedMetadata.maxLuminance, convertedMetadata.minLuminance,
+                        convertedMetadata.maxContentLightLevel,
+                        convertedMetadata.maxFrameAverageLightLevel);
+        } else {
+            VideoDecoderInstance::SetHdrStaticMetadata(nullptr);
+            OH_LOG_WARN(LOG_APP, "HDR metadata missing or invalid, decoder will use fallback static metadata");
+        }
+    } else {
+        VideoDecoderInstance::SetHdrStaticMetadata(nullptr);
     }
     
     // 通知 ArkTS 层 HDR 状态变化
