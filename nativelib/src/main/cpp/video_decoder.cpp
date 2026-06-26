@@ -25,6 +25,7 @@
 #include <sched.h>
 #include <unistd.h>
 #include <fstream>
+#include <mutex>
 #include <vector>
 #include <qos/qos.h>
 
@@ -182,6 +183,77 @@ static bool g_syncApiAvailable = false;
 static const char* key_enable_sync_mode = nullptr;
 static const char* key_vrr_enable = nullptr;
 static bool g_mediaKeysLoaded = false;
+
+// AV1 MIME (API 23+) must be loaded dynamically so older runtimes can still load this module.
+static const char* key_mime_video_av1 = nullptr;
+static std::once_flag g_codecMimeKeysOnce;
+
+static void LoadCodecMimeKeys() {
+    const char** pAv1 = (const char**)dlsym(RTLD_DEFAULT, "OH_AVCODEC_MIMETYPE_VIDEO_AV1");
+    if (pAv1 != nullptr) key_mime_video_av1 = *pAv1;
+
+    if (pAv1 == nullptr) {
+        static void* codecbaseHandle = dlopen("libnative_media_codecbase.so", RTLD_NOW);
+        if (codecbaseHandle != nullptr) {
+            pAv1 = (const char**)dlsym(codecbaseHandle, "OH_AVCODEC_MIMETYPE_VIDEO_AV1");
+            if (pAv1 != nullptr) key_mime_video_av1 = *pAv1;
+        }
+    }
+
+    OH_LOG_INFO(LOG_APP, "Codec MIME availability: AV1=%{public}s",
+                key_mime_video_av1 ? key_mime_video_av1 : "N/A");
+}
+
+static const char* TryLoadAv1MimeType() {
+    std::call_once(g_codecMimeKeysOnce, LoadCodecMimeKeys);
+    return key_mime_video_av1;
+}
+
+namespace {
+    Smpte2086Metadata g_hdrStaticMetadata = {};
+    bool g_hasHdrStaticMetadata = false;
+    std::mutex g_hdrStaticMetadataMutex;
+}
+
+static OH_NativeBuffer_StaticMetadata BuildDefaultHdrStaticMetadata() {
+    OH_NativeBuffer_StaticMetadata staticMetadata = {};
+    staticMetadata.smpte2086.displayPrimaryRed   = {0.708f, 0.292f};
+    staticMetadata.smpte2086.displayPrimaryGreen = {0.170f, 0.797f};
+    staticMetadata.smpte2086.displayPrimaryBlue  = {0.131f, 0.046f};
+    staticMetadata.smpte2086.whitePoint          = {0.3127f, 0.3290f};
+    staticMetadata.smpte2086.maxLuminance        = 1000.0f;
+    staticMetadata.smpte2086.minLuminance        = 0.001f;
+    staticMetadata.cta861.maxContentLightLevel       = 1000.0f;
+    staticMetadata.cta861.maxFrameAverageLightLevel  = 400.0f;
+    return staticMetadata;
+}
+
+static OH_NativeBuffer_StaticMetadata ToNativeHdrStaticMetadata(const Smpte2086Metadata& metadata) {
+    OH_NativeBuffer_StaticMetadata staticMetadata = {};
+    staticMetadata.smpte2086.displayPrimaryRed   = {metadata.redX, metadata.redY};
+    staticMetadata.smpte2086.displayPrimaryGreen = {metadata.greenX, metadata.greenY};
+    staticMetadata.smpte2086.displayPrimaryBlue  = {metadata.blueX, metadata.blueY};
+    staticMetadata.smpte2086.whitePoint          = {metadata.whiteX, metadata.whiteY};
+    staticMetadata.smpte2086.maxLuminance        = metadata.maxLuminance;
+    staticMetadata.smpte2086.minLuminance        = metadata.minLuminance;
+    staticMetadata.cta861.maxContentLightLevel      = metadata.maxContentLightLevel;
+    staticMetadata.cta861.maxFrameAverageLightLevel = metadata.maxFrameAverageLightLevel;
+    return staticMetadata;
+}
+
+// 查询指定 MIME 类型解码器的硬件能力
+// 返回: OH_AVCapability* (系统管理，无需释放), 或 nullptr 不支持
+static OH_AVCapability* GetHWDecoderCapability(const char* mimeType) {
+    if (mimeType == nullptr) {
+        return nullptr;
+    }
+
+    OH_AVCapability* cap = OH_AVCodec_GetCapabilityByCategory(mimeType, false, HARDWARE);
+    if (cap != nullptr && OH_AVCapability_IsHardware(cap)) {
+        return cap;
+    }
+    return nullptr;
+}
 
 /**
  * 尝试在运行时加载同步模式 API 函数
@@ -399,11 +471,7 @@ const char* VideoDecoder::GetMimeType(VideoCodecType codec) const {
         case VideoCodecType::HEVC:
             return OH_AVCODEC_MIMETYPE_VIDEO_HEVC;
         case VideoCodecType::AV1:
-            // HarmonyOS NEXT 目前不支持 AV1 硬解码
-            // 未来版本可能添加 OH_AVCODEC_MIMETYPE_VIDEO_AV1
-            // 暂时回退到 HEVC
-            OH_LOG_WARN(LOG_APP, "AV1 not supported, falling back to HEVC");
-            return OH_AVCODEC_MIMETYPE_VIDEO_HEVC;
+            return TryLoadAv1MimeType();
         default:
             return OH_AVCODEC_MIMETYPE_VIDEO_AVC;
     }
@@ -423,25 +491,28 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     
     // 创建视频解码器
     const char* mimeType = GetMimeType(config_.codec);
-    OH_LOG_INFO(LOG_APP, "{Init} Creating decoder with mime type: %{public}s", mimeType);
-    
-    decoder_ = OH_VideoDecoder_CreateByMime(mimeType);
+    if (mimeType == nullptr) {
+        OH_LOG_ERROR(LOG_APP, "{Init} Decoder MIME unavailable for codec=%{public}d",
+                     static_cast<int>(config_.codec));
+        return -1;
+    }
+    OH_AVCapability* hwCapability = GetHWDecoderCapability(mimeType);
+    if (hwCapability == nullptr) {
+        OH_LOG_ERROR(LOG_APP, "{Init} No hardware decoder capability for mime type: %{public}s", mimeType);
+        return -1;
+    }
+    const char* decoderName = OH_AVCapability_GetName(hwCapability);
+    if (decoderName == nullptr || decoderName[0] == '\0') {
+        OH_LOG_ERROR(LOG_APP, "{Init} Hardware decoder name unavailable for mime type: %{public}s", mimeType);
+        return -1;
+    }
+    OH_LOG_INFO(LOG_APP, "{Init} Creating hardware decoder: %{public}s (mime=%{public}s)",
+                decoderName, mimeType);
+
+    decoder_ = OH_VideoDecoder_CreateByName(decoderName);
     if (decoder_ == nullptr) {
-        OH_LOG_ERROR(LOG_APP, "{Init} Failed to create video decoder for mime type: %{public}s (may need to try H264)", mimeType);
-        
-        // 如果 HEVC 失败，尝试回退到 H264
-        if (config_.codec == VideoCodecType::HEVC) {
-            OH_LOG_INFO(LOG_APP, "{Init} HEVC failed, trying H264 fallback...");
-            mimeType = "video/avc";
-            decoder_ = OH_VideoDecoder_CreateByMime(mimeType);
-            if (decoder_ == nullptr) {
-                OH_LOG_ERROR(LOG_APP, "{Init} H264 fallback also failed");
-                return -1;
-            }
-            OH_LOG_INFO(LOG_APP, "{Init} H264 fallback succeeded");
-        } else {
-            return -1;
-        }
+        OH_LOG_ERROR(LOG_APP, "{Init} Failed to create hardware decoder: %{public}s", decoderName);
+        return -1;
     }
     
     OH_LOG_INFO(LOG_APP, "{Init} Decoder created successfully");
@@ -758,26 +829,35 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
             }
             
             // 5. 设置 HDR 静态元数据（SMPTE 2086 + CTA 861.3）
-            // 这些数据由 Sunshine 编码端从显示器 EDID 读取并通过 SEI 传递
-            // 解码器会从码流中解析 MDCV/CLL SEI，但显示管线初始化时也需要默认值
-            // 使用 BT.2020 标准色域 + 典型 HDR 显示器参数作为默认值
-            OH_NativeBuffer_StaticMetadata staticMetadata = {};
-            // BT.2020 色域主色坐标
-            staticMetadata.smpte2086.displayPrimaryRed   = {0.708f, 0.292f};
-            staticMetadata.smpte2086.displayPrimaryGreen  = {0.170f, 0.797f};
-            staticMetadata.smpte2086.displayPrimaryBlue   = {0.131f, 0.046f};
-            staticMetadata.smpte2086.whitePoint           = {0.3127f, 0.3290f};  // D65
-            staticMetadata.smpte2086.maxLuminance         = 1000.0f;  // 典型 HDR 峰值亮度 1000 nits
-            staticMetadata.smpte2086.minLuminance         = 0.001f;   // 典型最低亮度
-            staticMetadata.cta861.maxContentLightLevel         = 1000.0f;
-            staticMetadata.cta861.maxFrameAverageLightLevel    = 400.0f;
-            
+            // Sunshine 会通过控制流传递主机显示器/内容元数据；缺失时才使用 BT.2020 默认值。
+            OH_NativeBuffer_StaticMetadata staticMetadata;
+            bool hasHostHdrStaticMetadata = false;
+            {
+                std::lock_guard<std::mutex> lock(g_hdrStaticMetadataMutex);
+                if (g_hasHdrStaticMetadata) {
+                    staticMetadata = ToNativeHdrStaticMetadata(g_hdrStaticMetadata);
+                    hasHostHdrStaticMetadata = true;
+                } else {
+                    staticMetadata = BuildDefaultHdrStaticMetadata();
+                }
+            }
+
+            if (hasHostHdrStaticMetadata) {
+                OH_LOG_INFO(LOG_APP, "{Init} Using host HDR static metadata: maxLum=%.3f, minLum=%.4f, maxCLL=%.3f, maxFALL=%.3f",
+                            staticMetadata.smpte2086.maxLuminance,
+                            staticMetadata.smpte2086.minLuminance,
+                            staticMetadata.cta861.maxContentLightLevel,
+                            staticMetadata.cta861.maxFrameAverageLightLevel);
+            } else {
+                OH_LOG_INFO(LOG_APP, "{Init} Host HDR metadata unavailable, using BT.2020 fallback static metadata");
+            }
+
             int32_t staticMetaRet = OH_NativeWindow_SetMetadataValue(window_, OH_HDR_STATIC_METADATA,
                 sizeof(staticMetadata), reinterpret_cast<uint8_t*>(&staticMetadata));
             if (staticMetaRet != 0) {
                 OH_LOG_WARN(LOG_APP, "{Init} Failed to set HDR static metadata: %{public}d", staticMetaRet);
             } else {
-                OH_LOG_INFO(LOG_APP, "{Init} HDR static metadata set: maxLum=1000, minLum=0.001, maxCLL=1000, maxFALL=400");
+                OH_LOG_INFO(LOG_APP, "{Init} HDR static metadata set");
             }
 #else
             OH_LOG_WARN(LOG_APP, "{Init} OH_NativeWindow HDR APIs not available on this platform");
@@ -2113,18 +2193,6 @@ namespace VideoDecoderInstance {
 
 namespace VideoDecoderInstance {
 
-// 查询指定 MIME 类型解码器的硬件能力
-// 返回: OH_AVCapability* (系统管理，无需释放), 或 nullptr 不支持
-static OH_AVCapability* GetHWDecoderCapability(const char* mimeType) {
-    // 优先查询硬件解码器
-    OH_AVCapability* cap = OH_AVCodec_GetCapabilityByCategory(mimeType, false, HARDWARE);
-    if (cap != nullptr && OH_AVCapability_IsHardware(cap)) {
-        return cap;
-    }
-    // 回退到系统推荐解码器
-    return OH_AVCodec_GetCapability(mimeType, false);
-}
-
 // 检测编解码器支持
 bool IsCodecSupported(VideoCodecType codec) {
     const char* mimeType = nullptr;
@@ -2136,7 +2204,8 @@ bool IsCodecSupported(VideoCodecType codec) {
             mimeType = OH_AVCODEC_MIMETYPE_VIDEO_HEVC;
             break;
         case VideoCodecType::AV1:
-            return false;  // HarmonyOS 不支持 AV1
+            mimeType = TryLoadAv1MimeType();
+            break;
         default:
             return false;
     }
@@ -2448,6 +2517,23 @@ void SetHdrConfig(bool enableHdr, int hdrType, int colorSpace, int colorRange) {
     g_colorRange = colorRange;
 }
 
+void SetHdrStaticMetadata(const Smpte2086Metadata* metadata) {
+    std::lock_guard<std::mutex> lock(g_hdrStaticMetadataMutex);
+
+    if (metadata == nullptr) {
+        g_hasHdrStaticMetadata = false;
+        g_hdrStaticMetadata = {};
+        OH_LOG_INFO(LOG_APP, "SetHdrStaticMetadata: cleared");
+        return;
+    }
+
+    g_hdrStaticMetadata = *metadata;
+    g_hasHdrStaticMetadata = true;
+    OH_LOG_INFO(LOG_APP, "SetHdrStaticMetadata: maxLum=%.3f, minLum=%.4f, maxCLL=%.3f, maxFALL=%.3f",
+                metadata->maxLuminance, metadata->minLuminance,
+                metadata->maxContentLightLevel, metadata->maxFrameAverageLightLevel);
+}
+
 void ResetHdrConfig() {
     std::lock_guard<std::mutex> lock(g_videoDecoderMutex);
     
@@ -2455,6 +2541,11 @@ void ResetHdrConfig() {
     g_hdrType = HdrType::SDR;
     g_colorSpace = 1;   // REC_709
     g_colorRange = 0;   // LIMITED
+    {
+        std::lock_guard<std::mutex> metadataLock(g_hdrStaticMetadataMutex);
+        g_hasHdrStaticMetadata = false;
+        g_hdrStaticMetadata = {};
+    }
 }
 
 void SetBufferCount(int count) {

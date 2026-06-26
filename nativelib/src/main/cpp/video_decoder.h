@@ -36,6 +36,21 @@
 #include <native_buffer/native_buffer.h>
 #include <hilog/log.h>
 
+struct Smpte2086Metadata {
+    float redX;
+    float redY;
+    float greenX;
+    float greenY;
+    float blueX;
+    float blueY;
+    float whiteX;
+    float whiteY;
+    float maxLuminance;
+    float minLuminance;
+    float maxContentLightLevel;
+    float maxFrameAverageLightLevel;
+};
+
 /**
  * 视频帧类型
  */
@@ -430,6 +445,12 @@ namespace VideoDecoderInstance {
      * @param colorRange 颜色范围 (0=Limited, 1=Full)
      */
     void SetHdrConfig(bool enableHdr, int hdrType, int colorSpace, int colorRange);
+
+    /**
+     * 设置服务端传递的 HDR10 静态元数据。
+     * @param metadata SMPTE 2086 + CTA-861.3 元数据，nullptr 表示清空。
+     */
+    void SetHdrStaticMetadata(const Smpte2086Metadata* metadata);
     
     /**
      * 重置 HDR 配置到默认值 (SDR)

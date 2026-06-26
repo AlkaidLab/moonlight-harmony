@@ -44,6 +44,8 @@ export class SettingsKeys {
   static readonly ENABLE_HDR: string = 'settings_enable_hdr';
   static readonly HDR_MODE: string = 'settings_hdr_mode';  // 'HDR10' or 'HLG'
   static readonly ENABLE_HDR_HIGH_BRIGHTNESS: string = 'settings_enable_hdr_high_brightness';
+  static readonly HDR_BRIGHTNESS_OVERRIDE: string = 'settings_hdr_brightness_override';
+  static readonly HDR_PEAK_BRIGHTNESS_NITS: string = 'settings_hdr_peak_brightness_nits';
   static readonly VIDEO_FORMAT: string = 'settings_video_format';
   static readonly STRETCH_VIDEO: string = 'settings_stretch_video';
   static readonly FULL_RANGE: string = 'settings_full_range';
@@ -253,6 +255,8 @@ export interface DisplaySettings {
   reverseResolution: boolean;
   rotableScreen: boolean;
   enableHdrHighBrightness: boolean;
+  hdrBrightnessOverride: boolean;
+  hdrPeakBrightnessNits: number;
   screenPosition: string;            // 画面位置：9 宫格（居中/左上/上/右上/左/右/左下/下/右下）
   screenOffsetX: number;             // 水平偏移百分比 (-100 ~ 100)
   screenOffsetY: number;             // 垂直偏移百分比 (-100 ~ 100)
@@ -648,6 +652,9 @@ export class SettingsService {
     const enableStun = await this.getBoolean(SettingsKeys.ENABLE_STUN, false);
     const stretchVideo = await this.getBoolean(SettingsKeys.STRETCH_VIDEO, false);
     const hdrHighBrightness = await this.getBoolean(SettingsKeys.ENABLE_HDR_HIGH_BRIGHTNESS, false);
+    const hdrBrightnessOverride = await this.getBoolean(SettingsKeys.HDR_BRIGHTNESS_OVERRIDE, false);
+    const hdrPeakBrightnessNits = Math.max(300, Math.min(4000,
+      await this.getNumber(SettingsKeys.HDR_PEAK_BRIGHTNESS_NITS, 1000)));
 
     // 获取显示设置
     const enablePerfOverlay = await this.getBoolean(SettingsKeys.ENABLE_PERF_OVERLAY, false);
@@ -669,6 +676,8 @@ export class SettingsService {
       hdr: enableHdr,
       hdrMode: hdrModeStr === 'HLG' ? HdrMode.HLG : HdrMode.HDR10,
       hdrHighBrightness: hdrHighBrightness,
+      hdrBrightnessOverride: hdrBrightnessOverride,
+      hdrPeakBrightnessNits: hdrPeakBrightnessNits,
       stretchVideo: stretchVideo,
 
       // 音频设置
@@ -824,12 +833,16 @@ export class SettingsService {
   async getDisplaySettings(): Promise<DisplaySettings> {
     const itemsStr = await this.getString(SettingsKeys.PERF_OVERLAY_ITEMS, 'resolution,decoder,render_fps,packet_loss,bitrate,network_latency,decode_latency');
     const items = itemsStr.split(',').filter(item => item.length > 0);
+    const hdrPeakBrightnessNits = Math.max(300, Math.min(4000,
+      await this.getNumber(SettingsKeys.HDR_PEAK_BRIGHTNESS_NITS, 1000)));
     
     return {
       stretchVideo: await this.getBoolean(SettingsKeys.STRETCH_VIDEO, false),
       reverseResolution: await this.getBoolean(SettingsKeys.REVERSE_RESOLUTION, false),
       rotableScreen: await this.getBoolean(SettingsKeys.ROTABLE_SCREEN, false),
       enableHdrHighBrightness: await this.getBoolean(SettingsKeys.ENABLE_HDR_HIGH_BRIGHTNESS, false),
+      hdrBrightnessOverride: await this.getBoolean(SettingsKeys.HDR_BRIGHTNESS_OVERRIDE, false),
+      hdrPeakBrightnessNits: hdrPeakBrightnessNits,
       screenPosition: await this.getString(SettingsKeys.SCREEN_POSITION, '居中'),
       screenOffsetX: await this.getNumber(SettingsKeys.SCREEN_OFFSET_X, 0),
       screenOffsetY: await this.getNumber(SettingsKeys.SCREEN_OFFSET_Y, 0),
