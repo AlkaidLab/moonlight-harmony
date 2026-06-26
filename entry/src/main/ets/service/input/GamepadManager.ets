@@ -264,7 +264,7 @@ export class GamepadManager implements UsbDriverListener {
 
   /**
    * 加载 Game Controller Kit 按键映射设置
-   * 根据用户设置动态调整 2313 按键的动作
+   * 根据用户设置动态调整 2313 兼容键的动作
    */
   private async loadGCButtonMappingSettings(): Promise<void> {
     try {
@@ -276,7 +276,7 @@ export class GamepadManager implements UsbDriverListener {
   }
 
   /**
-   * 设置 2313 按键的自定义动作回调
+   * 设置 2313 兼容键的自定义动作回调
    * @param callback 回调接口，包含各种自定义动作的处理函数
    */
   setGCButton2313ActionCallback(callback: GCButton2313ActionCallback | null): void {
@@ -284,7 +284,7 @@ export class GamepadManager implements UsbDriverListener {
   }
 
   /**
-   * 更新 GC Kit 2313 按键动作
+   * 更新 2313 兼容键动作
    * @param action 动作类型
    */
   updateGCButton2313Action(action: GCButton2313Action): void {
@@ -293,7 +293,7 @@ export class GamepadManager implements UsbDriverListener {
     // 对于按键映射类型，更新 gcButtonMap
     switch (action) {
       case 'guide':
-        gcButtonMap.set(2313, MoonlightButton.SPECIAL);  // 映射为 Guide/Home
+        gcButtonMap.set(2313, MoonlightButton.SPECIAL);  // 映射为 Guide/Home/Mode
         break;
       case 'select':
         gcButtonMap.set(2313, MoonlightButton.BACK);  // 映射为 Select/Back
@@ -306,7 +306,7 @@ export class GamepadManager implements UsbDriverListener {
   }
 
   /**
-   * 处理 2313 自定义动作
+   * 处理 2313 兼容键自定义动作
    * @returns true 如果动作已处理（不需要发送按键），false 如果需要正常发送按键
    */
   private handleGCButton2313Action(): boolean {
@@ -1155,6 +1155,19 @@ export class GamepadManager implements UsbDriverListener {
       console.info(`[${logPrefix}] 释放设备槽位: Key=${deviceKey}, Slot=${slot}`);
     }
   }
+
+  /**
+   * 释放已知槽位，并移除对应映射。
+   * 用于 GCK 多 HID 接口共槽场景：断开流程会先清理 deviceId 映射，
+   * 不能再依赖 releaseSlot() 从 map 中回查 slot。
+   */
+  private releaseKnownSlot(deviceKey: string, slot: number, keyToSlotMap: Map<string, number>, logPrefix: string): void {
+    if (slot >= 0 && slot < GamepadManager.MAX_CONTROLLERS) {
+      this.slotOccupied[slot] = false;
+      console.info(`[${logPrefix}] 释放设备槽位: Key=${deviceKey}, Slot=${slot}`);
+    }
+    keyToSlotMap.delete(deviceKey);
+  }
   
   /**
    * 判断是否为特殊按键码（2311-2315）
@@ -1294,8 +1307,16 @@ export class GamepadManager implements UsbDriverListener {
         console.info('[GAMEPAD] 检测到手柄连接，恢复输入监听');
       }
     } else {
-      // 获取槽位（在清理之前）
-      const slot = this.getSlotForGCDevice(deviceId);
+      // 获取槽位（在清理之前）。未知 deviceId 的 OFFLINE 事件直接忽略，
+      // 避免 getSlotForGCDevice() 的默认 0 误释放一号槽。
+      const slot = this.gcDeviceIdToSlot.get(deviceId);
+      if (slot === undefined) {
+        this.gcDeviceStates.delete(deviceId);
+        this.gcDeviceInfoCache.delete(deviceId);
+        this.gcDpadAxisActive.delete(deviceId);
+        console.info(`[GAMEPAD-GC] 收到未注册设备断开事件，忽略: deviceId=${deviceId}`);
+        return;
+      }
       
       // 清理物理地址映射
       const addrEntries = Array.from(this.gcPhysicalAddressToDeviceId.entries());
@@ -1321,7 +1342,8 @@ export class GamepadManager implements UsbDriverListener {
         }
       }
       
-      // 清理状态
+      // 清理当前 GCK deviceId 的状态和映射。副本设备共享主设备槽位时，
+      // 只移除副本映射；最后一个占用者断开时再释放 slotOccupied。
       this.gcDeviceStates.delete(deviceId);
       this.gcDeviceInfoCache.delete(deviceId);
       this.gcDpadAxisActive.delete(deviceId);
@@ -1333,8 +1355,8 @@ export class GamepadManager implements UsbDriverListener {
         return;
       }
       
-      // 释放槽位
-      this.releaseSlotForGCDevice(deviceId);
+      // 释放槽位：此时 deviceId 映射已移除，使用断开前保存的 slot 显式释放。
+      this.releaseKnownSlot(deviceId, slot, this.gcDeviceIdToSlot, 'GAMEPAD-GC');
       // 通知监听器
       this.notifyGamepadDisconnectedByKey(`gc_${deviceId}`, slot);
 
@@ -1573,8 +1595,8 @@ export class GamepadManager implements UsbDriverListener {
    * 处理按键事件 (InputKit KeyEvent)
    * 
    * GCK 模式下：
-   *   GCK 原生回调已覆盖所有手柄按键（除 2313）。
-   *   此处仅处理 2313 和 Start 长按，其余静默丢弃。
+   *   GCK 原生回调已覆盖大部分手柄按键。
+   *   此处保留 2313(Guide/Mode 兼容键) 和 Start 长按兜底，其余静默丢弃。
    * 
    * 传统模式下：
    *   所有 KeyEvent 通过 buttonMap 映射并更新设备状态。
@@ -1585,13 +1607,14 @@ export class GamepadManager implements UsbDriverListener {
     
     GamepadManager.DEBUG && console.info(`[GAMEPAD-KEY] handleKeyEvent: deviceId=${deviceId}, keyCode=${keyCode}, isPressed=${isPressed}`);
     
-    // 特殊处理 2313 按键（可自定义动作）- 无论是否使用 GC Kit 都处理
+    // 特殊处理 2313：部分手柄将 Guide/Mode/Home 键只通过 KeyEvent 上报。
+    // 无论是否使用 GC Kit 都处理，避免官方 GCK 通道识别不到时按键丢失。
     if (keyCode === 2313) {
       if (isPressed && this.handleGCButton2313Action()) {
         return;  // 自定义动作已处理（toggle_mouse, toggle_perf, show_menu, none）
       }
       // 'guide'/'select' 映射：通过映射表发送按钮状态
-      // 某些手柄的 Home/Guide 键仅通过 KeyEvent 到达（不经过 GCK Button 回调），
+      // 某些手柄的 Guide/Mode/Home 键仅通过 KeyEvent 到达（不经过 GCK Button 回调），
       // 如果依赖 GCK Button 回调处理会导致按键丢失
       if (this.useGameControllerKit) {
         const mappedButton = gcButtonMap.get(2313);
@@ -1615,7 +1638,7 @@ export class GamepadManager implements UsbDriverListener {
     }
     
     // GCK 模式：KeyEvent 通道完全冗余
-    // GCK 原生回调（Axis + Button）已覆盖所有手柄按键（除 2313，已在上方处理）。
+    // GCK 原生回调（Axis + Button）已覆盖大部分手柄按键；2313 兼容键已在上方处理。
     // 所有 KeyEvent 在此静默丢弃，避免与 GCK 回调双通道竞争导致双按。
     if (this.useGameControllerKit) {
       return;
