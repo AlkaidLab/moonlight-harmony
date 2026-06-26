@@ -198,7 +198,7 @@ struct SettingsPageV2 {
   @State enableStartKeyMenu: boolean = true;
   @State enableKeyInterceptor: boolean = false;
   @State keyInterceptorAvailable: boolean = false;  // 按键注入 API 是否可用（API 13+ 才支持反劫持）
-  @State gcButtonHomeMapping: string = 'guide';  // 2313键（Home键）动作映射
+  @State gcButtonHomeMapping: string = 'guide';  // 2313键（Guide/Mode 兼容键）动作映射
   @State usbDriverEnabled: boolean = false;  // 默认关闭 USB 手柄驱动
   @State forceUsbDriverOnly: boolean = false;  // 强制纯 USB 驱动模式
   @State ddkHighSpeedPolling: boolean = false;  // USB 驱动高速轮询
@@ -635,7 +635,7 @@ struct SettingsPageV2 {
   }
   
   /**
-   * 获取 Home 键动作描述
+   * 获取 Guide/Mode 键动作描述
    */
   private getHomeButtonActionDescription(): string {
     switch (this.gcButtonHomeMapping) {
@@ -1543,7 +1543,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '按键反劫持',
-                subtitle: '防止蓝牙手柄 Home 键退出 App（需系统级签名，否则可能无效）',
+                subtitle: '拦截部分蓝牙手柄 Guide/Mode 键退出 App（需系统级签名，否则可能无效）',
                 type: 'toggle',
                 value: this.enableKeyInterceptor,
                 visible: this.keyInterceptorAvailable,
@@ -1553,7 +1553,7 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: 'Home 键动作',
+                title: 'Guide/Mode 键动作',
                 subtitle: this.getHomeButtonActionDescription(),
                 type: 'select',
                 value: this.gcButtonHomeMapping,
@@ -3350,11 +3350,11 @@ struct SettingsPageV2 {
   }
 
   /**
-   * 显示 Home 键动作选择器
+   * 显示 Guide/Mode 键动作选择器
    */
   private showHomeButtonActionPicker(): void {
     const options: PickerOption[] = [
-      { title: '发送 Guide 键', subtitle: 'Xbox Guide / PS Home', value: 'guide' } as PickerOption,
+      { title: '发送 Guide 键', subtitle: 'Xbox Guide / PS Home / Mode', value: 'guide' } as PickerOption,
       { title: '发送 Select 键', subtitle: '返回/选择键', value: 'select' } as PickerOption,
       { title: '切换鼠标模式', subtitle: '切换触摸屏鼠标模拟', value: 'toggle_mouse' } as PickerOption,
       { title: '切换性能图层', subtitle: '显示/隐藏性能监控', value: 'toggle_perf' } as PickerOption,
@@ -3363,8 +3363,8 @@ struct SettingsPageV2 {
     ];
 
     const config: PickerConfig = {
-      title: 'Home 键动作',
-      subtitle: '设置蓝牙/系统手柄 Home 键的动作',
+      title: 'Guide/Mode 键动作',
+      subtitle: '设置 2313 兼容键的动作；部分手柄会把 Home/Guide/Mode 映射到这里',
       selectedValue: this.gcButtonHomeMapping,
       options: options,
       onSelect: (option: PickerOption) => {

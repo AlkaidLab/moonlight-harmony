@@ -85,7 +85,9 @@ export class MoonlightButton {
 }
 
 /**
- * 2313 按键动作类型
+ * 2313 兼容按键动作类型
+ * 部分手柄会把 Guide/Home/Mode 键通过 InputKit KeyEvent 2313 上报，
+ * 不一定经过 GCK Button 回调，因此这里保留单独映射。
  * 'guide' - 发送 Guide/Home 键
  * 'select' - 发送 Select/Back 键
  * 'toggle_mouse' - 切换鼠标模式
@@ -215,10 +217,10 @@ export const buttonMap = new Map<number, number>([
   [109, MoonlightButton.BACK],  // KEYCODE_BUTTON_SELECT
   // Special
   [110, MoonlightButton.SPECIAL], // KEYCODE_BUTTON_MODE
-  // GC Kit 按键码（某些蓝牙手柄可能通过 KeyEvent 发送这些码）
-  [2311, MoonlightButton.BACK],   // KEYCODE_BUTTON_SELECT - Select 键
-  [2312, MoonlightButton.START],  // KEYCODE_BUTTON_START - Start 键
-  [2313, MoonlightButton.SPECIAL], // KEYCODE_BUTTON_MODE - Home 键（可自定义）
+  // GC Kit/厂商兼容按键码（某些蓝牙手柄可能通过 KeyEvent 发送这些码）
+  [2311, MoonlightButton.BACK],   // GCK ButtonHome，实测常对应 Select/Back
+  [2312, MoonlightButton.START],  // GCK ButtonMenu，Start/Menu
+  [2313, MoonlightButton.SPECIAL], // InputKit Guide/Mode/Home 兼容键（可自定义）
   [2314, MoonlightButton.LS],     // KEYCODE_BUTTON_THUMBL - 左摇杆按下
   [2315, MoonlightButton.RS],     // KEYCODE_BUTTON_THUMBR - 右摇杆按下
 ]);
@@ -237,10 +239,10 @@ export const gcButtonMap = new Map<number, number>([
   // Thumbstick buttons
   [2314, MoonlightButton.LS],     // LEFT_THUMBSTICK
   [2315, MoonlightButton.RS],     // RIGHT_THUMBSTICK
-  // Menu buttons - 根据测试调整
-  [2311, MoonlightButton.BACK],   // 实测为 Select/Back 键
-  [2312, MoonlightButton.START],  // BUTTON_MENU (Start)
-  [2313, MoonlightButton.SPECIAL],// 默认为 Guide/Home，可用户自定义
+  // Menu buttons - 根据 GCK 命名和实测兼容性调整
+  [2311, MoonlightButton.BACK],   // GCK ButtonHome，实测常对应 Select/Back
+  [2312, MoonlightButton.START],  // GCK ButtonMenu，Start/Menu
+  [2313, MoonlightButton.SPECIAL],// Guide/Mode/Home 兼容键，可用户自定义
   // D-Pad
   [2012, MoonlightButton.UP],     // DPAD_UP
   [2013, MoonlightButton.DOWN],   // DPAD_DOWN

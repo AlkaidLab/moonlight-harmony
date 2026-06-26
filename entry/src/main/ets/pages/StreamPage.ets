@@ -25,7 +25,7 @@ import { GameMenuDialog, GameMenuCallbacks } from '../components/dialogs/GameMen
 import { StreamMenuManager } from '../components/StreamMenuManager';
 import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { TouchInputHandler, TouchInputMode } from '../service/input/TouchInputHandler';
-import { StreamWindowManager } from '../service/streaming/StreamWindowManager';
+import { StreamWindowManager, DisplaySize } from '../service/streaming/StreamWindowManager';
 import { ShortcutManager, Shortcut } from '../components/ShortcutManager';
 import { pickRandomConnectingTip } from '../components/StreamConnectingTips';
 import { ShortcutEditorDialog, ShortcutEditData } from '../components/dialogs/ShortcutEditorDialog';
@@ -224,6 +224,8 @@ struct StreamPage {
   // 窗口模式下 xComponentWidth/Height='100%'，实际 vp 尺寸需从 onAreaChange 获取
   private xComponentActualWidthVp: number = 0;
   private xComponentActualHeightVp: number = 0;
+  private videoViewportWidthVp: number = 0;
+  private videoViewportHeightVp: number = 0;
 
   // 组件控制器和服务
   private xComponentController: XComponentController = new XComponentController();
@@ -1042,7 +1044,8 @@ struct StreamPage {
   private async recalculateXComponentSize(): Promise<void> {
     if (!this.windowManager) return;
 
-    if (this.windowManager.isFullscreen) {
+    const measuredViewport = this.getMeasuredVideoViewportSize();
+    if (this.windowManager.isFullscreen && !measuredViewport) {
       // 全屏：按屏幕尺寸精确计算 letterbox/pillarbox
       const screenSize = await this.windowManager.updateScreenSize();
       this.viewModel.displayInfo.screenWidth = screenSize.width;
@@ -1054,8 +1057,9 @@ struct StreamPage {
       this.xComponentWidth = size.width;
       this.xComponentHeight = size.height;
     } else {
-      // 窗口/浮窗：按实际窗口内容区等比适配，避免 Surface 被父容器裁剪
-      const viewportSize = await this.windowManager.getCurrentWindowViewportSize();
+      // 窗口/浮窗/画中画：按实际 ArkUI 内容区等比适配，避免 Surface 被父容器裁剪
+      const viewportSize = measuredViewport ? measuredViewport :
+        await this.windowManager.getCurrentWindowViewportSize();
       const size = this.windowManager.calculateXComponentSizeForViewport(
         viewportSize.width,
         viewportSize.height,
@@ -1069,6 +1073,29 @@ struct StreamPage {
     }
     // 更新画面位置和偏移
     this.updateDisplayPosition();
+  }
+
+  private async handleVideoViewportAreaChange(width: number, height: number): Promise<void> {
+    if (!this.windowManager) return;
+    if (width <= 0 || height <= 0) return;
+    if (Math.abs(this.videoViewportWidthVp - width) < 0.5 &&
+      Math.abs(this.videoViewportHeightVp - height) < 0.5) {
+      return;
+    }
+
+    this.videoViewportWidthVp = width;
+    this.videoViewportHeightVp = height;
+    await this.recalculateXComponentSize();
+  }
+
+  private getMeasuredVideoViewportSize(): DisplaySize | null {
+    if (this.videoViewportWidthVp <= 0 || this.videoViewportHeightVp <= 0) {
+      return null;
+    }
+    return {
+      width: this.videoViewportWidthVp,
+      height: this.videoViewportHeightVp
+    };
   }
 
   /**
@@ -1221,13 +1248,22 @@ struct StreamPage {
 
     // 更新屏幕尺寸
     const screenSize = await this.windowManager?.updateScreenSize();
-    if (screenSize) {
-      this.viewModel.displayInfo.screenWidth = screenSize.width;
-      this.viewModel.displayInfo.screenHeight = screenSize.height;
+    const measuredViewport = this.getMeasuredVideoViewportSize();
+    const viewportSize = measuredViewport ? measuredViewport : screenSize;
+    if (viewportSize) {
+      this.viewModel.displayInfo.screenWidth = viewportSize.width;
+      this.viewModel.displayInfo.screenHeight = viewportSize.height;
+      this.panZoomHandler.setParentSize(viewportSize.width, viewportSize.height);
     }
 
     // 计算 XComponent 尺寸（letterbox/pillarbox）
-    const xComponentSize = this.windowManager?.calculateXComponentSize(this.viewModel.displayInfo.stretchVideo);
+    const xComponentSize = measuredViewport
+      ? this.windowManager?.calculateXComponentSizeForViewport(
+        measuredViewport.width,
+        measuredViewport.height,
+        this.viewModel.displayInfo.stretchVideo
+      )
+      : this.windowManager?.calculateXComponentSize(this.viewModel.displayInfo.stretchVideo);
     if (xComponentSize) {
       this.xComponentWidth = xComponentSize.width;
       this.xComponentHeight = xComponentSize.height;
@@ -1900,6 +1936,11 @@ struct StreamPage {
       .height('100%')
       .alignContent(this.xComponentAlignment)
       .clip(true)
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        const w = newArea.width as number;
+        const h = newArea.height as number;
+        void this.handleVideoViewportAreaChange(w, h);
+      })
       .scale({
         x: this.videoScale,
         y: this.videoScale,

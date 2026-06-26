@@ -98,7 +98,9 @@ export class AxisType {
 }
 
 /**
- * 按键码常量 (与 Game Controller Kit 一致)
+ * 按键码常量。
+ * 2301-2312/2314/2315 来自 GCK；2313 是 InputKit 兼容键，
+ * 部分手柄会用它上报 Guide/Home/Mode。
  */
 export class ButtonCode {
   static readonly BUTTON_A = 2301;
@@ -110,8 +112,8 @@ export class ButtonCode {
   static readonly RIGHT_SHOULDER = 2308;
   static readonly LEFT_TRIGGER = 2309;
   static readonly RIGHT_TRIGGER = 2310;
-  static readonly BUTTON_HOME = 2311;
-  static readonly BUTTON_MENU = 2312;
+  static readonly BUTTON_HOME = 2311;  // GCK ButtonHome，实测常对应 Select/Back
+  static readonly BUTTON_MENU = 2312;  // GCK ButtonMenu，Start/Menu
   static readonly LEFT_THUMBSTICK = 2314;
   static readonly RIGHT_THUMBSTICK = 2315;
   static readonly DPAD_UP = 2012;
