@@ -89,8 +89,8 @@ typedef struct {
 #define GC_KEYCODE_RIGHT_SHOULDER     2308
 #define GC_KEYCODE_LEFT_TRIGGER       2309
 #define GC_KEYCODE_RIGHT_TRIGGER      2310
-#define GC_KEYCODE_BUTTON_HOME        2311  // GCK API 名为 "ButtonHome"，实测对应 Select/Back 键
-#define GC_KEYCODE_BUTTON_MENU        2312
+#define GC_KEYCODE_BUTTON_HOME        2311  // GCK ButtonHome，实测常对应 Select/Back
+#define GC_KEYCODE_BUTTON_MENU        2312  // GCK ButtonMenu，Start/Menu
 #define GC_KEYCODE_LEFT_THUMBSTICK    2314
 #define GC_KEYCODE_RIGHT_THUMBSTICK   2315
 #define GC_KEYCODE_DPAD_UP            2012
