@@ -44,11 +44,12 @@ import { StreamLifecycleManager } from '../service/streaming/StreamLifecycleMana
 import { StreamIMEManager } from '../service/streaming/StreamIMEManager';
 import { VirtualKeyboard } from '../components/virtual/VirtualKeyboard';
 import { CustomKeyOverlay } from '../components/CustomKeyOverlay';
-import { StreamSessionReport, StreamReportData, StreamReportStats, createEmptyStreamReport, buildStreamReportData } from '../components/StreamSessionReport';
+import { StreamSessionReport, StreamReportData, StreamReportStats, StreamReportConfigSnapshot, createEmptyStreamReport, createStreamReportConfigSnapshot, buildStreamReportDataFromSnapshot, markStreamReportAiLoading } from '../components/StreamSessionReport';
 import { CustomKeyManager, CustomKeyManagerHost, SessionLike } from '../service/customkey/CustomKeyManager';
 import { CustomKeyStore } from '../service/customkey/CustomKeyStore';
 import { PanZoomHandler, PanZoomState, PointXY } from '../service/input/PanZoomHandler';
 import { AiKeyService, AiKeyRecommendation } from '../service/AiKeyService';
+import { StreamReportAiService } from '../service/StreamReportAiService';
 import { ComputerManager } from '../service/ComputerManager';
 import { ToastQueue } from '../utils/ToastQueue';
 import { NetworkBoostService, SystemNetScene, SystemNetSceneListener } from '../service/network/NetworkBoostService';
@@ -90,6 +91,13 @@ interface StreamPageParams {
   displayGuid?: string;   // 指定的显示器 GUID
   useVdd?: boolean;       // 是否使用虚拟显示器
   posterPath?: string;    // 应用本地海报路径，连接中遮罩背景
+}
+
+class BuiltStreamReport {
+  data: StreamReportData = createEmptyStreamReport();
+  stats: StreamReportStats = new StreamReportStats();
+  config: StreamReportConfigSnapshot | null = null;
+  durationMs: number = 0;
 }
 
 /** StreamPage 对 CustomKeyManager 的宿主回调实现 */
@@ -242,6 +250,8 @@ struct StreamPage {
   private controllerTypes: Map<number, number> = new Map();  // slot → MoonlightControllerType
   private aiKeyService: AiKeyService | null = null;
   private aiKeyNvHttp: NvHttp | null = null;
+  private streamReportAiService: StreamReportAiService | null = null;
+  private streamReportAiRequestId: number = 0;
   // AI 可用性探测的延时定时器，aboutToDisappear 时需清理
   private aiProbeTimer: number | null = null;
   
@@ -305,6 +315,7 @@ struct StreamPage {
         if (computer) {
           const nvHttp = NvHttp.fromComputer(computer, this.context);
           this.aiKeyService = new AiKeyService(nvHttp, this.context);
+          this.streamReportAiService = new StreamReportAiService(nvHttp);
           this.aiKeyNvHttp = nvHttp;
         }
       } catch (err) {
@@ -726,6 +737,8 @@ struct StreamPage {
     }
     this.threeFingerImeGestureHandler.dispose();
     this.aiKeyNvHttp = null;
+    this.streamReportAiService = null;
+    this.streamReportAiRequestId++;
 
     this.stopClipboardSync();
 
@@ -1481,7 +1494,7 @@ struct StreamPage {
   /**
    * 生成当前串流战报（必须在 viewModel.stopStreaming/quitGame 清空 session 前调用）
    */
-  private buildCurrentStreamReport(): StreamReportData {
+  private buildCurrentStreamReport(): BuiltStreamReport {
     const session = this.viewModel.getSession();
     const stats = session ? session.getSummaryStats() : this.viewModel.performanceStats;
     const durationMs = this.streamStartedAtMs > 0 ? Date.now() - this.streamStartedAtMs : 0;
@@ -1503,7 +1516,44 @@ struct StreamPage {
     snapshot.droppedByL3 = stats.droppedByL3;
     snapshot.droppedByL4 = stats.droppedByL4;
     snapshot.droppedByL5 = stats.droppedByL5;
-    return buildStreamReportData(snapshot, this.viewModel.streamConfig, this.appName || '远程游戏', durationMs);
+    const result = new BuiltStreamReport();
+    result.stats = snapshot;
+    result.config = createStreamReportConfigSnapshot(this.viewModel.streamConfig);
+    result.durationMs = durationMs;
+    result.data = buildStreamReportDataFromSnapshot(snapshot, result.config, this.appName || '远程游戏', durationMs);
+    return result;
+  }
+
+  private enrichStreamReportWithAi(report: BuiltStreamReport): void {
+    const aiService = this.streamReportAiService;
+    const nvHttp = this.aiKeyNvHttp;
+    if (!aiService || !nvHttp) {
+      return;
+    }
+
+    const requestId = ++this.streamReportAiRequestId;
+    nvHttp.checkAiAvailable().then((available: boolean) => {
+      if (requestId !== this.streamReportAiRequestId || !this.showStreamReport || !this.streamReportAiService) {
+        return;
+      }
+      if (!available) {
+        return;
+      }
+      this.streamReportData = markStreamReportAiLoading(report.data);
+      aiService.summarize(report.data, report.stats, report.config, report.durationMs).then((aiReport: StreamReportData) => {
+        if (requestId !== this.streamReportAiRequestId || !this.showStreamReport || !this.streamReportAiService) {
+          return;
+        }
+        this.streamReportData = aiReport;
+      }).catch((err: Error) => {
+        console.warn(`[StreamPage] AI 串流战报总结失败: ${err.message}`);
+        if (requestId === this.streamReportAiRequestId && this.showStreamReport) {
+          this.streamReportData = report.data;
+        }
+      });
+    }).catch((err: Error) => {
+      console.warn(`[StreamPage] AI 串流战报可用性检查失败: ${err.message}`);
+    });
   }
 
   /**
@@ -1664,6 +1714,7 @@ struct StreamPage {
     this.isClosingStreamReport = true;
     try {
       await this.waitForPendingStreamShutdown();
+      this.streamReportAiRequestId++;
       this.showStreamReport = false;
       await this.exitStreamAndReturn();
     } catch (err) {
@@ -1689,8 +1740,9 @@ struct StreamPage {
 
     const report = this.buildCurrentStreamReport();
     this.prepareStreamEndUiImmediate();
-    this.streamReportData = report;
+    this.streamReportData = report.data;
     this.showStreamReport = true;
+    this.enrichStreamReportWithAi(report);
     this.runStreamShutdownInBackground('正在断开串流', async (): Promise<void> => {
       await Promise.all([
         this.lifecycleManager.stopBackgroundTask(),
@@ -1721,8 +1773,9 @@ struct StreamPage {
       return;
     }
 
-    this.streamReportData = report;
+    this.streamReportData = report.data;
     this.showStreamReport = true;
+    this.enrichStreamReportWithAi(report);
     this.runStreamShutdownInBackground('正在退出游戏', async (): Promise<void> => {
       const stopBackgroundTaskPromise = this.lifecycleManager.stopBackgroundTask();
       await this.sendLockScreenShortcutBeforeDisconnect();

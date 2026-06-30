@@ -63,6 +63,21 @@ export interface StreamReportMetric {
   progress: number;
 }
 
+export enum StreamReportAiStatus {
+  NONE = 0,
+  LOADING = 1,
+  READY = 2
+}
+
+export class StreamReportConfigSnapshot {
+  width: number = 0;
+  height: number = 0;
+  fps: number = 0;
+  bitrate: number = 0;
+  codec: string = 'Auto';
+  hdr: boolean = false;
+}
+
 export interface StreamReportData {
   appName: string;
   title: string;
@@ -78,6 +93,22 @@ export interface StreamReportData {
   suggestions: string[];
   configLine: string;
   generatedAt: string;
+  aiStatus: StreamReportAiStatus;
+  aiBadgeText: string;
+}
+
+export function createStreamReportConfigSnapshot(config: StreamConfig | null | undefined): StreamReportConfigSnapshot | null {
+  if (!config) {
+    return null;
+  }
+  const snapshot = new StreamReportConfigSnapshot();
+  snapshot.width = config.width;
+  snapshot.height = config.height;
+  snapshot.fps = config.fps;
+  snapshot.bitrate = config.bitrate;
+  snapshot.codec = config.codec;
+  snapshot.hdr = config.hdr;
+  return snapshot;
 }
 
 export function createEmptyStreamReport(): StreamReportData {
@@ -95,8 +126,52 @@ export function createEmptyStreamReport(): StreamReportData {
     metrics: [],
     suggestions: ['保持当前设置，继续快乐串流。'],
     configLine: 'Moonlight V+',
-    generatedAt: ''
+    generatedAt: '',
+    aiStatus: StreamReportAiStatus.NONE,
+    aiBadgeText: ''
   };
+}
+
+export function copyStreamReportWithAiMeta(data: StreamReportData, aiStatus: StreamReportAiStatus,
+  aiBadgeText: string): StreamReportData {
+  const suggestions: string[] = [];
+  for (const item of data.suggestions) {
+    suggestions.push(item);
+  }
+
+  const metrics: StreamReportMetric[] = [];
+  for (const item of data.metrics) {
+    metrics.push({
+      label: item.label,
+      value: item.value,
+      hint: item.hint,
+      color: item.color,
+      progress: item.progress
+    });
+  }
+
+  return {
+    appName: data.appName,
+    title: data.title,
+    subtitle: data.subtitle,
+    grade: data.grade,
+    gradeColor: data.gradeColor,
+    score: data.score,
+    conclusion: data.conclusion,
+    moodIcon: data.moodIcon,
+    durationText: data.durationText,
+    durationTease: data.durationTease,
+    metrics,
+    suggestions,
+    configLine: data.configLine,
+    generatedAt: data.generatedAt,
+    aiStatus,
+    aiBadgeText
+  };
+}
+
+export function markStreamReportAiLoading(data: StreamReportData): StreamReportData {
+  return copyStreamReportWithAiMeta(data, StreamReportAiStatus.LOADING, '米塔复盘中');
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -237,7 +312,7 @@ function buildGradeMeta(score: number): StreamReportGradeMeta {
 
 function buildStreamReportMetrics(avgFps: number, targetFps: number, fpsRatio: number, networkLatency: number,
   decodeLatency: number, hostLatency: number, packetLoss: number, bitrateBps: number,
-  config: StreamConfig | null | undefined): StreamReportMetric[] {
+  config: StreamReportConfigSnapshot | null | undefined): StreamReportMetric[] {
   const configuredBitrateBps = Math.max(0, config?.bitrate ?? 0) * 1000;
   const bitrateProgressBase = configuredBitrateBps > 0 ? configuredBitrateBps : bitrateBps;
   return [
@@ -288,6 +363,12 @@ function buildStreamReportMetrics(avgFps: number, targetFps: number, fpsRatio: n
 
 export function buildStreamReportData(stats: StreamReportStats, config: StreamConfig | null | undefined,
   appName: string, durationMs: number = 0): StreamReportData {
+  const configSnapshot = createStreamReportConfigSnapshot(config);
+  return buildStreamReportDataFromSnapshot(stats, configSnapshot, appName, durationMs);
+}
+
+export function buildStreamReportDataFromSnapshot(stats: StreamReportStats,
+  config: StreamReportConfigSnapshot | null | undefined, appName: string, durationMs: number = 0): StreamReportData {
   const targetFps = config?.fps ?? 0;
   const avgFps = safeNumber(stats.globalAvgFps, 0) > 0 ? stats.globalAvgFps : safeNumber(stats.renderedFps, 0);
   const decodeLatency = safeNumber(stats.globalAvgDecodeLatency, 0) > 0 ? stats.globalAvgDecodeLatency : safeNumber(stats.latency, 0);
@@ -333,7 +414,9 @@ export function buildStreamReportData(stats: StreamReportStats, config: StreamCo
     metrics,
     suggestions: buildSuggestions(score, networkLatency, decodeLatency, hostLatency, packetLoss, fpsRatio, droppedFrames),
     configLine: `${resolution} · ${codec} · ${hdr}`,
-    generatedAt: getNowText()
+    generatedAt: getNowText(),
+    aiStatus: StreamReportAiStatus.NONE,
+    aiBadgeText: ''
   };
 }
 
@@ -741,11 +824,25 @@ export struct StreamSessionReport {
         }
 
         Column({ space: 8 }) {
-          Text('调教建议')
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#FFFFFFFF')
-            .width('100%')
+          Row({ space: 8 }) {
+            Text('调教建议')
+              .fontSize(14)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#FFFFFFFF')
+            if (this.data.aiBadgeText.length > 0) {
+              Text(this.data.aiBadgeText)
+                .fontSize(10)
+                .fontColor(this.data.aiStatus === StreamReportAiStatus.READY ? '#FF101828' : '#D8FFFFFF')
+                .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                .borderRadius(10)
+                .backgroundColor(this.data.aiStatus === StreamReportAiStatus.READY ? '#FFA8D8EA' : '#24FFFFFF')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            Blank()
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
           ForEach(this.data.suggestions, (item: string) => {
             this.SuggestionLine(item)
           }, (item: string) => item)
