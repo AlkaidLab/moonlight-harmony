@@ -112,7 +112,9 @@ set(MOONLIGHT_COMMON_SOURCES
     ${MOONLIGHT_COMMON_PATH}/src/ConnectionTester.c
     ${MOONLIGHT_COMMON_PATH}/src/MicrophoneStream.c
     ${MOONLIGHT_COMMON_PATH}/src/FakeCallbacks.c
-    ${MOONLIGHT_COMMON_PATH}/src/rswrapper.c
+    ${MOONLIGHT_COMMON_PATH}/nanors/rs.c
+    ${MOONLIGHT_COMMON_PATH}/nanors/deps/obl/oblas_common.c
+    ${MOONLIGHT_COMMON_PATH}/nanors/deps/obl/oblas_lite.c
 )
 
 # ENet 网络库源文件
@@ -185,10 +187,13 @@ add_library(moonlight_nativelib SHARED
 )
 add_dependencies(moonlight_nativelib generate_shader_header)
 
-# rswrapper.c 需要优化标志以获得最佳 Reed-Solomon 性能
+# nanors 需要优化标志以获得最佳 Reed-Solomon 性能
 # 使用 ohos_shim/assert.h 避免 OHOS assert.h 的 __assert_fail 与 Clang target
 # multiversioning 冲突 (尤其是 x86_64 模拟器构建)
-set_source_files_properties(${MOONLIGHT_COMMON_PATH}/src/rswrapper.c
+set_source_files_properties(
+    ${MOONLIGHT_COMMON_PATH}/nanors/rs.c
+    ${MOONLIGHT_COMMON_PATH}/nanors/deps/obl/oblas_common.c
+    ${MOONLIGHT_COMMON_PATH}/nanors/deps/obl/oblas_lite.c
     PROPERTIES COMPILE_FLAGS "-ftree-vectorize -funroll-loops -isystem ${CMAKE_CURRENT_SOURCE_DIR}/ohos_shim")
 
 # 主项目只需要 aubio 的公开头文件路径 (用于 aubio_onset_wrapper.h)

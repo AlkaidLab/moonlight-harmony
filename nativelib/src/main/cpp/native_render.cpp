@@ -315,37 +315,80 @@ void NativeRender::ApplyFrameRateRange() {
 // =============================================================================
 
 int64_t NativeRender::CalculatePresentTime(int64_t pts) const {
-    // 获取当前系统时间（纳秒）
+    // 获取当前系统时间（纳秒，单调钟）
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     int64_t nowNs = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
-    
-    // 初始化时间基准
-    if (!timeBaseInitialized_) {
-        baseSystemTimeNs_ = nowNs;
-        basePtsUs_ = pts;
+
+    const int64_t hostNs = pts * 1000LL;         // host 时钟(纳秒)，原点=首个被捕获帧
+    const int64_t instOffset = nowNs - hostNs;   // 本帧的"本地 - host"瞬时偏移(含网络+解码延迟)
+    const int64_t frameIntervalNs = configuredFps_ > 0 ? 1000000000LL / configuredFps_ : 16666667LL;
+
+    // 检测 PTS 不连续（重连 / seek / 编码器重启）：PTS 回退，或跳变 > 2s。
+    const bool discontinuity = timeBaseInitialized_ &&
+        (pts < lastPtsUs_ || (pts - lastPtsUs_) > 2000000LL);
+
+    if (!timeBaseInitialized_ || discontinuity) {
+        // (重新)锚定：用本帧偏移作为初值，清零 skew 与抖动估计。
+        estimatedOffsetNs_ = instOffset;
+        skewNs_ = 0;
+        jitterEstNs_ = static_cast<double>(frameIntervalNs) / 16.0;  // 抖动估计初值(约半毫秒量级)
         timeBaseInitialized_ = true;
-        OH_LOG_INFO(LOG_APP, "VSync time base initialized: basePts=%{public}lld us", 
-                    static_cast<long long>(basePtsUs_));
+        if (discontinuity) {
+            vsyncResyncCount_++;
+        }
+        OH_LOG_INFO(LOG_APP, "VSync clock (re)anchored: offset=%{public}lldus, pts=%{public}lldus%{public}s",
+                    static_cast<long long>(estimatedOffsetNs_ / 1000),
+                    static_cast<long long>(pts),
+                    discontinuity ? " [discontinuity]" : "");
+    } else {
+        // alpha-beta / PI 时钟恢复(离线仿真验证)：
+        //   pred = offset + skew          先按上一帧的频差估计外推一帧
+        //   e    = instOffset - pred      本帧残差(网络抖动 + 频差误差)
+        //   offset += ec/64 (Kp=1/64)     小比例项：跟踪偏移均值、保持网格近似刚性(不追逐逐帧抖动)
+        //   skew   += ec/2048(Ki=1/2048)  积分项：跟踪时钟频差，消除斜坡滞后
+        // ec 为限幅残差(±8ms)，抑制网络尖峰污染 offset/skew(尖峰由 cushion 与"迟到即立即呈现"兜底)。
+        // 注：用整除(向零取整)而非算术右移——右移对负 ec 向负无穷取整，会给 offset/skew(尤其积分项)
+        //     引入每帧亚纳秒级直流偏置并随时间累积；整除无此偏置，且与上述 Kp/Ki 语义一致。
+        const int64_t pred = estimatedOffsetNs_ + skewNs_;
+        const int64_t e = instOffset - pred;
+        int64_t ec = e;
+        if (ec > 8000000LL) ec = 8000000LL;
+        else if (ec < -8000000LL) ec = -8000000LL;
+        estimatedOffsetNs_ = pred + (ec / 64);
+        skewNs_ += (ec / 2048);
+        // 在线抖动估计(平均绝对偏差, EMA alpha=1/32)，用于自适应 cushion。
+        const double ae = static_cast<double>(e < 0 ? -e : e);
+        jitterEstNs_ += (ae - jitterEstNs_) / 32.0;
     }
-    
-    // 计算相对于基准的 PTS 偏移（转换为纳秒）
-    int64_t ptsDeltaNs = (pts - basePtsUs_) * 1000LL;
-    
-    // 目标呈现时间 = 基准系统时间 + PTS 偏移
-    int64_t targetPresentTimeNs = baseSystemTimeNs_ + ptsDeltaNs;
-    
-    // 如果目标时间已经过去，使用当前时间 + 小延迟
-    // 避免使用过去的时间戳导致帧被丢弃
+    lastPtsUs_ = pts;
+
+    // 自适应 cushion：随网络抖动伸缩(净 LAN 极小→低延迟；抖动大→更深缓冲)。
+    // 3×平均绝对偏差(高斯下≈2.4σ)，夹在 [1ms, 1 帧] 之间。延迟成本可调、可观测(见统计日志)。
+    int64_t cushionNs = static_cast<int64_t>(3.0 * jitterEstNs_);
+    if (cushionNs < 1000000LL) cushionNs = 1000000LL;
+    else if (cushionNs > frameIntervalNs) cushionNs = frameIntervalNs;
+
+    const int64_t targetPresentTimeNs = hostNs + estimatedOffsetNs_ + cushionNs;
+
+    // 迟到帧(网络抖动尖峰导致 target 已过去)：不改动网格，直接返回原网格时刻。
+    // 解码器对"过去的时间戳"即立即呈现；网格保持刚性连续，避免"弹出再弹回"的双重卡顿。
     if (targetPresentTimeNs < nowNs) {
-        // 添加半个帧间隔的偏移，给 compositor 一些处理时间
-        int64_t frameIntervalNs = 1000000000LL / configuredFps_;
-        targetPresentTimeNs = nowNs + frameIntervalNs / 2;
-        
-        // 重新同步时间基准（避免持续漂移）
-        baseSystemTimeNs_ = targetPresentTimeNs - ptsDeltaNs;
+        vsyncLateFrameCount_++;
     }
-    
+
+    // 周期性统计，便于评估收益/风险（迟到率高→cushion 偏小或抖动大；重锚频繁→上游 PTS 不稳）。
+    if (++vsyncFrameCount_ % 6000 == 0) {
+        OH_LOG_INFO(LOG_APP,
+            "VSync clock stats: frames=%{public}lld, late=%{public}lld, resync=%{public}lld, offset=%{public}lldus, skew=%{public}lldns/f, cushion=%{public}lldus",
+            static_cast<long long>(vsyncFrameCount_),
+            static_cast<long long>(vsyncLateFrameCount_),
+            static_cast<long long>(vsyncResyncCount_),
+            static_cast<long long>(estimatedOffsetNs_ / 1000),
+            static_cast<long long>(skewNs_),
+            static_cast<long long>(cushionNs / 1000));
+    }
+
     return targetPresentTimeNs;
 }
 
