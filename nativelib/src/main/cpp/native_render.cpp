@@ -345,16 +345,18 @@ int64_t NativeRender::CalculatePresentTime(int64_t pts) const {
         // alpha-beta / PI 时钟恢复(离线仿真验证)：
         //   pred = offset + skew          先按上一帧的频差估计外推一帧
         //   e    = instOffset - pred      本帧残差(网络抖动 + 频差误差)
-        //   offset += ec>>6 (Kp=1/64)     小比例项：跟踪偏移均值、保持网格近似刚性(不追逐逐帧抖动)
-        //   skew   += ec>>11(Ki=1/2048)   积分项：跟踪时钟频差，消除斜坡滞后
+        //   offset += ec/64 (Kp=1/64)     小比例项：跟踪偏移均值、保持网格近似刚性(不追逐逐帧抖动)
+        //   skew   += ec/2048(Ki=1/2048)  积分项：跟踪时钟频差，消除斜坡滞后
         // ec 为限幅残差(±8ms)，抑制网络尖峰污染 offset/skew(尖峰由 cushion 与"迟到即立即呈现"兜底)。
+        // 注：用整除(向零取整)而非算术右移——右移对负 ec 向负无穷取整，会给 offset/skew(尤其积分项)
+        //     引入每帧亚纳秒级直流偏置并随时间累积；整除无此偏置，且与上述 Kp/Ki 语义一致。
         const int64_t pred = estimatedOffsetNs_ + skewNs_;
         const int64_t e = instOffset - pred;
         int64_t ec = e;
         if (ec > 8000000LL) ec = 8000000LL;
         else if (ec < -8000000LL) ec = -8000000LL;
-        estimatedOffsetNs_ = pred + (ec >> 6);
-        skewNs_ += (ec >> 11);
+        estimatedOffsetNs_ = pred + (ec / 64);
+        skewNs_ += (ec / 2048);
         // 在线抖动估计(平均绝对偏差, EMA alpha=1/32)，用于自适应 cushion。
         const double ae = static_cast<double>(e < 0 ? -e : e);
         jitterEstNs_ += (ae - jitterEstNs_) / 32.0;
