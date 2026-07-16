@@ -96,9 +96,11 @@ public:
 
     /**
      * 解码输出时先按 host PTS 恢复节奏，再对齐最近 VSync 并呈现。
+     * drainToLatest 为 true 时按当前输出重新锚定，避免已丢弃帧的 PTS 跨度转化为额外等待。
      * 不支持定时呈现或 API 失败时立即回退直接呈现。
      */
-    OH_AVErrCode SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts);
+    OH_AVErrCode SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts,
+                             bool drainToLatest = false);
     
     // Surface 尺寸
     uint64_t GetSurfaceWidth() const { return surfaceWidth_; }
@@ -134,8 +136,10 @@ private:
     void RequestVsyncSample();
 
     // 已持有 presentationMutex_ 时使用
-    int64_t CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, bool twoStep);
+    int64_t CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, bool twoStep,
+                                         bool forceReanchor = false);
     void ResetPresentationClockLocked();
+    void ResetPresentationStatsLocked();
 
     // 将目标向上对齐到最近的真实 VSync；无有效相位时返回原目标
     int64_t SnapTargetToVsync(int64_t targetNs, int64_t nowNs) const;
@@ -180,10 +184,12 @@ private:
     int64_t twoStepHitCount_ = 0;      // 成功按两步目标提交的帧数
     int64_t twoStepFallbackCount_ = 0; // 无效目标或定时 API 失败的回退次数
     int64_t twoStepSameSlotCount_ = 0; // 多帧映射到同一未来 VSync 槽的次数
+    int64_t twoStepDrainReanchorCount_ = 0; // 同步模式丢旧帧后按最新输出重新锚定的次数
     
     // NativeVSync（用于设置期望帧率范围，API 20+）
     std::mutex nativeVsyncMutex_;
     OH_NativeVSync* nativeVSync_ = nullptr;
+    int64_t lastVsyncRequestFailureLogNs_ = 0;
     
     // 上一帧渲染时间（用于帧率控制）
     std::chrono::steady_clock::time_point lastFrameTime_;

@@ -2144,7 +2144,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     // 开关关闭时保留同步模式原有的立即呈现基线；开启后仅对最新帧执行 step2。
     NativeRender* render = NativeRender::GetInstance();
     ret = render->IsTwoStepPreciseSyncEnabled()
-        ? render->SubmitFrame(decoder_, latestFrame.index, pts)
+        ? render->SubmitFrame(decoder_, latestFrame.index, pts, totalFrames > 1)
         : OH_VideoDecoder_RenderOutputBuffer(decoder_, latestFrame.index);
     if (ret != AV_ERR_OK) {
         OH_LOG_WARN(LOG_APP, "Sync: render failed (%{public}d), freeing buffer", ret);
