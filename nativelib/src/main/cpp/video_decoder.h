@@ -167,6 +167,7 @@ struct VideoDecoderStats {
     uint64_t framesWithHostLatency;      // 有主机延迟数据的帧数
     double totalHostProcessingLatency;   // 累计主机处理延迟（ms）
     double avgHostProcessingLatency;     // 平均主机处理延迟（ms）
+    double recentHostProcessingLatency;  // 最近 1 秒主机处理延迟（ms）
     // 分类丢帧统计（按丢弃机制分类，用于诊断性能问题）
     uint64_t droppedByL1;                // L1: sync drain-to-latest 跳过的中间帧
     uint64_t droppedByL2;                // L2: async 模式延迟过高跳帧
@@ -359,6 +360,9 @@ private:
     // 统计信息
     mutable std::mutex statsMutex_;
     VideoDecoderStats stats_;
+    uint64_t recentHostLatencyWindowFrames_{0};
+    double recentHostLatencyWindowTotalMs_{0.0};
+    int64_t recentHostLatencyWindowStartTimeMs_{0};
     
     // 运行状态
     std::atomic<bool> running_{false};

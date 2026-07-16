@@ -1352,6 +1352,27 @@ void VideoDecoder::UpdateReceivedStats(int size, int frameNumber, uint16_t hostP
     
     auto currentTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
+
+    // Keep the live overlay responsive to recovery instead of letting old
+    // high-latency frames affect the value for the rest of the session.
+    if (recentHostLatencyWindowStartTimeMs_ == 0) {
+        recentHostLatencyWindowStartTimeMs_ = currentTimeMs;
+    } else if (currentTimeMs - recentHostLatencyWindowStartTimeMs_ >= kStatsUpdateIntervalMs) {
+        stats_.recentHostProcessingLatency = 0.0;
+        recentHostLatencyWindowFrames_ = 0;
+        recentHostLatencyWindowTotalMs_ = 0.0;
+        recentHostLatencyWindowStartTimeMs_ = currentTimeMs;
+    }
+
+    if (hostProcessingLatency > 0) {
+        double hostLatencyMs = static_cast<double>(hostProcessingLatency) / 10.0;
+        stats_.framesWithHostLatency++;
+        stats_.totalHostProcessingLatency += hostLatencyMs;
+        recentHostLatencyWindowFrames_++;
+        recentHostLatencyWindowTotalMs_ += hostLatencyMs;
+        stats_.recentHostProcessingLatency = recentHostLatencyWindowTotalMs_ /
+            static_cast<double>(recentHostLatencyWindowFrames_);
+    }
     
     if (stats_.lastFpsCalculationTime == 0) {
         // 初始化统计基线 - 注意：这是在增加 totalFrames 之后
@@ -1401,10 +1422,6 @@ void VideoDecoder::UpdateReceivedStats(int size, int frameNumber, uint16_t hostP
         }
     }
     
-    if (hostProcessingLatency > 0) {
-        stats_.framesWithHostLatency++;
-        stats_.totalHostProcessingLatency += static_cast<double>(hostProcessingLatency) / 10.0;
-    }
 }
 
 VideoDecoderStats VideoDecoder::GetStats() const {
