@@ -399,12 +399,12 @@ void NativeRender::ApplyFrameRateRange() {
 // =============================================================================
 
 void NativeRender::ResetPresentationClockLocked() {
-    pendingPresentTargets_.clear();
     timeBaseInitialized_ = false;
     estimatedOffsetNs_ = 0;
     skewNs_ = 0;
     jitterEstNs_ = 0.0;
     lastPtsUs_ = 0;
+    lastScheduledPresentNs_ = 0;
 }
 
 void NativeRender::ResetPresentationClock() {
@@ -421,7 +421,6 @@ int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, b
 
     if (!timeBaseInitialized_ || discontinuity) {
         if (discontinuity) {
-            pendingPresentTargets_.clear();
             vsyncResyncCount_++;
         }
         estimatedOffsetNs_ = instOffset;
@@ -454,35 +453,20 @@ int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, b
         vsyncLateFrameCount_++;
     }
 
-    if (++vsyncFrameCount_ % 6000 == 0) {
+    const int64_t statsPeriod = twoStep ? 600 : 6000;
+    if (++vsyncFrameCount_ % statsPeriod == 0) {
+        const int64_t vsyncPeriodUs =
+            g_vsyncPeriodNs.load(std::memory_order_acquire) / 1000;
         OH_LOG_INFO(LOG_APP,
-            "VSync clock stats: mode=%{public}s, frames=%{public}lld, late=%{public}lld, resync=%{public}lld, hit=%{public}lld, fallback=%{public}lld, pending=%{public}zu, cushion=%{public}lldus",
+            "VSync clock stats: mode=%{public}s, frames=%{public}lld, late=%{public}lld, resync=%{public}lld, hit=%{public}lld, fallback=%{public}lld, sameSlot=%{public}lld, period=%{public}lldus, cushion=%{public}lldus",
             twoStep ? "two-step" : "baseline",
             static_cast<long long>(vsyncFrameCount_), static_cast<long long>(vsyncLateFrameCount_),
             static_cast<long long>(vsyncResyncCount_), static_cast<long long>(twoStepHitCount_),
-            static_cast<long long>(twoStepFallbackCount_), pendingPresentTargets_.size(),
+            static_cast<long long>(twoStepFallbackCount_), static_cast<long long>(twoStepSameSlotCount_),
+            static_cast<long long>(vsyncPeriodUs),
             static_cast<long long>(cushionNs / 1000));
     }
     return targetNs;
-}
-
-void NativeRender::PrepareFrame(int64_t pts) {
-    if (!twoStepPreciseSyncEnabled_.load()) {
-        return;
-    }
-
-    RequestVsyncSample();
-    const int64_t nowNs = GetMonotonicTimeNs();
-    std::lock_guard<std::mutex> lock(presentationMutex_);
-    pendingPresentTargets_[pts] = CalculatePresentTargetLocked(pts, nowNs, true);
-    while (pendingPresentTargets_.size() > kMaxPendingPresentTargets) {
-        pendingPresentTargets_.erase(pendingPresentTargets_.begin());
-    }
-}
-
-void NativeRender::DiscardFrame(int64_t pts) {
-    std::lock_guard<std::mutex> lock(presentationMutex_);
-    pendingPresentTargets_.erase(pts);
 }
 
 int64_t NativeRender::SnapTargetToVsync(int64_t targetNs, int64_t nowNs) const {
@@ -525,7 +509,6 @@ OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, 
         PFN_RenderOutputBufferAtTime renderAtTime = GetRenderAtTimeFunc();
         if (renderAtTime == nullptr) {
             if (twoStepPreciseSyncEnabled_.load()) {
-                DiscardFrame(pts);
                 noteFallback();
             }
             renderResult = renderImmediately();
@@ -542,44 +525,42 @@ OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, 
                 renderResult = renderImmediately();
             }
         } else {
-            int64_t targetNs = 0;
-            bool foundTarget = false;
+            RequestVsyncSample();
+            const int64_t nowNs = GetMonotonicTimeNs();
+            int64_t targetNs;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
-                auto it = pendingPresentTargets_.find(pts);
-                if (it != pendingPresentTargets_.end()) {
-                    targetNs = it->second;
-                    pendingPresentTargets_.erase(it);
-                    foundTarget = true;
-                }
+                // step1 必须在解码输出到达时采样，目标才包含解码和排队耗时。
+                targetNs = CalculatePresentTargetLocked(pts, nowNs, true);
             }
 
-            if (!foundTarget) {
+            // step2 只负责把已恢复的 host 节奏落到本地显示槽。
+            const int64_t presentTimeNs = SnapTargetToVsync(targetNs, nowNs);
+            const int64_t frameIntervalNs = configuredFps_ > 0 ?
+                1000000000LL / configuredFps_ : 16666667LL;
+            const int64_t timeUntilPresentNs = presentTimeNs - nowNs;
+
+            if (timeUntilPresentNs < 0 || timeUntilPresentNs > frameIntervalNs * 3) {
                 noteFallback();
+                ResetPresentationClock();
                 renderResult = renderImmediately();
             } else {
-                const int64_t nowNs = GetMonotonicTimeNs();
-                const int64_t presentTimeNs = SnapTargetToVsync(targetNs, nowNs);
-                const int64_t frameIntervalNs = configuredFps_ > 0 ?
-                    1000000000LL / configuredFps_ : 16666667LL;
-                const int64_t timeUntilPresentNs = presentTimeNs - nowNs;
-
-                if (timeUntilPresentNs < 0 || timeUntilPresentNs > frameIntervalNs * 3) {
-                    noteFallback();
-                    ResetPresentationClock();
-                    renderResult = renderImmediately();
-                } else {
-                    renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
-                    if (renderResult == AV_ERR_OK) {
-                        std::lock_guard<std::mutex> lock(presentationMutex_);
-                        twoStepHitCount_++;
-                    } else {
-                        OH_LOG_WARN(LOG_APP,
-                            "RenderOutputBufferAtTime failed: %{public}d, pts=%{public}lld, presentNs=%{public}lld; falling back",
-                            renderResult, static_cast<long long>(pts), static_cast<long long>(presentTimeNs));
-                        noteFallback();
-                        renderResult = renderImmediately();
+                renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
+                if (renderResult == AV_ERR_OK) {
+                    std::lock_guard<std::mutex> lock(presentationMutex_);
+                    if (lastScheduledPresentNs_ >= nowNs && presentTimeNs <= lastScheduledPresentNs_) {
+                        twoStepSameSlotCount_++;
                     }
+                    if (presentTimeNs > lastScheduledPresentNs_) {
+                        lastScheduledPresentNs_ = presentTimeNs;
+                    }
+                    twoStepHitCount_++;
+                } else {
+                    OH_LOG_WARN(LOG_APP,
+                        "RenderOutputBufferAtTime failed: %{public}d, pts=%{public}lld, presentNs=%{public}lld; falling back",
+                        renderResult, static_cast<long long>(pts), static_cast<long long>(presentTimeNs));
+                    noteFallback();
+                    renderResult = renderImmediately();
                 }
             }
         }
