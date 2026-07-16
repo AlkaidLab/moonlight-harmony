@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "capture_id": "device-class_scenario_YYYYMMDDTHHMMSSZ",
+  "captured_at_utc": "2026-07-15T00:00:00Z",
+  "device_id_hash": "000000000000",
+  "device_class": "phone_performance",
+  "model": "replace-with-device-model",
+  "os_version": "replace-with-HarmonyOS-version",
+  "cpu_abi": "arm64-v8a",
+  "scenario_id": "replace-with-reproducible-scenario-name",
+  "scenario_category": "game_strong_transient",
+  "sample_rate_hz": 48000,
+  "sdk_version": "0.3.0",
+  "parameter_set_version": "game-p3-v1",
+  "shadow_runtime_enabled": true,
+  "source": "hilog_aggregate_only",
+  "synthetic": false,
+  "notes": "Do not put a raw device serial, account, IP address, title, or PCM content here."
+}

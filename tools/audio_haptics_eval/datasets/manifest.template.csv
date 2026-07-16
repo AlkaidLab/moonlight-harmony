@@ -1,0 +1,2 @@
+case_id,wav,labels,category,channels,sample_rate,duration_seconds,label_count,description,dataset_kind,rights,redistributable,critical,expected_haptic,split,audio_sha256,labels_sha256
+game_impact_001,local/game_impact_001.wav,local/game_impact_001.labels.csv,game/strong-transient,2,48000,10.000,3,Licensed gameplay impact excerpt,real_world,REPLACE_WITH_RIGHTS_BASIS,no,yes,transient,test,REPLACE_WITH_SHA256,REPLACE_WITH_SHA256

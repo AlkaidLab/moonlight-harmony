@@ -1,0 +1,6 @@
+/build/
+/out/
+/fixtures/generated/
+/datasets/local/
+__pycache__/
+*.pyc

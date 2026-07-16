@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moonlight-stream.org/schemas/audio-haptics-device-shadow-metadata-v1.json",
+  "title": "Moonlight audio haptics device shadow capture metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capture_id",
+    "captured_at_utc",
+    "device_id_hash",
+    "device_class",
+    "model",
+    "os_version",
+    "cpu_abi",
+    "scenario_id",
+    "scenario_category",
+    "sample_rate_hz",
+    "sdk_version",
+    "parameter_set_version",
+    "shadow_runtime_enabled",
+    "source",
+    "synthetic"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "capture_id": { "type": "string", "minLength": 1 },
+    "captured_at_utc": { "type": "string", "format": "date-time" },
+    "device_id_hash": { "type": "string", "pattern": "^[0-9a-f]{12}$" },
+    "device_class": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "os_version": { "type": "string", "minLength": 1 },
+    "cpu_abi": { "type": "string", "minLength": 1 },
+    "scenario_id": { "type": "string", "minLength": 1 },
+    "scenario_category": {
+      "enum": [
+        "game_strong_transient",
+        "continuous_low_frequency",
+        "music",
+        "speech",
+        "silence_noise_floor",
+        "stream_reconnect"
+      ]
+    },
+    "sample_rate_hz": { "type": "integer", "minimum": 8000 },
+    "sdk_version": { "type": "string", "minLength": 1 },
+    "parameter_set_version": { "type": "string", "minLength": 1 },
+    "shadow_runtime_enabled": { "const": true },
+    "source": {
+      "enum": ["hilog_aggregate_only", "android_logcat_aggregate_only"]
+    },
+    "synthetic": { "type": "boolean" },
+    "notes": { "type": "string" }
+  }
+}
