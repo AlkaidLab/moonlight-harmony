@@ -702,7 +702,8 @@ int BridgeDrSubmitDecodeUnit(void* decodeUnitPtr) {
         totalSize,
         decodeUnit->frameNumber, 
         decodeUnit->frameType,
-        decodeUnit->frameHostProcessingLatency
+        decodeUnit->frameHostProcessingLatency,
+        static_cast<int64_t>(decodeUnit->presentationTimeUs)
     );
     
     if (heapAllocated) {

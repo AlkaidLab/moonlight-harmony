@@ -898,6 +898,7 @@ int VideoDecoder::Start() {
         return -1;
     }
     
+    NativeRender::GetInstance()->ResetPresentationClock();
     int32_t ret = OH_VideoDecoder_Start(decoder_);
     if (ret != AV_ERR_OK) {
         OH_LOG_ERROR(LOG_APP, "Failed to start decoder: %{public}d", ret);
@@ -920,6 +921,7 @@ int VideoDecoder::Start() {
 
 int VideoDecoder::Stop() {
     running_ = false;
+    NativeRender::GetInstance()->ResetPresentationClock();
     
     // 同步模式：停止解码线程
     // 必须先 join 线程（等待 shared_lock 释放），再获取 unique_lock
@@ -964,6 +966,8 @@ int VideoDecoder::Flush() {
     if (decoder_ == nullptr) {
         return -1;
     }
+
+    NativeRender::GetInstance()->ResetPresentationClock();
     
     // 参考官方文档：使用 unique_lock 保护 Flush 操作，防止解码线程并发访问
     std::unique_lock<std::shared_mutex> codecLock(codecMutex_);
@@ -1052,6 +1056,32 @@ static OH_AVCodecBufferAttr MakeInputBufferAttr(int32_t size, int64_t pts, Video
     return attr;
 }
 
+class PresentationTargetGuard {
+public:
+    PresentationTargetGuard(int64_t pts, bool prepare)
+        : render_(NativeRender::GetInstance()), pts_(pts) {
+        if (prepare) {
+            render_->PrepareFrame(pts_);
+        }
+    }
+
+    ~PresentationTargetGuard() {
+        if (!committed_) {
+            render_->DiscardFrame(pts_);
+        }
+    }
+
+    void Commit() { committed_ = true; }
+
+    PresentationTargetGuard(const PresentationTargetGuard&) = delete;
+    PresentationTargetGuard& operator=(const PresentationTargetGuard&) = delete;
+
+private:
+    NativeRender* render_;
+    int64_t pts_;
+    bool committed_ = false;
+};
+
 void VideoDecoder::RecordEnqueueTimestamp(int64_t timestamp) {
     auto enqueueTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -1110,6 +1140,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
                         OH_LOG_WARN(LOG_APP, "L4 burst flush: cleared %{public}d queued frames", cleared);
                     }
                 }
+                NativeRender::GetInstance()->ResetPresentationClock();
                 latencyRecoveryActive_.store(true);
                 UpdateReceivedStats(totalSize, frameNumber, hostProcessingLatency);
                 {
@@ -1132,6 +1163,9 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
     if (recoveryResult < 0) {
         return recoveryResult;  // -1 = DR_NEED_IDR
     }
+
+    // step1 在网络帧进入解码管线的时刻完成；未能提交的帧由 guard 自动清理。
+    PresentationTargetGuard presentationTarget(timestamp, true);
     
     // 同步模式：直接提交到解码器（scatter-gather 直写 AVBuffer）
     if (config_.decoderMode == DecoderMode::SYNC) {
@@ -1173,6 +1207,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
                         if (ret == AV_ERR_OK) {
                             // 唤醒解码线程立即轮询输出，避免 wait_for(halfFrame) 空等
                             pendingFrameCond_.notify_one();
+                            presentationTarget.Commit();
                             return 0;  // 直接提交成功
                         }
                     }
@@ -1189,6 +1224,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
             std::lock_guard<std::mutex> lock(pendingFrameMutex_);
             while (pendingFrameQueue_.size() >= maxPendingFrames_) {
                 hadOverflow = true;
+                NativeRender::GetInstance()->DiscardFrame(pendingFrameQueue_.front().timestamp);
                 pendingFrameQueue_.pop();
                 std::lock_guard<std::mutex> statsLock(statsMutex_);
                 stats_.droppedFrames++;
@@ -1213,7 +1249,8 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
                 OH_LOG_WARN(LOG_APP, "Scatter sync: queue overflow, requesting IDR recovery");
             }
         }
-        
+
+        presentationTarget.Commit();
         return 0;
     }
     
@@ -1280,6 +1317,8 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
         OH_LOG_ERROR(LOG_APP, "Failed to push input buffer: %{public}d", ret);
         return -1;
     }
+
+    presentationTarget.Commit();
     
     UpdateReceivedStats(totalSize, frameNumber, hostProcessingLatency);
     
@@ -1452,6 +1491,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
         // 跳过条件：解码时间 > 3倍帧间隔 且 非关键帧 且 已过启动阶段
         if (instantDecodeTimeMs > expectedFrameTimeMs * kAsyncSkipThresholdMultiplier &&
             !isKeyframe && self->stats_.decodedFrames > kLatencyRecoveryMinFrames) {
+            NativeRender::GetInstance()->DiscardFrame(pts);
             OH_VideoDecoder_FreeOutputBuffer(codec, index);
             {
                 std::lock_guard<std::mutex> lock(self->statsMutex_);
@@ -1483,6 +1523,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
             if (outputInterval < static_cast<int64_t>(expectedFrameTimeMs * intervalRatio) &&
                 instantDecodeTimeMs > static_cast<int64_t>(expectedFrameTimeMs * latencyRatio) &&
                 meetsAbsoluteFloor) {
+                NativeRender::GetInstance()->DiscardFrame(pts);
                 OH_VideoDecoder_FreeOutputBuffer(codec, index);
                 {
                     std::lock_guard<std::mutex> lock(self->statsMutex_);
@@ -1521,8 +1562,9 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     if (g_useAsyncRender) {
         NativeRender* render = NativeRender::GetInstance();
         if (render != nullptr && render->IsSurfaceReady()) {
-            // 异步渲染：将帧提交到渲染队列
-            render->SubmitFrame(codec, index, pts, enqueueTimeMs);
+            if (render->SubmitFrame(codec, index, pts, enqueueTimeMs) != AV_ERR_OK) {
+                OH_VideoDecoder_FreeOutputBuffer(codec, index);
+            }
             // 后处理：如果启用，从代理 surface 读取并处理到显示 surface
             GLPostProcessor* postProc = GLPostProcessor::GetInstance();
             if (postProc->IsActive()) {
@@ -1532,16 +1574,10 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
         }
     }
     
-    // 同步渲染（fallback）
-    // 检查是否启用 VSync 模式
+    // 非 NativeRender surface 路径也使用同一呈现控制器，保持两步语义一致。
     NativeRender* render = NativeRender::GetInstance();
-    if (render != nullptr && render->IsVsyncEnabled() && pfn_RenderOutputBufferAtTime != nullptr) {
-        // VSync 模式：使用 RenderOutputBufferAtTime 计算呈现时间
-        int64_t presentTimeNs = render->CalculatePresentTime(pts);
-        pfn_RenderOutputBufferAtTime(codec, index, presentTimeNs);
-    } else {
-        // 低延迟模式：直接渲染
-        OH_VideoDecoder_RenderOutputBuffer(codec, index);
+    if (render->SubmitFrame(codec, index, pts, enqueueTimeMs) != AV_ERR_OK) {
+        OH_VideoDecoder_FreeOutputBuffer(codec, index);
     }
     
     // 后处理：非异步路径也需要处理
@@ -1828,6 +1864,7 @@ void VideoDecoder::SyncDecodeLoop() {
             if (firstFrameRendered && timeSinceLastOutput >= kFreezeDetectionMs) {
                 OH_LOG_WARN(LOG_APP, "Sync decode: no output for %{public}lldms, flushing decoder + requesting IDR",
                             static_cast<long long>(timeSinceLastOutput));
+                NativeRender::GetInstance()->ResetPresentationClock();
                 
                 // Flush 清空解码器内部缓冲 + 请求 IDR 关键帧
                 // 使用 unique_lock 独占解码器操作
@@ -1948,6 +1985,7 @@ int VideoDecoder::SyncProcessInput(int64_t timeoutUs) {
         frame = std::move(pendingFrameQueue_.front());
         pendingFrameQueue_.pop();
     }
+    PresentationTargetGuard presentationTarget(frame.timestamp, false);
     
     // 成功获得输入 buffer，继续处理帧
     static bool firstInputLog = true;
@@ -1992,7 +2030,8 @@ int VideoDecoder::SyncProcessInput(int64_t timeoutUs) {
         OH_LOG_ERROR(LOG_APP, "Sync PushInputBuffer failed: %{public}d", ret);
         return -1;  // API 错误
     }
-    
+
+    presentationTarget.Commit();
     return 1;  // 成功处理了一帧
 }
 
@@ -2044,6 +2083,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     // 检查 EOS
     if (attr.flags & AVCODEC_BUFFER_FLAGS_EOS) {
         OH_LOG_INFO(LOG_APP, "Sync: received EOS");
+        NativeRender::GetInstance()->DiscardFrame(attr.pts);
         OH_VideoDecoder_FreeOutputBuffer(decoder_, outputIndex);
         return 0;  // EOS 不是错误
     }
@@ -2086,6 +2126,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
         
         // EOS 帧不参与收集
         if (nextAttr.flags & AVCODEC_BUFFER_FLAGS_EOS) {
+            NativeRender::GetInstance()->DiscardFrame(nextAttr.pts);
             OH_VideoDecoder_FreeOutputBuffer(decoder_, nextOutputIndex);
             break;
         }
@@ -2104,6 +2145,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
                 std::lock_guard<std::mutex> lock(timestampMutex_);
                 timestampToEnqueueTime_.erase(frame.attr.pts);
             }
+            NativeRender::GetInstance()->DiscardFrame(frame.attr.pts);
             OH_VideoDecoder_FreeOutputBuffer(decoder_, frame.index);
         }
         {
@@ -2133,8 +2175,11 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     // 更新解码统计
     UpdateDecodedStats(pts, enqueueTimeMs, latestFrame.attr.flags);
     
-    // 渲染帧 - 同步模式：立即渲染确保最低延迟
-    ret = OH_VideoDecoder_RenderOutputBuffer(decoder_, latestFrame.index);
+    // 开关关闭时保留同步模式原有的立即呈现基线；开启后仅对最新帧执行 step2。
+    NativeRender* render = NativeRender::GetInstance();
+    ret = render->IsTwoStepPreciseSyncEnabled()
+        ? render->SubmitFrame(decoder_, latestFrame.index, pts, enqueueTimeMs)
+        : OH_VideoDecoder_RenderOutputBuffer(decoder_, latestFrame.index);
     if (ret != AV_ERR_OK) {
         OH_LOG_WARN(LOG_APP, "Sync: render failed (%{public}d), freeing buffer", ret);
         OH_VideoDecoder_FreeOutputBuffer(decoder_, latestFrame.index);
@@ -2329,37 +2374,42 @@ int Init(int videoFormat, int width, int height, double fps, void* window) {
     return Setup(videoFormat, width, height, fps);
 }
 
-// 辅助函数：转换帧类型 + 计算时间戳（全局包装器共用）
-static void PrepareFrameSubmitParams(int frameType, int frameNumber,
+// 辅助函数：转换帧类型 + 选择 common-c host PTS（全局包装器共用）
+static void PrepareFrameSubmitParams(int frameType, int frameNumber, int64_t presentationTimeUs,
                                       VideoFrameType& outType, int64_t& outTimestamp) {
     // FRAME_TYPE_IDR = 1, FRAME_TYPE_I = 2
     outType = (frameType == 1 || frameType == 2) ? VideoFrameType::I_FRAME : VideoFrameType::P_FRAME;
-    double fps = (g_savedFps > 0) ? g_savedFps : 60.0;
-    outTimestamp = static_cast<int64_t>(static_cast<double>(frameNumber) * 1000000.0 / fps);
+    if (presentationTimeUs >= 0 && NativeRender::GetInstance()->IsTwoStepPreciseSyncEnabled()) {
+        outTimestamp = presentationTimeUs;
+    } else {
+        double fps = (g_savedFps > 0) ? g_savedFps : 60.0;
+        outTimestamp = static_cast<int64_t>(static_cast<double>(frameNumber) * 1000000.0 / fps);
+    }
 }
 
-int SubmitDecodeUnit(const uint8_t* data, int size, int frameNumber, int frameType, uint16_t hostProcessingLatency) {
+int SubmitDecodeUnit(const uint8_t* data, int size, int frameNumber, int frameType,
+                     uint16_t hostProcessingLatency, int64_t presentationTimeUs) {
     if (g_videoDecoder == nullptr) {
         return -1;
     }
     
     VideoFrameType type;
     int64_t timestamp;
-    PrepareFrameSubmitParams(frameType, frameNumber, type, timestamp);
+    PrepareFrameSubmitParams(frameType, frameNumber, presentationTimeUs, type, timestamp);
     
     return g_videoDecoder->SubmitDecodeUnit(data, size, frameNumber, type, timestamp, hostProcessingLatency);
 }
 
 int SubmitDecodeUnitScatter(const BufferSegment* segments, int segmentCount,
                             int totalSize, int frameNumber, int frameType,
-                            uint16_t hostProcessingLatency) {
+                            uint16_t hostProcessingLatency, int64_t presentationTimeUs) {
     if (g_videoDecoder == nullptr) {
         return -1;
     }
     
     VideoFrameType type;
     int64_t timestamp;
-    PrepareFrameSubmitParams(frameType, frameNumber, type, timestamp);
+    PrepareFrameSubmitParams(frameType, frameNumber, presentationTimeUs, type, timestamp);
     
     return g_videoDecoder->SubmitDecodeUnitScatter(segments, segmentCount, totalSize,
                                                     frameNumber, type, timestamp, hostProcessingLatency);

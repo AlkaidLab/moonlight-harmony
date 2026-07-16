@@ -91,6 +91,7 @@ export interface StreamConfig {
   enableSyncDecode: boolean;  // 同步解码模式（API 20+，主动轮询 + 仅渲染最新输出帧，低延迟优先）
   enableVrr: boolean;         // VRR 可变刷新率模式（动态调整屏幕刷新率，可能丢帧）
   enableVsync: boolean;       // VSync 渲染模式（按时间戳精确呈现，更平滑但可能增加延迟）
+  enableTwoStepPreciseSync: boolean; // 二步精确同步（host 节奏去抖 + 本地 VSync 对齐）
   enablePostProcess: boolean; // 后处理滤镜（HDR 暗区抖动补偿，适用于 OLED 面板）
   upscaleMode: number;        // 超分辨率模式 (0=OFF, 1=XENGINE, 2=FSR1, 3=AUTO)
   upscaleSharpness: number;   // 超分锐度 (0.0 - 1.0)
@@ -277,6 +278,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     enableSyncDecode: false, // 默认禁用同步解码（需要 API 20+；启用后低延迟优先）
     enableVrr: false,       // 默认禁用 VRR（可能丢帧）
     enableVsync: false,     // 默认关闭（低延迟优先；开启后更平滑但可能增加 1 帧左右延迟）
+    enableTwoStepPreciseSync: false, // 默认关闭，便于与原 VSync 路径做 A/B 对比
     enablePostProcess: false, // 默认禁用后处理滤镜
     upscaleMode: 0,           // 默认不超分
     upscaleSharpness: 0.5,    // 默认锐度 50%

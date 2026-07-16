@@ -519,8 +519,10 @@ namespace VideoDecoderInstance {
     /**
      * 提交解码单元
      * @param hostProcessingLatency 主机处理延迟（1/10 ms 单位）
+     * @param presentationTimeUs common-c 生成的 host PTS（微秒），-1 时回退帧号推导
      */
-    int SubmitDecodeUnit(const uint8_t* data, int size, int frameNumber, int frameType, uint16_t hostProcessingLatency = 0);
+    int SubmitDecodeUnit(const uint8_t* data, int size, int frameNumber, int frameType,
+                         uint16_t hostProcessingLatency = 0, int64_t presentationTimeUs = -1);
     
     /**
      * 提交解码单元（scatter-gather 零拷贝模式）
@@ -531,11 +533,13 @@ namespace VideoDecoderInstance {
      * @param frameNumber 帧号
      * @param frameType 帧类型
      * @param hostProcessingLatency 主机处理延迟（1/10 ms 单位）
+     * @param presentationTimeUs common-c 生成的 host PTS（微秒），-1 时回退帧号推导
      * @return 0 成功，负数失败
      */
     int SubmitDecodeUnitScatter(const BufferSegment* segments, int segmentCount,
                                 int totalSize, int frameNumber, int frameType,
-                                uint16_t hostProcessingLatency = 0);
+                                uint16_t hostProcessingLatency = 0,
+                                int64_t presentationTimeUs = -1);
     
     /**
      * 启动解码器

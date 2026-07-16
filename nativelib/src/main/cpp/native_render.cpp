@@ -36,6 +36,23 @@ typedef OH_AVErrCode (*PFN_RenderOutputBufferAtTime)(OH_AVCodec*, uint32_t, int6
 static PFN_RenderOutputBufferAtTime g_pfnRenderAtTime = nullptr;
 static bool g_renderAtTimeChecked = false;
 
+// VSync 回调只写入进程级原子状态，避免 Surface 销毁时回调持有悬空对象。
+static std::atomic<int64_t> g_lastVsyncTimestampNs{0};
+static std::atomic<int64_t> g_vsyncPeriodNs{0};
+
+static void OnNativeVsync(long long timestamp, void* data) {
+    (void)data;
+    if (timestamp > 0) {
+        g_lastVsyncTimestampNs.store(static_cast<int64_t>(timestamp), std::memory_order_release);
+    }
+}
+
+static int64_t GetMonotonicTimeNs() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+}
+
 static PFN_RenderOutputBufferAtTime GetRenderAtTimeFunc() {
     if (!g_renderAtTimeChecked) {
         g_renderAtTimeChecked = true;
@@ -136,25 +153,58 @@ NativeRender::~NativeRender() {
 // =============================================================================
 
 void NativeRender::InitNativeVSync() {
-    if (nativeVSync_ != nullptr) {
-        return;  // 已初始化
+    bool created = false;
+    {
+        std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
+        if (nativeVSync_ != nullptr) {
+            return;
+        }
+
+        const char* name = "moonlight_render";
+        nativeVSync_ = OH_NativeVSync_Create(name, strlen(name));
+        if (nativeVSync_ != nullptr) {
+            long long periodNs = 0;
+            if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) != 0 || periodNs <= 0) {
+                const int fps = configuredFps_ > 0 ? configuredFps_ : 60;
+                periodNs = 1000000000LL / fps;
+                OH_LOG_WARN(LOG_APP,
+                    "NativeVSync period unavailable; using %{public}d FPS fallback", fps);
+            }
+            g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
+            created = true;
+            OH_LOG_INFO(LOG_APP, "NativeVSync created successfully, period=%{public}lldns", periodNs);
+        } else {
+            OH_LOG_WARN(LOG_APP, "Failed to create NativeVSync");
+        }
     }
-    
-    // 创建 NativeVSync 实例
-    const char* name = "moonlight_render";
-    nativeVSync_ = OH_NativeVSync_Create(name, strlen(name));
-    if (nativeVSync_ != nullptr) {
-        OH_LOG_INFO(LOG_APP, "NativeVSync created successfully");
-    } else {
-        OH_LOG_WARN(LOG_APP, "Failed to create NativeVSync");
+
+    if (created && twoStepPreciseSyncEnabled_.load()) {
+        RequestVsyncSample();
     }
 }
 
 void NativeRender::ReleaseNativeVSync() {
-    if (nativeVSync_ != nullptr) {
-        OH_NativeVSync_Destroy(nativeVSync_);
-        nativeVSync_ = nullptr;
-        OH_LOG_INFO(LOG_APP, "NativeVSync destroyed");
+    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
+    if (nativeVSync_ == nullptr) {
+        return;
+    }
+
+    OH_NativeVSync_Destroy(nativeVSync_);
+    nativeVSync_ = nullptr;
+    g_lastVsyncTimestampNs.store(0, std::memory_order_release);
+    g_vsyncPeriodNs.store(0, std::memory_order_release);
+    OH_LOG_INFO(LOG_APP, "NativeVSync destroyed");
+}
+
+void NativeRender::RequestVsyncSample() {
+    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
+    if (nativeVSync_ == nullptr) {
+        return;
+    }
+
+    int32_t ret = OH_NativeVSync_RequestFrame(nativeVSync_, OnNativeVsync, nullptr);
+    if (ret != 0) {
+        OH_LOG_DEBUG(LOG_APP, "NativeVSync sample request failed: %{public}d", ret);
     }
 }
 
@@ -163,6 +213,7 @@ void NativeRender::ReleaseNativeVSync() {
 // =============================================================================
 
 void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint64_t height) {
+    ResetPresentationClock();
     window_ = window;
     surfaceWidth_ = width;
     surfaceHeight_ = height;
@@ -176,7 +227,7 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
         
         // 如果帧率已配置，立即应用帧率范围
         // 这处理 SetConfiguredFps 在 SetNativeWindow 之前调用的情况
-        if (configuredFps_ > 0 && nativeVSync_ != nullptr) {
+        if (configuredFps_ > 0) {
             ApplyFrameRateRange();
         }
         
@@ -193,9 +244,8 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
 void NativeRender::SetConfiguredFps(int fps) {
     configuredFps_ = fps;
     OH_LOG_INFO(LOG_APP, "Configured FPS set to: %{public}d", fps);
-    
-    // 重置时间基准
-    timeBaseInitialized_ = false;
+
+    ResetPresentationClock();
     
     // 应用帧率范围（NativeVSync 层）
     ApplyFrameRateRange();
@@ -207,9 +257,22 @@ void NativeRender::SetConfiguredFps(int fps) {
 void NativeRender::SetVsyncEnabled(bool enable) {
     bool wasEnabled = vsyncEnabled_.exchange(enable);
     if (wasEnabled != enable) {
-        // 重置时间基准
-        timeBaseInitialized_ = false;
+        ResetPresentationClock();
+        if (enable && twoStepPreciseSyncEnabled_.load()) {
+            RequestVsyncSample();
+        }
         OH_LOG_INFO(LOG_APP, "VSync mode %{public}s", enable ? "enabled" : "disabled");
+    }
+}
+
+void NativeRender::SetTwoStepPreciseSyncEnabled(bool enable) {
+    bool wasEnabled = twoStepPreciseSyncEnabled_.exchange(enable);
+    if (wasEnabled != enable) {
+        ResetPresentationClock();
+        if (enable) {
+            RequestVsyncSample();
+        }
+        OH_LOG_INFO(LOG_APP, "Two-step precise sync %{public}s", enable ? "enabled" : "disabled");
     }
 }
 
@@ -293,7 +356,12 @@ void NativeRender::ApplyFrameRateRange() {
     // NativeVSync SetExpectedFrameRateRange (API 20+)
     // 设置 VSync 回调的期望帧率，影响 VSync 信号频率
     // 注意：XComponent 帧率提示由 MoonBridge_SetXComponentFrameRate 通过 ArkUI_NodeHandle 独立设置
-    if (nativeVSync_ != nullptr && CheckAndLoadApi20()) {
+    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
+    if (nativeVSync_ == nullptr) {
+        return;
+    }
+
+    if (CheckAndLoadApi20()) {
         OH_NativeVSync_ExpectedRateRange range;
         range.min = configuredFps_;
         range.max = configuredFps_;
@@ -308,48 +376,53 @@ void NativeRender::ApplyFrameRateRange() {
                         configuredFps_, ret);
         }
     }
+
+    long long periodNs = 0;
+    if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) != 0 || periodNs <= 0) {
+        const int fps = configuredFps_ > 0 ? configuredFps_ : 60;
+        periodNs = 1000000000LL / fps;
+    }
+    g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
 }
 
 // =============================================================================
-// 帧呈现时间计算（VSync 模式）
+// 两步呈现时钟
 // =============================================================================
 
-int64_t NativeRender::CalculatePresentTime(int64_t pts) const {
-    // 获取当前系统时间（纳秒，单调钟）
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    int64_t nowNs = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+void NativeRender::ResetPresentationClockLocked() {
+    pendingPresentTargets_.clear();
+    timeBaseInitialized_ = false;
+    estimatedOffsetNs_ = 0;
+    skewNs_ = 0;
+    jitterEstNs_ = 0.0;
+    lastPtsUs_ = 0;
+}
 
-    const int64_t hostNs = pts * 1000LL;         // host 时钟(纳秒)，原点=首个被捕获帧
-    const int64_t instOffset = nowNs - hostNs;   // 本帧的"本地 - host"瞬时偏移(含网络+解码延迟)
+void NativeRender::ResetPresentationClock() {
+    std::lock_guard<std::mutex> lock(presentationMutex_);
+    ResetPresentationClockLocked();
+}
+
+int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, bool twoStep) {
+    const int64_t hostNs = pts * 1000LL;
+    const int64_t instOffset = nowNs - hostNs;
     const int64_t frameIntervalNs = configuredFps_ > 0 ? 1000000000LL / configuredFps_ : 16666667LL;
-
-    // 检测 PTS 不连续（重连 / seek / 编码器重启）：PTS 回退，或跳变 > 2s。
     const bool discontinuity = timeBaseInitialized_ &&
         (pts < lastPtsUs_ || (pts - lastPtsUs_) > 2000000LL);
 
     if (!timeBaseInitialized_ || discontinuity) {
-        // (重新)锚定：用本帧偏移作为初值，清零 skew 与抖动估计。
-        estimatedOffsetNs_ = instOffset;
-        skewNs_ = 0;
-        jitterEstNs_ = static_cast<double>(frameIntervalNs) / 16.0;  // 抖动估计初值(约半毫秒量级)
-        timeBaseInitialized_ = true;
         if (discontinuity) {
+            pendingPresentTargets_.clear();
             vsyncResyncCount_++;
         }
+        estimatedOffsetNs_ = instOffset;
+        skewNs_ = 0;
+        jitterEstNs_ = static_cast<double>(frameIntervalNs) / 16.0;
+        timeBaseInitialized_ = true;
         OH_LOG_INFO(LOG_APP, "VSync clock (re)anchored: offset=%{public}lldus, pts=%{public}lldus%{public}s",
                     static_cast<long long>(estimatedOffsetNs_ / 1000),
-                    static_cast<long long>(pts),
-                    discontinuity ? " [discontinuity]" : "");
+                    static_cast<long long>(pts), discontinuity ? " [discontinuity]" : "");
     } else {
-        // alpha-beta / PI 时钟恢复(离线仿真验证)：
-        //   pred = offset + skew          先按上一帧的频差估计外推一帧
-        //   e    = instOffset - pred      本帧残差(网络抖动 + 频差误差)
-        //   offset += ec/64 (Kp=1/64)     小比例项：跟踪偏移均值、保持网格近似刚性(不追逐逐帧抖动)
-        //   skew   += ec/2048(Ki=1/2048)  积分项：跟踪时钟频差，消除斜坡滞后
-        // ec 为限幅残差(±8ms)，抑制网络尖峰污染 offset/skew(尖峰由 cushion 与"迟到即立即呈现"兜底)。
-        // 注：用整除(向零取整)而非算术右移——右移对负 ec 向负无穷取整，会给 offset/skew(尤其积分项)
-        //     引入每帧亚纳秒级直流偏置并随时间累积；整除无此偏置，且与上述 Kp/Ki 语义一致。
         const int64_t pred = estimatedOffsetNs_ + skewNs_;
         const int64_t e = instOffset - pred;
         int64_t ec = e;
@@ -357,75 +430,157 @@ int64_t NativeRender::CalculatePresentTime(int64_t pts) const {
         else if (ec < -8000000LL) ec = -8000000LL;
         estimatedOffsetNs_ = pred + (ec / 64);
         skewNs_ += (ec / 2048);
-        // 在线抖动估计(平均绝对偏差, EMA alpha=1/32)，用于自适应 cushion。
         const double ae = static_cast<double>(e < 0 ? -e : e);
         jitterEstNs_ += (ae - jitterEstNs_) / 32.0;
     }
     lastPtsUs_ = pts;
 
-    // 自适应 cushion：随网络抖动伸缩(净 LAN 极小→低延迟；抖动大→更深缓冲)。
-    // 3×平均绝对偏差(高斯下≈2.4σ)，夹在 [1ms, 1 帧] 之间。延迟成本可调、可观测(见统计日志)。
-    int64_t cushionNs = static_cast<int64_t>(3.0 * jitterEstNs_);
-    if (cushionNs < 1000000LL) cushionNs = 1000000LL;
-    else if (cushionNs > frameIntervalNs) cushionNs = frameIntervalNs;
+    // 二步模式的 VSync 向上取整自带约半帧余量；基线模式保留原 3×MAD + 1ms cushion。
+    int64_t cushionNs = static_cast<int64_t>((twoStep ? 0.5 : 3.0) * jitterEstNs_);
+    if (!twoStep && cushionNs < 1000000LL) cushionNs = 1000000LL;
+    if (cushionNs > frameIntervalNs) cushionNs = frameIntervalNs;
 
-    const int64_t targetPresentTimeNs = hostNs + estimatedOffsetNs_ + cushionNs;
-
-    // 迟到帧(网络抖动尖峰导致 target 已过去)：不改动网格，直接返回原网格时刻。
-    // 解码器对"过去的时间戳"即立即呈现；网格保持刚性连续，避免"弹出再弹回"的双重卡顿。
-    if (targetPresentTimeNs < nowNs) {
+    const int64_t targetNs = hostNs + estimatedOffsetNs_ + cushionNs;
+    if (targetNs < nowNs) {
         vsyncLateFrameCount_++;
     }
 
-    // 周期性统计，便于评估收益/风险（迟到率高→cushion 偏小或抖动大；重锚频繁→上游 PTS 不稳）。
     if (++vsyncFrameCount_ % 6000 == 0) {
         OH_LOG_INFO(LOG_APP,
-            "VSync clock stats: frames=%{public}lld, late=%{public}lld, resync=%{public}lld, offset=%{public}lldus, skew=%{public}lldns/f, cushion=%{public}lldus",
-            static_cast<long long>(vsyncFrameCount_),
-            static_cast<long long>(vsyncLateFrameCount_),
-            static_cast<long long>(vsyncResyncCount_),
-            static_cast<long long>(estimatedOffsetNs_ / 1000),
-            static_cast<long long>(skewNs_),
+            "VSync clock stats: mode=%{public}s, frames=%{public}lld, late=%{public}lld, resync=%{public}lld, hit=%{public}lld, fallback=%{public}lld, pending=%{public}zu, cushion=%{public}lldus",
+            twoStep ? "two-step" : "baseline",
+            static_cast<long long>(vsyncFrameCount_), static_cast<long long>(vsyncLateFrameCount_),
+            static_cast<long long>(vsyncResyncCount_), static_cast<long long>(twoStepHitCount_),
+            static_cast<long long>(twoStepFallbackCount_), pendingPresentTargets_.size(),
             static_cast<long long>(cushionNs / 1000));
     }
+    return targetNs;
+}
 
-    return targetPresentTimeNs;
+void NativeRender::PrepareFrame(int64_t pts) {
+    if (!twoStepPreciseSyncEnabled_.load()) {
+        return;
+    }
+
+    RequestVsyncSample();
+    const int64_t nowNs = GetMonotonicTimeNs();
+    std::lock_guard<std::mutex> lock(presentationMutex_);
+    pendingPresentTargets_[pts] = CalculatePresentTargetLocked(pts, nowNs, true);
+    while (pendingPresentTargets_.size() > kMaxPendingPresentTargets) {
+        pendingPresentTargets_.erase(pendingPresentTargets_.begin());
+    }
+}
+
+void NativeRender::DiscardFrame(int64_t pts) {
+    std::lock_guard<std::mutex> lock(presentationMutex_);
+    pendingPresentTargets_.erase(pts);
+}
+
+int64_t NativeRender::SnapTargetToVsync(int64_t targetNs, int64_t nowNs) const {
+    const int64_t phaseNs = g_lastVsyncTimestampNs.load(std::memory_order_acquire);
+    const int64_t periodNs = g_vsyncPeriodNs.load(std::memory_order_acquire);
+    if (phaseNs <= 0 || periodNs <= 0) {
+        return targetNs;
+    }
+
+    const int64_t phaseAgeNs = nowNs - phaseNs;
+    if (phaseAgeNs < -periodNs || phaseAgeNs > periodNs * 4) {
+        return targetNs;
+    }
+
+    const int64_t rawNs = targetNs < nowNs ? nowNs : targetNs;
+    if (rawNs <= phaseNs) {
+        return phaseNs;
+    }
+    const int64_t deltaNs = rawNs - phaseNs;
+    return phaseNs + ((deltaNs + periodNs - 1) / periodNs) * periodNs;
 }
 
 // =============================================================================
 // 帧渲染
 // =============================================================================
 
-void NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts, int64_t enqueueTimeMs) {
-    int32_t renderResult;
-    
-    if (vsyncEnabled_.load()) {
-        // VSync 模式：使用 RenderOutputBufferAtTime 精确控制呈现时间
+OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts, int64_t enqueueTimeMs) {
+    (void)enqueueTimeMs;
+
+    auto renderImmediately = [codec, bufferIndex]() {
+        return OH_VideoDecoder_RenderOutputBuffer(codec, bufferIndex);
+    };
+    auto noteFallback = [this]() {
+        std::lock_guard<std::mutex> lock(presentationMutex_);
+        twoStepFallbackCount_++;
+    };
+
+    OH_AVErrCode renderResult = AV_ERR_OK;
+    if (!vsyncEnabled_.load() && !twoStepPreciseSyncEnabled_.load()) {
+        renderResult = renderImmediately();
+    } else {
         PFN_RenderOutputBufferAtTime renderAtTime = GetRenderAtTimeFunc();
-        if (renderAtTime != nullptr) {
-            int64_t presentTimeNs = CalculatePresentTime(pts);
+        if (renderAtTime == nullptr) {
+            if (twoStepPreciseSyncEnabled_.load()) {
+                DiscardFrame(pts);
+                noteFallback();
+            }
+            renderResult = renderImmediately();
+        } else if (!twoStepPreciseSyncEnabled_.load()) {
+            // A/B 基线：保留原有的解码输出时采样 + 较大 cushion，不做 VSync 相位 snap。
+            const int64_t nowNs = GetMonotonicTimeNs();
+            int64_t presentTimeNs;
+            {
+                std::lock_guard<std::mutex> lock(presentationMutex_);
+                presentTimeNs = CalculatePresentTargetLocked(pts, nowNs, false);
+            }
             renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
-            
-            if (renderResult != 0) {
-                OH_LOG_WARN(LOG_APP, "RenderOutputBufferAtTime failed: %{public}d, pts=%{public}lld, presentNs=%{public}lld",
-                            renderResult, static_cast<long long>(pts), static_cast<long long>(presentTimeNs));
+            if (renderResult != AV_ERR_OK) {
+                renderResult = renderImmediately();
             }
         } else {
-            // RenderOutputBufferAtTime 不可用，回退到直接渲染
-            renderResult = OH_VideoDecoder_RenderOutputBuffer(codec, bufferIndex);
-            if (renderResult != 0) {
-                OH_LOG_WARN(LOG_APP, "RenderOutputBuffer (vsync fallback) failed: %{public}d", renderResult);
+            int64_t targetNs = 0;
+            bool foundTarget = false;
+            {
+                std::lock_guard<std::mutex> lock(presentationMutex_);
+                auto it = pendingPresentTargets_.find(pts);
+                if (it != pendingPresentTargets_.end()) {
+                    targetNs = it->second;
+                    pendingPresentTargets_.erase(it);
+                    foundTarget = true;
+                }
+            }
+
+            if (!foundTarget) {
+                noteFallback();
+                renderResult = renderImmediately();
+            } else {
+                const int64_t nowNs = GetMonotonicTimeNs();
+                const int64_t presentTimeNs = SnapTargetToVsync(targetNs, nowNs);
+                const int64_t frameIntervalNs = configuredFps_ > 0 ?
+                    1000000000LL / configuredFps_ : 16666667LL;
+                const int64_t timeUntilPresentNs = presentTimeNs - nowNs;
+
+                if (timeUntilPresentNs < 0 || timeUntilPresentNs > frameIntervalNs * 3) {
+                    noteFallback();
+                    ResetPresentationClock();
+                    renderResult = renderImmediately();
+                } else {
+                    renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
+                    if (renderResult == AV_ERR_OK) {
+                        std::lock_guard<std::mutex> lock(presentationMutex_);
+                        twoStepHitCount_++;
+                    } else {
+                        OH_LOG_WARN(LOG_APP,
+                            "RenderOutputBufferAtTime failed: %{public}d, pts=%{public}lld, presentNs=%{public}lld; falling back",
+                            renderResult, static_cast<long long>(pts), static_cast<long long>(presentTimeNs));
+                        noteFallback();
+                        renderResult = renderImmediately();
+                    }
+                }
             }
         }
-    } else {
-        // 低延迟模式：直接渲染
-        renderResult = OH_VideoDecoder_RenderOutputBuffer(codec, bufferIndex);
-        
-        if (renderResult != 0) {
-            OH_LOG_WARN(LOG_APP, "RenderOutputBuffer failed: %{public}d", renderResult);
-        }
     }
-    
-    // 更新上一帧时间
+
+    if (renderResult != AV_ERR_OK) {
+        OH_LOG_WARN(LOG_APP, "RenderOutputBuffer failed: %{public}d", renderResult);
+    }
     lastFrameTime_ = std::chrono::steady_clock::now();
+    return renderResult;
 }
