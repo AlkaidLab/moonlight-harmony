@@ -202,6 +202,15 @@ void NativeRender::RequestVsyncSample() {
         return;
     }
 
+    // GetPeriod only becomes valid after the first VSync callback. Query it on
+    // the following frame while the instance is protected from destruction.
+    if (g_lastVsyncTimestampNs.load(std::memory_order_acquire) > 0) {
+        long long periodNs = 0;
+        if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) == 0 && periodNs > 0) {
+            g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
+        }
+    }
+
     int32_t ret = OH_NativeVSync_RequestFrame(nativeVSync_, OnNativeVsync, nullptr);
     if (ret != 0) {
         OH_LOG_DEBUG(LOG_APP, "NativeVSync sample request failed: %{public}d", ret);
