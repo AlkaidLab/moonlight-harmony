@@ -453,8 +453,7 @@ int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, b
         vsyncLateFrameCount_++;
     }
 
-    const int64_t statsPeriod = twoStep ? 600 : 6000;
-    if (++vsyncFrameCount_ % statsPeriod == 0) {
+    if (++vsyncFrameCount_ % 6000 == 0) {
         const int64_t vsyncPeriodUs =
             g_vsyncPeriodNs.load(std::memory_order_acquire) / 1000;
         OH_LOG_INFO(LOG_APP,
