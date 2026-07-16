@@ -58,7 +58,7 @@ export interface StreamStats {
   renderedFps: number;     // 渲染帧率 (Rd)
   bitrate: number;         // Kbps
   latency: number;         // 解码延迟 ms (EMA 瞬时值)
-  hostLatency: number;     // 主机处理延迟（编码时间）ms
+  hostLatency: number;     // 最近 1 秒主机处理延迟（编码时间）ms
   networkLatency: number;  // 网络延迟（RTT）ms
   packetLoss: number;      // %
   decodedFrames: number;

@@ -1737,7 +1737,7 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     napi_create_double(env, stats.currentFps, &fps);          // 接收帧率 (Rx)
     napi_create_double(env, stats.renderedFps, &renderedFps); // 渲染帧率 (Rd)
     napi_create_double(env, stats.currentBitrate, &bitrate);
-    napi_create_double(env, stats.avgHostProcessingLatency, &hostLatency);  // 主机处理延迟
+    napi_create_double(env, stats.recentHostProcessingLatency, &hostLatency);  // 最近 1 秒主机处理延迟
     
     // 网络丢帧统计
     napi_value framesLost, totalFrames;
@@ -1758,7 +1758,7 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     napi_set_named_property(env, result, "fps", fps);             // 接收帧率 (Rx)
     napi_set_named_property(env, result, "renderedFps", renderedFps); // 渲染帧率 (Rd)
     napi_set_named_property(env, result, "bitrate", bitrate);
-    napi_set_named_property(env, result, "hostLatency", hostLatency);  // 主机处理延迟（编码时间）
+    napi_set_named_property(env, result, "hostLatency", hostLatency);  // 最近 1 秒主机处理延迟（编码时间）
     napi_set_named_property(env, result, "framesLost", framesLost);
     napi_set_named_property(env, result, "totalFrames", totalFrames);
     
