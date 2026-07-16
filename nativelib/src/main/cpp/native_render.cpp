@@ -574,13 +574,8 @@ OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, 
                     presentTimeNs = lastScheduledPresentNs_;
                 }
             }
-            const int64_t frameIntervalNs = configuredFps_ > 0 ?
-                1000000000LL / configuredFps_ : 16666667LL;
-            const int64_t timeUntilPresentNs = presentTimeNs - nowNs;
-
-            if (timeUntilPresentNs < 0 || timeUntilPresentNs > frameIntervalNs * 3) {
+            if (targetNs < nowNs) {
                 noteFallback();
-                ResetPresentationClock();
                 renderResult = renderImmediately();
             } else {
                 renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
