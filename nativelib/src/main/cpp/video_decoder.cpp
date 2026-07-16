@@ -1553,7 +1553,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     if (g_useAsyncRender) {
         NativeRender* render = NativeRender::GetInstance();
         if (render != nullptr && render->IsSurfaceReady()) {
-            if (render->SubmitFrame(codec, index, pts, enqueueTimeMs) != AV_ERR_OK) {
+            if (render->SubmitFrame(codec, index, pts) != AV_ERR_OK) {
                 OH_VideoDecoder_FreeOutputBuffer(codec, index);
             }
             // 后处理：如果启用，从代理 surface 读取并处理到显示 surface
@@ -1567,7 +1567,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     
     // 非 NativeRender surface 路径也使用同一呈现控制器，保持两步语义一致。
     NativeRender* render = NativeRender::GetInstance();
-    if (render->SubmitFrame(codec, index, pts, enqueueTimeMs) != AV_ERR_OK) {
+    if (render->SubmitFrame(codec, index, pts) != AV_ERR_OK) {
         OH_VideoDecoder_FreeOutputBuffer(codec, index);
     }
     
@@ -2169,7 +2169,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     // 开关关闭时保留同步模式原有的立即呈现基线；开启后仅对最新帧执行 step2。
     NativeRender* render = NativeRender::GetInstance();
     ret = render->IsTwoStepPreciseSyncEnabled()
-        ? render->SubmitFrame(decoder_, latestFrame.index, pts, enqueueTimeMs)
+        ? render->SubmitFrame(decoder_, latestFrame.index, pts)
         : OH_VideoDecoder_RenderOutputBuffer(decoder_, latestFrame.index);
     if (ret != AV_ERR_OK) {
         OH_LOG_WARN(LOG_APP, "Sync: render failed (%{public}d), freeing buffer", ret);

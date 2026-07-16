@@ -109,7 +109,7 @@ public:
      * step2：解码输出时将 step1 目标对齐到最近 VSync 并呈现。
      * 无效目标、不支持定时呈现或 API 失败时立即回退直接呈现。
      */
-    OH_AVErrCode SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts, int64_t enqueueTimeMs);
+    OH_AVErrCode SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts);
     
     // Surface 尺寸
     uint64_t GetSurfaceWidth() const { return surfaceWidth_; }

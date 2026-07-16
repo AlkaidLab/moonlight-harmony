@@ -509,9 +509,7 @@ int64_t NativeRender::SnapTargetToVsync(int64_t targetNs, int64_t nowNs) const {
 // 帧渲染
 // =============================================================================
 
-OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts, int64_t enqueueTimeMs) {
-    (void)enqueueTimeMs;
-
+OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts) {
     auto renderImmediately = [codec, bufferIndex]() {
         return OH_VideoDecoder_RenderOutputBuffer(codec, bufferIndex);
     };
