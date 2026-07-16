@@ -134,6 +134,7 @@ export class SettingsKeys {
   static readonly ENABLE_SYNC_DECODE: string = 'settings_enable_sync_decode';  // 同步解码模式
   static readonly ENABLE_VRR: string = 'settings_enable_vrr';  // VRR 可变刷新率模式
   static readonly ENABLE_VSYNC: string = 'settings_enable_vsync';
+  static readonly ENABLE_TWO_STEP_PRECISE_SYNC: string = 'settings_enable_two_step_precise_sync';
   static readonly ADAPTIVE_BITRATE: string = 'settings_adaptive_bitrate';  // 智能码率调节
   static readonly ABR_MODE: string = 'settings_abr_mode';  // ABR 模式: balanced | quality | lowLatency
   static readonly ENABLE_POST_PROCESS: string = 'settings_enable_post_process';  // 后处理滤镜
@@ -639,6 +640,7 @@ export class SettingsService {
     const enableSyncDecode = await this.getBoolean(SettingsKeys.ENABLE_SYNC_DECODE, false);  // 默认禁用
     const enableVrr = await this.getBoolean(SettingsKeys.ENABLE_VRR, false);  // VRR 默认禁用
     const enableVsync = await this.getBoolean(SettingsKeys.ENABLE_VSYNC, false);
+    const enableTwoStepPreciseSync = await this.getBoolean(SettingsKeys.ENABLE_TWO_STEP_PRECISE_SYNC, false);
     const enablePostProcess = await this.getBoolean(SettingsKeys.ENABLE_POST_PROCESS, false);
     const upscaleMode = await this.getNumber(SettingsKeys.UPSCALE_MODE, 0);
     const upscaleSharpness = await this.getNumber(SettingsKeys.UPSCALE_SHARPNESS, 50) / 100.0;
@@ -729,6 +731,7 @@ export class SettingsService {
       enableSyncDecode: enableSyncDecode,
       enableVrr: enableVrr,
       enableVsync: enableVsync,
+      enableTwoStepPreciseSync: enableTwoStepPreciseSync,
       enablePostProcess: enablePostProcess,
       sdrToHdrMode: sdrToHdrMode,
       sdrToHdr: sdrToHdr,
