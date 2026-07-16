@@ -2017,12 +2017,6 @@ napi_value MoonBridge_SetTwoStepPreciseSyncEnabled(napi_env env, napi_callback_i
     return result;
 }
 
-napi_value MoonBridge_IsTwoStepPreciseSyncEnabled(napi_env env, napi_callback_info info) {
-    napi_value result;
-    napi_get_boolean(env, NativeRender::GetInstance()->IsTwoStepPreciseSyncEnabled(), &result);
-    return result;
-}
-
 // =============================================================================
 // 音频设置
 // =============================================================================

@@ -162,13 +162,11 @@ static void SetupDecodeThreadPriority() {
 // =============================================================================
 typedef OH_AVErrCode (*PFN_OH_VideoDecoder_QueryInputBuffer)(OH_AVCodec*, uint32_t*, int64_t);
 typedef OH_AVErrCode (*PFN_OH_VideoDecoder_QueryOutputBuffer)(OH_AVCodec*, uint32_t*, int64_t);
-typedef OH_AVErrCode (*PFN_OH_VideoDecoder_RenderOutputBufferAtTime)(OH_AVCodec*, uint32_t, int64_t);
 typedef OH_AVBuffer* (*PFN_OH_VideoDecoder_GetInputBuffer)(OH_AVCodec*, uint32_t);
 typedef OH_AVBuffer* (*PFN_OH_VideoDecoder_GetOutputBuffer)(OH_AVCodec*, uint32_t);
 
 static PFN_OH_VideoDecoder_QueryInputBuffer  pfn_QueryInputBuffer = nullptr;
 static PFN_OH_VideoDecoder_QueryOutputBuffer pfn_QueryOutputBuffer = nullptr;
-static PFN_OH_VideoDecoder_RenderOutputBufferAtTime pfn_RenderOutputBufferAtTime = nullptr;
 static PFN_OH_VideoDecoder_GetInputBuffer pfn_GetInputBuffer = nullptr;
 static PFN_OH_VideoDecoder_GetOutputBuffer pfn_GetOutputBuffer = nullptr;
 static bool g_syncApiLoaded = false;
@@ -268,8 +266,6 @@ static bool TryLoadSyncModeApis() {
         dlsym(RTLD_DEFAULT, "OH_VideoDecoder_QueryInputBuffer");
     pfn_QueryOutputBuffer = (PFN_OH_VideoDecoder_QueryOutputBuffer)
         dlsym(RTLD_DEFAULT, "OH_VideoDecoder_QueryOutputBuffer");
-    pfn_RenderOutputBufferAtTime = (PFN_OH_VideoDecoder_RenderOutputBufferAtTime)
-        dlsym(RTLD_DEFAULT, "OH_VideoDecoder_RenderOutputBufferAtTime");
     pfn_GetInputBuffer = (PFN_OH_VideoDecoder_GetInputBuffer)
         dlsym(RTLD_DEFAULT, "OH_VideoDecoder_GetInputBuffer");
     pfn_GetOutputBuffer = (PFN_OH_VideoDecoder_GetOutputBuffer)
@@ -287,9 +283,6 @@ static bool TryLoadSyncModeApis() {
             if (pfn_QueryOutputBuffer == nullptr)
                 pfn_QueryOutputBuffer = (PFN_OH_VideoDecoder_QueryOutputBuffer)
                     dlsym(vdecHandle, "OH_VideoDecoder_QueryOutputBuffer");
-            if (pfn_RenderOutputBufferAtTime == nullptr)
-                pfn_RenderOutputBufferAtTime = (PFN_OH_VideoDecoder_RenderOutputBufferAtTime)
-                    dlsym(vdecHandle, "OH_VideoDecoder_RenderOutputBufferAtTime");
             if (pfn_GetInputBuffer == nullptr)
                 pfn_GetInputBuffer = (PFN_OH_VideoDecoder_GetInputBuffer)
                     dlsym(vdecHandle, "OH_VideoDecoder_GetInputBuffer");
@@ -306,11 +299,9 @@ static bool TryLoadSyncModeApis() {
                           && pfn_GetInputBuffer != nullptr);
     
     OH_LOG_INFO(LOG_APP, "Sync mode API availability: QueryInputBuffer=%{public}s, "
-                "QueryOutputBuffer=%{public}s, RenderOutputBufferAtTime=%{public}s, "
-                "GetInputBuffer=%{public}s, GetOutputBuffer=%{public}s",
+                "QueryOutputBuffer=%{public}s, GetInputBuffer=%{public}s, GetOutputBuffer=%{public}s",
                 pfn_QueryInputBuffer ? "YES" : "NO",
                 pfn_QueryOutputBuffer ? "YES" : "NO",
-                pfn_RenderOutputBufferAtTime ? "YES" : "NO",
                 pfn_GetInputBuffer ? "YES" : "NO",
                 pfn_GetOutputBuffer ? "YES" : "NO");
     
