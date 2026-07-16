@@ -34,7 +34,6 @@
 #include <mutex>
 #include <atomic>
 #include <chrono>
-#include <map>
 
 /**
  * NativeRender 类
@@ -91,23 +90,13 @@ public:
     bool IsTwoStepPreciseSyncEnabled() const { return twoStepPreciseSyncEnabled_; }
     
     /**
-     * step1：帧到达解码管线时，用 host PTS 生成去抖的本地呈现目标。
-     */
-    void PrepareFrame(int64_t pts);
-
-    /**
-     * 丢弃尚未呈现的帧目标。
-     */
-    void DiscardFrame(int64_t pts);
-
-    /**
-     * 清空帧目标并强制下一帧重新锚定（Flush/重连/Surface 切换）。
+     * 强制下一帧重新锚定（Flush/重连/Surface 切换）。
      */
     void ResetPresentationClock();
 
     /**
-     * step2：解码输出时将 step1 目标对齐到最近 VSync 并呈现。
-     * 无效目标、不支持定时呈现或 API 失败时立即回退直接呈现。
+     * 解码输出时先按 host PTS 恢复节奏，再对齐最近 VSync 并呈现。
+     * 不支持定时呈现或 API 失败时立即回退直接呈现。
      */
     OH_AVErrCode SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts);
     
@@ -172,13 +161,12 @@ private:
     // 帧率范围已经应用过（NativeVSync）
     bool frameRateApplied_ = false;
     
-    // 两步呈现状态：step1 host-PI 去抖，step2 对齐本地 VSync
+    // 两步呈现状态：解码输出时 step1 host-PI 去抖，step2 对齐本地 VSync
     mutable std::mutex presentationMutex_;
-    std::map<int64_t, int64_t> pendingPresentTargets_;
-    static constexpr size_t kMaxPendingPresentTargets = 64;
+    int64_t lastScheduledPresentNs_ = 0;
 
-    // Host PTS 去抖时钟。旧 VSync 模式在解码输出时计算目标；二步模式在输入时预计算，
-    // 再于输出时向上对齐真实 VSync。两者共享 offset/skew 与在线抖动估计。
+    // Host PTS 去抖时钟。旧 VSync 与二步模式都在解码输出时建立本地目标；
+    // 二步模式随后再向上对齐真实 VSync。两者共享 offset/skew 与在线抖动估计。
     int64_t estimatedOffsetNs_ = 0;  // 平滑后的 (本地 - host) 偏移均值(纳秒)
     int64_t skewNs_ = 0;             // 每帧频差估计(纳秒/帧)，消除时钟 skew 斜坡滞后
     double  jitterEstNs_ = 0.0;      // 在线抖动估计(平均绝对偏差, 纳秒)，驱动自适应 cushion
@@ -189,8 +177,9 @@ private:
     int64_t vsyncFrameCount_ = 0;      // step1 生成目标的帧数
     int64_t vsyncLateFrameCount_ = 0;  // step1 目标在生成时已过期的帧数
     int64_t vsyncResyncCount_ = 0;     // 因 PTS 不连续而重锚定的次数
-    int64_t twoStepHitCount_ = 0;      // step2 命中预计算目标的帧数
-    int64_t twoStepFallbackCount_ = 0; // 缺失/无效目标或定时 API 失败的回退次数
+    int64_t twoStepHitCount_ = 0;      // 成功按两步目标提交的帧数
+    int64_t twoStepFallbackCount_ = 0; // 无效目标或定时 API 失败的回退次数
+    int64_t twoStepSameSlotCount_ = 0; // 多帧映射到同一未来 VSync 槽的次数
     
     // NativeVSync（用于设置期望帧率范围，API 20+）
     std::mutex nativeVsyncMutex_;
