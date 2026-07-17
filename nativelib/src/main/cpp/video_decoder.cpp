@@ -1677,13 +1677,16 @@ void VideoDecoder::UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32
             constexpr int64_t kPipelineWarningIntervalMs = 5000;
             const int64_t lastWarningMs =
                 lastPipelineWarningTimeMs_.load(std::memory_order_relaxed);
-            if (!latencyRecoveryActive_.load() &&
-                (lastWarningMs == 0 ||
-                 currentTimeMs - lastWarningMs >= kPipelineWarningIntervalMs)) {
-                lastPipelineWarningTimeMs_.store(currentTimeMs, std::memory_order_relaxed);
-                OH_LOG_WARN(LOG_APP, "Pipeline latency %{public}lldms critical (decode=%{public}lldms), flagging recovery",
-                            static_cast<long long>(pipelineLatencyMs),
-                            static_cast<long long>(decodeTimeMs));
+            if (!latencyRecoveryActive_.load()) {
+                bool expected = false;
+                if (latencyRecoveryActive_.compare_exchange_strong(expected, true) &&
+                    (lastWarningMs == 0 ||
+                     currentTimeMs - lastWarningMs >= kPipelineWarningIntervalMs)) {
+                    lastPipelineWarningTimeMs_.store(currentTimeMs, std::memory_order_relaxed);
+                    OH_LOG_WARN(LOG_APP, "Pipeline latency %{public}lldms critical (decode=%{public}lldms), flagging recovery",
+                                static_cast<long long>(pipelineLatencyMs),
+                                static_cast<long long>(decodeTimeMs));
+                }
             }
         }
     } else {
