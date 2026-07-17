@@ -135,6 +135,9 @@ private:
     // 请求一次 VSync 样本，供 step2 做相位对齐
     void RequestVsyncSample();
 
+    // Reuse a recent phase sample and refresh it only when it becomes stale.
+    void MaybeRequestVsyncSample(int64_t nowNs);
+
     // 已持有 presentationMutex_ 时使用
     int64_t CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, bool twoStep,
                                          bool forceReanchor = false);
@@ -190,6 +193,7 @@ private:
     std::mutex nativeVsyncMutex_;
     OH_NativeVSync* nativeVSync_ = nullptr;
     int64_t lastVsyncRequestFailureLogNs_ = 0;
+    int64_t lastVsyncPeriodQueryNs_ = 0;
     
     // 上一帧渲染时间（用于帧率控制）
     std::chrono::steady_clock::time_point lastFrameTime_;

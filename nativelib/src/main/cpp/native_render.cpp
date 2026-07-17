@@ -39,12 +39,17 @@ static bool g_renderAtTimeChecked = false;
 // VSync 回调只写入进程级原子状态，避免 Surface 销毁时回调持有悬空对象。
 static std::atomic<int64_t> g_lastVsyncTimestampNs{0};
 static std::atomic<int64_t> g_vsyncPeriodNs{0};
+static std::atomic<bool> g_vsyncRequestPending{false};
+
+static constexpr int64_t kVsyncSampleRefreshPeriods = 2;
+static constexpr int64_t kVsyncPeriodRefreshIntervalNs = 250000000LL;
 
 static void OnNativeVsync(long long timestamp, void* data) {
     (void)data;
     if (timestamp > 0) {
         g_lastVsyncTimestampNs.store(static_cast<int64_t>(timestamp), std::memory_order_release);
     }
+    g_vsyncRequestPending.store(false, std::memory_order_release);
 }
 
 static int64_t GetMonotonicTimeNs() {
@@ -164,13 +169,17 @@ void NativeRender::InitNativeVSync() {
         nativeVSync_ = OH_NativeVSync_Create(name, strlen(name));
         if (nativeVSync_ != nullptr) {
             long long periodNs = 0;
-            if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) != 0 || periodNs <= 0) {
+            const bool periodAvailable =
+                OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) == 0 && periodNs > 0;
+            if (!periodAvailable) {
                 const int fps = configuredFps_ > 0 ? configuredFps_ : 60;
                 periodNs = 1000000000LL / fps;
                 OH_LOG_WARN(LOG_APP,
                     "NativeVSync period unavailable; using %{public}d FPS fallback", fps);
             }
             g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
+            lastVsyncPeriodQueryNs_ = periodAvailable ? GetMonotonicTimeNs() : 0;
+            g_vsyncRequestPending.store(false, std::memory_order_release);
             created = true;
             OH_LOG_INFO(LOG_APP, "NativeVSync created successfully, period=%{public}lldns", periodNs);
         } else {
@@ -194,34 +203,59 @@ void NativeRender::ReleaseNativeVSync() {
     lastVsyncRequestFailureLogNs_ = 0;
     g_lastVsyncTimestampNs.store(0, std::memory_order_release);
     g_vsyncPeriodNs.store(0, std::memory_order_release);
+    g_vsyncRequestPending.store(false, std::memory_order_release);
+    lastVsyncPeriodQueryNs_ = 0;
     OH_LOG_INFO(LOG_APP, "NativeVSync destroyed");
 }
 
 void NativeRender::RequestVsyncSample() {
-    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
-    if (nativeVSync_ == nullptr) {
+    bool expected = false;
+    if (!g_vsyncRequestPending.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel, std::memory_order_acquire)) {
         return;
     }
 
-    // GetPeriod only becomes valid after the first VSync callback. Query it on
-    // the following frame while the instance is protected from destruction.
-    if (g_lastVsyncTimestampNs.load(std::memory_order_acquire) > 0) {
+    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
+    if (nativeVSync_ == nullptr) {
+        g_vsyncRequestPending.store(false, std::memory_order_release);
+        return;
+    }
+
+    // GetPeriod takes the VSync receiver lock. Poll it at most once per second
+    // to retain refresh-rate switch handling without doing it for every frame.
+    const int64_t nowNs = GetMonotonicTimeNs();
+    const bool periodRefreshDue = lastVsyncPeriodQueryNs_ == 0 ||
+        nowNs - lastVsyncPeriodQueryNs_ >= kVsyncPeriodRefreshIntervalNs;
+    if (periodRefreshDue && g_lastVsyncTimestampNs.load(std::memory_order_acquire) > 0) {
         long long periodNs = 0;
         if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) == 0 && periodNs > 0) {
             g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
         }
+        lastVsyncPeriodQueryNs_ = nowNs;
     }
 
     int32_t ret = OH_NativeVSync_RequestFrame(nativeVSync_, OnNativeVsync, nullptr);
     if (ret != 0) {
+        g_vsyncRequestPending.store(false, std::memory_order_release);
         constexpr int64_t kFailureLogIntervalNs = 10000000000LL;
-        const int64_t nowNs = GetMonotonicTimeNs();
         if (lastVsyncRequestFailureLogNs_ == 0 ||
             nowNs - lastVsyncRequestFailureLogNs_ >= kFailureLogIntervalNs) {
             lastVsyncRequestFailureLogNs_ = nowNs;
             OH_LOG_DEBUG(LOG_APP, "NativeVSync sample request failed: %{public}d", ret);
         }
     }
+}
+
+void NativeRender::MaybeRequestVsyncSample(int64_t nowNs) {
+    const int64_t phaseNs = g_lastVsyncTimestampNs.load(std::memory_order_acquire);
+    const int64_t periodNs = g_vsyncPeriodNs.load(std::memory_order_acquire);
+    if (phaseNs > 0 && periodNs > 0) {
+        const int64_t phaseAgeNs = nowNs - phaseNs;
+        if (phaseAgeNs >= -periodNs && phaseAgeNs < periodNs * kVsyncSampleRefreshPeriods) {
+            return;
+        }
+    }
+    RequestVsyncSample();
 }
 
 // =============================================================================
@@ -402,11 +436,14 @@ void NativeRender::ApplyFrameRateRange() {
     }
 
     long long periodNs = 0;
-    if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) != 0 || periodNs <= 0) {
+    const bool periodAvailable =
+        OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) == 0 && periodNs > 0;
+    if (!periodAvailable) {
         const int fps = configuredFps_ > 0 ? configuredFps_ : 60;
         periodNs = 1000000000LL / fps;
     }
     g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
+    lastVsyncPeriodQueryNs_ = periodAvailable ? GetMonotonicTimeNs() : 0;
 }
 
 // =============================================================================
@@ -557,7 +594,6 @@ OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, 
             }
         } else {
             const int64_t nowNs = GetMonotonicTimeNs();
-            RequestVsyncSample();
             int64_t targetNs;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
@@ -596,6 +632,9 @@ OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, 
                     renderResult = renderImmediately();
                 }
             }
+            // Sampling only refreshes future frames, so keep its Binder work
+            // after the current codec buffer has already been released.
+            MaybeRequestVsyncSample(nowNs);
         }
     }
 

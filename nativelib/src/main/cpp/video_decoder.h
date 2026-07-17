@@ -20,13 +20,14 @@
 #define VIDEO_DECODER_H
 
 #include <cstdint>
+#include <array>
 #include <mutex>
 #include <shared_mutex>
 #include <queue>
 #include <thread>
 #include <atomic>
 #include <condition_variable>
-#include <unordered_map>
+#include <vector>
 #include <multimedia/player_framework/native_avcodec_videodecoder.h>
 #include <multimedia/player_framework/native_avcapability.h>
 #include <multimedia/player_framework/native_avcodec_base.h>
@@ -34,6 +35,9 @@
 #include <multimedia/player_framework/native_avbuffer.h>
 #include <native_window/external_window.h>
 #include <native_buffer/native_buffer.h>
+
+class NativeRender;
+class GLPostProcessor;
 #include <hilog/log.h>
 
 struct Smpte2086Metadata {
@@ -277,6 +281,16 @@ public:
      */
     bool CheckDecoderValid();
 private:
+    enum class DropReason {
+        L1,
+        L2,
+        L3,
+        L4,
+        L5,
+        QUEUE_OVERFLOW,
+        TIMEOUT,
+    };
+
     // AVCodec 回调
     static void OnError(OH_AVCodec* codec, int32_t errorCode, void* userData);
     static void OnOutputFormatChanged(OH_AVCodec* codec, OH_AVFormat* format, void* userData);
@@ -301,14 +315,19 @@ private:
     void UpdateReceivedStats(int size, int frameNumber, uint16_t hostProcessingLatency);
     
     // 更新解码帧统计
-    void UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32_t flags);
+    void UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32_t flags,
+                            int64_t currentTimeMs);
+
+    void RecordDroppedFrames(DropReason reason, uint64_t count = 1);
     
     // 延迟恢复：检查是否应丢弃输入帧并请求 IDR
     // 返回 -1 表示应丢弃（需要 IDR），0 表示正常处理
-    int CheckLatencyRecovery(VideoFrameType frameType, int size, int frameNumber, uint16_t hostProcessingLatency);
+    int CheckLatencyRecovery(VideoFrameType frameType, int size, int frameNumber,
+                             uint16_t hostProcessingLatency);
     
     // 记录帧入队时间戳（用于计算解码延迟）
     void RecordEnqueueTimestamp(int64_t timestamp);
+    int64_t TakeEnqueueTimestamp(int64_t timestamp);
     
     // 解码器实例
     OH_AVCodec* decoder_ = nullptr;
@@ -320,6 +339,11 @@ private:
     
     // 渲染窗口
     OHNativeWindow* window_ = nullptr;
+
+    // Singleton lifetimes cover the decoder session. Cache them so output callbacks
+    // do not contend on the singleton mutex for every frame.
+    NativeRender* render_ = nullptr;
+    GLPostProcessor* postProcessor_ = nullptr;
     
     // 配置
     VideoDecoderConfig config_;
@@ -353,9 +377,16 @@ private:
     std::chrono::steady_clock::time_point lastFrameTime_;
     int64_t frameIntervalUs_{0};  // 目标帧间隔（微秒），0 表示不限制
     
-    // 帧时间戳到入队时间的映射（用于计算解码时间）
+    // Fixed-size timestamp ring avoids a node allocation/free for every frame.
+    struct TimestampEntry {
+        int64_t pts = 0;
+        int64_t enqueueTimeMs = 0;
+        bool valid = false;
+    };
+    static constexpr size_t kTimestampEntryCount = 32;
     std::mutex timestampMutex_;
-    std::unordered_map<int64_t, int64_t> timestampToEnqueueTime_;
+    std::array<TimestampEntry, kTimestampEntryCount> timestampEntries_{};
+    size_t timestampWriteIndex_ = 0;
     
     // 统计信息
     mutable std::mutex statsMutex_;
@@ -363,6 +394,27 @@ private:
     uint64_t recentHostLatencyWindowFrames_{0};
     double recentHostLatencyWindowTotalMs_{0.0};
     int64_t recentHostLatencyWindowStartTimeMs_{0};
+
+    // Output/drop counters are updated atomically so decoder callbacks never
+    // wait on the receive-statistics snapshot mutex.
+    std::atomic<uint64_t> decodedFrames_{0};
+    std::atomic<uint64_t> droppedFrames_{0};
+    std::atomic<uint64_t> droppedByL1_{0};
+    std::atomic<uint64_t> droppedByL2_{0};
+    std::atomic<uint64_t> droppedByL3_{0};
+    std::atomic<uint64_t> droppedByL4_{0};
+    std::atomic<uint64_t> droppedByL5_{0};
+    std::atomic<uint64_t> droppedByQueueOverflow_{0};
+    std::atomic<uint64_t> droppedByTimeout_{0};
+    mutable std::mutex decodeStatsMutex_;
+    uint64_t decodeTotalTimeMs_{0};
+    uint64_t decodeValidFrames_{0};
+    double decodeAverageTimeMs_{0.0};
+    int64_t decodeMaxTimeMs_{0};
+
+    // Sync diagnostics are owned by syncDecodeThread_.
+    uint64_t syncDrainEventsSinceLog_{0};
+    uint64_t syncDrainFramesSinceLog_{0};
     
     // 运行状态
     std::atomic<bool> running_{false};
@@ -386,6 +438,7 @@ private:
     // === 异步模式渲染跳帧（Render Skip） ===
     std::atomic<int64_t> lastAsyncRenderTimeMs_{0};     // 上一次异步渲染时间 (ms)
     std::atomic<int64_t> lastAsyncOutputTimeMs_{0};     // 上一次回调到达时间 (ms)，用于 L5 输出间隔检测
+    std::atomic<int64_t> lastPipelineWarningTimeMs_{0};
     
     // 解码器健康检查状态
     std::atomic<int64_t> lastHealthCheckTimeMs_{0};     // 上次健康检查时间 (ms)
