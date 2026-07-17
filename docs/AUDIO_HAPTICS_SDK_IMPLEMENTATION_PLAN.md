@@ -186,12 +186,12 @@ Sunshine 当前音频链路在采集 PCM 后进入 Opus 编码线程，因此服
 实现 `AUTO`；厂商连续缩放作为可关闭 device profile 独立推进。每一步保持 IR 单路输出和真机
 A/B，不同时重写检测器、Renderer 与客户端接线。
 
-## 4. SDK 目录与构建产物
+## 4. SDK 独立仓库与构建产物
 
-建议在仓库顶层新增独立目录，避免继续把公共核心埋在 HarmonyOS `nativelib` 内：
+SDK 已建立为独立仓库，公共核心不再放在 HarmonyOS `nativelib` 或本仓库顶层：
 
 ```text
-audio-haptics-sdk/
+moonlight-audio-haptics/
 ├─ CMakeLists.txt
 ├─ LICENSE                 # Apache License 2.0 英文原文
 ├─ NOTICE                  # 第三方归属信息；没有适用信息时可不创建
@@ -628,7 +628,7 @@ Android 官方文档指出触觉效果取决于执行器和驱动，predefined�
 
 Android Renderer 已从 GPL 宿主的 IR 设备渲染路径抽离到 Apache-2.0 SDK：
 
-- 模块位于 `audio-haptics-sdk/platform/android`，可独立生成
+- 模块位于独立仓库的 `platform/android`，可独立生成
   `moonlight-haptics-android-release.aar`，开发版本坐标为
   `com.moonlight.haptics:moonlight-haptics-android:0.5.14-SNAPSHOT`。
 - AAR 提供标准 Kotlin `HapticFrame`、`AndroidHapticCapabilities`、
@@ -647,8 +647,9 @@ Android Renderer 已从 GPL 宿主的 IR 设备渲染路径抽离到 Apache-2.0 
   留在 Moonlight Android 宿主，符合产品策略归宿主的边界。`MUSIC` 的 groove 门控、瞬态
   gain 与 restart 意图已迁入 Core；能力相关最低瞬态和时长已迁入 SDK Renderer。宿主不再
   对通用 `MUSIC` IR 二次创作。
-- Moonlight 开发阶段通过 `audioHapticsSdkDir` 源码依赖 AAR 模块；正式发布后
-  改为版本化 Maven/AAR 依赖，不依赖相邻仓库路径。
+- Moonlight 过渡阶段通过 `audioHapticsSdkDir` 依赖固定 commit SHA 的独立 SDK
+  checkout；正式发布后改为版本化 Maven/AAR 依赖。本地允许并列目录自动发现，
+  CI 不依赖可变分支或隐式相邻路径。
 - GPL 宿主只保留薄接线：从解码回调取得 PCM、注册 AAR opaque session handle，
   并在 PCM critical 外触发 drain 通知。宿主不再声明 `AhEngine`、
   `AudioHapticsOutputFrame` 或逐帧十参数 JNI callback。
@@ -959,7 +960,7 @@ Opus 解码 PCM
 
 ### 13.1 最终选择
 
-独立 `audio-haptics-sdk` 统一采用 **Apache License 2.0**。选择范围包括：
+独立 `moonlight-audio-haptics` 仓库统一采用 **Apache License 2.0**。选择范围包括：
 
 - C++ Core、公共 C ABI 头文件和 host 工具。
 - Haptic Wire schema、codec、测试工具与版本协商公共实现。
@@ -974,7 +975,7 @@ Opus 解码 PCM
 ```text
 Apache-2.0                         GPL-3.0
 ┌──────────────────────────┐      ┌────────────────────────────┐
-│ audio-haptics-sdk        │      │ moonlight-harmonyos app    │
+│ moonlight-audio-haptics  │      │ moonlight-harmonyos app    │
 │ Core / C ABI / Wire      │<─────│ Sunshine / Moonlight 宿主   │
 │ Sunshine/移动端 adapters │      │ 宿主集成与业务代码          │
 │ tests / examples         │      │ 现有 aubio（迁移期）        │
@@ -988,7 +989,7 @@ Apache-2.0                         GPL-3.0
 
 ### 13.3 文件与发布要求
 
-P1 创建 SDK 目录时必须同时完成：
+SDK 独立仓库必须持续满足：
 
 1. 根目录 `LICENSE` 放置未修改的 Apache License 2.0 英文原文。
 2. 源文件使用 `SPDX-License-Identifier: Apache-2.0`，并保留正确的版权声明。
