@@ -13,10 +13,12 @@ set(NATIVE_CPP_DIR "${REPO_ROOT}/nativelib/src/main/cpp")
 set(AUBIO_SRC_DIR "${NATIVE_CPP_DIR}/aubio/src")
 set(AUBIO_CONFIG_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/config.h")
 
+include("${REPO_ROOT}/cmake/ResolveMoonlightAudioHaptics.cmake")
+resolve_moonlight_audio_haptics(MOONLIGHT_HAPTICS_SDK_PATH "${REPO_ROOT}")
 set(MOONLIGHT_HAPTICS_BUILD_TESTS OFF)
 add_subdirectory(
-    "${REPO_ROOT}/audio-haptics-sdk"
-    "${CMAKE_CURRENT_BINARY_DIR}/audio-haptics-sdk"
+    "${MOONLIGHT_HAPTICS_SDK_PATH}"
+    "${CMAKE_CURRENT_BINARY_DIR}/moonlight-audio-haptics"
 )
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")

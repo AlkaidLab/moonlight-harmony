@@ -5,6 +5,7 @@
 > 核心决策：采用“**Sunshine 编码前 PCM 检测 + Haptic IR 传输 + 客户端渲染 + 客户端本地检测回退**”的混合架构；服务端与客户端复用同一 C++17 Core，不复制算法；CNN 仅作为后续可选语义控制器。
 > 当前实施优先级：**先在 Android 真机完成本地闭环，再启动 Sunshine/Wire 实现**。Android 闭环未达到功能、生命周期、性能和回滚 gate 前，不并行扩展服务端协议。
 > 许可证决策：独立 SDK 采用 **Apache License 2.0**（2026-07-15 确认）；现有 GPLv3 应用代码不进入 Apache-2.0 SDK 边界。
+> 独立仓库：SDK 已于 2026-07-17 迁移至 [AlkaidLab/moonlight-audio-haptics](https://github.com/AlkaidLab/moonlight-audio-haptics)，发布基线为 [`v0.5.14`](https://github.com/AlkaidLab/moonlight-audio-haptics/releases/tag/v0.5.14)，宿主按不可变 commit SHA 获取源码，不再从 Harmony 仓库内嵌目录消费。
 > 实施进度：**P0、P1、P2 已完成；P3 离线、HarmonyOS 设备侧 shadow 与 Android 真机串流 shadow 链路已跑通；P4-A 已将 `AhEngine`、native SPSC IR 队列、批量 JNI drain 和 capability-aware Renderer 收入 Apache-2.0 AAR。`0.5.6 / latency-alignment v2` 已在魅族 17 与 OPPO PKJ110 验证真实串流音乐的播放时钟对齐。`0.5.14 / action-rpg-p4g-v4` 已把 GAME 默认路径切换为面向《原神》一类 BGM-heavy action RPG 的因果 profile：使用项目自研的 trailing-median HPSS 近似、SuperFlux 振音抑制、稳定节拍降权、冲击/锐攻击分层和受限 continuous；不复现旧 BassEnergy，也不修改已确认的 MUSIC 路径。Host 8/8 回归通过，下一步安装 Android 真机，用当前游戏 BGM 验证配乐负载，再在可进入 gameplay 时补战斗召回矩阵。SDK Renderer 生命周期矩阵已完成设置、后台、退出、断流 stop 和手动新会话恢复；客户端自动重连仍属连接层待办，30 分钟长稳按本轮决策后置**（2026-07-16）。结果见 [P0 基线报告](./AUDIO_HAPTICS_P0_BASELINE.md)、[P1 SDK 基础报告](./AUDIO_HAPTICS_P1_SDK_FOUNDATION.md)、[P2 因果 DSP 报告](./AUDIO_HAPTICS_P2_CAUSAL_DSP.md)、[P3 Shadow 基础报告](./AUDIO_HAPTICS_P3_SHADOW_FOUNDATION.md)、[P3 设备侧 Shadow 报告](./AUDIO_HAPTICS_P3_DEVICE_SHADOW.md)和 [Android 真机 Benchmark](./AUDIO_HAPTICS_ANDROID_DEVICE_BENCHMARK.md)。
 
 ## 1. 结论与实施边界

@@ -5,6 +5,7 @@
 > SDK 版本：0.1.0
 > ABI 版本：1
 > 许可证：Apache License 2.0
+> 迁移说明：本文记录 P1 当时的仓库内路径；SDK 已于 2026-07-17 迁移到 [独立仓库](https://github.com/AlkaidLab/moonlight-audio-haptics)，当前发布基线为 `v0.5.14`。
 
 ## 1. P1 交付结果
 

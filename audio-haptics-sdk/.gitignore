@@ -1,6 +1,0 @@
-/build/
-/platform/android/build/
-/platform/android/.gradle/
-/platform/android/.cxx/
-__pycache__/
-*.pyc

@@ -12,10 +12,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+include("${REPO_ROOT}/cmake/ResolveMoonlightAudioHaptics.cmake")
+resolve_moonlight_audio_haptics(MOONLIGHT_HAPTICS_SDK_PATH "${REPO_ROOT}")
 set(MOONLIGHT_HAPTICS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(
-    "${REPO_ROOT}/audio-haptics-sdk"
-    "${CMAKE_CURRENT_BINARY_DIR}/audio-haptics-sdk"
+    "${MOONLIGHT_HAPTICS_SDK_PATH}"
+    "${CMAKE_CURRENT_BINARY_DIR}/moonlight-audio-haptics"
 )
 
 add_executable(audio_haptics_android_bench src/main.cpp)

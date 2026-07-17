@@ -98,7 +98,8 @@ SDK 目前有四项 CTest：
 3. DSP 集成：mono clicks 4/4、antiphase stereo 4/4、稳态音零瞬态、时间误差 0～1 hop、所有 IR 数值范围。
 4. Apache-2.0/SPDX 与 aubio/GPL 边界扫描。
 
-算法来源和 clean-room 边界记录在 `audio-haptics-sdk/ALGORITHM_PROVENANCE.md`；SDK 无第三方 DSP runtime 源码或二进制依赖。
+算法来源和 clean-room 边界记录在独立仓库的
+[`ALGORITHM_PROVENANCE.md`](https://github.com/AlkaidLab/moonlight-audio-haptics/blob/v0.5.14/ALGORITHM_PROVENANCE.md)；SDK 无第三方 DSP runtime 源码或二进制依赖。
 
 HarmonyOS `nativelib` 也已完成 Debug HAR 回归，arm64-v8a 与 x86_64 均成功编译。P2 静态库分别为 630,818 bytes 和 614,858 bytes，`nativelib.har` 为 12,377,548 bytes。生产代码尚未引用 Core 符号，链接器仍可移除未使用对象；这些大小不能直接当作最终包增量。
 
