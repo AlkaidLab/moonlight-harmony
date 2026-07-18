@@ -33,7 +33,6 @@ struct PresentationPlan {
     PresentationAction action = PresentationAction::DROP;
     PresentationEvent event = PresentationEvent::NONE;
     int64_t targetTimeNs = 0;
-    int64_t leadTimeNs = 0;
     int64_t latenessNs = 0;
 };
 
@@ -46,7 +45,6 @@ public:
     void Reset();
     PresentationPlan PlanFrame(int64_t ptsUs, int64_t decodedAtNs);
 
-    int64_t GetFrameIntervalNs() const { return frameIntervalNs_; }
     int64_t GetInitialLeadNs() const { return initialLeadNs_; }
 
 private:

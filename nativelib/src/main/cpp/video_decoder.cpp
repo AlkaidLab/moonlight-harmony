@@ -36,10 +36,6 @@ extern "C" {
 
 #define LOG_TAG "VideoDecoder"
 
-// 是否启用异步渲染（通过 NativeRender）
-// 启用后可利用 SetExpectedFrameRateRange 优化高帧率显示
-static bool g_useAsyncRender = true;
-
 // =============================================================================
 // 大核绑定 + QoS 线程优化
 // 检测 ARM big.LITTLE 架构中的高频核心（大核），将解码线程绑定以获取最大性能
@@ -487,7 +483,6 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     config_ = config;
     window_ = window;
     render_ = NativeRender::GetInstance();
-    postProcessor_ = GLPostProcessor::GetInstance();
     
     OH_LOG_INFO(LOG_APP, "{Init} Initializing video decoder: %{public}dx%{public}d@%.2f, codec=%{public}d, window=%{public}p",
                 config_.width, config_.height, config_.fps, static_cast<int>(config_.codec), static_cast<void*>(window));
@@ -1041,7 +1036,6 @@ void VideoDecoder::Cleanup() {
     lastAsyncRenderTimeMs_ = 0;
     lastAsyncOutputTimeMs_ = 0;
     render_ = nullptr;
-    postProcessor_ = nullptr;
     
     OH_LOG_INFO(LOG_APP, "Video decoder cleaned up");
 }
@@ -1604,15 +1598,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     decodedFrame.ptsUs = pts;
     decodedFrame.decodedAtNs = GetSteadyTimeNs();
 
-    // Both async surface paths use the same PTS-aware presentation contract.
-    if (g_useAsyncRender) {
-        NativeRender* render = self->render_;
-        if (render != nullptr && render->IsSurfaceReady()) {
-            render->SubmitFrame(decodedFrame);
-            return;
-        }
-    }
-    
+    // Async output follows the same PTS-aware ownership contract as sync output.
     self->render_->SubmitFrame(decodedFrame);
 }
 

@@ -1,7 +1,9 @@
 #include "presentation_scheduler.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 
 namespace {
@@ -63,6 +65,42 @@ void TestDiscontinuityReanchors() {
     assert(discontinuity.action == PresentationAction::SCHEDULE);
     assert(discontinuity.event == PresentationEvent::DISCONTINUITY);
 }
+
+void TestFractionalFpsLead() {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(59.94);
+
+    const int64_t decodedAtNs = 2000 * kMs;
+    const PresentationPlan first = scheduler.PlanFrame(0, decodedAtNs);
+    const int64_t expectedLeadNs = static_cast<int64_t>(
+        std::llround(1000000000.0 / 59.94)) + 2 * kMs;
+
+    assert(first.action == PresentationAction::SCHEDULE);
+    assert(first.targetTimeNs - decodedAtNs == expectedLeadNs);
+}
+
+void TestSlowClockDriftStaysBounded() {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(60.0);
+
+    constexpr int64_t kStartNs = 1000 * kMs;
+    constexpr double kPtsIntervalUs = 1000000.0 / 60.0;
+    constexpr double kFastLocalIntervalNs = 1000000000.0 / 60.0 * (1.0 - 0.0001);
+    scheduler.PlanFrame(0, kStartNs);
+
+    PresentationPlan plan;
+    int64_t decodedAtNs = kStartNs;
+    for (int i = 1; i <= 20000; ++i) {
+        const int64_t ptsUs = static_cast<int64_t>(std::llround(i * kPtsIntervalUs));
+        decodedAtNs = kStartNs + static_cast<int64_t>(std::llround(i * kFastLocalIntervalNs));
+        plan = scheduler.PlanFrame(ptsUs, decodedAtNs);
+        assert(plan.action == PresentationAction::SCHEDULE);
+    }
+
+    const int64_t finalLeadNs = plan.targetTimeNs - decodedAtNs;
+    const int64_t expectedLeadNs = scheduler.GetInitialLeadNs();
+    assert(std::llabs(finalLeadNs - expectedLeadNs) < 5 * kMs);
+}
 } // namespace
 
 int main() {
@@ -70,6 +108,8 @@ int main() {
     TestSmallLateFrameShiftsWholeTimeline();
     TestSevereLateDropThenRebuffer();
     TestDiscontinuityReanchors();
+    TestFractionalFpsLead();
+    TestSlowClockDriftStaysBounded();
     std::cout << "presentation scheduler tests passed\n";
     return 0;
 }

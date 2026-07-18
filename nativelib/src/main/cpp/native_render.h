@@ -35,7 +35,6 @@
 #include <cstdint>
 #include <mutex>
 #include <atomic>
-#include <chrono>
 
 /**
  * NativeRender 类
@@ -68,11 +67,6 @@ public:
      * @param fps 期望帧率
      */
     void SetConfiguredFps(double fps);
-    
-    /**
-     * 获取配置的帧率
-     */
-    double GetConfiguredFps() const { return configuredFps_; }
     
     /**
      * 启用/禁用 VSync 渲染模式
@@ -160,9 +154,6 @@ private:
     std::atomic<bool> vsyncEnabled_{false};
     std::atomic<bool> hostPacedPresentationEnabled_{false};
     
-    // 帧率范围已经应用过（NativeVSync）
-    bool frameRateApplied_ = false;
-    
     // Timed presentation state. Legacy VSync and host-paced presentation use
     // separate clocks so switching decoder modes cannot perturb PTS cadence.
     mutable std::mutex presentationMutex_;
@@ -190,8 +181,6 @@ private:
     std::mutex nativeVsyncMutex_;
     OH_NativeVSync* nativeVSync_ = nullptr;
     
-    // 上一帧渲染时间（用于帧率控制）
-    std::chrono::steady_clock::time_point lastFrameTime_;
 };
 
 #endif // NATIVE_RENDER_H

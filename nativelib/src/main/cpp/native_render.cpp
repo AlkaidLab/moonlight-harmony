@@ -127,7 +127,6 @@ void NativeRender::ReleaseInstance() {
 
 NativeRender::NativeRender() {
     OH_LOG_INFO(LOG_APP, "NativeRender created");
-    lastFrameTime_ = std::chrono::steady_clock::now();
 }
 
 NativeRender::~NativeRender() {
@@ -527,6 +526,5 @@ OH_AVErrCode NativeRender::SubmitFrame(const DecodedFrame& frame) {
         OH_LOG_WARN(LOG_APP, "RenderOutputBuffer failed: %{public}d; freeing output", renderResult);
         freeFrame();
     }
-    lastFrameTime_ = std::chrono::steady_clock::now();
     return renderResult;
 }

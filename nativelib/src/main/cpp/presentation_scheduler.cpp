@@ -58,7 +58,6 @@ PresentationPlan PtsPresentationScheduler::AnchorFrame(
     plan.action = PresentationAction::SCHEDULE;
     plan.event = event;
     plan.targetTimeNs = anchorTargetNs_;
-    plan.leadTimeNs = initialLeadNs_;
     return plan;
 }
 
@@ -121,7 +120,6 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
             plan.action = PresentationAction::SCHEDULE;
             plan.event = PresentationEvent::PHASE_SHIFT;
             plan.targetTimeNs = requiredTargetNs;
-            plan.leadTimeNs = submitLeadNs_;
             plan.latenessNs = latenessNs;
             return plan;
         }
@@ -141,6 +139,5 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
     PresentationPlan plan;
     plan.action = PresentationAction::SCHEDULE;
     plan.targetTimeNs = targetTimeNs;
-    plan.leadTimeNs = targetTimeNs - decodedAtNs;
     return plan;
 }

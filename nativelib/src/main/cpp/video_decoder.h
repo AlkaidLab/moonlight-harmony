@@ -37,7 +37,6 @@
 #include <native_buffer/native_buffer.h>
 
 class NativeRender;
-class GLPostProcessor;
 #include <hilog/log.h>
 
 struct Smpte2086Metadata {
@@ -340,10 +339,9 @@ private:
     // 渲染窗口
     OHNativeWindow* window_ = nullptr;
 
-    // Singleton lifetimes cover the decoder session. Cache them so output callbacks
-    // do not contend on the singleton mutex for every frame.
+    // NativeRender's singleton lifetime covers the decoder session. Cache it so
+    // output callbacks do not contend on the singleton mutex for every frame.
     NativeRender* render_ = nullptr;
-    GLPostProcessor* postProcessor_ = nullptr;
     
     // 配置
     VideoDecoderConfig config_;
@@ -372,10 +370,6 @@ private:
     // 同步模式解码线程
     std::thread syncDecodeThread_;
     std::atomic<bool> syncDecodeRunning_{false};
-    
-    // 帧率限制相关
-    std::chrono::steady_clock::time_point lastFrameTime_;
-    int64_t frameIntervalUs_{0};  // 目标帧间隔（微秒），0 表示不限制
     
     // Fixed-size timestamp ring avoids a node allocation/free for every frame.
     struct TimestampEntry {
