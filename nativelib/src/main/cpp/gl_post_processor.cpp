@@ -415,8 +415,11 @@ GLPostProcessor* GLPostProcessor::GetInstance() {
 void GLPostProcessor::ReleaseInstance() {
     std::lock_guard<std::mutex> lock(instanceMutex_);
     if (instance_) {
-        delete instance_;
-        instance_ = nullptr;
+        // The NativeImage API does not promise that unregistering a listener
+        // drains callbacks already dispatched by the system. Keep the process
+        // singleton alive and release only session resources so callback
+        // context and synchronization primitives always remain valid.
+        instance_->Release();
     }
 }
 
@@ -723,16 +726,23 @@ bool GLPostProcessor::InitNativeImage() {
         return false;
     }
 
+    auto callbackContext = std::make_unique<FrameCallbackContext>();
+    callbackContext->owner = this;
+    FrameCallbackContext* callbackContextPtr = callbackContext.get();
+    frameCallbackContexts_.push_back(std::move(callbackContext));
+
     OH_OnFrameAvailableListener listener = {};
-    listener.context = this;
+    listener.context = callbackContextPtr;
     listener.onFrameAvailable = &GLPostProcessor::OnFrameAvailable;
     {
         std::lock_guard<std::mutex> lock(frameCallbackMutex_);
+        activeFrameCallbackContext_ = callbackContextPtr;
         frameCallbacksEnabled_ = true;
     }
     if (g_api.nativeImageSetFrameListener(nativeImage_, listener) != 0) {
         std::lock_guard<std::mutex> lock(frameCallbackMutex_);
         frameCallbacksEnabled_ = false;
+        activeFrameCallbackContext_ = nullptr;
         OH_LOG_ERROR(LOG_APP, "OH_NativeImage_SetOnFrameAvailableListener failed");
         return false;
     }
@@ -744,19 +754,25 @@ bool GLPostProcessor::InitNativeImage() {
 }
 
 void GLPostProcessor::StartFrameWorker() {
-    if (frameWorkerRunning_.exchange(true)) {
-        return;
+    {
+        std::lock_guard<std::mutex> lock(frameWorkerMutex_);
+        if (frameWorkerRunning_.load()) {
+            return;
+        }
+        framePending_ = false;
+        frameWorkerRunning_.store(true);
     }
     frameWorkerThread_ = std::thread(&GLPostProcessor::FrameWorkerLoop, this);
 }
 
 void GLPostProcessor::StopFrameWorker() {
-    // Stop callbacks before joining the worker. Unregistering the listener
-    // prevents new callbacks, while the in-flight counter is the lifetime
-    // barrier for callbacks that were already executing.
+    // Disable the current registration before joining the worker. A callback
+    // dispatched before unregister may still enter later; its retained context
+    // keeps that entry safe and prevents it from targeting a newer session.
     {
         std::lock_guard<std::mutex> lock(frameCallbackMutex_);
         frameCallbacksEnabled_ = false;
+        activeFrameCallbackContext_ = nullptr;
     }
     if (nativeImage_ && frameListenerRegistered_) {
         if (g_api.nativeImageUnsetFrameListener) {
@@ -772,7 +788,13 @@ void GLPostProcessor::StopFrameWorker() {
         });
     }
 
-    frameWorkerRunning_.store(false);
+    {
+        // Update the wait predicate while holding the same mutex used by
+        // FrameWorkerLoop. This prevents a notify between predicate evaluation
+        // and wait() from being lost during shutdown.
+        std::lock_guard<std::mutex> lock(frameWorkerMutex_);
+        frameWorkerRunning_.store(false);
+    }
     frameWorkerCond_.notify_all();
     if (frameWorkerThread_.joinable()) {
         frameWorkerThread_.join();
@@ -782,16 +804,18 @@ void GLPostProcessor::StopFrameWorker() {
 }
 
 void GLPostProcessor::OnFrameAvailable(void* context) {
-    auto* self = static_cast<GLPostProcessor*>(context);
-    if (self == nullptr) {
+    auto* callbackContext = static_cast<FrameCallbackContext*>(context);
+    if (callbackContext == nullptr || callbackContext->owner == nullptr) {
         return;
     }
+    GLPostProcessor* self = callbackContext->owner;
 
     bool shouldNotifyWorker = false;
     {
         std::lock_guard<std::mutex> lock(self->frameCallbackMutex_);
         self->activeFrameCallbacks_++;
-        shouldNotifyWorker = self->frameCallbacksEnabled_;
+        shouldNotifyWorker = self->frameCallbacksEnabled_ &&
+            self->activeFrameCallbackContext_ == callbackContext;
     }
 
     if (shouldNotifyWorker && self->frameWorkerRunning_.load()) {
@@ -1399,6 +1423,8 @@ void GLPostProcessor::ReleaseInternal() {
 
     initialized_ = false;
     frameCount_ = 0;
+    xengineConsecutiveErrors_ = 0;
+    swapConsecutiveFailures_ = 0;
     OH_LOG_INFO(LOG_APP, "GLPostProcessor released");
 }
 

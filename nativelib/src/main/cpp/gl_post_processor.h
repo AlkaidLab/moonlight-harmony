@@ -37,6 +37,8 @@
 #include <atomic>
 #include <thread>
 #include <condition_variable>
+#include <memory>
+#include <vector>
 
 // 前向声明 — 避免在头文件中引入 EGL/GL/NativeImage 依赖
 // 实际类型在 cpp 中通过 dlsym 加载
@@ -190,6 +192,10 @@ private:
     void FallbackFromXEngine();
 
 private:
+    struct FrameCallbackContext {
+        GLPostProcessor* owner = nullptr;
+    };
+
     static GLPostProcessor* instance_;
     static std::mutex instanceMutex_;
 
@@ -204,6 +210,11 @@ private:
     uint32_t activeFrameCallbacks_ = 0;
     bool frameCallbacksEnabled_ = false;
     bool frameListenerRegistered_ = false;
+    FrameCallbackContext* activeFrameCallbackContext_ = nullptr;
+    // Listener callbacks may already be dispatched when the listener is
+    // removed. Retain their immutable contexts for the process lifetime so a
+    // late callback never dereferences a freed context or a newer session.
+    std::vector<std::unique_ptr<FrameCallbackContext>> frameCallbackContexts_;
     bool framePending_ = false;
 
     // 显示目标

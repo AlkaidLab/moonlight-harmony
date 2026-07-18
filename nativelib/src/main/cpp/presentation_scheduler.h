@@ -62,6 +62,7 @@ private:
     int64_t anchorTargetNs_ = 0;
     int64_t lastPtsUs_ = 0;
     int64_t driftErrorEmaNs_ = 0;
+    int64_t phaseShiftDebtNs_ = 0;
     int consecutiveSevereLateFrames_ = 0;
 };
 

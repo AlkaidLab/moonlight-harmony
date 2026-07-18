@@ -288,6 +288,7 @@ private:
         L5,
         QUEUE_OVERFLOW,
         TIMEOUT,
+        PRESENTATION,
     };
 
     // AVCodec 回调
@@ -314,8 +315,12 @@ private:
     void UpdateReceivedStats(int size, int frameNumber, uint16_t hostProcessingLatency);
     
     // 更新解码帧统计
-    void UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32_t flags,
-                            int64_t currentTimeMs);
+    void UpdateDecodedStats(int64_t enqueueTimeMs, uint32_t flags,
+                            int64_t currentTimeMs, bool presented);
+
+    void SubmitDecodedFrame(OH_AVCodec* codec, uint32_t index,
+                            const OH_AVCodecBufferAttr& attr,
+                            int64_t enqueueTimeMs, int64_t outputTimeMs);
 
     void RecordDroppedFrames(DropReason reason, uint64_t count = 1);
     
@@ -391,6 +396,7 @@ private:
 
     // Output/drop counters are updated atomically so decoder callbacks never
     // wait on the receive-statistics snapshot mutex.
+    std::atomic<uint64_t> codecOutputFrames_{0};
     std::atomic<uint64_t> decodedFrames_{0};
     std::atomic<uint64_t> droppedFrames_{0};
     std::atomic<uint64_t> droppedByL1_{0};
@@ -433,6 +439,7 @@ private:
     std::atomic<int64_t> lastAsyncRenderTimeMs_{0};     // 上一次异步渲染时间 (ms)
     std::atomic<int64_t> lastAsyncOutputTimeMs_{0};     // 上一次回调到达时间 (ms)，用于 L5 输出间隔检测
     std::atomic<int64_t> lastPipelineWarningTimeMs_{0};
+    std::atomic<int> consecutiveCriticalPipelineFrames_{0};
     
     // 解码器健康检查状态
     std::atomic<int64_t> lastHealthCheckTimeMs_{0};     // 上次健康检查时间 (ms)

@@ -42,6 +42,7 @@ void PtsPresentationScheduler::Reset() {
     anchorTargetNs_ = 0;
     lastPtsUs_ = 0;
     driftErrorEmaNs_ = 0;
+    phaseShiftDebtNs_ = 0;
     consecutiveSevereLateFrames_ = 0;
 }
 
@@ -52,6 +53,7 @@ PresentationPlan PtsPresentationScheduler::AnchorFrame(
     anchorTargetNs_ = decodedAtNs + initialLeadNs_;
     lastPtsUs_ = ptsUs;
     driftErrorEmaNs_ = 0;
+    phaseShiftDebtNs_ = 0;
     consecutiveSevereLateFrames_ = 0;
 
     PresentationPlan plan;
@@ -75,6 +77,10 @@ void PtsPresentationScheduler::ApplySlowDriftCorrection(
             kMaxDriftCorrectionPerFrameNs);
         anchorTargetNs_ += correctionNs;
         targetTimeNs += correctionNs;
+        if (correctionNs < 0 && phaseShiftDebtNs_ > 0) {
+            phaseShiftDebtNs_ = std::max<int64_t>(
+                0, phaseShiftDebtNs_ + correctionNs);
+        }
     }
 }
 
@@ -91,9 +97,10 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
     }
 
     if (ptsUs == lastPtsUs_) {
-        PresentationPlan plan;
-        plan.event = PresentationEvent::DUPLICATE_PTS;
-        return plan;
+        // A permanently repeated timestamp must not become a permanent DROP
+        // state. Treat it as a broken host timeline and fall back to a fresh
+        // local anchor until valid PTS progression resumes.
+        return AnchorFrame(ptsUs, decodedAtNs, PresentationEvent::DUPLICATE_PTS);
     }
 
     const int64_t ptsDeltaUs = ptsUs - lastPtsUs_;
@@ -104,6 +111,29 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
 
     int64_t targetTimeNs = anchorTargetNs_ +
         (ptsUs - anchorPtsUs_) * kNanosecondsPerMicrosecond;
+
+    // Small late frames move the complete timeline forward and accumulate a
+    // known phase-shift debt. Once the decode/transport delay recovers, repay
+    // only that debt. This restores low latency quickly without mistaking a
+    // normal decoder output burst (which has no debt) for excessive queuing.
+    const int64_t surplusLeadNs =
+        targetTimeNs - decodedAtNs - initialLeadNs_;
+    if (phaseShiftDebtNs_ > 0 && surplusLeadNs > kDriftDeadbandNs) {
+        const int64_t repaymentNs = std::min(phaseShiftDebtNs_, surplusLeadNs);
+        anchorTargetNs_ -= repaymentNs;
+        targetTimeNs -= repaymentNs;
+        phaseShiftDebtNs_ -= repaymentNs;
+        driftErrorEmaNs_ = 0;
+        consecutiveSevereLateFrames_ = 0;
+
+        PresentationPlan plan;
+        plan.action = PresentationAction::SCHEDULE;
+        plan.event = PresentationEvent::PHASE_SHIFT;
+        plan.targetTimeNs = targetTimeNs;
+        plan.latenessNs = -repaymentNs;
+        return plan;
+    }
+
     ApplySlowDriftCorrection(decodedAtNs, targetTimeNs);
 
     const int64_t requiredTargetNs = decodedAtNs + submitLeadNs_;
@@ -113,6 +143,7 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
             // Move the complete timeline forward. This keeps all following PTS
             // intervals intact instead of switching this frame to immediate mode.
             anchorTargetNs_ += latenessNs;
+            phaseShiftDebtNs_ += latenessNs;
             driftErrorEmaNs_ = 0;
             consecutiveSevereLateFrames_ = 0;
 

@@ -375,10 +375,6 @@ static int64_t GetSteadyTimeMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-static int64_t GetSteadyTimeNs() {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-}
 static constexpr int64_t kMaxValidDecodeTimeMs = 1000;   // 有效解码时间上限
 
 // 颜色空间常量 (OH_ColorPrimary)
@@ -416,6 +412,7 @@ static constexpr double kCriticalLatencyMultiplier = 8.0;
 static constexpr double kCriticalLatencyMinMs = 100.0;  // IDR 恢复最小阈值
 static constexpr int kLatencyRecoveryMinFrames = 60;     // 启动阶段不触发
 static constexpr int64_t kLatencyRecoveryTimeoutMs = 1000; // drop-until-IDR 超时兜底：IDR 久未到达则恢复提交，避免长时间冻结
+static constexpr int kCriticalPipelineFramesBeforeRecovery = 3;
 // L4: 网络抖动突发检测 - 连续 N 帧在极短间隔内到达时主动 Flush + IDR
 static constexpr int kBurstFlushThreshold = 4;           // 连续突发帧数阈值（@基准帧率）
 static constexpr double kBurstBaselineFps = 60.0;        // 突发计数阈值的基准帧率
@@ -1035,7 +1032,7 @@ void VideoDecoder::Cleanup() {
     burstFrameCount_ = 0;
     lastAsyncRenderTimeMs_ = 0;
     lastAsyncOutputTimeMs_ = 0;
-    render_ = nullptr;
+    consecutiveCriticalPipelineFrames_ = 0;
     
     OH_LOG_INFO(LOG_APP, "Video decoder cleaned up");
 }
@@ -1109,7 +1106,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
     // === L4 网络抖动突发检测（仅异步模式） ===
     // 同步模式下 L1 drain-to-latest 已足够处理突发到达，L4 的 IDR 请求反而会加重负担
     if (config_.decoderMode != DecoderMode::SYNC &&
-        !render_->IsHostPacedPresentationEnabled()) {
+        !render_->IsHostPacedPresentationActive()) {
         const int64_t nowMs = GetSteadyTimeMs();
         int64_t lastArrival = lastFrameArrivalMs_.exchange(nowMs);
         double expectedFrameMs = 1000.0 / config_.fps;
@@ -1466,6 +1463,8 @@ void VideoDecoder::RecordDroppedFrames(DropReason reason, uint64_t count) {
         case DropReason::TIMEOUT:
             droppedByTimeout_.fetch_add(count, std::memory_order_relaxed);
             break;
+        case DropReason::PRESENTATION:
+            break;
     }
 }
 
@@ -1528,7 +1527,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     
     // === L2 延迟恢复：异步模式基于延迟的帧跳过 ===
     // 当解码耗时过高时，跳过非关键帧以快速追赶
-    const bool hostPaced = self->render_->IsHostPacedPresentationEnabled();
+    const bool hostPaced = self->render_->IsHostPacedPresentationActive();
     if (enqueueTimeMs > 0 && !hostPaced) {
         // 记录回调到达时间（用于 L5 输出间隔检测，排除渲染处理开销的抖动）
         int64_t prevOutputTimeMs = self->lastAsyncOutputTimeMs_.exchange(outputTimeMs);
@@ -1539,7 +1538,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
         // 跳过条件：解码时间 > 3倍帧间隔 且 非关键帧 且 已过启动阶段
         if (instantDecodeTimeMs > expectedFrameTimeMs * kAsyncSkipThresholdMultiplier &&
             !isKeyframe &&
-            self->decodedFrames_.load(std::memory_order_relaxed) > kLatencyRecoveryMinFrames) {
+            self->codecOutputFrames_.load(std::memory_order_relaxed) > kLatencyRecoveryMinFrames) {
             OH_VideoDecoder_FreeOutputBuffer(codec, index);
             self->RecordDroppedFrames(DropReason::L2);
             // 注意：不要把含排队等待的管线延迟 instantDecodeTimeMs 写入 lastInstantDecodeTimeMs_。
@@ -1554,7 +1553,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
         // 高帧率（>90fps）使用更宽松的阈值，避免 VPU 正常管线延迟被误判
         // 使用回调到达间隔（而非渲染完成间隔），排除 GL 后处理/锁竞争等开销的抖动
         if (prevOutputTimeMs > 0 && !isKeyframe &&
-            self->decodedFrames_.load(std::memory_order_relaxed) > kLatencyRecoveryMinFrames) {
+            self->codecOutputFrames_.load(std::memory_order_relaxed) > kLatencyRecoveryMinFrames) {
             int64_t outputInterval = outputTimeMs - prevOutputTimeMs;
             // 根据帧率选择阈值
             double latencyRatio = (self->config_.fps > kL5HighFpsThreshold)
@@ -1582,9 +1581,6 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     // 更新异步渲染时间戳
     self->lastAsyncRenderTimeMs_.store(outputTimeMs);
     
-    // 更新解码统计（复用统一函数）
-    self->UpdateDecodedStats(pts, enqueueTimeMs, attr.flags, outputTimeMs);
-    
     // 注意：异步模式不在此处做帧率限制
     // 原因：
     // 1. 阻塞解码器回调线程会导致内部 buffer 堆积
@@ -1592,24 +1588,41 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     // 3. 低延迟模式应尽快渲染，由显示器 VSync 自然限制
     // 帧率限制通过 SetExpectedFrameRateRange 在系统层面实现
     
-    NativeRender::DecodedFrame decodedFrame;
-    decodedFrame.codec = codec;
-    decodedFrame.bufferIndex = index;
-    decodedFrame.ptsUs = pts;
-    decodedFrame.decodedAtNs = GetSteadyTimeNs();
-
-    // Async output follows the same PTS-aware ownership contract as sync output.
-    self->render_->SubmitFrame(decodedFrame);
+    self->SubmitDecodedFrame(codec, index, attr, enqueueTimeMs, outputTimeMs);
 }
 
 // =============================================================================
 // 同步模式解码实现
 // =============================================================================
 
-void VideoDecoder::UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32_t flags,
-                                      int64_t currentTimeMs) {
-    const uint64_t decodedFrames =
-        decodedFrames_.fetch_add(1, std::memory_order_relaxed) + 1;
+void VideoDecoder::SubmitDecodedFrame(OH_AVCodec* codec, uint32_t index,
+                                      const OH_AVCodecBufferAttr& attr,
+                                      int64_t enqueueTimeMs, int64_t outputTimeMs) {
+    NativeRender::DecodedFrame decodedFrame;
+    decodedFrame.codec = codec;
+    decodedFrame.bufferIndex = index;
+    decodedFrame.ptsUs = attr.pts;
+
+    // SubmitFrame owns the output buffer for every result. Keep presentation
+    // accounting and the ownership contract identical for all decoder modes.
+    const NativeRender::FrameSubmitResult result = render_->SubmitFrame(decodedFrame);
+    UpdateDecodedStats(enqueueTimeMs, attr.flags, outputTimeMs, result.presented);
+    if (!result.presented) {
+        RecordDroppedFrames(DropReason::PRESENTATION);
+    }
+    if (result.status != AV_ERR_OK) {
+        OH_LOG_WARN(LOG_APP, "Submit decoded frame failed: %{public}d, pts=%{public}lld",
+                    result.status, static_cast<long long>(attr.pts));
+    }
+}
+
+void VideoDecoder::UpdateDecodedStats(int64_t enqueueTimeMs, uint32_t flags,
+                                      int64_t currentTimeMs, bool presented) {
+    const uint64_t outputFrames =
+        codecOutputFrames_.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (presented) {
+        decodedFrames_.fetch_add(1, std::memory_order_relaxed);
+    }
     
     if (enqueueTimeMs > 0) {
         // === 精确解码时间：排除队列等待 ===
@@ -1638,7 +1651,7 @@ void VideoDecoder::UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32
             decodeTotalTimeMs_ += static_cast<uint64_t>(decodeTimeMs);
             decodeValidFrames_++;
 
-            if (decodedFrames == 1) {
+            if (decodeValidFrames_ == 1) {
                 decodeAverageTimeMs_ = static_cast<double>(decodeTimeMs);
             } else {
                 const double alpha = isKeyframe ? kEmaAlphaKeyframe : kEmaAlphaNormal;
@@ -1658,26 +1671,36 @@ void VideoDecoder::UpdateDecodedStats(int64_t pts, int64_t enqueueTimeMs, uint32
         // 为保持 L3 敏感度，额外检查管线延迟是否超过临界值
         if (pipelineLatencyMs > static_cast<int64_t>(
                 std::max(1000.0 / config_.fps * kCriticalLatencyMultiplier, kCriticalLatencyMinMs)) &&
-            decodedFrames > kLatencyRecoveryMinFrames) {
-            // 管线延迟已超临界，但精确解码时间可能正常——标记为需要恢复
+            outputFrames > kLatencyRecoveryMinFrames) {
+            // Require a short run of critical samples. A single queue spike is
+            // common during transport jitter and must not turn into an IDR
+            // recovery freeze by itself.
+            const int criticalFrames =
+                consecutiveCriticalPipelineFrames_.fetch_add(
+                    1, std::memory_order_relaxed) + 1;
             constexpr int64_t kPipelineWarningIntervalMs = 5000;
             const int64_t lastWarningMs =
                 lastPipelineWarningTimeMs_.load(std::memory_order_relaxed);
-            if (!latencyRecoveryActive_.load()) {
+            if (criticalFrames >= kCriticalPipelineFramesBeforeRecovery &&
+                !latencyRecoveryActive_.load()) {
                 bool expected = false;
                 if (latencyRecoveryActive_.compare_exchange_strong(expected, true) &&
                     (lastWarningMs == 0 ||
                      currentTimeMs - lastWarningMs >= kPipelineWarningIntervalMs)) {
                     lastPipelineWarningTimeMs_.store(currentTimeMs, std::memory_order_relaxed);
-                    OH_LOG_WARN(LOG_APP, "Pipeline latency %{public}lldms critical (decode=%{public}lldms), flagging recovery",
+                    OH_LOG_WARN(LOG_APP, "Pipeline latency %{public}lldms critical for %{public}d frames (decode=%{public}lldms), flagging recovery",
                                 static_cast<long long>(pipelineLatencyMs),
+                                criticalFrames,
                                 static_cast<long long>(decodeTimeMs));
                 }
             }
+        } else {
+            consecutiveCriticalPipelineFrames_.store(0, std::memory_order_relaxed);
         }
     } else {
         // 无 enqueueTimeMs 时也更新 lastOutputTimeMs_
         lastOutputTimeMs_.store(currentTimeMs);
+        consecutiveCriticalPipelineFrames_.store(0, std::memory_order_relaxed);
     }
 }
 
@@ -1727,6 +1750,9 @@ bool VideoDecoder::CheckDecoderValid() {
 int VideoDecoder::CheckLatencyRecovery(VideoFrameType frameType, int size, int frameNumber,
                                        uint16_t hostProcessingLatency) {
     bool isIFrame = (frameType == VideoFrameType::I_FRAME);
+    if (isIFrame) {
+        consecutiveCriticalPipelineFrames_.store(0, std::memory_order_relaxed);
+    }
     
     // 收到 IDR 帧时重置恢复状态
     if (isIFrame && latencyRecoveryActive_.load()) {
@@ -1776,8 +1802,8 @@ int VideoDecoder::CheckLatencyRecovery(VideoFrameType frameType, int size, int f
     double criticalThresholdMs = std::max(expectedFrameTimeMs * kCriticalLatencyMultiplier, kCriticalLatencyMinMs);
     
     // 检查是否已过启动阶段（避免初始化时的误触发）
-    const uint64_t decodedFrames = decodedFrames_.load(std::memory_order_relaxed);
-    if (decodedFrames < static_cast<uint64_t>(kLatencyRecoveryMinFrames)) {
+    const uint64_t outputFrames = codecOutputFrames_.load(std::memory_order_relaxed);
+    if (outputFrames < static_cast<uint64_t>(kLatencyRecoveryMinFrames)) {
         return 0;
     }
     
@@ -2109,21 +2135,11 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
 
     // Host-paced presentation must see every PTS. Do not apply the low-latency
     // drain-to-latest policy before the shared presentation scheduler.
-    if (render_->IsHostPacedPresentationEnabled()) {
+    if (render_->IsHostPacedPresentationActive()) {
         const int64_t pts = attr.pts;
         const int64_t enqueueTimeMs = TakeEnqueueTimestamp(pts);
         const int64_t outputTimeMs = GetSteadyTimeMs();
-        UpdateDecodedStats(pts, enqueueTimeMs, attr.flags, outputTimeMs);
-
-        NativeRender::DecodedFrame decodedFrame;
-        decodedFrame.codec = decoder_;
-        decodedFrame.bufferIndex = outputIndex;
-        decodedFrame.ptsUs = pts;
-        decodedFrame.decodedAtNs = GetSteadyTimeNs();
-        ret = render_->SubmitFrame(decodedFrame);
-        if (ret != AV_ERR_OK) {
-            OH_LOG_WARN(LOG_APP, "Sync host-paced render failed: %{public}d", ret);
-        }
+        SubmitDecodedFrame(decoder_, outputIndex, attr, enqueueTimeMs, outputTimeMs);
         return 1;
     }
     
@@ -2195,23 +2211,11 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     const int64_t enqueueTimeMs = TakeEnqueueTimestamp(pts);
     const int64_t outputTimeMs = GetSteadyTimeMs();
     
-    // 更新解码统计
-    UpdateDecodedStats(pts, enqueueTimeMs, latestAttr.flags, outputTimeMs);
-    
     // Decoder output selection and presentation are separate policies: sync
     // mode still drains to the latest frame, while the shared presenter uses
     // that frame's PTS when legacy VSync is enabled.
-    NativeRender::DecodedFrame decodedFrame;
-    decodedFrame.codec = decoder_;
-    decodedFrame.bufferIndex = latestIndex;
-    decodedFrame.ptsUs = pts;
-    decodedFrame.decodedAtNs = GetSteadyTimeNs();
-    ret = render_->SubmitFrame(decodedFrame);
-    if (ret != AV_ERR_OK) {
-        // SubmitFrame owns the output buffer even when presentation fails.
-        OH_LOG_WARN(LOG_APP, "Sync: render failed (%{public}d)", ret);
-        return 0;
-    }
+    SubmitDecodedFrame(decoder_, latestIndex, latestAttr,
+                       enqueueTimeMs, outputTimeMs);
 
     return 1;  // 成功渲染一帧
 }
@@ -2223,7 +2227,6 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
 namespace {
     VideoDecoder* g_videoDecoder = nullptr;
     std::mutex g_videoDecoderMutex;
-    NativeRender* g_renderInstance = nullptr;
     OHNativeWindow* g_savedWindow = nullptr;
     int g_savedVideoFormat = 0;
     int g_savedWidth = 0;
@@ -2371,8 +2374,7 @@ int SetupInternal(int videoFormat, int width, int height, double fps) {
     g_savedFps = fps;
     
     // 设置 NativeRender 的帧率配置（用于 SetExpectedFrameRateRange 优化高帧率显示）
-    g_renderInstance = NativeRender::GetInstance();
-    NativeRender* render = g_renderInstance;
+    NativeRender* render = NativeRender::GetInstance();
     if (render != nullptr) {
         render->SetConfiguredFps(fps);
         OH_LOG_INFO(LOG_APP, "VideoDecoder: NativeRender configured fps set to %.3f", fps);

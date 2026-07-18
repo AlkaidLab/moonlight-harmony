@@ -55,6 +55,62 @@ void TestSevereLateDropThenRebuffer() {
     assert(rebuffered.targetTimeNs > 1101 * kMs);
 }
 
+void TestAccumulatedPhaseShiftRecoversQuickly() {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(60.0);
+
+    constexpr int64_t kStartNs = 1000 * kMs;
+    constexpr int64_t kFrameUs = 16667;
+    scheduler.PlanFrame(0, kStartNs);
+
+    int phaseShiftCount = 0;
+    for (int i = 1; i <= 12; ++i) {
+        const int64_t ptsUs = i * kFrameUs;
+        const int64_t nominalDecodeNs = kStartNs + ptsUs * 1000;
+        const int64_t rampDelayNs = (20 + (i - 1) * 6) * kMs;
+        const PresentationPlan delayed = scheduler.PlanFrame(
+            ptsUs, nominalDecodeNs + rampDelayNs);
+        assert(delayed.action == PresentationAction::SCHEDULE);
+        if (delayed.event == PresentationEvent::PHASE_SHIFT) {
+            phaseShiftCount++;
+        }
+    }
+    assert(phaseShiftCount >= 10);
+
+    const int64_t recoveredPtsUs = 13 * kFrameUs;
+    const int64_t recoveredDecodeNs = kStartNs + recoveredPtsUs * 1000;
+    const PresentationPlan recovered = scheduler.PlanFrame(
+        recoveredPtsUs, recoveredDecodeNs);
+
+    assert(recovered.action == PresentationAction::SCHEDULE);
+    assert(recovered.event == PresentationEvent::PHASE_SHIFT);
+    assert(recovered.latenessNs < 0);
+    assert(std::llabs((recovered.targetTimeNs - recoveredDecodeNs) -
+                      scheduler.GetInitialLeadNs()) < kMs);
+
+    const int64_t nextPtsUs = 14 * kFrameUs;
+    const int64_t nextDecodeNs = kStartNs + nextPtsUs * 1000;
+    const PresentationPlan next = scheduler.PlanFrame(nextPtsUs, nextDecodeNs);
+    assert(next.action == PresentationAction::SCHEDULE);
+    assert(std::llabs((next.targetTimeNs - recovered.targetTimeNs) -
+                      kFrameUs * 1000) < kMs);
+}
+
+void TestDuplicatePtsReanchorsInsteadOfFreezing() {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(60.0);
+
+    scheduler.PlanFrame(1000, 1000 * kMs);
+    const PresentationPlan firstDuplicate = scheduler.PlanFrame(1000, 1017 * kMs);
+    const PresentationPlan secondDuplicate = scheduler.PlanFrame(1000, 1034 * kMs);
+
+    assert(firstDuplicate.action == PresentationAction::SCHEDULE);
+    assert(firstDuplicate.event == PresentationEvent::DUPLICATE_PTS);
+    assert(secondDuplicate.action == PresentationAction::SCHEDULE);
+    assert(secondDuplicate.event == PresentationEvent::DUPLICATE_PTS);
+    assert(secondDuplicate.targetTimeNs > firstDuplicate.targetTimeNs);
+}
+
 void TestDiscontinuityReanchors() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(59.94);
@@ -107,6 +163,8 @@ int main() {
     TestBurstKeepsPtsCadence();
     TestSmallLateFrameShiftsWholeTimeline();
     TestSevereLateDropThenRebuffer();
+    TestAccumulatedPhaseShiftRecoversQuickly();
+    TestDuplicatePtsReanchorsInsteadOfFreezing();
     TestDiscontinuityReanchors();
     TestFractionalFpsLead();
     TestSlowClockDriftStaysBounded();

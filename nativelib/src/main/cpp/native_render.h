@@ -82,9 +82,9 @@ public:
     /**
      * Enable host-PTS paced presentation. The existing setting/API name is
      * retained for compatibility with persisted preferences.
-     */
+    */
     void SetHostPacedPresentationEnabled(bool enable);
-    bool IsHostPacedPresentationEnabled() const { return hostPacedPresentationEnabled_; }
+    bool IsHostPacedPresentationActive() const;
     
     /**
      * 强制下一帧重新锚定（Flush/重连/Surface 切换）。
@@ -95,11 +95,15 @@ public:
         OH_AVCodec* codec = nullptr;
         uint32_t bufferIndex = 0;
         int64_t ptsUs = 0;
-        int64_t decodedAtNs = 0;
+    };
+
+    struct FrameSubmitResult {
+        OH_AVErrCode status = AV_ERR_OK;
+        bool presented = false;
     };
 
     // Takes ownership of the decoder output buffer for every return value.
-    OH_AVErrCode SubmitFrame(const DecodedFrame& frame);
+    FrameSubmitResult SubmitFrame(const DecodedFrame& frame);
     
     // Surface 尺寸
     uint64_t GetSurfaceWidth() const { return surfaceWidth_; }
@@ -148,7 +152,7 @@ private:
     std::atomic<bool> surfaceReady_{false};
     
     // 帧率配置
-    double configuredFps_ = 60.0;
+    std::atomic<double> configuredFps_{60.0};
     
     // VSync 模式
     std::atomic<bool> vsyncEnabled_{false};

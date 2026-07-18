@@ -30,11 +30,11 @@
 #undef LOG_TAG
 #define LOG_TAG "NativeRender"
 
-// RenderOutputBufferAtTime 是 API 14+ 的函数，低版本设备不存在
+// RenderOutputBufferAtTime 是 API 12+ 的函数，旧设备或不完整运行时可能不存在
 // 通过 dlsym 动态加载，避免硬依赖
 typedef OH_AVErrCode (*PFN_RenderOutputBufferAtTime)(OH_AVCodec*, uint32_t, int64_t);
 static PFN_RenderOutputBufferAtTime g_pfnRenderAtTime = nullptr;
-static bool g_renderAtTimeChecked = false;
+static std::once_flag g_renderAtTimeOnce;
 
 static int64_t GetMonotonicTimeNs() {
     struct timespec ts;
@@ -43,8 +43,7 @@ static int64_t GetMonotonicTimeNs() {
 }
 
 static PFN_RenderOutputBufferAtTime GetRenderAtTimeFunc() {
-    if (!g_renderAtTimeChecked) {
-        g_renderAtTimeChecked = true;
+    std::call_once(g_renderAtTimeOnce, [] {
         g_pfnRenderAtTime = (PFN_RenderOutputBufferAtTime)
             dlsym(RTLD_DEFAULT, "OH_VideoDecoder_RenderOutputBufferAtTime");
         // RTLD_DEFAULT 可能在某些设备上找不到（如 API 22），回退到显式 dlopen
@@ -55,7 +54,7 @@ static PFN_RenderOutputBufferAtTime GetRenderAtTimeFunc() {
                     dlsym(handle, "OH_VideoDecoder_RenderOutputBufferAtTime");
             }
         }
-    }
+    });
     return g_pfnRenderAtTime;
 }
 
@@ -185,7 +184,7 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
         
         // 如果帧率已配置，立即应用帧率范围
         // 这处理 SetConfiguredFps 在 SetNativeWindow 之前调用的情况
-        if (configuredFps_ > 0) {
+        if (configuredFps_.load() > 0) {
             ApplyFrameRateRange();
         }
         
@@ -200,14 +199,13 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
 }
 
 void NativeRender::SetConfiguredFps(double fps) {
-    configuredFps_ = fps;
-    OH_LOG_INFO(LOG_APP, "Configured FPS set to: %.3f", fps);
-
     {
         std::lock_guard<std::mutex> lock(presentationMutex_);
+        configuredFps_.store(fps);
         ptsScheduler_.Configure(fps);
         ResetPresentationClockLocked();
     }
+    OH_LOG_INFO(LOG_APP, "Configured FPS set to: %.3f", fps);
     
     // 应用帧率范围（NativeVSync 层）
     ApplyFrameRateRange();
@@ -238,6 +236,14 @@ void NativeRender::SetHostPacedPresentationEnabled(bool enable) {
         }
         OH_LOG_INFO(LOG_APP, "Host-paced presentation %{public}s", enable ? "enabled" : "disabled");
     }
+    if (enable && GetRenderAtTimeFunc() == nullptr) {
+        OH_LOG_WARN(LOG_APP,
+            "Host-paced presentation unavailable; keeping decoder low-latency policies active");
+    }
+}
+
+bool NativeRender::IsHostPacedPresentationActive() const {
+    return hostPacedPresentationEnabled_.load() && GetRenderAtTimeFunc() != nullptr;
 }
 
 void NativeRender::ConfigureNativeWindow() {
@@ -252,7 +258,7 @@ void NativeRender::ConfigureNativeWindow() {
     }
     
     // 如果帧率已配置，立即在 NativeWindow 层设置帧率偏好
-    if (configuredFps_ > 60) {
+    if (configuredFps_.load() > 60) {
         ApplyNativeWindowFrameRate();
     }
 }
@@ -298,7 +304,8 @@ static bool CheckAndLoadNWFrameRateApi() {
 }
 
 void NativeRender::ApplyNativeWindowFrameRate() {
-    if (window_ == nullptr || configuredFps_ <= 60) {
+    const double configuredFps = configuredFps_.load();
+    if (window_ == nullptr || configuredFps <= 60) {
         return;
     }
     
@@ -307,7 +314,7 @@ void NativeRender::ApplyNativeWindowFrameRate() {
     }
     
     // strategy = 0 (DEFAULT): 让系统根据能力选择最佳刷新率
-    const int fps = static_cast<int>(configuredFps_ + 0.5);
+    const int fps = static_cast<int>(configuredFps + 0.5);
     int32_t ret = g_pfnNWSetFrameRateRange(window_, fps, fps, fps, 0);
     if (ret == 0) {
         OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d fps (Surface level)", fps);
@@ -328,7 +335,7 @@ void NativeRender::ApplyFrameRateRange() {
 
     if (CheckAndLoadApi20()) {
         OH_NativeVSync_ExpectedRateRange range;
-        const int fps = static_cast<int>(configuredFps_ + 0.5);
+        const int fps = static_cast<int>(configuredFps_.load() + 0.5);
         range.min = fps;
         range.max = fps;
         range.expected = fps;
@@ -378,8 +385,9 @@ void NativeRender::ResetPresentationClock() {
 int64_t NativeRender::CalculateLegacyPresentTargetLocked(int64_t pts, int64_t nowNs) {
     const int64_t hostNs = pts * 1000LL;
     const int64_t instOffset = nowNs - hostNs;
-    const int64_t frameIntervalNs = configuredFps_ > 0.0 ?
-        static_cast<int64_t>(1000000000.0 / configuredFps_) : 16666667LL;
+    const double configuredFps = configuredFps_.load();
+    const int64_t frameIntervalNs = configuredFps > 0.0 ?
+        static_cast<int64_t>(1000000000.0 / configuredFps) : 16666667LL;
     const bool discontinuity = timeBaseInitialized_ &&
         (pts < lastPtsUs_ || (pts - lastPtsUs_) > 2000000LL);
 
@@ -432,12 +440,16 @@ int64_t NativeRender::CalculateLegacyPresentTargetLocked(int64_t pts, int64_t no
 // 帧渲染
 // =============================================================================
 
-OH_AVErrCode NativeRender::SubmitFrame(const DecodedFrame& frame) {
+NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& frame) {
     bool bufferConsumed = false;
-    auto renderImmediately = [&frame, &bufferConsumed]() {
+    bool framePresented = false;
+    auto renderImmediately = [&frame, &bufferConsumed, &framePresented]() {
         const OH_AVErrCode result =
             OH_VideoDecoder_RenderOutputBuffer(frame.codec, frame.bufferIndex);
-        if (result == AV_ERR_OK) bufferConsumed = true;
+        if (result == AV_ERR_OK) {
+            bufferConsumed = true;
+            framePresented = true;
+        }
         return result;
     };
     auto freeFrame = [&frame, &bufferConsumed]() {
@@ -457,19 +469,21 @@ OH_AVErrCode NativeRender::SubmitFrame(const DecodedFrame& frame) {
         if (renderAtTime == nullptr) {
             renderResult = renderImmediately();
         } else if (!hostPacedPresentationEnabled_.load()) {
-            const int64_t nowNs = frame.decodedAtNs > 0 ? frame.decodedAtNs : GetMonotonicTimeNs();
+            const int64_t nowNs = GetMonotonicTimeNs();
             int64_t presentTimeNs;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
                 presentTimeNs = CalculateLegacyPresentTargetLocked(frame.ptsUs, nowNs);
             }
             renderResult = renderAtTime(frame.codec, frame.bufferIndex, presentTimeNs);
-            if (renderResult != AV_ERR_OK) {
+            if (renderResult == AV_ERR_OK) {
+                bufferConsumed = true;
+                framePresented = true;
+            } else {
                 renderResult = renderImmediately();
             }
         } else {
-            const int64_t decodedAtNs = frame.decodedAtNs > 0 ?
-                frame.decodedAtNs : GetMonotonicTimeNs();
+            const int64_t decodedAtNs = GetMonotonicTimeNs();
             PresentationPlan plan;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
@@ -482,7 +496,10 @@ OH_AVErrCode NativeRender::SubmitFrame(const DecodedFrame& frame) {
                 if (plan.latenessNs > 0) preciseLateCount_++;
                 if (plan.event == PresentationEvent::PHASE_SHIFT) precisePhaseShiftCount_++;
                 if (plan.event == PresentationEvent::REBUFFER) preciseRebufferCount_++;
-                if (plan.event == PresentationEvent::DISCONTINUITY) preciseResyncCount_++;
+                if (plan.event == PresentationEvent::DISCONTINUITY ||
+                    plan.event == PresentationEvent::DUPLICATE_PTS) {
+                    preciseResyncCount_++;
+                }
 
                 const int64_t totalFrames = preciseScheduledCount_ + preciseDroppedCount_;
                 if (totalFrames % 6000 == 0) {
@@ -507,6 +524,7 @@ OH_AVErrCode NativeRender::SubmitFrame(const DecodedFrame& frame) {
                     frame.codec, frame.bufferIndex, plan.targetTimeNs);
                 if (renderResult == AV_ERR_OK) {
                     bufferConsumed = true;
+                    framePresented = true;
                 } else {
                     {
                         std::lock_guard<std::mutex> lock(presentationMutex_);
@@ -526,5 +544,5 @@ OH_AVErrCode NativeRender::SubmitFrame(const DecodedFrame& frame) {
         OH_LOG_WARN(LOG_APP, "RenderOutputBuffer failed: %{public}d; freeing output", renderResult);
         freeFrame();
     }
-    return renderResult;
+    return {renderResult, framePresented};
 }
