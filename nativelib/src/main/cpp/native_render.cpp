@@ -36,22 +36,6 @@ typedef OH_AVErrCode (*PFN_RenderOutputBufferAtTime)(OH_AVCodec*, uint32_t, int6
 static PFN_RenderOutputBufferAtTime g_pfnRenderAtTime = nullptr;
 static bool g_renderAtTimeChecked = false;
 
-// VSync 回调只写入进程级原子状态，避免 Surface 销毁时回调持有悬空对象。
-static std::atomic<int64_t> g_lastVsyncTimestampNs{0};
-static std::atomic<int64_t> g_vsyncPeriodNs{0};
-static std::atomic<bool> g_vsyncRequestPending{false};
-
-static constexpr int64_t kVsyncSampleRefreshPeriods = 2;
-static constexpr int64_t kVsyncPeriodRefreshIntervalNs = 250000000LL;
-
-static void OnNativeVsync(long long timestamp, void* data) {
-    (void)data;
-    if (timestamp > 0) {
-        g_lastVsyncTimestampNs.store(static_cast<int64_t>(timestamp), std::memory_order_release);
-    }
-    g_vsyncRequestPending.store(false, std::memory_order_release);
-}
-
 static int64_t GetMonotonicTimeNs() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -158,37 +142,17 @@ NativeRender::~NativeRender() {
 // =============================================================================
 
 void NativeRender::InitNativeVSync() {
-    bool created = false;
-    {
-        std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
-        if (nativeVSync_ != nullptr) {
-            return;
-        }
-
-        const char* name = "moonlight_render";
-        nativeVSync_ = OH_NativeVSync_Create(name, strlen(name));
-        if (nativeVSync_ != nullptr) {
-            long long periodNs = 0;
-            const bool periodAvailable =
-                OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) == 0 && periodNs > 0;
-            if (!periodAvailable) {
-                const int fps = configuredFps_ > 0 ? configuredFps_ : 60;
-                periodNs = 1000000000LL / fps;
-                OH_LOG_WARN(LOG_APP,
-                    "NativeVSync period unavailable; using %{public}d FPS fallback", fps);
-            }
-            g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
-            lastVsyncPeriodQueryNs_ = periodAvailable ? GetMonotonicTimeNs() : 0;
-            g_vsyncRequestPending.store(false, std::memory_order_release);
-            created = true;
-            OH_LOG_INFO(LOG_APP, "NativeVSync created successfully, period=%{public}lldns", periodNs);
-        } else {
-            OH_LOG_WARN(LOG_APP, "Failed to create NativeVSync");
-        }
+    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
+    if (nativeVSync_ != nullptr) {
+        return;
     }
 
-    if (created && twoStepPreciseSyncEnabled_.load()) {
-        RequestVsyncSample();
+    const char* name = "moonlight_render";
+    nativeVSync_ = OH_NativeVSync_Create(name, strlen(name));
+    if (nativeVSync_ != nullptr) {
+        OH_LOG_INFO(LOG_APP, "NativeVSync created successfully");
+    } else {
+        OH_LOG_WARN(LOG_APP, "Failed to create NativeVSync");
     }
 }
 
@@ -200,62 +164,7 @@ void NativeRender::ReleaseNativeVSync() {
 
     OH_NativeVSync_Destroy(nativeVSync_);
     nativeVSync_ = nullptr;
-    lastVsyncRequestFailureLogNs_ = 0;
-    g_lastVsyncTimestampNs.store(0, std::memory_order_release);
-    g_vsyncPeriodNs.store(0, std::memory_order_release);
-    g_vsyncRequestPending.store(false, std::memory_order_release);
-    lastVsyncPeriodQueryNs_ = 0;
     OH_LOG_INFO(LOG_APP, "NativeVSync destroyed");
-}
-
-void NativeRender::RequestVsyncSample() {
-    bool expected = false;
-    if (!g_vsyncRequestPending.compare_exchange_strong(
-            expected, true, std::memory_order_acq_rel, std::memory_order_acquire)) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
-    if (nativeVSync_ == nullptr) {
-        g_vsyncRequestPending.store(false, std::memory_order_release);
-        return;
-    }
-
-    // GetPeriod takes the VSync receiver lock. Poll it at most once per second
-    // to retain refresh-rate switch handling without doing it for every frame.
-    const int64_t nowNs = GetMonotonicTimeNs();
-    const bool periodRefreshDue = lastVsyncPeriodQueryNs_ == 0 ||
-        nowNs - lastVsyncPeriodQueryNs_ >= kVsyncPeriodRefreshIntervalNs;
-    if (periodRefreshDue && g_lastVsyncTimestampNs.load(std::memory_order_acquire) > 0) {
-        long long periodNs = 0;
-        if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) == 0 && periodNs > 0) {
-            g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
-        }
-        lastVsyncPeriodQueryNs_ = nowNs;
-    }
-
-    int32_t ret = OH_NativeVSync_RequestFrame(nativeVSync_, OnNativeVsync, nullptr);
-    if (ret != 0) {
-        g_vsyncRequestPending.store(false, std::memory_order_release);
-        constexpr int64_t kFailureLogIntervalNs = 10000000000LL;
-        if (lastVsyncRequestFailureLogNs_ == 0 ||
-            nowNs - lastVsyncRequestFailureLogNs_ >= kFailureLogIntervalNs) {
-            lastVsyncRequestFailureLogNs_ = nowNs;
-            OH_LOG_DEBUG(LOG_APP, "NativeVSync sample request failed: %{public}d", ret);
-        }
-    }
-}
-
-void NativeRender::MaybeRequestVsyncSample(int64_t nowNs) {
-    const int64_t phaseNs = g_lastVsyncTimestampNs.load(std::memory_order_acquire);
-    const int64_t periodNs = g_vsyncPeriodNs.load(std::memory_order_acquire);
-    if (phaseNs > 0 && periodNs > 0) {
-        const int64_t phaseAgeNs = nowNs - phaseNs;
-        if (phaseAgeNs >= -periodNs && phaseAgeNs < periodNs * kVsyncSampleRefreshPeriods) {
-            return;
-        }
-    }
-    RequestVsyncSample();
 }
 
 // =============================================================================
@@ -291,11 +200,15 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
     }
 }
 
-void NativeRender::SetConfiguredFps(int fps) {
+void NativeRender::SetConfiguredFps(double fps) {
     configuredFps_ = fps;
-    OH_LOG_INFO(LOG_APP, "Configured FPS set to: %{public}d", fps);
+    OH_LOG_INFO(LOG_APP, "Configured FPS set to: %.3f", fps);
 
-    ResetPresentationClock();
+    {
+        std::lock_guard<std::mutex> lock(presentationMutex_);
+        ptsScheduler_.Configure(fps);
+        ResetPresentationClockLocked();
+    }
     
     // 应用帧率范围（NativeVSync 层）
     ApplyFrameRateRange();
@@ -312,25 +225,19 @@ void NativeRender::SetVsyncEnabled(bool enable) {
             ResetPresentationClockLocked();
             ResetPresentationStatsLocked();
         }
-        if (enable && twoStepPreciseSyncEnabled_.load()) {
-            RequestVsyncSample();
-        }
         OH_LOG_INFO(LOG_APP, "VSync mode %{public}s", enable ? "enabled" : "disabled");
     }
 }
 
-void NativeRender::SetTwoStepPreciseSyncEnabled(bool enable) {
-    bool wasEnabled = twoStepPreciseSyncEnabled_.exchange(enable);
+void NativeRender::SetHostPacedPresentationEnabled(bool enable) {
+    bool wasEnabled = hostPacedPresentationEnabled_.exchange(enable);
     if (wasEnabled != enable) {
         {
             std::lock_guard<std::mutex> lock(presentationMutex_);
             ResetPresentationClockLocked();
             ResetPresentationStatsLocked();
         }
-        if (enable) {
-            RequestVsyncSample();
-        }
-        OH_LOG_INFO(LOG_APP, "Two-step precise sync %{public}s", enable ? "enabled" : "disabled");
+        OH_LOG_INFO(LOG_APP, "Host-paced presentation %{public}s", enable ? "enabled" : "disabled");
     }
 }
 
@@ -401,12 +308,13 @@ void NativeRender::ApplyNativeWindowFrameRate() {
     }
     
     // strategy = 0 (DEFAULT): 让系统根据能力选择最佳刷新率
-    int32_t ret = g_pfnNWSetFrameRateRange(window_, configuredFps_, configuredFps_, configuredFps_, 0);
+    const int fps = static_cast<int>(configuredFps_ + 0.5);
+    int32_t ret = g_pfnNWSetFrameRateRange(window_, fps, fps, fps, 0);
     if (ret == 0) {
-        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d fps (Surface level)", configuredFps_);
+        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d fps (Surface level)", fps);
     } else {
         OH_LOG_WARN(LOG_APP, "NativeWindow SetFrameRateRange failed: ret=%{public}d, fps=%{public}d", 
-                    ret, configuredFps_);
+                    ret, fps);
     }
 }
 
@@ -421,52 +329,46 @@ void NativeRender::ApplyFrameRateRange() {
 
     if (CheckAndLoadApi20()) {
         OH_NativeVSync_ExpectedRateRange range;
-        range.min = configuredFps_;
-        range.max = configuredFps_;
-        range.expected = configuredFps_;
+        const int fps = static_cast<int>(configuredFps_ + 0.5);
+        range.min = fps;
+        range.max = fps;
+        range.expected = fps;
         
         int32_t ret = g_pfnSetExpectedFrameRateRange(nativeVSync_, &range);
         if (ret == 0) {
             OH_LOG_INFO(LOG_APP, "NativeVSync FrameRateRange set to fixed %{public}d fps",
-                        configuredFps_);
+                        fps);
         } else {
             OH_LOG_WARN(LOG_APP, "Failed to set NativeVSync FrameRateRange to %{public}d: ret=%{public}d", 
-                        configuredFps_, ret);
+                        fps, ret);
         }
     }
-
-    long long periodNs = 0;
-    const bool periodAvailable =
-        OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) == 0 && periodNs > 0;
-    if (!periodAvailable) {
-        const int fps = configuredFps_ > 0 ? configuredFps_ : 60;
-        periodNs = 1000000000LL / fps;
-    }
-    g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
-    lastVsyncPeriodQueryNs_ = periodAvailable ? GetMonotonicTimeNs() : 0;
 }
 
 // =============================================================================
-// 两步呈现时钟
+// PTS presentation clocks
 // =============================================================================
 
 void NativeRender::ResetPresentationClockLocked() {
+    ptsScheduler_.Reset();
     timeBaseInitialized_ = false;
     estimatedOffsetNs_ = 0;
     skewNs_ = 0;
     jitterEstNs_ = 0.0;
     lastPtsUs_ = 0;
-    lastScheduledPresentNs_ = 0;
 }
 
 void NativeRender::ResetPresentationStatsLocked() {
     vsyncFrameCount_ = 0;
     vsyncLateFrameCount_ = 0;
     vsyncResyncCount_ = 0;
-    twoStepHitCount_ = 0;
-    twoStepFallbackCount_ = 0;
-    twoStepSameSlotCount_ = 0;
-    twoStepDrainReanchorCount_ = 0;
+    preciseScheduledCount_ = 0;
+    preciseDroppedCount_ = 0;
+    preciseLateCount_ = 0;
+    precisePhaseShiftCount_ = 0;
+    preciseRebufferCount_ = 0;
+    preciseResyncCount_ = 0;
+    preciseApiFailureCount_ = 0;
 }
 
 void NativeRender::ResetPresentationClock() {
@@ -474,29 +376,26 @@ void NativeRender::ResetPresentationClock() {
     ResetPresentationClockLocked();
 }
 
-int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, bool twoStep,
-                                                   bool forceReanchor) {
+int64_t NativeRender::CalculateLegacyPresentTargetLocked(int64_t pts, int64_t nowNs) {
     const int64_t hostNs = pts * 1000LL;
     const int64_t instOffset = nowNs - hostNs;
-    const int64_t frameIntervalNs = configuredFps_ > 0 ? 1000000000LL / configuredFps_ : 16666667LL;
+    const int64_t frameIntervalNs = configuredFps_ > 0.0 ?
+        static_cast<int64_t>(1000000000.0 / configuredFps_) : 16666667LL;
     const bool discontinuity = timeBaseInitialized_ &&
         (pts < lastPtsUs_ || (pts - lastPtsUs_) > 2000000LL);
 
-    if (forceReanchor || !timeBaseInitialized_ || discontinuity) {
-        if (forceReanchor) {
-            twoStepDrainReanchorCount_++;
-        } else if (discontinuity) {
+    if (!timeBaseInitialized_ || discontinuity) {
+        if (discontinuity) {
             vsyncResyncCount_++;
         }
         estimatedOffsetNs_ = instOffset;
         skewNs_ = 0;
         jitterEstNs_ = static_cast<double>(frameIntervalNs) / 16.0;
         timeBaseInitialized_ = true;
-        if (!forceReanchor) {
-            OH_LOG_INFO(LOG_APP, "VSync clock (re)anchored: offset=%{public}lldus, pts=%{public}lldus%{public}s",
-                        static_cast<long long>(estimatedOffsetNs_ / 1000),
-                        static_cast<long long>(pts), discontinuity ? " [discontinuity]" : "");
-        }
+        OH_LOG_INFO(LOG_APP,
+            "Legacy VSync clock (re)anchored: offset=%{public}lldus, pts=%{public}lldus%{public}s",
+            static_cast<long long>(estimatedOffsetNs_ / 1000),
+            static_cast<long long>(pts), discontinuity ? " [discontinuity]" : "");
     } else {
         const int64_t pred = estimatedOffsetNs_ + skewNs_;
         const int64_t e = instOffset - pred;
@@ -510,9 +409,8 @@ int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, b
     }
     lastPtsUs_ = pts;
 
-    // 二步模式的 VSync 向上取整自带约半帧余量；基线模式保留原 3×MAD + 1ms cushion。
-    int64_t cushionNs = static_cast<int64_t>((twoStep ? 0.5 : 3.0) * jitterEstNs_);
-    if (!twoStep && cushionNs < 1000000LL) cushionNs = 1000000LL;
+    int64_t cushionNs = static_cast<int64_t>(3.0 * jitterEstNs_);
+    if (cushionNs < 1000000LL) cushionNs = 1000000LL;
     if (cushionNs > frameIntervalNs) cushionNs = frameIntervalNs;
 
     const int64_t targetNs = hostNs + estimatedOffsetNs_ + cushionNs;
@@ -521,125 +419,113 @@ int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, b
     }
 
     if (++vsyncFrameCount_ % 6000 == 0) {
-        const int64_t vsyncPeriodUs =
-            g_vsyncPeriodNs.load(std::memory_order_acquire) / 1000;
         OH_LOG_INFO(LOG_APP,
-            "VSync clock stats: mode=%{public}s, frames=%{public}lld, late=%{public}lld, resync=%{public}lld, hit=%{public}lld, fallback=%{public}lld, sameSlot=%{public}lld, drainReanchor=%{public}lld, period=%{public}lldus, cushion=%{public}lldus",
-            twoStep ? "two-step" : "baseline",
-            static_cast<long long>(vsyncFrameCount_), static_cast<long long>(vsyncLateFrameCount_),
-            static_cast<long long>(vsyncResyncCount_), static_cast<long long>(twoStepHitCount_),
-            static_cast<long long>(twoStepFallbackCount_), static_cast<long long>(twoStepSameSlotCount_),
-            static_cast<long long>(twoStepDrainReanchorCount_),
-            static_cast<long long>(vsyncPeriodUs),
+            "Legacy VSync stats: frames=%{public}lld, late=%{public}lld, resync=%{public}lld, cushion=%{public}lldus",
+            static_cast<long long>(vsyncFrameCount_),
+            static_cast<long long>(vsyncLateFrameCount_),
+            static_cast<long long>(vsyncResyncCount_),
             static_cast<long long>(cushionNs / 1000));
     }
     return targetNs;
-}
-
-int64_t NativeRender::SnapTargetToVsync(int64_t targetNs, int64_t nowNs) const {
-    const int64_t phaseNs = g_lastVsyncTimestampNs.load(std::memory_order_acquire);
-    const int64_t periodNs = g_vsyncPeriodNs.load(std::memory_order_acquire);
-    if (phaseNs <= 0 || periodNs <= 0) {
-        return targetNs;
-    }
-
-    const int64_t phaseAgeNs = nowNs - phaseNs;
-    if (phaseAgeNs < -periodNs || phaseAgeNs > periodNs * 4) {
-        return targetNs;
-    }
-
-    const int64_t rawNs = targetNs < nowNs ? nowNs : targetNs;
-    if (rawNs <= phaseNs) {
-        return phaseNs;
-    }
-    const int64_t deltaNs = rawNs - phaseNs;
-    return phaseNs + ((deltaNs + periodNs - 1) / periodNs) * periodNs;
 }
 
 // =============================================================================
 // 帧渲染
 // =============================================================================
 
-OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts,
-                                       bool drainToLatest) {
-    auto renderImmediately = [codec, bufferIndex]() {
-        return OH_VideoDecoder_RenderOutputBuffer(codec, bufferIndex);
+OH_AVErrCode NativeRender::SubmitFrame(const DecodedFrame& frame) {
+    bool bufferConsumed = false;
+    auto renderImmediately = [&frame, &bufferConsumed]() {
+        const OH_AVErrCode result =
+            OH_VideoDecoder_RenderOutputBuffer(frame.codec, frame.bufferIndex);
+        if (result == AV_ERR_OK) bufferConsumed = true;
+        return result;
     };
-    auto noteFallback = [this]() {
-        std::lock_guard<std::mutex> lock(presentationMutex_);
-        twoStepFallbackCount_++;
+    auto freeFrame = [&frame, &bufferConsumed]() {
+        if (bufferConsumed) return AV_ERR_OK;
+        const OH_AVErrCode result =
+            OH_VideoDecoder_FreeOutputBuffer(frame.codec, frame.bufferIndex);
+        // Do not retry a failed release with an index whose ownership is unclear.
+        bufferConsumed = true;
+        return result;
     };
 
     OH_AVErrCode renderResult = AV_ERR_OK;
-    if (!vsyncEnabled_.load() && !twoStepPreciseSyncEnabled_.load()) {
+    if (!vsyncEnabled_.load() && !hostPacedPresentationEnabled_.load()) {
         renderResult = renderImmediately();
     } else {
         PFN_RenderOutputBufferAtTime renderAtTime = GetRenderAtTimeFunc();
         if (renderAtTime == nullptr) {
-            if (twoStepPreciseSyncEnabled_.load()) {
-                noteFallback();
-            }
             renderResult = renderImmediately();
-        } else if (!twoStepPreciseSyncEnabled_.load()) {
-            // A/B 基线：保留原有的解码输出时采样 + 较大 cushion，不做 VSync 相位 snap。
-            const int64_t nowNs = GetMonotonicTimeNs();
+        } else if (!hostPacedPresentationEnabled_.load()) {
+            const int64_t nowNs = frame.decodedAtNs > 0 ? frame.decodedAtNs : GetMonotonicTimeNs();
             int64_t presentTimeNs;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
-                presentTimeNs = CalculatePresentTargetLocked(pts, nowNs, false);
+                presentTimeNs = CalculateLegacyPresentTargetLocked(frame.ptsUs, nowNs);
             }
-            renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
+            renderResult = renderAtTime(frame.codec, frame.bufferIndex, presentTimeNs);
             if (renderResult != AV_ERR_OK) {
                 renderResult = renderImmediately();
             }
         } else {
-            const int64_t nowNs = GetMonotonicTimeNs();
-            int64_t targetNs;
+            const int64_t decodedAtNs = frame.decodedAtNs > 0 ?
+                frame.decodedAtNs : GetMonotonicTimeNs();
+            PresentationPlan plan;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
-                // step1 必须在解码输出到达时采样，目标才包含解码和排队耗时。
-                targetNs = CalculatePresentTargetLocked(pts, nowNs, true, drainToLatest);
-            }
+                plan = ptsScheduler_.PlanFrame(frame.ptsUs, decodedAtNs);
+                if (plan.action == PresentationAction::SCHEDULE) {
+                    preciseScheduledCount_++;
+                } else {
+                    preciseDroppedCount_++;
+                }
+                if (plan.latenessNs > 0) preciseLateCount_++;
+                if (plan.event == PresentationEvent::PHASE_SHIFT) precisePhaseShiftCount_++;
+                if (plan.event == PresentationEvent::REBUFFER) preciseRebufferCount_++;
+                if (plan.event == PresentationEvent::DISCONTINUITY) preciseResyncCount_++;
 
-            // step2 只负责把已恢复的 host 节奏落到本地显示槽。
-            int64_t presentTimeNs = SnapTargetToVsync(targetNs, nowNs);
-            if (drainToLatest) {
-                std::lock_guard<std::mutex> lock(presentationMutex_);
-                // Surface 按提交顺序处理；已有未来帧时让最新帧进入同槽覆盖，避免倒序时间戳。
-                if (lastScheduledPresentNs_ >= nowNs && presentTimeNs < lastScheduledPresentNs_) {
-                    presentTimeNs = lastScheduledPresentNs_;
+                const int64_t totalFrames = preciseScheduledCount_ + preciseDroppedCount_;
+                if (totalFrames % 6000 == 0) {
+                    OH_LOG_INFO(LOG_APP,
+                        "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus",
+                        static_cast<long long>(totalFrames),
+                        static_cast<long long>(preciseScheduledCount_),
+                        static_cast<long long>(preciseDroppedCount_),
+                        static_cast<long long>(preciseLateCount_),
+                        static_cast<long long>(precisePhaseShiftCount_),
+                        static_cast<long long>(preciseRebufferCount_),
+                        static_cast<long long>(preciseResyncCount_),
+                        static_cast<long long>(preciseApiFailureCount_),
+                        static_cast<long long>(ptsScheduler_.GetInitialLeadNs() / 1000));
                 }
             }
-            if (targetNs < nowNs) {
-                noteFallback();
-                renderResult = renderImmediately();
+
+            if (plan.action == PresentationAction::DROP) {
+                renderResult = freeFrame();
             } else {
-                renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
+                renderResult = renderAtTime(
+                    frame.codec, frame.bufferIndex, plan.targetTimeNs);
                 if (renderResult == AV_ERR_OK) {
-                    std::lock_guard<std::mutex> lock(presentationMutex_);
-                    if (lastScheduledPresentNs_ >= nowNs && presentTimeNs <= lastScheduledPresentNs_) {
-                        twoStepSameSlotCount_++;
-                    }
-                    if (presentTimeNs > lastScheduledPresentNs_) {
-                        lastScheduledPresentNs_ = presentTimeNs;
-                    }
-                    twoStepHitCount_++;
+                    bufferConsumed = true;
                 } else {
+                    {
+                        std::lock_guard<std::mutex> lock(presentationMutex_);
+                        preciseApiFailureCount_++;
+                    }
                     OH_LOG_WARN(LOG_APP,
-                        "RenderOutputBufferAtTime failed: %{public}d, pts=%{public}lld, presentNs=%{public}lld; falling back",
-                        renderResult, static_cast<long long>(pts), static_cast<long long>(presentTimeNs));
-                    noteFallback();
+                        "Host-paced render failed: %{public}d, pts=%{public}lld, targetNs=%{public}lld; falling back",
+                        renderResult, static_cast<long long>(frame.ptsUs),
+                        static_cast<long long>(plan.targetTimeNs));
                     renderResult = renderImmediately();
                 }
             }
-            // Sampling only refreshes future frames, so keep its Binder work
-            // after the current codec buffer has already been released.
-            MaybeRequestVsyncSample(nowNs);
         }
     }
 
-    if (renderResult != AV_ERR_OK) {
-        OH_LOG_WARN(LOG_APP, "RenderOutputBuffer failed: %{public}d", renderResult);
+    if (renderResult != AV_ERR_OK && !bufferConsumed) {
+        OH_LOG_WARN(LOG_APP, "RenderOutputBuffer failed: %{public}d; freeing output", renderResult);
+        freeFrame();
     }
     lastFrameTime_ = std::chrono::steady_clock::now();
     return renderResult;

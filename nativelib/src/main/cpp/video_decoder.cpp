@@ -378,6 +378,11 @@ static int64_t GetSteadyTimeMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
+
+static int64_t GetSteadyTimeNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 static constexpr int64_t kMaxValidDecodeTimeMs = 1000;   // 有效解码时间上限
 
 // 颜色空间常量 (OH_ColorPrimary)
@@ -1109,7 +1114,8 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
     
     // === L4 网络抖动突发检测（仅异步模式） ===
     // 同步模式下 L1 drain-to-latest 已足够处理突发到达，L4 的 IDR 请求反而会加重负担
-    if (config_.decoderMode != DecoderMode::SYNC) {
+    if (config_.decoderMode != DecoderMode::SYNC &&
+        !render_->IsHostPacedPresentationEnabled()) {
         const int64_t nowMs = GetSteadyTimeMs();
         int64_t lastArrival = lastFrameArrivalMs_.exchange(nowMs);
         double expectedFrameMs = 1000.0 / config_.fps;
@@ -1508,10 +1514,17 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     if (self == nullptr) return;
     
     // 获取输出数据信息
-    OH_AVCodecBufferAttr attr;
-    int64_t pts = 0;
-    if (OH_AVBuffer_GetBufferAttr(buffer, &attr) == AV_ERR_OK) {
-        pts = attr.pts;
+    OH_AVCodecBufferAttr attr = {};
+    if (OH_AVBuffer_GetBufferAttr(buffer, &attr) != AV_ERR_OK) {
+        OH_LOG_WARN(LOG_APP, "Async: failed to get output buffer attr");
+        OH_VideoDecoder_FreeOutputBuffer(codec, index);
+        return;
+    }
+    const int64_t pts = attr.pts;
+
+    if (attr.flags & AVCODEC_BUFFER_FLAGS_EOS) {
+        OH_VideoDecoder_FreeOutputBuffer(codec, index);
+        return;
     }
 
     const int64_t outputTimeMs = GetSteadyTimeMs();
@@ -1521,7 +1534,8 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     
     // === L2 延迟恢复：异步模式基于延迟的帧跳过 ===
     // 当解码耗时过高时，跳过非关键帧以快速追赶
-    if (enqueueTimeMs > 0) {
+    const bool hostPaced = self->render_->IsHostPacedPresentationEnabled();
+    if (enqueueTimeMs > 0 && !hostPaced) {
         // 记录回调到达时间（用于 L5 输出间隔检测，排除渲染处理开销的抖动）
         int64_t prevOutputTimeMs = self->lastAsyncOutputTimeMs_.exchange(outputTimeMs);
         int64_t instantDecodeTimeMs = outputTimeMs - enqueueTimeMs;
@@ -1584,36 +1598,22 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     // 3. 低延迟模式应尽快渲染，由显示器 VSync 自然限制
     // 帧率限制通过 SetExpectedFrameRateRange 在系统层面实现
     
-    // 渲染到 Surface
-    // 检查是否使用异步渲染（通过 NativeRender）
+    NativeRender::DecodedFrame decodedFrame;
+    decodedFrame.codec = codec;
+    decodedFrame.bufferIndex = index;
+    decodedFrame.ptsUs = pts;
+    decodedFrame.decodedAtNs = GetSteadyTimeNs();
+
+    // Both async surface paths use the same PTS-aware presentation contract.
     if (g_useAsyncRender) {
         NativeRender* render = self->render_;
         if (render != nullptr && render->IsSurfaceReady()) {
-            if (render->SubmitFrame(codec, index, pts) != AV_ERR_OK) {
-                OH_VideoDecoder_FreeOutputBuffer(codec, index);
-            }
-            // 后处理：如果启用，从代理 surface 读取并处理到显示 surface
-            GLPostProcessor* postProc = self->postProcessor_;
-            if (postProc->IsActive()) {
-                postProc->ProcessFrame();
-            }
+            render->SubmitFrame(decodedFrame);
             return;
         }
     }
     
-    // 非 NativeRender surface 路径也使用同一呈现控制器，保持两步语义一致。
-    NativeRender* render = self->render_;
-    if (render->SubmitFrame(codec, index, pts) != AV_ERR_OK) {
-        OH_VideoDecoder_FreeOutputBuffer(codec, index);
-    }
-    
-    // 后处理：非异步路径也需要处理
-    {
-        GLPostProcessor* postProc = self->postProcessor_;
-        if (postProc->IsActive()) {
-            postProc->ProcessFrame();
-        }
-    }
+    self->render_->SubmitFrame(decodedFrame);
 }
 
 // =============================================================================
@@ -2102,14 +2102,16 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     OH_AVBuffer* outputBuffer = pfn_GetOutputBuffer(decoder_, outputIndex);
     if (outputBuffer == nullptr) {
         OH_LOG_ERROR(LOG_APP, "Sync GetOutputBuffer failed");
+        OH_VideoDecoder_FreeOutputBuffer(decoder_, outputIndex);
         return -1;  // API 错误
     }
     
     // 获取 buffer 属性
-    OH_AVCodecBufferAttr attr;
+    OH_AVCodecBufferAttr attr = {};
     if (OH_AVBuffer_GetBufferAttr(outputBuffer, &attr) != AV_ERR_OK) {
         OH_LOG_WARN(LOG_APP, "Sync: failed to get buffer attr");
-        memset(&attr, 0, sizeof(attr));
+        OH_VideoDecoder_FreeOutputBuffer(decoder_, outputIndex);
+        return 0;
     }
     
     // 检查 EOS
@@ -2117,6 +2119,26 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
         OH_LOG_INFO(LOG_APP, "Sync: received EOS");
         OH_VideoDecoder_FreeOutputBuffer(decoder_, outputIndex);
         return 0;  // EOS 不是错误
+    }
+
+    // Host-paced presentation must see every PTS. Do not apply the low-latency
+    // drain-to-latest policy before the shared presentation scheduler.
+    if (render_->IsHostPacedPresentationEnabled()) {
+        const int64_t pts = attr.pts;
+        const int64_t enqueueTimeMs = TakeEnqueueTimestamp(pts);
+        const int64_t outputTimeMs = GetSteadyTimeMs();
+        UpdateDecodedStats(pts, enqueueTimeMs, attr.flags, outputTimeMs);
+
+        NativeRender::DecodedFrame decodedFrame;
+        decodedFrame.codec = decoder_;
+        decodedFrame.bufferIndex = outputIndex;
+        decodedFrame.ptsUs = pts;
+        decodedFrame.decodedAtNs = GetSteadyTimeNs();
+        ret = render_->SubmitFrame(decodedFrame);
+        if (ret != AV_ERR_OK) {
+            OH_LOG_WARN(LOG_APP, "Sync host-paced render failed: %{public}d", ret);
+        }
+        return 1;
     }
     
     // ================================================================
@@ -2190,20 +2212,19 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     // 更新解码统计
     UpdateDecodedStats(pts, enqueueTimeMs, latestAttr.flags, outputTimeMs);
     
-    // 开关关闭时保留同步模式原有的立即呈现基线；开启后仅对最新帧执行 step2。
-    NativeRender* render = render_;
-    ret = render->IsTwoStepPreciseSyncEnabled()
-        ? render->SubmitFrame(decoder_, latestIndex, pts, totalFrames > 1)
-        : OH_VideoDecoder_RenderOutputBuffer(decoder_, latestIndex);
+    // Decoder output selection and presentation are separate policies: sync
+    // mode still drains to the latest frame, while the shared presenter uses
+    // that frame's PTS when legacy VSync is enabled.
+    NativeRender::DecodedFrame decodedFrame;
+    decodedFrame.codec = decoder_;
+    decodedFrame.bufferIndex = latestIndex;
+    decodedFrame.ptsUs = pts;
+    decodedFrame.decodedAtNs = GetSteadyTimeNs();
+    ret = render_->SubmitFrame(decodedFrame);
     if (ret != AV_ERR_OK) {
-        OH_LOG_WARN(LOG_APP, "Sync: render failed (%{public}d), freeing buffer", ret);
-        OH_VideoDecoder_FreeOutputBuffer(decoder_, latestIndex);
+        // SubmitFrame owns the output buffer even when presentation fails.
+        OH_LOG_WARN(LOG_APP, "Sync: render failed (%{public}d)", ret);
         return 0;
-    }
-
-    // Post-processing: apply GL shader pipeline if enabled
-    if (postProcessor_->IsActive()) {
-        postProcessor_->ProcessFrame();
     }
 
     return 1;  // 成功渲染一帧
@@ -2367,9 +2388,8 @@ int SetupInternal(int videoFormat, int width, int height, double fps) {
     g_renderInstance = NativeRender::GetInstance();
     NativeRender* render = g_renderInstance;
     if (render != nullptr) {
-        render->SetConfiguredFps(static_cast<int>(std::round(fps)));  // 四舍五入到最近整数
-        OH_LOG_INFO(LOG_APP, "VideoDecoder: NativeRender configured fps set to %.2f (rounded to %d)", 
-                    fps, static_cast<int>(std::round(fps)));
+        render->SetConfiguredFps(fps);
+        OH_LOG_INFO(LOG_APP, "VideoDecoder: NativeRender configured fps set to %.3f", fps);
     }
     
     return 0;
@@ -2388,17 +2408,12 @@ int Init(int videoFormat, int width, int height, double fps, void* window) {
     return Setup(videoFormat, width, height, fps);
 }
 
-// 辅助函数：转换帧类型 + 选择 common-c host PTS（全局包装器共用）
+// Convert frame type and preserve common-c host PTS for both decoder modes.
 static void PrepareFrameSubmitParams(int frameType, int frameNumber, int64_t presentationTimeUs,
                                       VideoFrameType& outType, int64_t& outTimestamp) {
     // FRAME_TYPE_IDR = 1, FRAME_TYPE_I = 2
     outType = (frameType == 1 || frameType == 2) ? VideoFrameType::I_FRAME : VideoFrameType::P_FRAME;
-    NativeRender* render = g_renderInstance;
-    if (render == nullptr) {
-        render = NativeRender::GetInstance();
-        g_renderInstance = render;
-    }
-    if (presentationTimeUs >= 0 && render->IsTwoStepPreciseSyncEnabled()) {
+    if (presentationTimeUs >= 0) {
         outTimestamp = presentationTimeUs;
     } else {
         double fps = (g_savedFps > 0) ? g_savedFps : 60.0;

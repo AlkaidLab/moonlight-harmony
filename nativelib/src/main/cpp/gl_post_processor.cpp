@@ -22,6 +22,7 @@
 
 #include "gl_post_processor.h"
 #include <native_buffer/native_buffer.h>
+#include <native_image/native_image.h>
 #include <cstring>
 #include <cmath>
 #include <dlfcn.h>
@@ -172,10 +173,12 @@ typedef void (*PFN_HMS_XEG_RenderSpatialUpscale)(GLuint);
 typedef OH_NativeImage* (*PFN_OH_NativeImage_Create)(GLuint, unsigned int);
 typedef OHNativeWindow* (*PFN_OH_NativeImage_AcquireNativeWindow)(OH_NativeImage*);
 typedef int32_t (*PFN_OH_NativeImage_UpdateSurfaceImage)(OH_NativeImage*);
-typedef int32_t (*PFN_OH_NativeImage_GetTimestamp)(OH_NativeImage*, int64_t*);
+typedef int64_t (*PFN_OH_NativeImage_GetTimestamp)(OH_NativeImage*);
 typedef void (*PFN_OH_NativeImage_Destroy)(OH_NativeImage**);
 typedef int32_t (*PFN_OH_NativeImage_AttachContext)(OH_NativeImage*, GLuint);
-typedef int32_t (*PFN_OH_NativeImage_SetOnFrameAvailableListener)(OH_NativeImage*, void*);
+typedef int32_t (*PFN_OH_NativeImage_SetOnFrameAvailableListener)(
+    OH_NativeImage*, OH_OnFrameAvailableListener);
+typedef int32_t (*PFN_OH_NativeImage_UnsetOnFrameAvailableListener)(OH_NativeImage*);
 
 // Function pointer storage
 static struct {
@@ -246,6 +249,8 @@ static struct {
     PFN_OH_NativeImage_GetTimestamp nativeImageGetTimestamp;
     PFN_OH_NativeImage_Destroy nativeImageDestroy;
     PFN_OH_NativeImage_AttachContext nativeImageAttachContext;
+    PFN_OH_NativeImage_SetOnFrameAvailableListener nativeImageSetFrameListener;
+    PFN_OH_NativeImage_UnsetOnFrameAvailableListener nativeImageUnsetFrameListener;
     // XEngine (optional)
     PFN_HMS_XEG_GetString xegGetString;
     PFN_HMS_XEG_SpatialUpscaleParameter xegSpatialUpscaleParam;
@@ -337,13 +342,18 @@ static bool LoadAPIs() {
     g_api.nativeImageGetTimestamp = (PFN_OH_NativeImage_GetTimestamp)dlsym(niLib, "OH_NativeImage_GetTimestamp");
     g_api.nativeImageDestroy = (PFN_OH_NativeImage_Destroy)dlsym(niLib, "OH_NativeImage_Destroy");
     g_api.nativeImageAttachContext = (PFN_OH_NativeImage_AttachContext)dlsym(niLib, "OH_NativeImage_AttachContext");
+    g_api.nativeImageSetFrameListener = (PFN_OH_NativeImage_SetOnFrameAvailableListener)
+        dlsym(niLib, "OH_NativeImage_SetOnFrameAvailableListener");
+    g_api.nativeImageUnsetFrameListener = (PFN_OH_NativeImage_UnsetOnFrameAvailableListener)
+        dlsym(niLib, "OH_NativeImage_UnsetOnFrameAvailableListener");
 
     // Validate critical functions
     if (!g_api.eglGetDisplay || !g_api.eglInitialize || !g_api.eglChooseConfig ||
         !g_api.eglCreateContext || !g_api.eglCreateWindowSurface || !g_api.eglMakeCurrent ||
         !g_api.eglSwapBuffers || !g_api.glCreateShader || !g_api.glCreateProgram ||
         !g_api.nativeImageCreate || !g_api.nativeImageAcquireWindow ||
-        !g_api.nativeImageUpdateSurface) {
+        !g_api.nativeImageUpdateSurface || !g_api.nativeImageSetFrameListener ||
+        !g_api.nativeImageUnsetFrameListener) {
         OH_LOG_ERROR(LOG_APP, "Missing critical GL/EGL/NativeImage APIs");
         return false;
     }
@@ -532,8 +542,9 @@ int GLPostProcessor::Init(OHNativeWindow* displayWindow,
 
     initialized_ = true;
 
-    // Release EGL context from init thread so decode thread can claim it
+    // Release the context before the frame worker becomes eligible to claim it.
     g_api.eglMakeCurrent(eglDisplay_, MY_EGL_NO_SURFACE, MY_EGL_NO_SURFACE, MY_EGL_NO_CONTEXT);
+    StartFrameWorker();
 
     OH_LOG_INFO(LOG_APP, "GLPostProcessor initialized: input=%{public}ux%{public}u output=%{public}ux%{public}u upscale=%{public}d",
                 inputWidth_, inputHeight_, outputWidth_, outputHeight_, static_cast<int>(activeUpscale_));
@@ -712,9 +723,77 @@ bool GLPostProcessor::InitNativeImage() {
         return false;
     }
 
+    OH_OnFrameAvailableListener listener = {};
+    listener.context = this;
+    listener.onFrameAvailable = &GLPostProcessor::OnFrameAvailable;
+    if (g_api.nativeImageSetFrameListener(nativeImage_, listener) != 0) {
+        OH_LOG_ERROR(LOG_APP, "OH_NativeImage_SetOnFrameAvailableListener failed");
+        return false;
+    }
+    frameListenerRegistered_ = true;
+
     OH_LOG_INFO(LOG_APP, "NativeImage created: texture=%{public}u, proxyWindow=%{public}p",
                 oesTexture_, static_cast<void*>(proxyWindow_));
     return true;
+}
+
+void GLPostProcessor::StartFrameWorker() {
+    if (frameWorkerRunning_.exchange(true)) {
+        return;
+    }
+    frameWorkerThread_ = std::thread(&GLPostProcessor::FrameWorkerLoop, this);
+}
+
+void GLPostProcessor::StopFrameWorker() {
+    // Stop new callbacks before joining the worker. This also handles init
+    // failures where the listener exists but the worker was never started.
+    if (nativeImage_ && frameListenerRegistered_) {
+        if (g_api.nativeImageUnsetFrameListener) {
+            g_api.nativeImageUnsetFrameListener(nativeImage_);
+        }
+        frameListenerRegistered_ = false;
+    }
+
+    frameWorkerRunning_.store(false);
+    frameWorkerCond_.notify_all();
+    if (frameWorkerThread_.joinable()) {
+        frameWorkerThread_.join();
+    }
+    std::lock_guard<std::mutex> lock(frameWorkerMutex_);
+    framePending_ = false;
+}
+
+void GLPostProcessor::OnFrameAvailable(void* context) {
+    auto* self = static_cast<GLPostProcessor*>(context);
+    if (self == nullptr || !self->frameWorkerRunning_.load()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(self->frameWorkerMutex_);
+        self->framePending_ = true;
+    }
+    self->frameWorkerCond_.notify_one();
+}
+
+void GLPostProcessor::FrameWorkerLoop() {
+    while (frameWorkerRunning_.load()) {
+        {
+            std::unique_lock<std::mutex> lock(frameWorkerMutex_);
+            frameWorkerCond_.wait(lock, [this] {
+                return framePending_ || !frameWorkerRunning_.load();
+            });
+            if (!frameWorkerRunning_.load()) {
+                break;
+            }
+            framePending_ = false;
+        }
+        ProcessFrame();
+    }
+
+    if (eglDisplay_) {
+        g_api.eglMakeCurrent(
+            eglDisplay_, MY_EGL_NO_SURFACE, MY_EGL_NO_SURFACE, MY_EGL_NO_CONTEXT);
+    }
 }
 
 static GLuint CompileShader(unsigned int type, const char* source) {
@@ -1265,11 +1344,13 @@ void GLPostProcessor::DrawFullscreenQuad() {
 // =============================================================================
 
 void GLPostProcessor::Release() {
+    StopFrameWorker();
     std::lock_guard<std::mutex> lock(processMutex_);
     ReleaseInternal();
 }
 
 void GLPostProcessor::ReleaseInternal() {
+    StopFrameWorker();
     if (eglDisplay_ && eglSurface_ && eglContext_) {
         g_api.eglMakeCurrent(eglDisplay_, eglSurface_, eglSurface_, eglContext_);
     }
@@ -1293,6 +1374,10 @@ void GLPostProcessor::ReleaseShaders() {
 
 void GLPostProcessor::ReleaseNativeImage() {
     if (nativeImage_) {
+        if (frameListenerRegistered_ && g_api.nativeImageUnsetFrameListener) {
+            g_api.nativeImageUnsetFrameListener(nativeImage_);
+        }
+        frameListenerRegistered_ = false;
         g_api.nativeImageDestroy(&nativeImage_);
         nativeImage_ = nullptr;
         proxyWindow_ = nullptr;  // owned by NativeImage

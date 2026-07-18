@@ -130,7 +130,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "isDecoderSyncMode", nullptr, MoonBridge_IsDecoderSyncMode, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setVsyncEnabled", nullptr, MoonBridge_SetVsyncEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "isVsyncEnabled", nullptr, MoonBridge_IsVsyncEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
-        { "setTwoStepPreciseSyncEnabled", nullptr, MoonBridge_SetTwoStepPreciseSyncEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "setHostPacedPresentationEnabled", nullptr, MoonBridge_SetHostPacedPresentationEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
+        // Compatibility alias for builds that persisted PR #58's experimental setting.
+        { "setTwoStepPreciseSyncEnabled", nullptr, MoonBridge_SetHostPacedPresentationEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setVrrEnabled", nullptr, MoonBridge_SetVrrEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setPostProcessEnabled", nullptr, MoonBridge_SetPostProcessEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "setUpscaleMode", nullptr, MoonBridge_SetUpscaleMode, nullptr, nullptr, nullptr, napi_default, nullptr },

@@ -273,10 +273,10 @@ napi_value MoonBridge_SetVsyncEnabled(napi_env env, napi_callback_info info);
 napi_value MoonBridge_IsVsyncEnabled(napi_env env, napi_callback_info info);
 
 /**
- * 设置是否启用二步精确同步（内部自行使用 VSync）。
+ * 设置是否启用主机 PTS 平滑呈现。
  * @param enabled boolean
  */
-napi_value MoonBridge_SetTwoStepPreciseSyncEnabled(napi_env env, napi_callback_info info);
+napi_value MoonBridge_SetHostPacedPresentationEnabled(napi_env env, napi_callback_info info);
 
 // =============================================================================
 // 音频设置

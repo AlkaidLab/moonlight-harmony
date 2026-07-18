@@ -36,6 +36,7 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <condition_variable>
 
 // 前向声明 — 避免在头文件中引入 EGL/GL/NativeImage 依赖
 // 实际类型在 cpp 中通过 dlsym 加载
@@ -142,11 +143,6 @@ public:
     bool IsActive() const { return ditherEnabled_ || sdrToHdr_ || upscaleMode_ != UpscaleMode::OFF; }
 
     /**
-     * 手动触发处理当前帧（供解码器回调调用）
-     */
-    void ProcessFrame();
-
-    /**
      * 释放所有资源
      */
     void Release();
@@ -171,6 +167,11 @@ private:
     // OH_NativeImage 代理 surface
     bool InitNativeImage();
     void ReleaseNativeImage();
+    void StartFrameWorker();
+    void StopFrameWorker();
+    static void OnFrameAvailable(void* context);
+    void FrameWorkerLoop();
+    void ProcessFrame();
 
     // FBO (用于 OES → TEXTURE_2D 转换)
     bool InitFBO();
@@ -194,6 +195,12 @@ private:
 
     std::atomic<bool> ditherEnabled_{false};  // 暗区增强（HDR 暗部抖动补偿）
     std::mutex processMutex_;
+    std::mutex frameWorkerMutex_;
+    std::condition_variable frameWorkerCond_;
+    std::thread frameWorkerThread_;
+    std::atomic<bool> frameWorkerRunning_{false};
+    bool frameListenerRegistered_ = false;
+    bool framePending_ = false;
 
     // 显示目标
     OHNativeWindow* displayWindow_ = nullptr;
