@@ -199,6 +199,10 @@ private:
     std::condition_variable frameWorkerCond_;
     std::thread frameWorkerThread_;
     std::atomic<bool> frameWorkerRunning_{false};
+    std::mutex frameCallbackMutex_;
+    std::condition_variable frameCallbackCond_;
+    uint32_t activeFrameCallbacks_ = 0;
+    bool frameCallbacksEnabled_ = false;
     bool frameListenerRegistered_ = false;
     bool framePending_ = false;
 

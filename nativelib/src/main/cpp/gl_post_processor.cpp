@@ -726,7 +726,13 @@ bool GLPostProcessor::InitNativeImage() {
     OH_OnFrameAvailableListener listener = {};
     listener.context = this;
     listener.onFrameAvailable = &GLPostProcessor::OnFrameAvailable;
+    {
+        std::lock_guard<std::mutex> lock(frameCallbackMutex_);
+        frameCallbacksEnabled_ = true;
+    }
     if (g_api.nativeImageSetFrameListener(nativeImage_, listener) != 0) {
+        std::lock_guard<std::mutex> lock(frameCallbackMutex_);
+        frameCallbacksEnabled_ = false;
         OH_LOG_ERROR(LOG_APP, "OH_NativeImage_SetOnFrameAvailableListener failed");
         return false;
     }
@@ -745,13 +751,25 @@ void GLPostProcessor::StartFrameWorker() {
 }
 
 void GLPostProcessor::StopFrameWorker() {
-    // Stop new callbacks before joining the worker. This also handles init
-    // failures where the listener exists but the worker was never started.
+    // Stop callbacks before joining the worker. Unregistering the listener
+    // prevents new callbacks, while the in-flight counter is the lifetime
+    // barrier for callbacks that were already executing.
+    {
+        std::lock_guard<std::mutex> lock(frameCallbackMutex_);
+        frameCallbacksEnabled_ = false;
+    }
     if (nativeImage_ && frameListenerRegistered_) {
         if (g_api.nativeImageUnsetFrameListener) {
             g_api.nativeImageUnsetFrameListener(nativeImage_);
         }
         frameListenerRegistered_ = false;
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(frameCallbackMutex_);
+        frameCallbackCond_.wait(lock, [this] {
+            return activeFrameCallbacks_ == 0;
+        });
     }
 
     frameWorkerRunning_.store(false);
@@ -765,14 +783,32 @@ void GLPostProcessor::StopFrameWorker() {
 
 void GLPostProcessor::OnFrameAvailable(void* context) {
     auto* self = static_cast<GLPostProcessor*>(context);
-    if (self == nullptr || !self->frameWorkerRunning_.load()) {
+    if (self == nullptr) {
         return;
     }
+
+    bool shouldNotifyWorker = false;
     {
-        std::lock_guard<std::mutex> lock(self->frameWorkerMutex_);
-        self->framePending_ = true;
+        std::lock_guard<std::mutex> lock(self->frameCallbackMutex_);
+        self->activeFrameCallbacks_++;
+        shouldNotifyWorker = self->frameCallbacksEnabled_;
     }
-    self->frameWorkerCond_.notify_one();
+
+    if (shouldNotifyWorker && self->frameWorkerRunning_.load()) {
+        {
+            std::lock_guard<std::mutex> lock(self->frameWorkerMutex_);
+            self->framePending_ = true;
+        }
+        self->frameWorkerCond_.notify_one();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(self->frameCallbackMutex_);
+        self->activeFrameCallbacks_--;
+        if (self->activeFrameCallbacks_ == 0) {
+            self->frameCallbackCond_.notify_all();
+        }
+    }
 }
 
 void GLPostProcessor::FrameWorkerLoop() {
