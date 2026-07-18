@@ -5,7 +5,7 @@
  * For HarmonyOS project CI/CD compatibility
  */
 
-const { spawn, execSync } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -47,26 +47,42 @@ function findAndRunHvigor() {
   
   // 4. Try global hvigor
   try {
-    const hvigorPath = execSync('which hvigor', { encoding: 'utf8' }).trim();
+    const locator = process.platform === 'win32' ? 'where.exe' : 'which';
+    const hvigorPaths = execFileSync(locator, ['hvigor'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true
+    }).split(/\r?\n/).map((candidate) => candidate.trim()).filter(Boolean);
+
+    if (process.platform === 'win32') {
+      for (const commandPath of hvigorPaths) {
+        for (const prefix of [path.dirname(commandPath), path.resolve(path.dirname(commandPath), '..')]) {
+          const globalEntry = path.join(prefix, 'node_modules', '@ohos', 'hvigor', 'bin', 'hvigor.js');
+          if (fs.existsSync(globalEntry)) {
+            require(globalEntry);
+            return;
+          }
+        }
+      }
+    }
+
+    const hvigorPath = hvigorPaths.find((candidate) =>
+      process.platform !== 'win32' || /\.(?:com|exe)$/i.test(candidate));
     if (hvigorPath) {
-      const child = spawn(hvigorPath, args, { stdio: 'inherit' });
-      child.on('exit', (code) => process.exit(code || 0));
+      const child = spawn(hvigorPath, args, { stdio: 'inherit', windowsHide: true });
+      child.on('exit', (code) => process.exit(code ?? 1));
+      child.on('error', (error) => {
+        console.error(`Error: Failed to start hvigor: ${error.message}`);
+        process.exit(1);
+      });
       return;
     }
   } catch (e) {
     // Global hvigor not found
   }
-  
-  // 5. Try npx
-  console.log('Trying npx @ohos/hvigor...');
-  const child = spawn('npx', ['@ohos/hvigor', ...args], { stdio: 'inherit', shell: true });
-  child.on('exit', (code) => process.exit(code || 0));
-  child.on('error', () => {
-    console.error('Error: Cannot find hvigor. Please install it via:');
-    console.error('  cd hvigor && npm install');
-    console.error('  or: ohpm install');
-    process.exit(1);
-  });
+
+  console.error('Error: Cannot find hvigor. Run "ohpm install --all" or open the project in DevEco Studio.');
+  process.exit(1);
 }
 
 function findFilesRecursive(dir, filename) {

@@ -192,8 +192,14 @@ git clone https://github.com/AlkaidLab/moonlight-harmony.git
 # 使用 DevEco Studio 打开项目
 # File → Open → 选择项目目录
 
-# 编译 HAP
-./hvigorw assembleHap
+# 命令行构建前安装项目依赖（DevEco Studio 可自动完成）
+ohpm install --all
+
+# 运行仓库检查（脚本语法 + Sunshine 协议模型测试）
+npm run check
+
+# 编译调试版应用（与 CI 使用相同的任务）
+node hvigorw.js assembleApp --mode project -p product=default -p buildMode=debug --no-daemon
 ```
 
 ## 🐛 问题反馈

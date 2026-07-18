@@ -1,2 +1,13 @@
-# Ensure shell scripts keep LF line endings (run on Linux CI)
-ci/*.sh text eol=lf
+# Keep text files stable across Windows development and Linux CI.
+* text=auto
+*.sh text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.ts text eol=lf
+*.ets text eol=lf
+*.json text eol=lf
+*.json5 text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+/hvigorw text eol=lf
+*.bat text eol=crlf

@@ -19,12 +19,5 @@ if exist "%PROJECT_DIR%node_modules\.bin\hvigor.cmd" (
     exit /b %ERRORLEVEL%
 )
 
-where npx >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    npx hvigor %*
-    exit /b %ERRORLEVEL%
-)
-
-echo Error: Cannot find hvigor. Please install it via:
-echo   ohpm install @ohos/hvigor-ohos-plugin
+echo Error: Cannot find hvigor. Run "ohpm install --all" or open the project in DevEco Studio.
 exit /b 1
