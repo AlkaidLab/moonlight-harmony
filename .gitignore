@@ -6,6 +6,7 @@ build/
 oh_modules/
 node_modules/
 .hvigor/
+/.codex-build/
 .local.properties
 local.properties
 .preview/
@@ -15,11 +16,23 @@ nativelib/.preview/
 .github/appmod/
 
 # Build profile (contains signing config)
-build-profile.json5
+/build-profile.json5
+/.signing/
 nativelib/BuildProfile.ets
 nativelib/src/main/cpp/aubio/src/config.h
 nativelib/src/main/cpp/include/
 nativelib/src/main/cpp/rs_include/
+
+# Local test and tooling caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Testing/
+coverage/
 
 # Dev key secret (contains activation salt)
 entry/src/main/ets/config/DevKeySecret.ets
@@ -33,6 +46,8 @@ More
 *.o
 *.so
 *.a
+!nativelib/src/main/cpp/libopus/arm64-v8a/libopus.a
+!nativelib/src/main/cpp/libopus/x86_64/libopus.a
 *.hap
 *.app
 
@@ -59,6 +74,7 @@ scripts/*
 !scripts/release.js
 !scripts/sunshine-mock-connection-test.js
 !scripts/archive-native-symbols.js
+!scripts/check-repository.js
 
 # Local release artifacts
 release-symbols/

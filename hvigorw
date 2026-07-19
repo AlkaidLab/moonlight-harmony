@@ -43,12 +43,5 @@ if [ -d "$PROJECT_DIR/.hvigor" ]; then
     fi
 fi
 
-# 6. Try using npx
-if command -v npx &> /dev/null; then
-    exec npx @ohos/hvigor "$@"
-fi
-
-echo "Error: Cannot find hvigor. Please install it via:"
-echo "  cd hvigor && npm install"
-echo "  or: ohpm install"
+echo 'Error: Cannot find hvigor. Run "ohpm install --all" or open the project in DevEco Studio.'
 exit 1
