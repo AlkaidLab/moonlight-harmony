@@ -195,7 +195,7 @@ git clone https://github.com/AlkaidLab/moonlight-harmony.git
 # 命令行构建前安装项目依赖（DevEco Studio 可自动完成）
 ohpm install --all
 
-# 运行仓库检查（脚本语法 + Sunshine 协议模型测试）
+# 运行仓库检查（脚本语法 + Git 忽略规则 + Sunshine 协议模型测试）
 npm run check
 
 # 编译调试版应用（与 CI 使用相同的任务）
