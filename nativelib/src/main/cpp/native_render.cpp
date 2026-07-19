@@ -30,22 +30,11 @@
 #undef LOG_TAG
 #define LOG_TAG "NativeRender"
 
-// RenderOutputBufferAtTime 是 API 14+ 的函数，低版本设备不存在
+// RenderOutputBufferAtTime 是 API 12+ 的函数，旧设备或不完整运行时可能不存在
 // 通过 dlsym 动态加载，避免硬依赖
 typedef OH_AVErrCode (*PFN_RenderOutputBufferAtTime)(OH_AVCodec*, uint32_t, int64_t);
 static PFN_RenderOutputBufferAtTime g_pfnRenderAtTime = nullptr;
-static bool g_renderAtTimeChecked = false;
-
-// VSync 回调只写入进程级原子状态，避免 Surface 销毁时回调持有悬空对象。
-static std::atomic<int64_t> g_lastVsyncTimestampNs{0};
-static std::atomic<int64_t> g_vsyncPeriodNs{0};
-
-static void OnNativeVsync(long long timestamp, void* data) {
-    (void)data;
-    if (timestamp > 0) {
-        g_lastVsyncTimestampNs.store(static_cast<int64_t>(timestamp), std::memory_order_release);
-    }
-}
+static std::once_flag g_renderAtTimeOnce;
 
 static int64_t GetMonotonicTimeNs() {
     struct timespec ts;
@@ -54,8 +43,7 @@ static int64_t GetMonotonicTimeNs() {
 }
 
 static PFN_RenderOutputBufferAtTime GetRenderAtTimeFunc() {
-    if (!g_renderAtTimeChecked) {
-        g_renderAtTimeChecked = true;
+    std::call_once(g_renderAtTimeOnce, [] {
         g_pfnRenderAtTime = (PFN_RenderOutputBufferAtTime)
             dlsym(RTLD_DEFAULT, "OH_VideoDecoder_RenderOutputBufferAtTime");
         // RTLD_DEFAULT 可能在某些设备上找不到（如 API 22），回退到显式 dlopen
@@ -66,7 +54,7 @@ static PFN_RenderOutputBufferAtTime GetRenderAtTimeFunc() {
                     dlsym(handle, "OH_VideoDecoder_RenderOutputBufferAtTime");
             }
         }
-    }
+    });
     return g_pfnRenderAtTime;
 }
 
@@ -138,7 +126,6 @@ void NativeRender::ReleaseInstance() {
 
 NativeRender::NativeRender() {
     OH_LOG_INFO(LOG_APP, "NativeRender created");
-    lastFrameTime_ = std::chrono::steady_clock::now();
 }
 
 NativeRender::~NativeRender() {
@@ -153,33 +140,17 @@ NativeRender::~NativeRender() {
 // =============================================================================
 
 void NativeRender::InitNativeVSync() {
-    bool created = false;
-    {
-        std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
-        if (nativeVSync_ != nullptr) {
-            return;
-        }
-
-        const char* name = "moonlight_render";
-        nativeVSync_ = OH_NativeVSync_Create(name, strlen(name));
-        if (nativeVSync_ != nullptr) {
-            long long periodNs = 0;
-            if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) != 0 || periodNs <= 0) {
-                const int fps = configuredFps_ > 0 ? configuredFps_ : 60;
-                periodNs = 1000000000LL / fps;
-                OH_LOG_WARN(LOG_APP,
-                    "NativeVSync period unavailable; using %{public}d FPS fallback", fps);
-            }
-            g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
-            created = true;
-            OH_LOG_INFO(LOG_APP, "NativeVSync created successfully, period=%{public}lldns", periodNs);
-        } else {
-            OH_LOG_WARN(LOG_APP, "Failed to create NativeVSync");
-        }
+    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
+    if (nativeVSync_ != nullptr) {
+        return;
     }
 
-    if (created && twoStepPreciseSyncEnabled_.load()) {
-        RequestVsyncSample();
+    const char* name = "moonlight_render";
+    nativeVSync_ = OH_NativeVSync_Create(name, strlen(name));
+    if (nativeVSync_ != nullptr) {
+        OH_LOG_INFO(LOG_APP, "NativeVSync created successfully");
+    } else {
+        OH_LOG_WARN(LOG_APP, "Failed to create NativeVSync");
     }
 }
 
@@ -191,30 +162,7 @@ void NativeRender::ReleaseNativeVSync() {
 
     OH_NativeVSync_Destroy(nativeVSync_);
     nativeVSync_ = nullptr;
-    g_lastVsyncTimestampNs.store(0, std::memory_order_release);
-    g_vsyncPeriodNs.store(0, std::memory_order_release);
     OH_LOG_INFO(LOG_APP, "NativeVSync destroyed");
-}
-
-void NativeRender::RequestVsyncSample() {
-    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
-    if (nativeVSync_ == nullptr) {
-        return;
-    }
-
-    // GetPeriod only becomes valid after the first VSync callback. Query it on
-    // the following frame while the instance is protected from destruction.
-    if (g_lastVsyncTimestampNs.load(std::memory_order_acquire) > 0) {
-        long long periodNs = 0;
-        if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) == 0 && periodNs > 0) {
-            g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
-        }
-    }
-
-    int32_t ret = OH_NativeVSync_RequestFrame(nativeVSync_, OnNativeVsync, nullptr);
-    if (ret != 0) {
-        OH_LOG_DEBUG(LOG_APP, "NativeVSync sample request failed: %{public}d", ret);
-    }
 }
 
 // =============================================================================
@@ -236,7 +184,7 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
         
         // 如果帧率已配置，立即应用帧率范围
         // 这处理 SetConfiguredFps 在 SetNativeWindow 之前调用的情况
-        if (configuredFps_ > 0) {
+        if (configuredFps_.load() > 0) {
             ApplyFrameRateRange();
         }
         
@@ -250,11 +198,14 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
     }
 }
 
-void NativeRender::SetConfiguredFps(int fps) {
-    configuredFps_ = fps;
-    OH_LOG_INFO(LOG_APP, "Configured FPS set to: %{public}d", fps);
-
-    ResetPresentationClock();
+void NativeRender::SetConfiguredFps(double fps) {
+    {
+        std::lock_guard<std::mutex> lock(presentationMutex_);
+        configuredFps_.store(fps);
+        ptsScheduler_.Configure(fps);
+        ResetPresentationClockLocked();
+    }
+    OH_LOG_INFO(LOG_APP, "Configured FPS set to: %.3f", fps);
     
     // 应用帧率范围（NativeVSync 层）
     ApplyFrameRateRange();
@@ -266,23 +217,33 @@ void NativeRender::SetConfiguredFps(int fps) {
 void NativeRender::SetVsyncEnabled(bool enable) {
     bool wasEnabled = vsyncEnabled_.exchange(enable);
     if (wasEnabled != enable) {
-        ResetPresentationClock();
-        if (enable && twoStepPreciseSyncEnabled_.load()) {
-            RequestVsyncSample();
+        {
+            std::lock_guard<std::mutex> lock(presentationMutex_);
+            ResetPresentationClockLocked();
+            ResetPresentationStatsLocked();
         }
         OH_LOG_INFO(LOG_APP, "VSync mode %{public}s", enable ? "enabled" : "disabled");
     }
 }
 
-void NativeRender::SetTwoStepPreciseSyncEnabled(bool enable) {
-    bool wasEnabled = twoStepPreciseSyncEnabled_.exchange(enable);
+void NativeRender::SetHostPacedPresentationEnabled(bool enable) {
+    bool wasEnabled = hostPacedPresentationEnabled_.exchange(enable);
     if (wasEnabled != enable) {
-        ResetPresentationClock();
-        if (enable) {
-            RequestVsyncSample();
+        {
+            std::lock_guard<std::mutex> lock(presentationMutex_);
+            ResetPresentationClockLocked();
+            ResetPresentationStatsLocked();
         }
-        OH_LOG_INFO(LOG_APP, "Two-step precise sync %{public}s", enable ? "enabled" : "disabled");
+        OH_LOG_INFO(LOG_APP, "Host-paced presentation %{public}s", enable ? "enabled" : "disabled");
     }
+    if (enable && GetRenderAtTimeFunc() == nullptr) {
+        OH_LOG_WARN(LOG_APP,
+            "Host-paced presentation unavailable; keeping decoder low-latency policies active");
+    }
+}
+
+bool NativeRender::IsHostPacedPresentationActive() const {
+    return hostPacedPresentationEnabled_.load() && GetRenderAtTimeFunc() != nullptr;
 }
 
 void NativeRender::ConfigureNativeWindow() {
@@ -297,7 +258,7 @@ void NativeRender::ConfigureNativeWindow() {
     }
     
     // 如果帧率已配置，立即在 NativeWindow 层设置帧率偏好
-    if (configuredFps_ > 60) {
+    if (configuredFps_.load() > 60) {
         ApplyNativeWindowFrameRate();
     }
 }
@@ -343,7 +304,8 @@ static bool CheckAndLoadNWFrameRateApi() {
 }
 
 void NativeRender::ApplyNativeWindowFrameRate() {
-    if (window_ == nullptr || configuredFps_ <= 60) {
+    const double configuredFps = configuredFps_.load();
+    if (window_ == nullptr || configuredFps <= 60) {
         return;
     }
     
@@ -352,12 +314,13 @@ void NativeRender::ApplyNativeWindowFrameRate() {
     }
     
     // strategy = 0 (DEFAULT): 让系统根据能力选择最佳刷新率
-    int32_t ret = g_pfnNWSetFrameRateRange(window_, configuredFps_, configuredFps_, configuredFps_, 0);
+    const int fps = static_cast<int>(configuredFps + 0.5);
+    int32_t ret = g_pfnNWSetFrameRateRange(window_, fps, fps, fps, 0);
     if (ret == 0) {
-        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d fps (Surface level)", configuredFps_);
+        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d fps (Surface level)", fps);
     } else {
         OH_LOG_WARN(LOG_APP, "NativeWindow SetFrameRateRange failed: ret=%{public}d, fps=%{public}d", 
-                    ret, configuredFps_);
+                    ret, fps);
     }
 }
 
@@ -372,34 +335,28 @@ void NativeRender::ApplyFrameRateRange() {
 
     if (CheckAndLoadApi20()) {
         OH_NativeVSync_ExpectedRateRange range;
-        range.min = configuredFps_;
-        range.max = configuredFps_;
-        range.expected = configuredFps_;
+        const int fps = static_cast<int>(configuredFps_.load() + 0.5);
+        range.min = fps;
+        range.max = fps;
+        range.expected = fps;
         
         int32_t ret = g_pfnSetExpectedFrameRateRange(nativeVSync_, &range);
         if (ret == 0) {
             OH_LOG_INFO(LOG_APP, "NativeVSync FrameRateRange set to fixed %{public}d fps",
-                        configuredFps_);
+                        fps);
         } else {
             OH_LOG_WARN(LOG_APP, "Failed to set NativeVSync FrameRateRange to %{public}d: ret=%{public}d", 
-                        configuredFps_, ret);
+                        fps, ret);
         }
     }
-
-    long long periodNs = 0;
-    if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) != 0 || periodNs <= 0) {
-        const int fps = configuredFps_ > 0 ? configuredFps_ : 60;
-        periodNs = 1000000000LL / fps;
-    }
-    g_vsyncPeriodNs.store(static_cast<int64_t>(periodNs), std::memory_order_release);
 }
 
 // =============================================================================
-// 两步呈现时钟
+// PTS presentation clocks
 // =============================================================================
 
 void NativeRender::ResetPresentationClockLocked() {
-    pendingPresentTargets_.clear();
+    ptsScheduler_.Reset();
     timeBaseInitialized_ = false;
     estimatedOffsetNs_ = 0;
     skewNs_ = 0;
@@ -407,30 +364,45 @@ void NativeRender::ResetPresentationClockLocked() {
     lastPtsUs_ = 0;
 }
 
+void NativeRender::ResetPresentationStatsLocked() {
+    vsyncFrameCount_ = 0;
+    vsyncLateFrameCount_ = 0;
+    vsyncResyncCount_ = 0;
+    preciseScheduledCount_ = 0;
+    preciseDroppedCount_ = 0;
+    preciseLateCount_ = 0;
+    precisePhaseShiftCount_ = 0;
+    preciseRebufferCount_ = 0;
+    preciseResyncCount_ = 0;
+    preciseApiFailureCount_ = 0;
+}
+
 void NativeRender::ResetPresentationClock() {
     std::lock_guard<std::mutex> lock(presentationMutex_);
     ResetPresentationClockLocked();
 }
 
-int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, bool twoStep) {
+int64_t NativeRender::CalculateLegacyPresentTargetLocked(int64_t pts, int64_t nowNs) {
     const int64_t hostNs = pts * 1000LL;
     const int64_t instOffset = nowNs - hostNs;
-    const int64_t frameIntervalNs = configuredFps_ > 0 ? 1000000000LL / configuredFps_ : 16666667LL;
+    const double configuredFps = configuredFps_.load();
+    const int64_t frameIntervalNs = configuredFps > 0.0 ?
+        static_cast<int64_t>(1000000000.0 / configuredFps) : 16666667LL;
     const bool discontinuity = timeBaseInitialized_ &&
         (pts < lastPtsUs_ || (pts - lastPtsUs_) > 2000000LL);
 
     if (!timeBaseInitialized_ || discontinuity) {
         if (discontinuity) {
-            pendingPresentTargets_.clear();
             vsyncResyncCount_++;
         }
         estimatedOffsetNs_ = instOffset;
         skewNs_ = 0;
         jitterEstNs_ = static_cast<double>(frameIntervalNs) / 16.0;
         timeBaseInitialized_ = true;
-        OH_LOG_INFO(LOG_APP, "VSync clock (re)anchored: offset=%{public}lldus, pts=%{public}lldus%{public}s",
-                    static_cast<long long>(estimatedOffsetNs_ / 1000),
-                    static_cast<long long>(pts), discontinuity ? " [discontinuity]" : "");
+        OH_LOG_INFO(LOG_APP,
+            "Legacy VSync clock (re)anchored: offset=%{public}lldus, pts=%{public}lldus%{public}s",
+            static_cast<long long>(estimatedOffsetNs_ / 1000),
+            static_cast<long long>(pts), discontinuity ? " [discontinuity]" : "");
     } else {
         const int64_t pred = estimatedOffsetNs_ + skewNs_;
         const int64_t e = instOffset - pred;
@@ -444,9 +416,8 @@ int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, b
     }
     lastPtsUs_ = pts;
 
-    // 二步模式的 VSync 向上取整自带约半帧余量；基线模式保留原 3×MAD + 1ms cushion。
-    int64_t cushionNs = static_cast<int64_t>((twoStep ? 0.5 : 3.0) * jitterEstNs_);
-    if (!twoStep && cushionNs < 1000000LL) cushionNs = 1000000LL;
+    int64_t cushionNs = static_cast<int64_t>(3.0 * jitterEstNs_);
+    if (cushionNs < 1000000LL) cushionNs = 1000000LL;
     if (cushionNs > frameIntervalNs) cushionNs = frameIntervalNs;
 
     const int64_t targetNs = hostNs + estimatedOffsetNs_ + cushionNs;
@@ -456,138 +427,122 @@ int64_t NativeRender::CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, b
 
     if (++vsyncFrameCount_ % 6000 == 0) {
         OH_LOG_INFO(LOG_APP,
-            "VSync clock stats: mode=%{public}s, frames=%{public}lld, late=%{public}lld, resync=%{public}lld, hit=%{public}lld, fallback=%{public}lld, pending=%{public}zu, cushion=%{public}lldus",
-            twoStep ? "two-step" : "baseline",
-            static_cast<long long>(vsyncFrameCount_), static_cast<long long>(vsyncLateFrameCount_),
-            static_cast<long long>(vsyncResyncCount_), static_cast<long long>(twoStepHitCount_),
-            static_cast<long long>(twoStepFallbackCount_), pendingPresentTargets_.size(),
+            "Legacy VSync stats: frames=%{public}lld, late=%{public}lld, resync=%{public}lld, cushion=%{public}lldus",
+            static_cast<long long>(vsyncFrameCount_),
+            static_cast<long long>(vsyncLateFrameCount_),
+            static_cast<long long>(vsyncResyncCount_),
             static_cast<long long>(cushionNs / 1000));
     }
     return targetNs;
-}
-
-void NativeRender::PrepareFrame(int64_t pts) {
-    if (!twoStepPreciseSyncEnabled_.load()) {
-        return;
-    }
-
-    RequestVsyncSample();
-    const int64_t nowNs = GetMonotonicTimeNs();
-    std::lock_guard<std::mutex> lock(presentationMutex_);
-    pendingPresentTargets_[pts] = CalculatePresentTargetLocked(pts, nowNs, true);
-    while (pendingPresentTargets_.size() > kMaxPendingPresentTargets) {
-        pendingPresentTargets_.erase(pendingPresentTargets_.begin());
-    }
-}
-
-void NativeRender::DiscardFrame(int64_t pts) {
-    std::lock_guard<std::mutex> lock(presentationMutex_);
-    pendingPresentTargets_.erase(pts);
-}
-
-int64_t NativeRender::SnapTargetToVsync(int64_t targetNs, int64_t nowNs) const {
-    const int64_t phaseNs = g_lastVsyncTimestampNs.load(std::memory_order_acquire);
-    const int64_t periodNs = g_vsyncPeriodNs.load(std::memory_order_acquire);
-    if (phaseNs <= 0 || periodNs <= 0) {
-        return targetNs;
-    }
-
-    const int64_t phaseAgeNs = nowNs - phaseNs;
-    if (phaseAgeNs < -periodNs || phaseAgeNs > periodNs * 4) {
-        return targetNs;
-    }
-
-    const int64_t rawNs = targetNs < nowNs ? nowNs : targetNs;
-    if (rawNs <= phaseNs) {
-        return phaseNs;
-    }
-    const int64_t deltaNs = rawNs - phaseNs;
-    return phaseNs + ((deltaNs + periodNs - 1) / periodNs) * periodNs;
 }
 
 // =============================================================================
 // 帧渲染
 // =============================================================================
 
-OH_AVErrCode NativeRender::SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts) {
-    auto renderImmediately = [codec, bufferIndex]() {
-        return OH_VideoDecoder_RenderOutputBuffer(codec, bufferIndex);
+NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& frame) {
+    bool bufferConsumed = false;
+    bool framePresented = false;
+    auto renderImmediately = [&frame, &bufferConsumed, &framePresented]() {
+        const OH_AVErrCode result =
+            OH_VideoDecoder_RenderOutputBuffer(frame.codec, frame.bufferIndex);
+        if (result == AV_ERR_OK) {
+            bufferConsumed = true;
+            framePresented = true;
+        }
+        return result;
     };
-    auto noteFallback = [this]() {
-        std::lock_guard<std::mutex> lock(presentationMutex_);
-        twoStepFallbackCount_++;
+    auto freeFrame = [&frame, &bufferConsumed]() {
+        if (bufferConsumed) return AV_ERR_OK;
+        const OH_AVErrCode result =
+            OH_VideoDecoder_FreeOutputBuffer(frame.codec, frame.bufferIndex);
+        // Do not retry a failed release with an index whose ownership is unclear.
+        bufferConsumed = true;
+        return result;
     };
 
     OH_AVErrCode renderResult = AV_ERR_OK;
-    if (!vsyncEnabled_.load() && !twoStepPreciseSyncEnabled_.load()) {
+    if (!vsyncEnabled_.load() && !hostPacedPresentationEnabled_.load()) {
         renderResult = renderImmediately();
     } else {
         PFN_RenderOutputBufferAtTime renderAtTime = GetRenderAtTimeFunc();
         if (renderAtTime == nullptr) {
-            if (twoStepPreciseSyncEnabled_.load()) {
-                DiscardFrame(pts);
-                noteFallback();
-            }
             renderResult = renderImmediately();
-        } else if (!twoStepPreciseSyncEnabled_.load()) {
-            // A/B 基线：保留原有的解码输出时采样 + 较大 cushion，不做 VSync 相位 snap。
+        } else if (!hostPacedPresentationEnabled_.load()) {
             const int64_t nowNs = GetMonotonicTimeNs();
             int64_t presentTimeNs;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
-                presentTimeNs = CalculatePresentTargetLocked(pts, nowNs, false);
+                presentTimeNs = CalculateLegacyPresentTargetLocked(frame.ptsUs, nowNs);
             }
-            renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
-            if (renderResult != AV_ERR_OK) {
+            renderResult = renderAtTime(frame.codec, frame.bufferIndex, presentTimeNs);
+            if (renderResult == AV_ERR_OK) {
+                bufferConsumed = true;
+                framePresented = true;
+            } else {
                 renderResult = renderImmediately();
             }
         } else {
-            int64_t targetNs = 0;
-            bool foundTarget = false;
+            const int64_t decodedAtNs = GetMonotonicTimeNs();
+            PresentationPlan plan;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
-                auto it = pendingPresentTargets_.find(pts);
-                if (it != pendingPresentTargets_.end()) {
-                    targetNs = it->second;
-                    pendingPresentTargets_.erase(it);
-                    foundTarget = true;
+                plan = ptsScheduler_.PlanFrame(frame.ptsUs, decodedAtNs);
+                if (plan.action == PresentationAction::SCHEDULE) {
+                    preciseScheduledCount_++;
+                } else {
+                    preciseDroppedCount_++;
+                }
+                if (plan.latenessNs > 0) preciseLateCount_++;
+                if (plan.event == PresentationEvent::PHASE_SHIFT) precisePhaseShiftCount_++;
+                if (plan.event == PresentationEvent::REBUFFER) preciseRebufferCount_++;
+                if (plan.event == PresentationEvent::DISCONTINUITY ||
+                    plan.event == PresentationEvent::DUPLICATE_PTS) {
+                    preciseResyncCount_++;
+                }
+
+                const int64_t totalFrames = preciseScheduledCount_ + preciseDroppedCount_;
+                if (totalFrames % 6000 == 0) {
+                    OH_LOG_INFO(LOG_APP,
+                        "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus",
+                        static_cast<long long>(totalFrames),
+                        static_cast<long long>(preciseScheduledCount_),
+                        static_cast<long long>(preciseDroppedCount_),
+                        static_cast<long long>(preciseLateCount_),
+                        static_cast<long long>(precisePhaseShiftCount_),
+                        static_cast<long long>(preciseRebufferCount_),
+                        static_cast<long long>(preciseResyncCount_),
+                        static_cast<long long>(preciseApiFailureCount_),
+                        static_cast<long long>(ptsScheduler_.GetInitialLeadNs() / 1000));
                 }
             }
 
-            if (!foundTarget) {
-                noteFallback();
-                renderResult = renderImmediately();
+            if (plan.action == PresentationAction::DROP) {
+                renderResult = freeFrame();
             } else {
-                const int64_t nowNs = GetMonotonicTimeNs();
-                const int64_t presentTimeNs = SnapTargetToVsync(targetNs, nowNs);
-                const int64_t frameIntervalNs = configuredFps_ > 0 ?
-                    1000000000LL / configuredFps_ : 16666667LL;
-                const int64_t timeUntilPresentNs = presentTimeNs - nowNs;
-
-                if (timeUntilPresentNs < 0 || timeUntilPresentNs > frameIntervalNs * 3) {
-                    noteFallback();
-                    ResetPresentationClock();
-                    renderResult = renderImmediately();
+                renderResult = renderAtTime(
+                    frame.codec, frame.bufferIndex, plan.targetTimeNs);
+                if (renderResult == AV_ERR_OK) {
+                    bufferConsumed = true;
+                    framePresented = true;
                 } else {
-                    renderResult = renderAtTime(codec, bufferIndex, presentTimeNs);
-                    if (renderResult == AV_ERR_OK) {
+                    {
                         std::lock_guard<std::mutex> lock(presentationMutex_);
-                        twoStepHitCount_++;
-                    } else {
-                        OH_LOG_WARN(LOG_APP,
-                            "RenderOutputBufferAtTime failed: %{public}d, pts=%{public}lld, presentNs=%{public}lld; falling back",
-                            renderResult, static_cast<long long>(pts), static_cast<long long>(presentTimeNs));
-                        noteFallback();
-                        renderResult = renderImmediately();
+                        preciseApiFailureCount_++;
                     }
+                    OH_LOG_WARN(LOG_APP,
+                        "Host-paced render failed: %{public}d, pts=%{public}lld, targetNs=%{public}lld; falling back",
+                        renderResult, static_cast<long long>(frame.ptsUs),
+                        static_cast<long long>(plan.targetTimeNs));
+                    renderResult = renderImmediately();
                 }
             }
         }
     }
 
-    if (renderResult != AV_ERR_OK) {
-        OH_LOG_WARN(LOG_APP, "RenderOutputBuffer failed: %{public}d", renderResult);
+    if (renderResult != AV_ERR_OK && !bufferConsumed) {
+        OH_LOG_WARN(LOG_APP, "RenderOutputBuffer failed: %{public}d; freeing output", renderResult);
+        freeFrame();
     }
-    lastFrameTime_ = std::chrono::steady_clock::now();
-    return renderResult;
+    return {renderResult, framePresented};
 }

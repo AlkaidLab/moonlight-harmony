@@ -136,7 +136,7 @@ interface NativeModule {
   isDecoderSyncMode(): boolean;
   setVsyncEnabled(enabled: boolean): void;
   isVsyncEnabled(): boolean;
-  setTwoStepPreciseSyncEnabled(enabled: boolean): void;
+  setHostPacedPresentationEnabled(enabled: boolean): void;
   setVrrEnabled(enabled: boolean): void;
   setPostProcessEnabled(enabled: boolean): void;
   setUpscaleMode(mode: number, sharpness: number): void;
@@ -1284,7 +1284,8 @@ export class StreamingSession {
     this.nativeModule.setDecoderBufferCount(this.config.decoderBufferCount);
     this.nativeModule.setDecoderSyncMode(this.config.enableSyncDecode);
     this.nativeModule.setVsyncEnabled(this.config.enableVsync);
-    this.nativeModule.setTwoStepPreciseSyncEnabled(this.config.enableTwoStepPreciseSync ?? false);
+    this.nativeModule.setHostPacedPresentationEnabled(
+      this.config.enableHostPacedPresentation ?? false);
     this.nativeModule.setVrrEnabled(this.config.enableVrr);
     this.nativeModule.setPostProcessEnabled(this.config.enablePostProcess ?? false);
     this.nativeModule.setUpscaleMode(this.config.upscaleMode ?? 0, this.config.upscaleSharpness ?? 0.5);
@@ -1295,7 +1296,7 @@ export class StreamingSession {
     }
 
     console.info(`解码器: buffers=${this.config.decoderBufferCount}, sync=${this.config.enableSyncDecode}, ` +
-      `vsync=${this.config.enableVsync}, twoStep=${this.config.enableTwoStepPreciseSync ?? false}, ` +
+      `vsync=${this.config.enableVsync}, hostPaced=${this.config.enableHostPacedPresentation ?? false}, ` +
       `vrr=${this.config.enableVrr}`);
 
     const callStart = async (): Promise<number> => {

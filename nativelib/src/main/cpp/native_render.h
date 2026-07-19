@@ -30,11 +30,11 @@
 #include <multimedia/player_framework/native_avcodec_videodecoder.h>
 #include <hilog/log.h>
 
+#include "presentation_scheduler.h"
+
 #include <cstdint>
 #include <mutex>
 #include <atomic>
-#include <chrono>
-#include <map>
 
 /**
  * NativeRender 类
@@ -66,12 +66,7 @@ public:
      * 配置帧率（用于高帧率优化）
      * @param fps 期望帧率
      */
-    void SetConfiguredFps(int fps);
-    
-    /**
-     * 获取配置的帧率
-     */
-    int GetConfiguredFps() const { return configuredFps_; }
+    void SetConfiguredFps(double fps);
     
     /**
      * 启用/禁用 VSync 渲染模式
@@ -85,31 +80,30 @@ public:
     bool IsVsyncEnabled() const { return vsyncEnabled_; }
 
     /**
-     * 启用/禁用二步精确同步；开启时内部自行使用 VSync，不依赖 VSync 设置开关。
-     */
-    void SetTwoStepPreciseSyncEnabled(bool enable);
-    bool IsTwoStepPreciseSyncEnabled() const { return twoStepPreciseSyncEnabled_; }
+     * Enable host-PTS paced presentation. The existing setting/API name is
+     * retained for compatibility with persisted preferences.
+    */
+    void SetHostPacedPresentationEnabled(bool enable);
+    bool IsHostPacedPresentationActive() const;
     
     /**
-     * step1：帧到达解码管线时，用 host PTS 生成去抖的本地呈现目标。
-     */
-    void PrepareFrame(int64_t pts);
-
-    /**
-     * 丢弃尚未呈现的帧目标。
-     */
-    void DiscardFrame(int64_t pts);
-
-    /**
-     * 清空帧目标并强制下一帧重新锚定（Flush/重连/Surface 切换）。
+     * 强制下一帧重新锚定（Flush/重连/Surface 切换）。
      */
     void ResetPresentationClock();
 
-    /**
-     * step2：解码输出时将 step1 目标对齐到最近 VSync 并呈现。
-     * 无效目标、不支持定时呈现或 API 失败时立即回退直接呈现。
-     */
-    OH_AVErrCode SubmitFrame(OH_AVCodec* codec, uint32_t bufferIndex, int64_t pts);
+    struct DecodedFrame {
+        OH_AVCodec* codec = nullptr;
+        uint32_t bufferIndex = 0;
+        int64_t ptsUs = 0;
+    };
+
+    struct FrameSubmitResult {
+        OH_AVErrCode status = AV_ERR_OK;
+        bool presented = false;
+    };
+
+    // Takes ownership of the decoder output buffer for every return value.
+    FrameSubmitResult SubmitFrame(const DecodedFrame& frame);
     
     // Surface 尺寸
     uint64_t GetSurfaceWidth() const { return surfaceWidth_; }
@@ -141,15 +135,10 @@ private:
     // 释放 NativeVSync
     void ReleaseNativeVSync();
 
-    // 请求一次 VSync 样本，供 step2 做相位对齐
-    void RequestVsyncSample();
-
     // 已持有 presentationMutex_ 时使用
-    int64_t CalculatePresentTargetLocked(int64_t pts, int64_t nowNs, bool twoStep);
+    int64_t CalculateLegacyPresentTargetLocked(int64_t pts, int64_t nowNs);
     void ResetPresentationClockLocked();
-
-    // 将目标向上对齐到最近的真实 VSync；无有效相位时返回原目标
-    int64_t SnapTargetToVsync(int64_t targetNs, int64_t nowNs) const;
+    void ResetPresentationStatsLocked();
 
 private:
     // 单例
@@ -163,41 +152,39 @@ private:
     std::atomic<bool> surfaceReady_{false};
     
     // 帧率配置
-    int configuredFps_ = 60;
+    std::atomic<double> configuredFps_{60.0};
     
     // VSync 模式
     std::atomic<bool> vsyncEnabled_{false};
-    std::atomic<bool> twoStepPreciseSyncEnabled_{false};
+    std::atomic<bool> hostPacedPresentationEnabled_{false};
     
-    // 帧率范围已经应用过（NativeVSync）
-    bool frameRateApplied_ = false;
-    
-    // 两步呈现状态：step1 host-PI 去抖，step2 对齐本地 VSync
+    // Timed presentation state. Legacy VSync and host-paced presentation use
+    // separate clocks so switching decoder modes cannot perturb PTS cadence.
     mutable std::mutex presentationMutex_;
-    std::map<int64_t, int64_t> pendingPresentTargets_;
-    static constexpr size_t kMaxPendingPresentTargets = 64;
+    PtsPresentationScheduler ptsScheduler_;
 
-    // Host PTS 去抖时钟。旧 VSync 模式在解码输出时计算目标；二步模式在输入时预计算，
-    // 再于输出时向上对齐真实 VSync。两者共享 offset/skew 与在线抖动估计。
+    // Legacy VSync clock, kept isolated from the host-paced scheduler.
     int64_t estimatedOffsetNs_ = 0;  // 平滑后的 (本地 - host) 偏移均值(纳秒)
     int64_t skewNs_ = 0;             // 每帧频差估计(纳秒/帧)，消除时钟 skew 斜坡滞后
     double  jitterEstNs_ = 0.0;      // 在线抖动估计(平均绝对偏差, 纳秒)，驱动自适应 cushion
     int64_t lastPtsUs_ = 0;          // 上一帧 host PTS(微秒)，用于检测不连续(重连/跳变)
     bool timeBaseInitialized_ = false;
 
-    // VSync 去抖时钟的运行统计(用于评估收益/风险)
-    int64_t vsyncFrameCount_ = 0;      // step1 生成目标的帧数
-    int64_t vsyncLateFrameCount_ = 0;  // step1 目标在生成时已过期的帧数
-    int64_t vsyncResyncCount_ = 0;     // 因 PTS 不连续而重锚定的次数
-    int64_t twoStepHitCount_ = 0;      // step2 命中预计算目标的帧数
-    int64_t twoStepFallbackCount_ = 0; // 缺失/无效目标或定时 API 失败的回退次数
+    int64_t vsyncFrameCount_ = 0;
+    int64_t vsyncLateFrameCount_ = 0;
+    int64_t vsyncResyncCount_ = 0;
+    int64_t preciseScheduledCount_ = 0;
+    int64_t preciseDroppedCount_ = 0;
+    int64_t preciseLateCount_ = 0;
+    int64_t precisePhaseShiftCount_ = 0;
+    int64_t preciseRebufferCount_ = 0;
+    int64_t preciseResyncCount_ = 0;
+    int64_t preciseApiFailureCount_ = 0;
     
     // NativeVSync（用于设置期望帧率范围，API 20+）
     std::mutex nativeVsyncMutex_;
     OH_NativeVSync* nativeVSync_ = nullptr;
     
-    // 上一帧渲染时间（用于帧率控制）
-    std::chrono::steady_clock::time_point lastFrameTime_;
 };
 
 #endif // NATIVE_RENDER_H

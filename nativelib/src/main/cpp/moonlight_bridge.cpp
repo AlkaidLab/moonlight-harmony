@@ -1998,7 +1998,7 @@ napi_value MoonBridge_IsVsyncEnabled(napi_env env, napi_callback_info info) {
     return result;
 }
 
-napi_value MoonBridge_SetTwoStepPreciseSyncEnabled(napi_env env, napi_callback_info info) {
+napi_value MoonBridge_SetHostPacedPresentationEnabled(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value args[1];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -2008,8 +2008,8 @@ napi_value MoonBridge_SetTwoStepPreciseSyncEnabled(napi_env env, napi_callback_i
         napi_get_value_bool(env, args[0], &enabled);
     }
 
-    NativeRender::GetInstance()->SetTwoStepPreciseSyncEnabled(enabled);
-    OH_LOG_INFO(LOG_APP, "MoonBridge_SetTwoStepPreciseSyncEnabled: %{public}s",
+    NativeRender::GetInstance()->SetHostPacedPresentationEnabled(enabled);
+    OH_LOG_INFO(LOG_APP, "MoonBridge_SetHostPacedPresentationEnabled: %{public}s",
                 enabled ? "true" : "false");
 
     napi_value result;
