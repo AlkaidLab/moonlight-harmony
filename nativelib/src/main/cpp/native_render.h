@@ -177,6 +177,7 @@ private:
     int64_t preciseDroppedCount_ = 0;
     int64_t preciseLateCount_ = 0;
     int64_t preciseCatchUpCount_ = 0;
+    int64_t preciseBurstHeadroomCount_ = 0;
     int64_t precisePhaseShiftCount_ = 0;
     int64_t preciseRebufferCount_ = 0;
     int64_t preciseResyncCount_ = 0;

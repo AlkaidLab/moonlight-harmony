@@ -373,6 +373,7 @@ void NativeRender::ResetPresentationStatsLocked() {
     preciseDroppedCount_ = 0;
     preciseLateCount_ = 0;
     preciseCatchUpCount_ = 0;
+    preciseBurstHeadroomCount_ = 0;
     precisePhaseShiftCount_ = 0;
     preciseRebufferCount_ = 0;
     preciseResyncCount_ = 0;
@@ -500,6 +501,9 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                 if (plan.event == PresentationEvent::CATCH_UP) {
                     preciseCatchUpCount_++;
                 }
+                if (plan.event == PresentationEvent::BURST_HEADROOM) {
+                    preciseBurstHeadroomCount_++;
+                }
                 if (plan.event == PresentationEvent::PHASE_SHIFT) precisePhaseShiftCount_++;
                 if (plan.event == PresentationEvent::REBUFFER) preciseRebufferCount_++;
                 if (plan.event == PresentationEvent::DISCONTINUITY ||
@@ -514,12 +518,13 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                 const int64_t totalFrames = preciseScheduledCount_ + preciseDroppedCount_;
                 if (totalFrames % 6000 == 0) {
                     OH_LOG_INFO(LOG_APP,
-                        "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, catchUp=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus, maxLead=%{public}lldus",
+                        "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, catchUp=%{public}lld, burstHeadroom=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus, maxLead=%{public}lldus",
                         static_cast<long long>(totalFrames),
                         static_cast<long long>(preciseScheduledCount_),
                         static_cast<long long>(preciseDroppedCount_),
                         static_cast<long long>(preciseLateCount_),
                         static_cast<long long>(preciseCatchUpCount_),
+                        static_cast<long long>(preciseBurstHeadroomCount_),
                         static_cast<long long>(precisePhaseShiftCount_),
                         static_cast<long long>(preciseRebufferCount_),
                         static_cast<long long>(preciseResyncCount_),
