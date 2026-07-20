@@ -7,18 +7,52 @@
 #include <iostream>
 
 namespace {
+constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
+constexpr int64_t kNanosecondsPerMicrosecond = 1000LL;
 constexpr int64_t kMs = 1000000LL;
+constexpr int64_t kStartNs = 1000 * kMs;
+constexpr int64_t kExpectedSubmitLeadNs = 2 * kMs;
+
+int64_t FrameIntervalNs(double fps) {
+    return static_cast<int64_t>(
+        std::llround(static_cast<double>(kNanosecondsPerSecond) / fps));
+}
+
+void AssertFutureCadenceBudget(double fps, int numerator, int denominator) {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(fps);
+
+    const PresentationPlan first = scheduler.PlanFrame(0, kStartNs);
+    const int64_t expectedCadenceBudgetNs =
+        FrameIntervalNs(fps) * numerator / denominator;
+
+    assert(first.action == PresentationAction::SCHEDULE);
+    assert(scheduler.GetInitialLeadNs() == kExpectedSubmitLeadNs);
+    assert(first.targetTimeNs - kStartNs == kExpectedSubmitLeadNs);
+    assert(scheduler.GetMaxFutureLeadNs() ==
+        kExpectedSubmitLeadNs + expectedCadenceBudgetNs +
+        kNanosecondsPerMicrosecond);
+}
+
+void TestRefreshRateTierBudgets() {
+    AssertFutureCadenceBudget(30.0, 1, 2);
+    AssertFutureCadenceBudget(59.94, 1, 2);
+    AssertFutureCadenceBudget(60.0, 1, 2);
+    AssertFutureCadenceBudget(90.0, 1, 1);
+    AssertFutureCadenceBudget(119.0, 1, 1);
+    AssertFutureCadenceBudget(119.88, 2, 1);
+    AssertFutureCadenceBudget(120.0, 2, 1);
+    AssertFutureCadenceBudget(144.0, 2, 1);
+}
 
 void Test120FpsTripleBurstKeepsPtsCadence() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(120.0);
 
-    const PresentationPlan first = scheduler.PlanFrame(0, 1000 * kMs);
-    const PresentationPlan second = scheduler.PlanFrame(8334, 1000 * kMs);
-    const PresentationPlan third = scheduler.PlanFrame(16667, 1001 * kMs);
-    const PresentationPlan fourth = scheduler.PlanFrame(25000, 1001 * kMs);
-    const int64_t frameIntervalNs = static_cast<int64_t>(
-        std::llround(1000000000.0 / 120.0));
+    const PresentationPlan first = scheduler.PlanFrame(0, kStartNs);
+    const PresentationPlan second = scheduler.PlanFrame(8334, kStartNs);
+    const PresentationPlan third = scheduler.PlanFrame(16667, kStartNs + kMs);
+    const PresentationPlan fourth = scheduler.PlanFrame(25000, kStartNs + kMs);
 
     assert(first.action == PresentationAction::SCHEDULE);
     assert(second.action == PresentationAction::SCHEDULE);
@@ -27,67 +61,40 @@ void Test120FpsTripleBurstKeepsPtsCadence() {
     assert(second.event == PresentationEvent::NONE);
     assert(third.event == PresentationEvent::NONE);
     assert(fourth.event == PresentationEvent::CATCH_UP);
-    assert(first.targetTimeNs - 1000 * kMs == scheduler.GetInitialLeadNs());
-    assert(scheduler.GetInitialLeadNs() == 2 * kMs);
-    assert(scheduler.GetMaxFutureLeadNs() ==
-        scheduler.GetInitialLeadNs() + frameIntervalNs * 2 + 1000LL);
-    assert(second.targetTimeNs - first.targetTimeNs == 8334 * 1000LL);
-    assert(third.targetTimeNs - second.targetTimeNs == 8333 * 1000LL);
-    assert(fourth.targetTimeNs - 1001 * kMs == scheduler.GetInitialLeadNs());
+    assert(second.targetTimeNs - first.targetTimeNs ==
+        8334 * kNanosecondsPerMicrosecond);
+    assert(third.targetTimeNs - second.targetTimeNs ==
+        8333 * kNanosecondsPerMicrosecond);
+    assert(fourth.targetTimeNs - (kStartNs + kMs) ==
+        scheduler.GetInitialLeadNs());
 }
 
 void Test90FpsPairBurstKeepsSingleFrameBudget() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(90.0);
 
-    const int64_t decodedAtNs = 1000 * kMs;
-    const PresentationPlan first = scheduler.PlanFrame(0, decodedAtNs);
-    const PresentationPlan second = scheduler.PlanFrame(11111, decodedAtNs);
-    const PresentationPlan third = scheduler.PlanFrame(22222, decodedAtNs + kMs);
-    const int64_t frameIntervalNs = static_cast<int64_t>(
-        std::llround(1000000000.0 / 90.0));
+    const PresentationPlan first = scheduler.PlanFrame(0, kStartNs);
+    const PresentationPlan second = scheduler.PlanFrame(11111, kStartNs);
+    const PresentationPlan third = scheduler.PlanFrame(22222, kStartNs + kMs);
 
     assert(first.action == PresentationAction::SCHEDULE);
     assert(second.action == PresentationAction::SCHEDULE);
     assert(third.action == PresentationAction::SCHEDULE);
     assert(second.event == PresentationEvent::NONE);
     assert(third.event == PresentationEvent::CATCH_UP);
-    assert(scheduler.GetMaxFutureLeadNs() ==
-        scheduler.GetInitialLeadNs() + frameIntervalNs + 1000LL);
-}
-
-void TestNtsc120FpsUsesTripleBurstBudget() {
-    PtsPresentationScheduler scheduler;
-    scheduler.Configure(119.88);
-
-    const int64_t frameIntervalNs = static_cast<int64_t>(
-        std::llround(1000000000.0 / 119.88));
-    assert(scheduler.GetMaxFutureLeadNs() ==
-        scheduler.GetInitialLeadNs() + frameIntervalNs * 2 + 1000LL);
-
-    scheduler.Configure(119.0);
-    const int64_t lowerFrameIntervalNs = static_cast<int64_t>(
-        std::llround(1000000000.0 / 119.0));
-    assert(scheduler.GetMaxFutureLeadNs() ==
-        scheduler.GetInitialLeadNs() + lowerFrameIntervalNs + 1000LL);
 }
 
 void AssertLowRefreshBurstCatchesUp(double fps, int64_t framePtsUs) {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(fps);
 
-    const int64_t decodedAtNs = 1000 * kMs;
-    const PresentationPlan first = scheduler.PlanFrame(0, decodedAtNs);
-    const PresentationPlan burst = scheduler.PlanFrame(framePtsUs, decodedAtNs);
-    const int64_t frameIntervalNs = static_cast<int64_t>(
-        std::llround(1000000000.0 / fps));
+    const PresentationPlan first = scheduler.PlanFrame(0, kStartNs);
+    const PresentationPlan burst = scheduler.PlanFrame(framePtsUs, kStartNs);
 
     assert(first.action == PresentationAction::SCHEDULE);
     assert(burst.action == PresentationAction::SCHEDULE);
     assert(burst.event == PresentationEvent::CATCH_UP);
-    assert(burst.targetTimeNs - decodedAtNs == scheduler.GetInitialLeadNs());
-    assert(scheduler.GetMaxFutureLeadNs() ==
-        scheduler.GetInitialLeadNs() + frameIntervalNs / 2 + 1000LL);
+    assert(burst.targetTimeNs - kStartNs == scheduler.GetInitialLeadNs());
 }
 
 void TestLowRefreshBurstKeepsHalfFrameBudget() {
@@ -99,7 +106,7 @@ void TestSmallLateFrameShiftsWholeTimeline() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
 
-    const PresentationPlan first = scheduler.PlanFrame(0, 1000 * kMs);
+    const PresentationPlan first = scheduler.PlanFrame(0, kStartNs);
     const PresentationPlan shifted = scheduler.PlanFrame(16667, 1018 * kMs);
     const PresentationPlan next = scheduler.PlanFrame(33333, 1034 * kMs);
 
@@ -115,7 +122,7 @@ void TestSevereLateDropThenRebuffer() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
 
-    scheduler.PlanFrame(0, 1000 * kMs);
+    scheduler.PlanFrame(0, kStartNs);
     const PresentationPlan dropped = scheduler.PlanFrame(16667, 1100 * kMs);
     const PresentationPlan rebuffered = scheduler.PlanFrame(33333, 1101 * kMs);
 
@@ -130,14 +137,14 @@ void TestAccumulatedPhaseShiftRecoversQuickly() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
 
-    constexpr int64_t kStartNs = 1000 * kMs;
     constexpr int64_t kFrameUs = 16667;
     scheduler.PlanFrame(0, kStartNs);
 
     int phaseShiftCount = 0;
     for (int i = 1; i <= 12; ++i) {
         const int64_t ptsUs = i * kFrameUs;
-        const int64_t nominalDecodeNs = kStartNs + ptsUs * 1000;
+        const int64_t nominalDecodeNs =
+            kStartNs + ptsUs * kNanosecondsPerMicrosecond;
         const int64_t rampDelayNs = (3 + (i - 1) * 6) * kMs;
         const PresentationPlan delayed = scheduler.PlanFrame(
             ptsUs, nominalDecodeNs + rampDelayNs);
@@ -149,7 +156,8 @@ void TestAccumulatedPhaseShiftRecoversQuickly() {
     assert(phaseShiftCount >= 10);
 
     const int64_t recoveredPtsUs = 13 * kFrameUs;
-    const int64_t recoveredDecodeNs = kStartNs + recoveredPtsUs * 1000;
+    const int64_t recoveredDecodeNs =
+        kStartNs + recoveredPtsUs * kNanosecondsPerMicrosecond;
     const PresentationPlan recovered = scheduler.PlanFrame(
         recoveredPtsUs, recoveredDecodeNs);
 
@@ -160,18 +168,19 @@ void TestAccumulatedPhaseShiftRecoversQuickly() {
                       scheduler.GetInitialLeadNs()) < kMs);
 
     const int64_t nextPtsUs = 14 * kFrameUs;
-    const int64_t nextDecodeNs = kStartNs + nextPtsUs * 1000;
+    const int64_t nextDecodeNs =
+        kStartNs + nextPtsUs * kNanosecondsPerMicrosecond;
     const PresentationPlan next = scheduler.PlanFrame(nextPtsUs, nextDecodeNs);
     assert(next.action == PresentationAction::SCHEDULE);
     assert(std::llabs((next.targetTimeNs - recovered.targetTimeNs) -
-                      kFrameUs * 1000) < kMs);
+                      kFrameUs * kNanosecondsPerMicrosecond) < kMs);
 }
 
 void TestBurstCatchesUpAfterPartialPhaseDebtRepayment() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
 
-    scheduler.PlanFrame(0, 1000 * kMs);
+    scheduler.PlanFrame(0, kStartNs);
     const PresentationPlan shifted = scheduler.PlanFrame(16667, 1022 * kMs);
     const PresentationPlan burst = scheduler.PlanFrame(50000, 1023 * kMs);
 
@@ -207,27 +216,10 @@ void TestDiscontinuityReanchors() {
     assert(discontinuity.event == PresentationEvent::DISCONTINUITY);
 }
 
-void TestFractionalFpsLatencyBudget() {
-    PtsPresentationScheduler scheduler;
-    scheduler.Configure(59.94);
-
-    const int64_t decodedAtNs = 2000 * kMs;
-    const PresentationPlan first = scheduler.PlanFrame(0, decodedAtNs);
-    const int64_t frameIntervalNs = static_cast<int64_t>(
-        std::llround(1000000000.0 / 59.94));
-    const int64_t expectedLeadNs = 2 * kMs;
-
-    assert(first.action == PresentationAction::SCHEDULE);
-    assert(first.targetTimeNs - decodedAtNs == expectedLeadNs);
-    assert(scheduler.GetMaxFutureLeadNs() ==
-        expectedLeadNs + frameIntervalNs / 2 + 1000LL);
-}
-
 void TestSlowClockDriftStaysBounded() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
 
-    constexpr int64_t kStartNs = 1000 * kMs;
     constexpr double kPtsIntervalUs = 1000000.0 / 60.0;
     constexpr double kFastLocalIntervalNs = 1000000000.0 / 60.0 * (1.0 - 0.0001);
     scheduler.PlanFrame(0, kStartNs);
@@ -248,9 +240,9 @@ void TestSlowClockDriftStaysBounded() {
 } // namespace
 
 int main() {
+    TestRefreshRateTierBudgets();
     Test120FpsTripleBurstKeepsPtsCadence();
     Test90FpsPairBurstKeepsSingleFrameBudget();
-    TestNtsc120FpsUsesTripleBurstBudget();
     TestLowRefreshBurstKeepsHalfFrameBudget();
     TestSmallLateFrameShiftsWholeTimeline();
     TestSevereLateDropThenRebuffer();
@@ -258,7 +250,6 @@ int main() {
     TestBurstCatchesUpAfterPartialPhaseDebtRepayment();
     TestDuplicatePtsReanchorsInsteadOfFreezing();
     TestDiscontinuityReanchors();
-    TestFractionalFpsLatencyBudget();
     TestSlowClockDriftStaysBounded();
     std::cout << "presentation scheduler tests passed\n";
     return 0;

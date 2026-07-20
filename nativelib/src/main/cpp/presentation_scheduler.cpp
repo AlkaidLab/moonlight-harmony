@@ -15,18 +15,30 @@
 
 namespace {
 constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
+constexpr int64_t kNanosecondsPerMillisecond = 1000000LL;
 constexpr int64_t kNanosecondsPerMicrosecond = 1000LL;
-constexpr int64_t kSubmitLeadNs = 2000000LL;
+constexpr int64_t kSubmitLeadNs = 2 * kNanosecondsPerMillisecond;
 constexpr int64_t kPtsQuantizationSlackNs = kNanosecondsPerMicrosecond;
-constexpr double kHighRefreshFps = 60.0;
+constexpr double kDefaultFps = 60.0;
+constexpr double kHighRefreshFps = kDefaultFps;
 constexpr double kNtscTripleBurstFps = 119.88;
-constexpr int64_t kDriftDeadbandNs = 2000000LL;
-constexpr int64_t kMaxDriftCorrectionPerFrameNs = 20000LL;
+constexpr int64_t kDriftDeadbandNs = 2 * kNanosecondsPerMillisecond;
+constexpr int64_t kMaxDriftCorrectionPerFrameNs = 20 * kNanosecondsPerMicrosecond;
 constexpr int kSevereLateFramesBeforeRebuffer = 2;
+
+int64_t CalculateFutureCadenceBudgetNs(double fps, int64_t frameIntervalNs) {
+    if (fps >= kNtscTripleBurstFps) {
+        return frameIntervalNs * 2;
+    }
+    if (fps > kHighRefreshFps) {
+        return frameIntervalNs;
+    }
+    return frameIntervalNs / 2;
+}
 } // namespace
 
 void PtsPresentationScheduler::Configure(double fps) {
-    const double safeFps = fps > 0.0 ? fps : 60.0;
+    const double safeFps = fps > 0.0 ? fps : kDefaultFps;
     frameIntervalNs_ = static_cast<int64_t>(
         std::llround(static_cast<double>(kNanosecondsPerSecond) / safeFps));
     frameIntervalNs_ = std::max<int64_t>(frameIntervalNs_, 1000000LL);
@@ -35,17 +47,11 @@ void PtsPresentationScheduler::Configure(double fps) {
     // for 120 Hz submission overhead.
     submitLeadNs_ = kSubmitLeadNs;
     initialLeadNs_ = submitLeadNs_;
-    // Preserve enough PTS spacing for the burst depth observed at each refresh
-    // tier without widening the latency budget for lower frame rates.
-    int64_t futureCadenceBudgetNs = frameIntervalNs_ / 2;
-    if (safeFps >= kNtscTripleBurstFps) {
-        futureCadenceBudgetNs = frameIntervalNs_ * 2;
-    } else if (safeFps > kHighRefreshFps) {
-        futureCadenceBudgetNs = frameIntervalNs_;
-    }
-    maxFutureLeadNs_ = initialLeadNs_ + futureCadenceBudgetNs +
+    maxFutureLeadNs_ = initialLeadNs_ +
+        CalculateFutureCadenceBudgetNs(safeFps, frameIntervalNs_) +
         kPtsQuantizationSlackNs;
-    discontinuityNs_ = std::max<int64_t>(250000000LL, frameIntervalNs_ * 12);
+    discontinuityNs_ = std::max<int64_t>(
+        250 * kNanosecondsPerMillisecond, frameIntervalNs_ * 12);
     Reset();
 }
 
