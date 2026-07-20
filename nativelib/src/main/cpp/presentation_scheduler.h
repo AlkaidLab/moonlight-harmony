@@ -22,6 +22,7 @@ enum class PresentationEvent {
     NONE,
     INITIAL_ANCHOR,
     DISCONTINUITY,
+    CATCH_UP,
     PHASE_SHIFT,
     REBUFFER,
     DUPLICATE_PTS,
@@ -46,6 +47,7 @@ public:
     PresentationPlan PlanFrame(int64_t ptsUs, int64_t decodedAtNs);
 
     int64_t GetInitialLeadNs() const { return initialLeadNs_; }
+    int64_t GetMaxFutureLeadNs() const { return maxFutureLeadNs_; }
 
 private:
     PresentationPlan AnchorFrame(int64_t ptsUs, int64_t decodedAtNs,
@@ -53,8 +55,9 @@ private:
     void ApplySlowDriftCorrection(int64_t decodedAtNs, int64_t& targetTimeNs);
 
     int64_t frameIntervalNs_ = 16666667LL;
-    int64_t initialLeadNs_ = 18666667LL;
+    int64_t initialLeadNs_ = 2000000LL;
     int64_t submitLeadNs_ = 2000000LL;
+    int64_t maxFutureLeadNs_ = 10333333LL;
     int64_t discontinuityNs_ = 250000000LL;
 
     bool initialized_ = false;

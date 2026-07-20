@@ -278,7 +278,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     enableSyncDecode: false, // 默认禁用同步解码（需要 API 20+；启用后低延迟优先）
     enableVrr: false,       // 默认禁用 VRR（可能丢帧）
     enableVsync: false,     // 默认关闭（低延迟优先；开启后更平滑但可能增加 1 帧左右延迟）
-    enableHostPacedPresentation: false, // 默认关闭，约增加一帧呈现余量
+    enableHostPacedPresentation: false, // 默认关闭，启用后使用有界低延迟 PTS 呈现
     enablePostProcess: false, // 默认禁用后处理滤镜
     upscaleMode: 0,           // 默认不超分
     upscaleSharpness: 0.5,    // 默认锐度 50%

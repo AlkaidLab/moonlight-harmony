@@ -16,7 +16,6 @@
 namespace {
 constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
 constexpr int64_t kNanosecondsPerMicrosecond = 1000LL;
-constexpr int64_t kExtraPresentationLeadNs = 2000000LL;
 constexpr int64_t kMinSubmitLeadNs = 1000000LL;
 constexpr int64_t kMaxSubmitLeadNs = 2000000LL;
 constexpr int64_t kDriftDeadbandNs = 2000000LL;
@@ -29,9 +28,13 @@ void PtsPresentationScheduler::Configure(double fps) {
     frameIntervalNs_ = static_cast<int64_t>(
         std::llround(static_cast<double>(kNanosecondsPerSecond) / safeFps));
     frameIntervalNs_ = std::max<int64_t>(frameIntervalNs_, 1000000LL);
-    initialLeadNs_ = frameIntervalNs_ + kExtraPresentationLeadNs;
     submitLeadNs_ = std::clamp(frameIntervalNs_ / 8,
                                kMinSubmitLeadNs, kMaxSubmitLeadNs);
+    // RenderOutputBufferAtTime only needs a small submission margin. A full
+    // frame of fixed lead makes the next VSync become the following VSync on
+    // part of every refresh cycle, adding latency even in steady state.
+    initialLeadNs_ = submitLeadNs_;
+    maxFutureLeadNs_ = initialLeadNs_ + frameIntervalNs_ / 2;
     discontinuityNs_ = std::max<int64_t>(250000000LL, frameIntervalNs_ * 12);
     Reset();
 }
@@ -126,12 +129,22 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
         driftErrorEmaNs_ = 0;
         consecutiveSevereLateFrames_ = 0;
 
-        PresentationPlan plan;
-        plan.action = PresentationAction::SCHEDULE;
-        plan.event = PresentationEvent::PHASE_SHIFT;
-        plan.targetTimeNs = targetTimeNs;
-        plan.latenessNs = -repaymentNs;
-        return plan;
+        if (targetTimeNs - decodedAtNs <= maxFutureLeadNs_) {
+            PresentationPlan plan;
+            plan.action = PresentationAction::SCHEDULE;
+            plan.event = PresentationEvent::PHASE_SHIFT;
+            plan.targetTimeNs = targetTimeNs;
+            plan.latenessNs = -repaymentNs;
+            return plan;
+        }
+    }
+
+    if (targetTimeNs - decodedAtNs > maxFutureLeadNs_) {
+        // This is not jitter absorbed by our own phase shift; it is decoded
+        // output arriving in a burst ahead of the presentation timeline. A
+        // fresh anchor gives all queued burst frames an immediate timestamp,
+        // so the Surface can keep the newest frame instead of preserving lag.
+        return AnchorFrame(ptsUs, decodedAtNs, PresentationEvent::CATCH_UP);
     }
 
     ApplySlowDriftCorrection(decodedAtNs, targetTimeNs);

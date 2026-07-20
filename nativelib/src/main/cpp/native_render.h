@@ -176,10 +176,12 @@ private:
     int64_t preciseScheduledCount_ = 0;
     int64_t preciseDroppedCount_ = 0;
     int64_t preciseLateCount_ = 0;
+    int64_t preciseCatchUpCount_ = 0;
     int64_t precisePhaseShiftCount_ = 0;
     int64_t preciseRebufferCount_ = 0;
     int64_t preciseResyncCount_ = 0;
     int64_t preciseApiFailureCount_ = 0;
+    int64_t preciseMaxTargetLeadNs_ = 0;
     
     // NativeVSync（用于设置期望帧率范围，API 20+）
     std::mutex nativeVsyncMutex_;
