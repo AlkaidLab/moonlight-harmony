@@ -19,7 +19,7 @@ constexpr int64_t kNanosecondsPerMicrosecond = 1000LL;
 constexpr int64_t kSubmitLeadNs = 2000000LL;
 constexpr int64_t kPtsQuantizationSlackNs = kNanosecondsPerMicrosecond;
 constexpr double kHighRefreshFps = 60.0;
-constexpr double kTripleBurstFps = 120.0;
+constexpr double kNtscTripleBurstFps = 119.88;
 constexpr int64_t kDriftDeadbandNs = 2000000LL;
 constexpr int64_t kMaxDriftCorrectionPerFrameNs = 20000LL;
 constexpr int kSevereLateFramesBeforeRebuffer = 2;
@@ -38,7 +38,7 @@ void PtsPresentationScheduler::Configure(double fps) {
     // Preserve enough PTS spacing for the burst depth observed at each refresh
     // tier without widening the latency budget for lower frame rates.
     int64_t futureCadenceBudgetNs = frameIntervalNs_ / 2;
-    if (safeFps >= kTripleBurstFps) {
+    if (safeFps >= kNtscTripleBurstFps) {
         futureCadenceBudgetNs = frameIntervalNs_ * 2;
     } else if (safeFps > kHighRefreshFps) {
         futureCadenceBudgetNs = frameIntervalNs_;

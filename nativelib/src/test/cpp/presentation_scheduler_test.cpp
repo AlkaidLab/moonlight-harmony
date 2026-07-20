@@ -56,6 +56,22 @@ void Test90FpsPairBurstKeepsSingleFrameBudget() {
         scheduler.GetInitialLeadNs() + frameIntervalNs + 1000LL);
 }
 
+void TestNtsc120FpsUsesTripleBurstBudget() {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(119.88);
+
+    const int64_t frameIntervalNs = static_cast<int64_t>(
+        std::llround(1000000000.0 / 119.88));
+    assert(scheduler.GetMaxFutureLeadNs() ==
+        scheduler.GetInitialLeadNs() + frameIntervalNs * 2 + 1000LL);
+
+    scheduler.Configure(119.0);
+    const int64_t lowerFrameIntervalNs = static_cast<int64_t>(
+        std::llround(1000000000.0 / 119.0));
+    assert(scheduler.GetMaxFutureLeadNs() ==
+        scheduler.GetInitialLeadNs() + lowerFrameIntervalNs + 1000LL);
+}
+
 void AssertLowRefreshBurstCatchesUp(double fps, int64_t framePtsUs) {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(fps);
@@ -234,6 +250,7 @@ void TestSlowClockDriftStaysBounded() {
 int main() {
     Test120FpsTripleBurstKeepsPtsCadence();
     Test90FpsPairBurstKeepsSingleFrameBudget();
+    TestNtsc120FpsUsesTripleBurstBudget();
     TestLowRefreshBurstKeepsHalfFrameBudget();
     TestSmallLateFrameShiftsWholeTimeline();
     TestSevereLateDropThenRebuffer();
