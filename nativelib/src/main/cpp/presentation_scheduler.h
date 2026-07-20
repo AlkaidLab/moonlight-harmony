@@ -23,7 +23,6 @@ enum class PresentationEvent {
     INITIAL_ANCHOR,
     DISCONTINUITY,
     CATCH_UP,
-    BURST_HEADROOM,
     PHASE_SHIFT,
     REBUFFER,
     DUPLICATE_PTS,
@@ -53,21 +52,18 @@ public:
 private:
     PresentationPlan AnchorFrame(int64_t ptsUs, int64_t decodedAtNs,
                                  PresentationEvent event);
-    bool IsDecoderOutputBurst(int64_t ptsDeltaUs, int64_t decodedAtNs) const;
     void ApplySlowDriftCorrection(int64_t decodedAtNs, int64_t& targetTimeNs);
 
     int64_t frameIntervalNs_ = 16666667LL;
     int64_t initialLeadNs_ = 2000000LL;
     int64_t submitLeadNs_ = 2000000LL;
     int64_t maxFutureLeadNs_ = 10334333LL;
-    int64_t maxBurstFutureLeadNs_ = 10334333LL;
     int64_t discontinuityNs_ = 250000000LL;
 
     bool initialized_ = false;
     int64_t anchorPtsUs_ = 0;
     int64_t anchorTargetNs_ = 0;
     int64_t lastPtsUs_ = 0;
-    int64_t lastDecodedAtNs_ = 0;
     int64_t driftErrorEmaNs_ = 0;
     int64_t phaseShiftDebtNs_ = 0;
     int consecutiveSevereLateFrames_ = 0;

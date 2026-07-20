@@ -45,7 +45,7 @@ void TestRefreshRateTierBudgets() {
     AssertFutureCadenceBudget(144.0, 2, 1);
 }
 
-void Test120FpsFourFrameBurstKeepsPtsCadence() {
+void Test120FpsTripleBurstKeepsPtsCadence() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(120.0);
 
@@ -53,62 +53,20 @@ void Test120FpsFourFrameBurstKeepsPtsCadence() {
     const PresentationPlan second = scheduler.PlanFrame(8334, kStartNs);
     const PresentationPlan third = scheduler.PlanFrame(16667, kStartNs + kMs);
     const PresentationPlan fourth = scheduler.PlanFrame(25000, kStartNs + kMs);
-    const PresentationPlan fifth = scheduler.PlanFrame(33333, kStartNs + kMs);
 
     assert(first.action == PresentationAction::SCHEDULE);
     assert(second.action == PresentationAction::SCHEDULE);
     assert(third.action == PresentationAction::SCHEDULE);
     assert(fourth.action == PresentationAction::SCHEDULE);
-    assert(fifth.action == PresentationAction::SCHEDULE);
     assert(second.event == PresentationEvent::NONE);
     assert(third.event == PresentationEvent::NONE);
-    assert(fourth.event == PresentationEvent::BURST_HEADROOM);
-    assert(fifth.event == PresentationEvent::CATCH_UP);
+    assert(fourth.event == PresentationEvent::CATCH_UP);
     assert(second.targetTimeNs - first.targetTimeNs ==
         8334 * kNanosecondsPerMicrosecond);
     assert(third.targetTimeNs - second.targetTimeNs ==
         8333 * kNanosecondsPerMicrosecond);
-    assert(fourth.targetTimeNs - third.targetTimeNs ==
-        8333 * kNanosecondsPerMicrosecond);
-    assert(fifth.targetTimeNs - (kStartNs + kMs) ==
+    assert(fourth.targetTimeNs - (kStartNs + kMs) ==
         scheduler.GetInitialLeadNs());
-}
-
-void Test120FpsBurstHeadroomExpiresOutsideBurst() {
-    PtsPresentationScheduler scheduler;
-    scheduler.Configure(120.0);
-
-    scheduler.PlanFrame(0, kStartNs);
-    scheduler.PlanFrame(8334, kStartNs);
-    scheduler.PlanFrame(16667, kStartNs + kMs);
-    const PresentationPlan regular = scheduler.PlanFrame(
-        25000, kStartNs + 7 * kMs);
-
-    assert(regular.action == PresentationAction::SCHEDULE);
-    assert(regular.event == PresentationEvent::CATCH_UP);
-    assert(regular.targetTimeNs - (kStartNs + 7 * kMs) ==
-        scheduler.GetInitialLeadNs());
-}
-
-void AssertFourthBurstFrameUsesHeadroom(
-        double fps, int64_t secondPtsUs, int64_t thirdPtsUs,
-        int64_t fourthPtsUs) {
-    PtsPresentationScheduler scheduler;
-    scheduler.Configure(fps);
-
-    scheduler.PlanFrame(0, kStartNs);
-    scheduler.PlanFrame(secondPtsUs, kStartNs);
-    scheduler.PlanFrame(thirdPtsUs, kStartNs + kMs);
-    const PresentationPlan fourth = scheduler.PlanFrame(
-        fourthPtsUs, kStartNs + kMs);
-
-    assert(fourth.action == PresentationAction::SCHEDULE);
-    assert(fourth.event == PresentationEvent::BURST_HEADROOM);
-}
-
-void TestHighRefreshRatesUseBurstHeadroom() {
-    AssertFourthBurstFrameUsesHeadroom(119.88, 8342, 16683, 25025);
-    AssertFourthBurstFrameUsesHeadroom(144.0, 6944, 13889, 20833);
 }
 
 void Test90FpsPairBurstKeepsSingleFrameBudget() {
@@ -283,9 +241,7 @@ void TestSlowClockDriftStaysBounded() {
 
 int main() {
     TestRefreshRateTierBudgets();
-    Test120FpsFourFrameBurstKeepsPtsCadence();
-    Test120FpsBurstHeadroomExpiresOutsideBurst();
-    TestHighRefreshRatesUseBurstHeadroom();
+    Test120FpsTripleBurstKeepsPtsCadence();
     Test90FpsPairBurstKeepsSingleFrameBudget();
     TestLowRefreshBurstKeepsHalfFrameBudget();
     TestSmallLateFrameShiftsWholeTimeline();
