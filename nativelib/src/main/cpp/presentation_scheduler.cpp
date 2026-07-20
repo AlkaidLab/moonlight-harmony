@@ -18,6 +18,8 @@ constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
 constexpr int64_t kNanosecondsPerMicrosecond = 1000LL;
 constexpr int64_t kSubmitLeadNs = 2000000LL;
 constexpr int64_t kPtsQuantizationSlackNs = kNanosecondsPerMicrosecond;
+constexpr double kHighRefreshFps = 60.0;
+constexpr double kTripleBurstFps = 120.0;
 constexpr int64_t kDriftDeadbandNs = 2000000LL;
 constexpr int64_t kMaxDriftCorrectionPerFrameNs = 20000LL;
 constexpr int kSevereLateFramesBeforeRebuffer = 2;
@@ -33,11 +35,14 @@ void PtsPresentationScheduler::Configure(double fps) {
     // for 120 Hz submission overhead.
     submitLeadNs_ = kSubmitLeadNs;
     initialLeadNs_ = submitLeadNs_;
-    // High-refresh decoder callbacks commonly arrive in pairs, so preserve one
-    // frame of PTS spacing there. At 60 FPS and below, keep the tighter half-
-    // frame bound to avoid turning a burst into 16-33 ms of extra latency.
-    const int64_t futureCadenceBudgetNs = safeFps > 60.0 ?
-        frameIntervalNs_ : frameIntervalNs_ / 2;
+    // Preserve enough PTS spacing for the burst depth observed at each refresh
+    // tier without widening the latency budget for lower frame rates.
+    int64_t futureCadenceBudgetNs = frameIntervalNs_ / 2;
+    if (safeFps >= kTripleBurstFps) {
+        futureCadenceBudgetNs = frameIntervalNs_ * 2;
+    } else if (safeFps > kHighRefreshFps) {
+        futureCadenceBudgetNs = frameIntervalNs_;
+    }
     maxFutureLeadNs_ = initialLeadNs_ + futureCadenceBudgetNs +
         kPtsQuantizationSlackNs;
     discontinuityNs_ = std::max<int64_t>(250000000LL, frameIntervalNs_ * 12);
