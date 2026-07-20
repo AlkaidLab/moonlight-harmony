@@ -57,7 +57,7 @@ private:
     int64_t frameIntervalNs_ = 16666667LL;
     int64_t initialLeadNs_ = 2000000LL;
     int64_t submitLeadNs_ = 2000000LL;
-    int64_t maxFutureLeadNs_ = 18667667LL;
+    int64_t maxFutureLeadNs_ = 10334333LL;
     int64_t discontinuityNs_ = 250000000LL;
 
     bool initialized_ = false;
