@@ -31,6 +31,26 @@
 #undef LOG_TAG
 #define LOG_TAG "NativeRender"
 
+namespace {
+constexpr int64_t kNanosecondsPerMillisecond = 1000000LL;
+constexpr int64_t kVsyncSampleIntervalNs = 250 * kNanosecondsPerMillisecond;
+constexpr int64_t kHostPacedStatsLogIntervalFrames = 600;
+
+std::atomic<uint64_t> g_vsyncSampleGeneration{0};
+std::atomic<int64_t> g_observedVsyncTimestampNs{0};
+std::atomic<int64_t> g_observedVsyncPeriodNs{0};
+std::atomic<int64_t> g_vsyncSampleRequestFailures{0};
+
+void OnVSyncSample(long long timestamp, void* data) {
+    const uint64_t generation = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(data));
+    if (generation == g_vsyncSampleGeneration.load(std::memory_order_acquire)) {
+        g_observedVsyncTimestampNs.store(
+            static_cast<int64_t>(timestamp), std::memory_order_release);
+    }
+}
+} // namespace
+
 // RenderOutputBufferAtTime 是 API 12+ 的函数，旧设备或不完整运行时可能不存在
 // 通过 dlsym 动态加载，避免硬依赖
 typedef OH_AVErrCode (*PFN_RenderOutputBufferAtTime)(OH_AVCodec*, uint32_t, int64_t);
@@ -149,6 +169,12 @@ void NativeRender::InitNativeVSync() {
     const char* name = "moonlight_render";
     nativeVSync_ = OH_NativeVSync_Create(name, strlen(name));
     if (nativeVSync_ != nullptr) {
+        nativeVsyncGeneration_ =
+            g_vsyncSampleGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+        g_observedVsyncTimestampNs.store(0, std::memory_order_release);
+        g_observedVsyncPeriodNs.store(0, std::memory_order_release);
+        g_vsyncSampleRequestFailures.store(0, std::memory_order_relaxed);
+        lastVsyncSampleRequestNs_.store(0, std::memory_order_relaxed);
         OH_LOG_INFO(LOG_APP, "NativeVSync created successfully");
     } else {
         OH_LOG_WARN(LOG_APP, "Failed to create NativeVSync");
@@ -161,6 +187,10 @@ void NativeRender::ReleaseNativeVSync() {
         return;
     }
 
+    g_vsyncSampleGeneration.fetch_add(1, std::memory_order_acq_rel);
+    nativeVsyncGeneration_ = 0;
+    g_observedVsyncTimestampNs.store(0, std::memory_order_release);
+    g_observedVsyncPeriodNs.store(0, std::memory_order_release);
     OH_NativeVSync_Destroy(nativeVSync_);
     nativeVSync_ = nullptr;
     OH_LOG_INFO(LOG_APP, "NativeVSync destroyed");
@@ -352,6 +382,38 @@ void NativeRender::ApplyFrameRateRange() {
     }
 }
 
+void NativeRender::RequestVSyncSample(int64_t nowNs) {
+    int64_t previousRequestNs =
+        lastVsyncSampleRequestNs_.load(std::memory_order_relaxed);
+    if (previousRequestNs > 0 &&
+        nowNs - previousRequestNs < kVsyncSampleIntervalNs) {
+        return;
+    }
+    if (!lastVsyncSampleRequestNs_.compare_exchange_strong(
+            previousRequestNs, nowNs, std::memory_order_relaxed)) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
+    if (nativeVSync_ == nullptr || nativeVsyncGeneration_ == 0) {
+        return;
+    }
+
+    long long periodNs = 0;
+    if (OH_NativeVSync_GetPeriod(nativeVSync_, &periodNs) == 0 &&
+        periodNs > 0) {
+        g_observedVsyncPeriodNs.store(
+            static_cast<int64_t>(periodNs), std::memory_order_release);
+    }
+
+    const int result = OH_NativeVSync_RequestFrame(
+        nativeVSync_, OnVSyncSample,
+        reinterpret_cast<void*>(static_cast<uintptr_t>(nativeVsyncGeneration_)));
+    if (result != 0) {
+        g_vsyncSampleRequestFailures.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 // =============================================================================
 // PTS presentation clocks
 // =============================================================================
@@ -378,6 +440,7 @@ void NativeRender::ResetPresentationStatsLocked() {
     preciseResyncCount_ = 0;
     preciseApiFailureCount_ = 0;
     preciseMaxTargetLeadNs_ = 0;
+    presentationDiagnostics_.Reset();
 }
 
 void NativeRender::ResetPresentationClock() {
@@ -487,6 +550,7 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
             }
         } else {
             const int64_t decodedAtNs = GetMonotonicTimeNs();
+            RequestVSyncSample(decodedAtNs);
             PresentationPlan plan;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
@@ -506,15 +570,24 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                     plan.event == PresentationEvent::DUPLICATE_PTS) {
                     preciseResyncCount_++;
                 }
+                const int64_t observedVsyncNs =
+                    g_observedVsyncTimestampNs.load(std::memory_order_acquire);
+                const int64_t observedVsyncPeriodNs =
+                    g_observedVsyncPeriodNs.load(std::memory_order_acquire);
                 if (plan.action == PresentationAction::SCHEDULE) {
                     preciseMaxTargetLeadNs_ = std::max(
                         preciseMaxTargetLeadNs_, plan.targetTimeNs - decodedAtNs);
+                    presentationDiagnostics_.Record(
+                        plan.targetTimeNs, decodedAtNs,
+                        observedVsyncNs, observedVsyncPeriodNs);
                 }
 
                 const int64_t totalFrames = preciseScheduledCount_ + preciseDroppedCount_;
-                if (totalFrames % 6000 == 0) {
+                if (totalFrames % kHostPacedStatsLogIntervalFrames == 0) {
+                    const PresentationTimingStats& timing =
+                        presentationDiagnostics_.GetStats();
                     OH_LOG_INFO(LOG_APP,
-                        "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, catchUp=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus, maxLead=%{public}lldus",
+                        "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, catchUp=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus, maxLead=%{public}lldus, sameSlot=%{public}lld, slotRegression=%{public}lld, targetRegression=%{public}lld, maxRegression=%{public}lldus, maxQueueSlots=%{public}lld, vsyncPeriod=%{public}lldus, vsyncAge=%{public}lldus, vsyncSampleFailure=%{public}lld",
                         static_cast<long long>(totalFrames),
                         static_cast<long long>(preciseScheduledCount_),
                         static_cast<long long>(preciseDroppedCount_),
@@ -525,7 +598,18 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                         static_cast<long long>(preciseResyncCount_),
                         static_cast<long long>(preciseApiFailureCount_),
                         static_cast<long long>(ptsScheduler_.GetInitialLeadNs() / 1000),
-                        static_cast<long long>(preciseMaxTargetLeadNs_ / 1000));
+                        static_cast<long long>(preciseMaxTargetLeadNs_ / 1000),
+                        static_cast<long long>(timing.sameVsyncSlotCount),
+                        static_cast<long long>(timing.vsyncSlotRegressionCount),
+                        static_cast<long long>(timing.targetRegressionCount),
+                        static_cast<long long>(timing.maxTargetRegressionNs / 1000),
+                        static_cast<long long>(timing.maxQueueDepthSlots),
+                        static_cast<long long>(observedVsyncPeriodNs / 1000),
+                        static_cast<long long>(observedVsyncNs > 0
+                            ? std::max<int64_t>(0, decodedAtNs - observedVsyncNs) / 1000
+                            : 0),
+                        static_cast<long long>(g_vsyncSampleRequestFailures.load(
+                            std::memory_order_relaxed)));
                 }
             }
 
