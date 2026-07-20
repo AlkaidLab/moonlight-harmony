@@ -532,12 +532,8 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
             if (plan.action == PresentationAction::DROP) {
                 renderResult = freeFrame();
             } else {
-                const int64_t renderTargetNs = std::max(
-                    decodedAtNs,
-                    plan.targetTimeNs -
-                        std::max<int64_t>(0, frame.presentationAdvanceNs));
                 renderResult = renderAtTime(
-                    frame.codec, frame.bufferIndex, renderTargetNs);
+                    frame.codec, frame.bufferIndex, plan.targetTimeNs);
                 if (renderResult == AV_ERR_OK) {
                     bufferConsumed = true;
                     framePresented = true;
@@ -547,10 +543,9 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                         preciseApiFailureCount_++;
                     }
                     OH_LOG_WARN(LOG_APP,
-                        "Host-paced render failed: %{public}d, pts=%{public}lld, targetNs=%{public}lld, renderTargetNs=%{public}lld; falling back",
+                        "Host-paced render failed: %{public}d, pts=%{public}lld, targetNs=%{public}lld; falling back",
                         renderResult, static_cast<long long>(frame.ptsUs),
-                        static_cast<long long>(plan.targetTimeNs),
-                        static_cast<long long>(renderTargetNs));
+                        static_cast<long long>(plan.targetTimeNs));
                     renderResult = renderImmediately();
                 }
             }

@@ -123,9 +123,8 @@ struct VideoDecoderConfig {
     bool enableVsync;     // 启用垂直同步（使用 RenderOutputBufferAtTime）
     DecoderMode decoderMode;  // 解码器工作模式 (同步/异步)
     bool enableVrr;       // VRR (Variable Refresh Rate) 可变刷新率模式
-                           // 启用后解码器输出将适配可变刷新率显示
-                           // 注意：VRR 可能会丢帧以匹配屏幕刷新率，主要用于节能
-    int64_t postProcessPresentationAdvanceNs = 0; // 为 GL 处理和最终 swap 预留的提前量
+                          // 启用后解码器输出将适配可变刷新率显示
+                          // 注意：VRR 可能会丢帧以匹配屏幕刷新率，主要用于节能
 };
 
 /**

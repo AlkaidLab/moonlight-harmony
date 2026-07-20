@@ -95,7 +95,6 @@ public:
         OH_AVCodec* codec = nullptr;
         uint32_t bufferIndex = 0;
         int64_t ptsUs = 0;
-        int64_t presentationAdvanceNs = 0;
     };
 
     struct FrameSubmitResult {

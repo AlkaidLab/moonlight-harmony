@@ -1602,7 +1602,6 @@ void VideoDecoder::SubmitDecodedFrame(OH_AVCodec* codec, uint32_t index,
     decodedFrame.codec = codec;
     decodedFrame.bufferIndex = index;
     decodedFrame.ptsUs = attr.pts;
-    decodedFrame.presentationAdvanceNs = config_.postProcessPresentationAdvanceNs;
 
     // SubmitFrame owns the output buffer for every result. Keep presentation
     // accounting and the ownership contract identical for all decoder modes.
@@ -2497,7 +2496,7 @@ int Start() {
     // 后处理管线：如果启用，初始化 GL 管线并使用代理 window
     OHNativeWindow* decoderWindow = g_savedWindow;
     GLPostProcessor* postProc = GLPostProcessor::GetInstance();
-    // 从全局状态恢复所有后处理设置（实例跨会话保留，资源会在 Cleanup 中释放）
+    // 从全局状态恢复所有后处理设置（实例在 Cleanup 中被销毁重建）
     postProc->SetSdrToHdr(g_sdrToHdr, g_sdrToHdrPeakNits, g_sdrToHdrSaturation, g_sdrToHdrContrast);
     postProc->SetDitherEnabled(g_ditherEnabled);
     postProc->SetUpscaleMode(static_cast<UpscaleMode>(g_upscaleMode));
@@ -2526,13 +2525,6 @@ int Start() {
 
         if (postProc->Init(g_savedWindow, config.width, config.height, outW, outH) == 0) {
             decoderWindow = postProc->GetDecoderWindow();
-            if (decoderWindow != g_savedWindow && config.fps > 0.0) {
-                config.postProcessPresentationAdvanceNs = static_cast<int64_t>(
-                    std::llround(1000000000.0 / config.fps));
-                OH_LOG_INFO(LOG_APP,
-                    "Post-processing presentation advance: %{public}lldus",
-                    static_cast<long long>(config.postProcessPresentationAdvanceNs / 1000));
-            }
         } else {
             OH_LOG_WARN(LOG_APP, "Post-processing init failed, using direct rendering");
             postProc->SetDitherEnabled(false);
