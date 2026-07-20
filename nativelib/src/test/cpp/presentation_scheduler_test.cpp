@@ -9,21 +9,22 @@
 namespace {
 constexpr int64_t kMs = 1000000LL;
 
-void TestBurstCollapsesToLatestWithinLatencyBudget() {
+void Test120FpsPairBurstKeepsPtsCadence() {
     PtsPresentationScheduler scheduler;
-    scheduler.Configure(60.0);
+    scheduler.Configure(120.0);
 
     const PresentationPlan first = scheduler.PlanFrame(0, 1000 * kMs);
-    const PresentationPlan second = scheduler.PlanFrame(16667, 1000 * kMs);
-    const PresentationPlan third = scheduler.PlanFrame(33333, 1001 * kMs);
+    const PresentationPlan second = scheduler.PlanFrame(8334, 1000 * kMs);
+    const PresentationPlan third = scheduler.PlanFrame(16667, 1001 * kMs);
 
     assert(first.action == PresentationAction::SCHEDULE);
     assert(second.action == PresentationAction::SCHEDULE);
     assert(third.action == PresentationAction::SCHEDULE);
-    assert(second.event == PresentationEvent::CATCH_UP);
+    assert(second.event == PresentationEvent::NONE);
     assert(third.event == PresentationEvent::CATCH_UP);
     assert(first.targetTimeNs - 1000 * kMs == scheduler.GetInitialLeadNs());
-    assert(second.targetTimeNs - 1000 * kMs == scheduler.GetInitialLeadNs());
+    assert(scheduler.GetInitialLeadNs() == 2 * kMs);
+    assert(second.targetTimeNs - first.targetTimeNs == 8334 * 1000LL);
     assert(third.targetTimeNs - 1001 * kMs == scheduler.GetInitialLeadNs());
 }
 
@@ -151,7 +152,8 @@ void TestFractionalFpsLatencyBudget() {
 
     assert(first.action == PresentationAction::SCHEDULE);
     assert(first.targetTimeNs - decodedAtNs == expectedLeadNs);
-    assert(scheduler.GetMaxFutureLeadNs() == expectedLeadNs + frameIntervalNs / 2);
+    assert(scheduler.GetMaxFutureLeadNs() ==
+        expectedLeadNs + frameIntervalNs + 1000LL);
 }
 
 void TestSlowClockDriftStaysBounded() {
@@ -179,7 +181,7 @@ void TestSlowClockDriftStaysBounded() {
 } // namespace
 
 int main() {
-    TestBurstCollapsesToLatestWithinLatencyBudget();
+    Test120FpsPairBurstKeepsPtsCadence();
     TestSmallLateFrameShiftsWholeTimeline();
     TestSevereLateDropThenRebuffer();
     TestAccumulatedPhaseShiftRecoversQuickly();

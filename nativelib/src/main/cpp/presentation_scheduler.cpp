@@ -16,8 +16,8 @@
 namespace {
 constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
 constexpr int64_t kNanosecondsPerMicrosecond = 1000LL;
-constexpr int64_t kMinSubmitLeadNs = 1000000LL;
-constexpr int64_t kMaxSubmitLeadNs = 2000000LL;
+constexpr int64_t kSubmitLeadNs = 2000000LL;
+constexpr int64_t kPtsQuantizationSlackNs = kNanosecondsPerMicrosecond;
 constexpr int64_t kDriftDeadbandNs = 2000000LL;
 constexpr int64_t kMaxDriftCorrectionPerFrameNs = 20000LL;
 constexpr int kSevereLateFramesBeforeRebuffer = 2;
@@ -28,13 +28,16 @@ void PtsPresentationScheduler::Configure(double fps) {
     frameIntervalNs_ = static_cast<int64_t>(
         std::llround(static_cast<double>(kNanosecondsPerSecond) / safeFps));
     frameIntervalNs_ = std::max<int64_t>(frameIntervalNs_, 1000000LL);
-    submitLeadNs_ = std::clamp(frameIntervalNs_ / 8,
-                               kMinSubmitLeadNs, kMaxSubmitLeadNs);
-    // RenderOutputBufferAtTime only needs a small submission margin. A full
-    // frame of fixed lead makes the next VSync become the following VSync on
-    // part of every refresh cycle, adding latency even in steady state.
+    // RenderService needs an absolute latch margin that does not shrink with
+    // the stream frame interval. Keep steady-state lead small, but large enough
+    // for 120 Hz submission overhead.
+    submitLeadNs_ = kSubmitLeadNs;
     initialLeadNs_ = submitLeadNs_;
-    maxFutureLeadNs_ = initialLeadNs_ + frameIntervalNs_ / 2;
+    // Decoder callbacks commonly arrive in pairs. Preserve one frame of PTS
+    // spacing before treating future lead as backlog. The extra microsecond
+    // covers integer PTS quantization at rates such as 120 and 59.94 FPS.
+    maxFutureLeadNs_ = initialLeadNs_ + frameIntervalNs_ +
+        kPtsQuantizationSlackNs;
     discontinuityNs_ = std::max<int64_t>(250000000LL, frameIntervalNs_ * 12);
     Reset();
 }
