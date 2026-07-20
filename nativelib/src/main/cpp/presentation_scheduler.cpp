@@ -33,10 +33,12 @@ void PtsPresentationScheduler::Configure(double fps) {
     // for 120 Hz submission overhead.
     submitLeadNs_ = kSubmitLeadNs;
     initialLeadNs_ = submitLeadNs_;
-    // Decoder callbacks commonly arrive in pairs. Preserve one frame of PTS
-    // spacing before treating future lead as backlog. The extra microsecond
-    // covers integer PTS quantization at rates such as 120 and 59.94 FPS.
-    maxFutureLeadNs_ = initialLeadNs_ + frameIntervalNs_ +
+    // High-refresh decoder callbacks commonly arrive in pairs, so preserve one
+    // frame of PTS spacing there. At 60 FPS and below, keep the tighter half-
+    // frame bound to avoid turning a burst into 16-33 ms of extra latency.
+    const int64_t futureCadenceBudgetNs = safeFps > 60.0 ?
+        frameIntervalNs_ : frameIntervalNs_ / 2;
+    maxFutureLeadNs_ = initialLeadNs_ + futureCadenceBudgetNs +
         kPtsQuantizationSlackNs;
     discontinuityNs_ = std::max<int64_t>(250000000LL, frameIntervalNs_ * 12);
     Reset();

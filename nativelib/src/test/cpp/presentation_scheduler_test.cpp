@@ -24,8 +24,32 @@ void Test120FpsPairBurstKeepsPtsCadence() {
     assert(third.event == PresentationEvent::CATCH_UP);
     assert(first.targetTimeNs - 1000 * kMs == scheduler.GetInitialLeadNs());
     assert(scheduler.GetInitialLeadNs() == 2 * kMs);
+    assert(scheduler.GetMaxFutureLeadNs() == 10334333LL);
     assert(second.targetTimeNs - first.targetTimeNs == 8334 * 1000LL);
     assert(third.targetTimeNs - 1001 * kMs == scheduler.GetInitialLeadNs());
+}
+
+void AssertLowRefreshBurstCatchesUp(double fps, int64_t framePtsUs) {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(fps);
+
+    const int64_t decodedAtNs = 1000 * kMs;
+    const PresentationPlan first = scheduler.PlanFrame(0, decodedAtNs);
+    const PresentationPlan burst = scheduler.PlanFrame(framePtsUs, decodedAtNs);
+    const int64_t frameIntervalNs = static_cast<int64_t>(
+        std::llround(1000000000.0 / fps));
+
+    assert(first.action == PresentationAction::SCHEDULE);
+    assert(burst.action == PresentationAction::SCHEDULE);
+    assert(burst.event == PresentationEvent::CATCH_UP);
+    assert(burst.targetTimeNs - decodedAtNs == scheduler.GetInitialLeadNs());
+    assert(scheduler.GetMaxFutureLeadNs() ==
+        scheduler.GetInitialLeadNs() + frameIntervalNs / 2 + 1000LL);
+}
+
+void TestLowRefreshBurstKeepsHalfFrameBudget() {
+    AssertLowRefreshBurstCatchesUp(30.0, 33333);
+    AssertLowRefreshBurstCatchesUp(60.0, 16667);
 }
 
 void TestSmallLateFrameShiftsWholeTimeline() {
@@ -153,7 +177,7 @@ void TestFractionalFpsLatencyBudget() {
     assert(first.action == PresentationAction::SCHEDULE);
     assert(first.targetTimeNs - decodedAtNs == expectedLeadNs);
     assert(scheduler.GetMaxFutureLeadNs() ==
-        expectedLeadNs + frameIntervalNs + 1000LL);
+        expectedLeadNs + frameIntervalNs / 2 + 1000LL);
 }
 
 void TestSlowClockDriftStaysBounded() {
@@ -182,6 +206,7 @@ void TestSlowClockDriftStaysBounded() {
 
 int main() {
     Test120FpsPairBurstKeepsPtsCadence();
+    TestLowRefreshBurstKeepsHalfFrameBudget();
     TestSmallLateFrameShiftsWholeTimeline();
     TestSevereLateDropThenRebuffer();
     TestAccumulatedPhaseShiftRecoversQuickly();
