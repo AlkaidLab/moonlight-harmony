@@ -2115,7 +2115,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '主机 PTS 平滑呈现 (实验性)',
-                subtitle: '按主机时间线匀速送显，约增加一帧延迟',
+                subtitle: '按主机时间线送显；积压时跳到最新帧，不固定增加一帧延迟',
                 type: 'toggle',
                 value: this.enableHostPacedPresentation,
                 action: () => {

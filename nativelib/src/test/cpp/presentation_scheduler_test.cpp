@@ -9,7 +9,7 @@
 namespace {
 constexpr int64_t kMs = 1000000LL;
 
-void TestBurstKeepsPtsCadence() {
+void TestBurstCollapsesToLatestWithinLatencyBudget() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
 
@@ -20,8 +20,11 @@ void TestBurstKeepsPtsCadence() {
     assert(first.action == PresentationAction::SCHEDULE);
     assert(second.action == PresentationAction::SCHEDULE);
     assert(third.action == PresentationAction::SCHEDULE);
-    assert(second.targetTimeNs - first.targetTimeNs == 16667000LL);
-    assert(third.targetTimeNs - second.targetTimeNs == 16666000LL);
+    assert(second.event == PresentationEvent::CATCH_UP);
+    assert(third.event == PresentationEvent::CATCH_UP);
+    assert(first.targetTimeNs - 1000 * kMs == scheduler.GetInitialLeadNs());
+    assert(second.targetTimeNs - 1000 * kMs == scheduler.GetInitialLeadNs());
+    assert(third.targetTimeNs - 1001 * kMs == scheduler.GetInitialLeadNs());
 }
 
 void TestSmallLateFrameShiftsWholeTimeline() {
@@ -29,14 +32,14 @@ void TestSmallLateFrameShiftsWholeTimeline() {
     scheduler.Configure(60.0);
 
     const PresentationPlan first = scheduler.PlanFrame(0, 1000 * kMs);
-    const PresentationPlan shifted = scheduler.PlanFrame(16667, 1034 * kMs);
-    const PresentationPlan next = scheduler.PlanFrame(33333, 1035 * kMs);
+    const PresentationPlan shifted = scheduler.PlanFrame(16667, 1018 * kMs);
+    const PresentationPlan next = scheduler.PlanFrame(33333, 1034 * kMs);
 
     assert(shifted.action == PresentationAction::SCHEDULE);
     assert(shifted.event == PresentationEvent::PHASE_SHIFT);
     assert(next.action == PresentationAction::SCHEDULE);
     assert(next.targetTimeNs - shifted.targetTimeNs == 16666000LL);
-    assert(shifted.targetTimeNs >= 1035 * kMs);
+    assert(shifted.targetTimeNs >= 1020 * kMs);
     assert(first.targetTimeNs < shifted.targetTimeNs);
 }
 
@@ -67,7 +70,7 @@ void TestAccumulatedPhaseShiftRecoversQuickly() {
     for (int i = 1; i <= 12; ++i) {
         const int64_t ptsUs = i * kFrameUs;
         const int64_t nominalDecodeNs = kStartNs + ptsUs * 1000;
-        const int64_t rampDelayNs = (20 + (i - 1) * 6) * kMs;
+        const int64_t rampDelayNs = (3 + (i - 1) * 6) * kMs;
         const PresentationPlan delayed = scheduler.PlanFrame(
             ptsUs, nominalDecodeNs + rampDelayNs);
         assert(delayed.action == PresentationAction::SCHEDULE);
@@ -96,6 +99,20 @@ void TestAccumulatedPhaseShiftRecoversQuickly() {
                       kFrameUs * 1000) < kMs);
 }
 
+void TestBurstCatchesUpAfterPartialPhaseDebtRepayment() {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(60.0);
+
+    scheduler.PlanFrame(0, 1000 * kMs);
+    const PresentationPlan shifted = scheduler.PlanFrame(16667, 1022 * kMs);
+    const PresentationPlan burst = scheduler.PlanFrame(50000, 1023 * kMs);
+
+    assert(shifted.event == PresentationEvent::PHASE_SHIFT);
+    assert(burst.action == PresentationAction::SCHEDULE);
+    assert(burst.event == PresentationEvent::CATCH_UP);
+    assert(burst.targetTimeNs - 1023 * kMs == scheduler.GetInitialLeadNs());
+}
+
 void TestDuplicatePtsReanchorsInsteadOfFreezing() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
@@ -122,17 +139,19 @@ void TestDiscontinuityReanchors() {
     assert(discontinuity.event == PresentationEvent::DISCONTINUITY);
 }
 
-void TestFractionalFpsLead() {
+void TestFractionalFpsLatencyBudget() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(59.94);
 
     const int64_t decodedAtNs = 2000 * kMs;
     const PresentationPlan first = scheduler.PlanFrame(0, decodedAtNs);
-    const int64_t expectedLeadNs = static_cast<int64_t>(
-        std::llround(1000000000.0 / 59.94)) + 2 * kMs;
+    const int64_t frameIntervalNs = static_cast<int64_t>(
+        std::llround(1000000000.0 / 59.94));
+    const int64_t expectedLeadNs = 2 * kMs;
 
     assert(first.action == PresentationAction::SCHEDULE);
     assert(first.targetTimeNs - decodedAtNs == expectedLeadNs);
+    assert(scheduler.GetMaxFutureLeadNs() == expectedLeadNs + frameIntervalNs / 2);
 }
 
 void TestSlowClockDriftStaysBounded() {
@@ -160,13 +179,14 @@ void TestSlowClockDriftStaysBounded() {
 } // namespace
 
 int main() {
-    TestBurstKeepsPtsCadence();
+    TestBurstCollapsesToLatestWithinLatencyBudget();
     TestSmallLateFrameShiftsWholeTimeline();
     TestSevereLateDropThenRebuffer();
     TestAccumulatedPhaseShiftRecoversQuickly();
+    TestBurstCatchesUpAfterPartialPhaseDebtRepayment();
     TestDuplicatePtsReanchorsInsteadOfFreezing();
     TestDiscontinuityReanchors();
-    TestFractionalFpsLead();
+    TestFractionalFpsLatencyBudget();
     TestSlowClockDriftStaysBounded();
     std::cout << "presentation scheduler tests passed\n";
     return 0;

@@ -23,6 +23,7 @@
  */
 
 #include "native_render.h"
+#include <algorithm>
 #include <cstring>
 #include <dlfcn.h>
 #include <time.h>
@@ -371,10 +372,12 @@ void NativeRender::ResetPresentationStatsLocked() {
     preciseScheduledCount_ = 0;
     preciseDroppedCount_ = 0;
     preciseLateCount_ = 0;
+    preciseCatchUpCount_ = 0;
     precisePhaseShiftCount_ = 0;
     preciseRebufferCount_ = 0;
     preciseResyncCount_ = 0;
     preciseApiFailureCount_ = 0;
+    preciseMaxTargetLeadNs_ = 0;
 }
 
 void NativeRender::ResetPresentationClock() {
@@ -494,34 +497,47 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                     preciseDroppedCount_++;
                 }
                 if (plan.latenessNs > 0) preciseLateCount_++;
+                if (plan.event == PresentationEvent::CATCH_UP) {
+                    preciseCatchUpCount_++;
+                }
                 if (plan.event == PresentationEvent::PHASE_SHIFT) precisePhaseShiftCount_++;
                 if (plan.event == PresentationEvent::REBUFFER) preciseRebufferCount_++;
                 if (plan.event == PresentationEvent::DISCONTINUITY ||
                     plan.event == PresentationEvent::DUPLICATE_PTS) {
                     preciseResyncCount_++;
                 }
+                if (plan.action == PresentationAction::SCHEDULE) {
+                    preciseMaxTargetLeadNs_ = std::max(
+                        preciseMaxTargetLeadNs_, plan.targetTimeNs - decodedAtNs);
+                }
 
                 const int64_t totalFrames = preciseScheduledCount_ + preciseDroppedCount_;
                 if (totalFrames % 6000 == 0) {
                     OH_LOG_INFO(LOG_APP,
-                        "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus",
+                        "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, catchUp=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus, maxLead=%{public}lldus",
                         static_cast<long long>(totalFrames),
                         static_cast<long long>(preciseScheduledCount_),
                         static_cast<long long>(preciseDroppedCount_),
                         static_cast<long long>(preciseLateCount_),
+                        static_cast<long long>(preciseCatchUpCount_),
                         static_cast<long long>(precisePhaseShiftCount_),
                         static_cast<long long>(preciseRebufferCount_),
                         static_cast<long long>(preciseResyncCount_),
                         static_cast<long long>(preciseApiFailureCount_),
-                        static_cast<long long>(ptsScheduler_.GetInitialLeadNs() / 1000));
+                        static_cast<long long>(ptsScheduler_.GetInitialLeadNs() / 1000),
+                        static_cast<long long>(preciseMaxTargetLeadNs_ / 1000));
                 }
             }
 
             if (plan.action == PresentationAction::DROP) {
                 renderResult = freeFrame();
             } else {
+                const int64_t renderTargetNs = std::max(
+                    decodedAtNs,
+                    plan.targetTimeNs -
+                        std::max<int64_t>(0, frame.presentationAdvanceNs));
                 renderResult = renderAtTime(
-                    frame.codec, frame.bufferIndex, plan.targetTimeNs);
+                    frame.codec, frame.bufferIndex, renderTargetNs);
                 if (renderResult == AV_ERR_OK) {
                     bufferConsumed = true;
                     framePresented = true;
@@ -531,9 +547,10 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                         preciseApiFailureCount_++;
                     }
                     OH_LOG_WARN(LOG_APP,
-                        "Host-paced render failed: %{public}d, pts=%{public}lld, targetNs=%{public}lld; falling back",
+                        "Host-paced render failed: %{public}d, pts=%{public}lld, targetNs=%{public}lld, renderTargetNs=%{public}lld; falling back",
                         renderResult, static_cast<long long>(frame.ptsUs),
-                        static_cast<long long>(plan.targetTimeNs));
+                        static_cast<long long>(plan.targetTimeNs),
+                        static_cast<long long>(renderTargetNs));
                     renderResult = renderImmediately();
                 }
             }
