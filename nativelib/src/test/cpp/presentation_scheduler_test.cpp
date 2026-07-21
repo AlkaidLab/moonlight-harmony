@@ -150,15 +150,19 @@ void TestSmallLateFrameShiftsWholeTimeline() {
     assert(next.targetTimeNs - shifted.targetTimeNs == timing.periodNs);
 }
 
-void TestSevereLateFrameRebuffersAfterDrain() {
+void TestSevereLateFrameDropsBeforeRebuffer() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
     const PresentationVsyncTiming timing = Timing(60.0);
 
     scheduler.PlanFrame(0, kStartNs + kMs, timing);
-    const PresentationPlan rebuffered = scheduler.PlanFrame(
+    const PresentationPlan dropped = scheduler.PlanFrame(
         16667, kStartNs + 100 * kMs, timing);
+    const PresentationPlan rebuffered = scheduler.PlanFrame(
+        33333, kStartNs + 101 * kMs, timing);
 
+    assert(dropped.action == PresentationAction::DROP);
+    assert(dropped.event == PresentationEvent::LATE_DROP);
     assert(rebuffered.action == PresentationAction::SCHEDULE);
     assert(rebuffered.event == PresentationEvent::REBUFFER);
     assert(rebuffered.targetTimeNs > kStartNs + 100 * kMs);
@@ -264,7 +268,7 @@ int main() {
     Test90FpsPairBurstUsesTwoSlots();
     Test60FpsDoesNotGrowPresentationQueue();
     TestSmallLateFrameShiftsWholeTimeline();
-    TestSevereLateFrameRebuffersAfterDrain();
+    TestSevereLateFrameDropsBeforeRebuffer();
     TestDiscontinuityWaitsForQueuedSlot();
     TestDuplicatePtsRecoversAfterQueuedSlot();
     TestNtscCadenceSkipsARealSlotWithoutRegression();

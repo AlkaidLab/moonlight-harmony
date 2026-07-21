@@ -27,6 +27,7 @@ enum class PresentationEvent {
     REBUFFER,
     DUPLICATE_PTS,
     INVALID_PTS,
+    LATE_DROP,
     QUEUE_FULL,
     WAIT_FOR_DRAIN,
 };
@@ -89,6 +90,7 @@ private:
     int64_t driftErrorEmaNs_ = 0;
     int64_t phaseShiftDebtNs_ = 0;
     int64_t lastScheduledTargetNs_ = 0;
+    int consecutiveSevereLateFrames_ = 0;
     bool reanchorPending_ = false;
     PresentationEvent pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
 };

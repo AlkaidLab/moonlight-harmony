@@ -24,6 +24,7 @@ constexpr double kHighRefreshFps = kDefaultFps;
 constexpr double kNtscTripleBurstFps = 119.88;
 constexpr int64_t kDriftDeadbandNs = 2 * kNanosecondsPerMillisecond;
 constexpr int64_t kMaxDriftCorrectionPerFrameNs = 20 * kNanosecondsPerMicrosecond;
+constexpr int kSevereLateFramesBeforeRebuffer = 2;
 
 int64_t FloorDiv(int64_t value, int64_t divisor) {
     int64_t quotient = value / divisor;
@@ -86,6 +87,7 @@ void PtsPresentationScheduler::Reset() {
     driftErrorEmaNs_ = 0;
     phaseShiftDebtNs_ = 0;
     lastScheduledTargetNs_ = 0;
+    consecutiveSevereLateFrames_ = 0;
     reanchorPending_ = false;
     pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
 }
@@ -99,6 +101,7 @@ PresentationPlan PtsPresentationScheduler::AnchorFrame(
     lastPtsUs_ = ptsUs;
     driftErrorEmaNs_ = 0;
     phaseShiftDebtNs_ = 0;
+    consecutiveSevereLateFrames_ = 0;
     reanchorPending_ = false;
     pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
 
@@ -303,16 +306,26 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
             anchorTargetNs_ += latenessNs;
             phaseShiftDebtNs_ += latenessNs;
             driftErrorEmaNs_ = 0;
+            consecutiveSevereLateFrames_ = 0;
             event = PresentationEvent::PHASE_SHIFT;
             targetTimeNs = requiredTargetNs;
             return ScheduleTarget(
                 targetTimeNs, decodedAtNs, event, latenessNs, slotClock);
         }
 
-        return AnchorFrame(
-            ptsUs, decodedAtNs, PresentationEvent::REBUFFER, slotClock);
+        consecutiveSevereLateFrames_++;
+        if (consecutiveSevereLateFrames_ >= kSevereLateFramesBeforeRebuffer) {
+            return AnchorFrame(
+                ptsUs, decodedAtNs, PresentationEvent::REBUFFER, slotClock);
+        }
+
+        PresentationPlan plan;
+        plan.event = PresentationEvent::LATE_DROP;
+        plan.latenessNs = latenessNs;
+        return plan;
     }
 
+    consecutiveSevereLateFrames_ = 0;
     return ScheduleTarget(
         targetTimeNs, decodedAtNs, event, latenessNs, slotClock);
 }
