@@ -61,11 +61,9 @@ double RollingFrameRateTracker::GetRate(int64_t nowMs) const {
 
     const int64_t cutoffMs = nowMs - windowMs_;
     size_t baselineOffset = 0;
-    for (size_t i = 1; i < size_; ++i) {
-        if (SampleAt(i).timestampMs > cutoffMs) {
-            break;
-        }
-        baselineOffset = i;
+    while (baselineOffset + 1 < size_ &&
+           SampleAt(baselineOffset).timestampMs < cutoffMs) {
+        baselineOffset++;
     }
 
     const Sample& baseline = SampleAt(baselineOffset);

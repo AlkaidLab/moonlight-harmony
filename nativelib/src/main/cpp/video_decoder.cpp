@@ -1608,9 +1608,9 @@ void VideoDecoder::UpdateDecodedStats(int64_t enqueueTimeMs, uint32_t flags,
     const uint64_t outputFrames =
         codecOutputFrames_.fetch_add(1, std::memory_order_relaxed) + 1;
     if (presented) {
+        std::lock_guard<std::mutex> lock(renderedRateMutex_);
         const uint64_t decodedFrames =
             decodedFrames_.fetch_add(1, std::memory_order_relaxed) + 1;
-        std::lock_guard<std::mutex> lock(renderedRateMutex_);
         renderedFrameRate_.Record(currentTimeMs, decodedFrames);
     }
     

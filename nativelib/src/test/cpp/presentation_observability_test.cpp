@@ -49,6 +49,17 @@ void TestRollingRateResetsWithCounter() {
     AssertNear(tracker.GetRate(4000), 120.0, 0.1);
 }
 
+void TestRollingRateExcludesOldCadence() {
+    RollingFrameRateTracker tracker;
+    tracker.Record(500, 500);
+    tracker.Record(1100, 510);
+    tracker.Record(2000, 600);
+    tracker.Record(3000, 700);
+    tracker.Record(4000, 800);
+
+    AssertNear(tracker.GetRate(4000), 100.0, 0.1);
+}
+
 void TestPresentationDiagnosticsTrackSlotConflicts() {
     PresentationDiagnostics diagnostics;
     constexpr int64_t kPeriodNs = 8333333;
@@ -76,6 +87,7 @@ int main() {
     TestRollingRateTracksSteadyCadence();
     TestRollingRateAbsorbsGroupedCallbacks();
     TestRollingRateResetsWithCounter();
+    TestRollingRateExcludesOldCadence();
     TestPresentationDiagnosticsTrackSlotConflicts();
     std::cout << "presentation observability tests passed\n";
     return 0;
