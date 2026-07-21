@@ -36,6 +36,8 @@
 #include <native_window/external_window.h>
 #include <native_buffer/native_buffer.h>
 
+#include "rolling_frame_rate.h"
+
 class NativeRender;
 #include <hilog/log.h>
 
@@ -147,14 +149,9 @@ struct VideoDecoderStats {
     int lastFrameNumber;         // 上一帧的帧号（用于丢包检测）
     double averageDecodeTimeMs;
     double maxDecodeTimeMs;
-    // 用于接收 FPS 计算
-    uint64_t lastFrameCount;
-    int64_t lastFpsCalculationTime;  // 毫秒
-    double currentFps;           // 接收帧率 (Rx)
-    // 用于渲染 FPS 计算
-    uint64_t lastDecodedFrameCount;
-    int64_t lastRenderedFpsCalculationTime;
-    double renderedFps;          // 渲染帧率 (Rd)
+    int64_t lastStatsCalculationTime; // 周期统计更新时间（毫秒）
+    double currentFps;           // 最近 3 秒接收帧率 (Rx)
+    double renderedFps;          // 最近 3 秒成功提交帧率 (Rd)
     // 会话平均帧率（用于串流结束后的 toast）
     int64_t sessionStartTime;           // 会话开始时间（毫秒）
     double globalAvgFps;                // 全局平均渲染帧率
@@ -393,6 +390,9 @@ private:
     uint64_t recentHostLatencyWindowFrames_{0};
     double recentHostLatencyWindowTotalMs_{0.0};
     int64_t recentHostLatencyWindowStartTimeMs_{0};
+    RollingFrameRateTracker receivedFrameRate_;
+    mutable std::mutex renderedRateMutex_;
+    RollingFrameRateTracker renderedFrameRate_;
 
     // Output/drop counters are updated atomically so decoder callbacks never
     // wait on the receive-statistics snapshot mutex.

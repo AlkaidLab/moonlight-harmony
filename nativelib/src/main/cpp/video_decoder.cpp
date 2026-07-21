@@ -1339,6 +1339,7 @@ void VideoDecoder::UpdateReceivedStats(int size, int frameNumber, uint16_t hostP
         }
     }
     stats_.lastFrameNumber = frameNumber;
+    receivedFrameRate_.Record(currentTimeMs, stats_.totalFrames);
     
     // Keep the live overlay responsive to recovery instead of letting old
     // high-latency frames affect the value for the rest of the session.
@@ -1361,48 +1362,22 @@ void VideoDecoder::UpdateReceivedStats(int size, int frameNumber, uint16_t hostP
             static_cast<double>(recentHostLatencyWindowFrames_);
     }
     
-    if (stats_.lastFpsCalculationTime == 0) {
-        // 初始化统计基线 - 注意：这是在增加 totalFrames 之后
-        // 两个 lastCount 都设为当前值，这样后续计算的 delta 是正确的增量
-        stats_.lastFpsCalculationTime = currentTimeMs;
-        stats_.lastFrameCount = stats_.totalFrames;  // 基线 = 当前总帧数 (已包含第一帧)
-        stats_.lastDecodedFrameCount = decodedFrames_.load(std::memory_order_relaxed);
-        stats_.lastRenderedFpsCalculationTime = currentTimeMs;
+    if (stats_.lastStatsCalculationTime == 0) {
+        stats_.lastStatsCalculationTime = currentTimeMs;
         stats_.lastBytesCount = stats_.totalBytesReceived;
         stats_.lastBitrateCalculationTime = currentTimeMs;
         stats_.sessionStartTime = currentTimeMs;  // 记录会话开始时间
-    } else if (currentTimeMs - stats_.lastFpsCalculationTime >= kStatsUpdateIntervalMs) {
-        int64_t elapsedMs = currentTimeMs - stats_.lastFpsCalculationTime;
-        
-        // 计算接收帧率 (RX)
-        // framesDelta = 当前总帧数 - 上个窗口结束时的帧数
-        uint64_t framesDelta = stats_.totalFrames - stats_.lastFrameCount;
-        stats_.currentFps = static_cast<double>(framesDelta) * 1000.0 / static_cast<double>(elapsedMs);
-        stats_.lastFrameCount = stats_.totalFrames;
-        
-        // 计算渲染帧率 (RD) - 使用相同的时间窗口
-        // decodedDelta = 当前解码帧数 - 上个窗口结束时的解码帧数
-        const uint64_t decodedFrames = decodedFrames_.load(std::memory_order_relaxed);
-        uint64_t decodedDelta = decodedFrames - stats_.lastDecodedFrameCount;
-        stats_.renderedFps = static_cast<double>(decodedDelta) * 1000.0 / static_cast<double>(elapsedMs);
-        stats_.lastDecodedFrameCount = decodedFrames;
-        
-        // 更新公共时间基线
-        stats_.lastFpsCalculationTime = currentTimeMs;
-        stats_.lastRenderedFpsCalculationTime = currentTimeMs;
-        
-        // 计算全局平均渲染帧率（会话级别）
-        if (stats_.sessionStartTime > 0) {
-            int64_t sessionMs = currentTimeMs - stats_.sessionStartTime;
-            if (sessionMs > 0) {
-                stats_.globalAvgFps = static_cast<double>(decodedFrames) * 1000.0 /
-                    static_cast<double>(sessionMs);
-            }
-        }
-        
+    } else if (currentTimeMs - stats_.lastStatsCalculationTime >=
+               kStatsUpdateIntervalMs) {
+        const int64_t elapsedMs =
+            currentTimeMs - stats_.lastStatsCalculationTime;
+        stats_.lastStatsCalculationTime = currentTimeMs;
+
         // 计算比特率
-        uint64_t bytesDelta = stats_.totalBytesReceived - stats_.lastBytesCount;
-        stats_.currentBitrate = static_cast<double>(bytesDelta) * 8.0 * 1000.0 / static_cast<double>(elapsedMs);
+        const uint64_t bytesDelta =
+            stats_.totalBytesReceived - stats_.lastBytesCount;
+        stats_.currentBitrate = static_cast<double>(bytesDelta) * 8.0 *
+            1000.0 / static_cast<double>(elapsedMs);
         stats_.lastBytesCount = stats_.totalBytesReceived;
         stats_.lastBitrateCalculationTime = currentTimeMs;
         
@@ -1414,10 +1389,16 @@ void VideoDecoder::UpdateReceivedStats(int size, int frameNumber, uint16_t hostP
 }
 
 VideoDecoderStats VideoDecoder::GetStats() const {
+    const int64_t currentTimeMs = GetSteadyTimeMs();
     VideoDecoderStats snapshot;
     {
         std::lock_guard<std::mutex> lock(statsMutex_);
         snapshot = stats_;
+        snapshot.currentFps = receivedFrameRate_.GetRate(currentTimeMs);
+    }
+    {
+        std::lock_guard<std::mutex> lock(renderedRateMutex_);
+        snapshot.renderedFps = renderedFrameRate_.GetRate(currentTimeMs);
     }
 
     snapshot.decodedFrames = decodedFrames_.load(std::memory_order_relaxed);
@@ -1429,6 +1410,12 @@ VideoDecoderStats VideoDecoder::GetStats() const {
     snapshot.droppedByL5 = droppedByL5_.load(std::memory_order_relaxed);
     snapshot.droppedByQueueOverflow = droppedByQueueOverflow_.load(std::memory_order_relaxed);
     snapshot.droppedByTimeout = droppedByTimeout_.load(std::memory_order_relaxed);
+    if (snapshot.sessionStartTime > 0 &&
+        currentTimeMs > snapshot.sessionStartTime) {
+        snapshot.globalAvgFps =
+            static_cast<double>(snapshot.decodedFrames) * 1000.0 /
+            static_cast<double>(currentTimeMs - snapshot.sessionStartTime);
+    }
     {
         std::lock_guard<std::mutex> lock(decodeStatsMutex_);
         snapshot.totalDecodeTimeMs = static_cast<double>(decodeTotalTimeMs_);
@@ -1621,7 +1608,10 @@ void VideoDecoder::UpdateDecodedStats(int64_t enqueueTimeMs, uint32_t flags,
     const uint64_t outputFrames =
         codecOutputFrames_.fetch_add(1, std::memory_order_relaxed) + 1;
     if (presented) {
-        decodedFrames_.fetch_add(1, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(renderedRateMutex_);
+        const uint64_t decodedFrames =
+            decodedFrames_.fetch_add(1, std::memory_order_relaxed) + 1;
+        renderedFrameRate_.Record(currentTimeMs, decodedFrames);
     }
     
     if (enqueueTimeMs > 0) {

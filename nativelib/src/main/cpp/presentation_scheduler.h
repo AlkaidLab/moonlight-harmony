@@ -28,6 +28,13 @@ enum class PresentationEvent {
     DUPLICATE_PTS,
     INVALID_PTS,
     LATE_DROP,
+    QUEUE_FULL,
+    WAIT_FOR_DRAIN,
+};
+
+struct PresentationVsyncTiming {
+    int64_t timestampNs = 0;
+    int64_t periodNs = 0;
 };
 
 struct PresentationPlan {
@@ -37,22 +44,38 @@ struct PresentationPlan {
     int64_t latenessNs = 0;
 };
 
-// Maps host PTS to a continuous local presentation timeline. Decoder output
-// arrival is used only for initial buffering and slow clock-drift correction;
-// it never replaces the PTS cadence on a normal frame.
+// Maps host PTS to a continuous local timeline, then assigns each submitted
+// frame a unique VSync slot. Decoder arrival never replaces normal PTS cadence.
 class PtsPresentationScheduler {
 public:
     void Configure(double fps);
     void Reset();
     PresentationPlan PlanFrame(int64_t ptsUs, int64_t decodedAtNs);
+    PresentationPlan PlanFrame(int64_t ptsUs, int64_t decodedAtNs,
+                               const PresentationVsyncTiming& vsyncTiming);
 
     int64_t GetInitialLeadNs() const { return initialLeadNs_; }
     int64_t GetMaxFutureLeadNs() const { return maxFutureLeadNs_; }
 
 private:
+    struct SlotClock {
+        int64_t anchorNs = 0;
+        int64_t periodNs = 0;
+        int64_t currentSlotNs = 0;
+    };
+
     PresentationPlan AnchorFrame(int64_t ptsUs, int64_t decodedAtNs,
-                                 PresentationEvent event);
+                                 PresentationEvent event,
+                                 const SlotClock& slotClock);
+    PresentationPlan ScheduleTarget(int64_t targetTimeNs, int64_t decodedAtNs,
+                                    PresentationEvent event, int64_t latenessNs,
+                                    const SlotClock& slotClock);
     void ApplySlowDriftCorrection(int64_t decodedAtNs, int64_t& targetTimeNs);
+    SlotClock ResolveSlotClock(
+        int64_t decodedAtNs,
+        const PresentationVsyncTiming& vsyncTiming) const;
+    bool IsPresentationQueueEmpty(const SlotClock& slotClock) const;
+    int64_t GetAdditionalQueueSlots(int64_t vsyncPeriodNs) const;
 
     int64_t frameIntervalNs_ = 16666667LL;
     int64_t initialLeadNs_ = 2000000LL;
@@ -66,7 +89,10 @@ private:
     int64_t lastPtsUs_ = 0;
     int64_t driftErrorEmaNs_ = 0;
     int64_t phaseShiftDebtNs_ = 0;
+    int64_t lastScheduledTargetNs_ = 0;
     int consecutiveSevereLateFrames_ = 0;
+    bool reanchorPending_ = false;
+    PresentationEvent pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
 };
 
 #endif // PRESENTATION_SCHEDULER_H
