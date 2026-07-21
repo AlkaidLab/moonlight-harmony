@@ -67,10 +67,11 @@ void PtsPresentationScheduler::Configure(double fps) {
         std::llround(static_cast<double>(kNanosecondsPerSecond) / safeFps));
     frameIntervalNs_ = std::max<int64_t>(frameIntervalNs_, 1000000LL);
     // RenderService needs an absolute latch margin that does not shrink with
-    // the stream frame interval. Keep steady-state lead small, but large enough
-    // for 120 Hz submission overhead.
+    // the stream frame interval. Host-paced presentation also keeps one full
+    // stream frame decoded ahead so normal decoder jitter does not immediately
+    // miss a VSync slot.
     submitLeadNs_ = kSubmitLeadNs;
-    initialLeadNs_ = submitLeadNs_;
+    initialLeadNs_ = submitLeadNs_ + frameIntervalNs_;
     maxFutureLeadNs_ = initialLeadNs_ +
         CalculateFutureCadenceBudgetNs(safeFps, frameIntervalNs_) +
         kPtsQuantizationSlackNs;
@@ -127,8 +128,8 @@ PresentationPlan PtsPresentationScheduler::ScheduleTarget(
         }
     }
 
-    // Start the existing cadence budget at the first slot that still has the
-    // submit margin. Being close to a VSync must not reduce burst capacity.
+    // Start the queue budget at the first slot that still has the submit
+    // margin. Being close to a VSync must not reduce burst capacity.
     const int64_t firstEligibleSlotNs = CeilToSlot(
         requiredTargetNs, slotClock.anchorNs, slotClock.periodNs);
     const int64_t maxScheduledSlotNs = firstEligibleSlotNs +
@@ -179,9 +180,12 @@ bool PtsPresentationScheduler::IsPresentationQueueEmpty(
 
 int64_t PtsPresentationScheduler::GetAdditionalQueueSlots(
         int64_t vsyncPeriodNs) const {
-    const int64_t cadenceBudgetNs = std::max<int64_t>(
-        0, maxFutureLeadNs_ - initialLeadNs_);
-    return cadenceBudgetNs / vsyncPeriodNs;
+    // Count from the first slot that satisfies the RenderService submit margin.
+    // This includes the one-frame playout reserve plus the existing burst
+    // budget, so adding the reserve does not reduce burst capacity.
+    const int64_t queueLeadNs = std::max<int64_t>(
+        0, maxFutureLeadNs_ - submitLeadNs_);
+    return queueLeadNs / vsyncPeriodNs;
 }
 
 void PtsPresentationScheduler::ApplySlowDriftCorrection(
