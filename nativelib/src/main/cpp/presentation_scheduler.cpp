@@ -24,7 +24,30 @@ constexpr double kHighRefreshFps = kDefaultFps;
 constexpr double kNtscTripleBurstFps = 119.88;
 constexpr int64_t kDriftDeadbandNs = 2 * kNanosecondsPerMillisecond;
 constexpr int64_t kMaxDriftCorrectionPerFrameNs = 20 * kNanosecondsPerMicrosecond;
-constexpr int kSevereLateFramesBeforeRebuffer = 2;
+
+int64_t FloorDiv(int64_t value, int64_t divisor) {
+    int64_t quotient = value / divisor;
+    if (value % divisor < 0) {
+        quotient--;
+    }
+    return quotient;
+}
+
+int64_t CeilDiv(int64_t value, int64_t divisor) {
+    int64_t quotient = value / divisor;
+    if (value % divisor > 0) {
+        quotient++;
+    }
+    return quotient;
+}
+
+int64_t FloorToSlot(int64_t timeNs, int64_t anchorNs, int64_t periodNs) {
+    return anchorNs + FloorDiv(timeNs - anchorNs, periodNs) * periodNs;
+}
+
+int64_t CeilToSlot(int64_t timeNs, int64_t anchorNs, int64_t periodNs) {
+    return anchorNs + CeilDiv(timeNs - anchorNs, periodNs) * periodNs;
+}
 
 int64_t CalculateFutureCadenceBudgetNs(double fps, int64_t frameIntervalNs) {
     if (fps >= kNtscTripleBurstFps) {
@@ -62,24 +85,100 @@ void PtsPresentationScheduler::Reset() {
     lastPtsUs_ = 0;
     driftErrorEmaNs_ = 0;
     phaseShiftDebtNs_ = 0;
-    consecutiveSevereLateFrames_ = 0;
+    lastScheduledTargetNs_ = 0;
+    reanchorPending_ = false;
+    pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
 }
 
 PresentationPlan PtsPresentationScheduler::AnchorFrame(
-        int64_t ptsUs, int64_t decodedAtNs, PresentationEvent event) {
+        int64_t ptsUs, int64_t decodedAtNs, PresentationEvent event,
+        const SlotClock& slotClock) {
     initialized_ = true;
     anchorPtsUs_ = ptsUs;
     anchorTargetNs_ = decodedAtNs + initialLeadNs_;
     lastPtsUs_ = ptsUs;
     driftErrorEmaNs_ = 0;
     phaseShiftDebtNs_ = 0;
-    consecutiveSevereLateFrames_ = 0;
+    reanchorPending_ = false;
+    pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
+
+    return ScheduleTarget(anchorTargetNs_, decodedAtNs, event, 0, slotClock);
+}
+
+PresentationPlan PtsPresentationScheduler::ScheduleTarget(
+        int64_t targetTimeNs, int64_t decodedAtNs,
+        PresentationEvent event, int64_t latenessNs,
+        const SlotClock& slotClock) {
+    const int64_t requiredTargetNs = decodedAtNs + submitLeadNs_;
+    int64_t scheduledSlotNs = CeilToSlot(
+        std::max(targetTimeNs, requiredTargetNs),
+        slotClock.anchorNs, slotClock.periodNs);
+
+    if (lastScheduledTargetNs_ > 0) {
+        // Re-map the previous target when a real VSync sample first arrives or
+        // its phase changes, so two submissions still cannot share a latch.
+        const int64_t lastOccupiedSlotNs = CeilToSlot(
+            lastScheduledTargetNs_, slotClock.anchorNs, slotClock.periodNs);
+        if (scheduledSlotNs <= lastOccupiedSlotNs) {
+            scheduledSlotNs = lastOccupiedSlotNs + slotClock.periodNs;
+        }
+    }
+
+    // Start the existing cadence budget at the first slot that still has the
+    // submit margin. Being close to a VSync must not reduce burst capacity.
+    const int64_t firstEligibleSlotNs = CeilToSlot(
+        requiredTargetNs, slotClock.anchorNs, slotClock.periodNs);
+    const int64_t maxScheduledSlotNs = firstEligibleSlotNs +
+        GetAdditionalQueueSlots(slotClock.periodNs) * slotClock.periodNs;
+    if (scheduledSlotNs > maxScheduledSlotNs) {
+        reanchorPending_ = true;
+        pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
+        PresentationPlan plan;
+        plan.event = PresentationEvent::QUEUE_FULL;
+        plan.latenessNs = latenessNs;
+        return plan;
+    }
+
+    lastScheduledTargetNs_ = scheduledSlotNs;
 
     PresentationPlan plan;
     plan.action = PresentationAction::SCHEDULE;
     plan.event = event;
-    plan.targetTimeNs = anchorTargetNs_;
+    plan.targetTimeNs = scheduledSlotNs;
+    plan.latenessNs = latenessNs;
     return plan;
+}
+
+PtsPresentationScheduler::SlotClock PtsPresentationScheduler::ResolveSlotClock(
+        int64_t decodedAtNs,
+        const PresentationVsyncTiming& vsyncTiming) const {
+    SlotClock clock;
+    clock.periodNs = vsyncTiming.periodNs > 0
+        ? vsyncTiming.periodNs
+        : frameIntervalNs_;
+    clock.anchorNs = vsyncTiming.timestampNs > 0
+        ? vsyncTiming.timestampNs
+        : 0;
+    clock.currentSlotNs = FloorToSlot(
+        decodedAtNs, clock.anchorNs, clock.periodNs);
+    return clock;
+}
+
+bool PtsPresentationScheduler::IsPresentationQueueEmpty(
+        const SlotClock& slotClock) const {
+    if (lastScheduledTargetNs_ <= 0) {
+        return true;
+    }
+    const int64_t lastOccupiedSlotNs = CeilToSlot(
+        lastScheduledTargetNs_, slotClock.anchorNs, slotClock.periodNs);
+    return lastOccupiedSlotNs <= slotClock.currentSlotNs;
+}
+
+int64_t PtsPresentationScheduler::GetAdditionalQueueSlots(
+        int64_t vsyncPeriodNs) const {
+    const int64_t cadenceBudgetNs = std::max<int64_t>(
+        0, maxFutureLeadNs_ - initialLeadNs_);
+    return cadenceBudgetNs / vsyncPeriodNs;
 }
 
 void PtsPresentationScheduler::ApplySlowDriftCorrection(
@@ -105,26 +204,62 @@ void PtsPresentationScheduler::ApplySlowDriftCorrection(
 
 PresentationPlan PtsPresentationScheduler::PlanFrame(
         int64_t ptsUs, int64_t decodedAtNs) {
+    return PlanFrame(ptsUs, decodedAtNs, {});
+}
+
+PresentationPlan PtsPresentationScheduler::PlanFrame(
+        int64_t ptsUs, int64_t decodedAtNs,
+        const PresentationVsyncTiming& vsyncTiming) {
     if (ptsUs < 0 || decodedAtNs <= 0) {
         PresentationPlan plan;
         plan.event = PresentationEvent::INVALID_PTS;
         return plan;
     }
 
+    const SlotClock slotClock = ResolveSlotClock(decodedAtNs, vsyncTiming);
+    const bool queueEmpty = IsPresentationQueueEmpty(slotClock);
+
+    if (reanchorPending_) {
+        if (queueEmpty) {
+            return AnchorFrame(
+                ptsUs, decodedAtNs, pendingReanchorEvent_, slotClock);
+        }
+        PresentationPlan plan;
+        plan.event = PresentationEvent::WAIT_FOR_DRAIN;
+        return plan;
+    }
+
     if (!initialized_) {
-        return AnchorFrame(ptsUs, decodedAtNs, PresentationEvent::INITIAL_ANCHOR);
+        return AnchorFrame(
+            ptsUs, decodedAtNs, PresentationEvent::INITIAL_ANCHOR, slotClock);
     }
 
     if (ptsUs == lastPtsUs_) {
         // A permanently repeated timestamp must not become a permanent DROP
         // state. Treat it as a broken host timeline and fall back to a fresh
         // local anchor until valid PTS progression resumes.
-        return AnchorFrame(ptsUs, decodedAtNs, PresentationEvent::DUPLICATE_PTS);
+        if (queueEmpty) {
+            return AnchorFrame(
+                ptsUs, decodedAtNs, PresentationEvent::DUPLICATE_PTS, slotClock);
+        }
+        reanchorPending_ = true;
+        pendingReanchorEvent_ = PresentationEvent::DUPLICATE_PTS;
+        PresentationPlan plan;
+        plan.event = PresentationEvent::WAIT_FOR_DRAIN;
+        return plan;
     }
 
     const int64_t ptsDeltaUs = ptsUs - lastPtsUs_;
     if (ptsDeltaUs < 0 || ptsDeltaUs > discontinuityNs_ / kNanosecondsPerMicrosecond) {
-        return AnchorFrame(ptsUs, decodedAtNs, PresentationEvent::DISCONTINUITY);
+        if (queueEmpty) {
+            return AnchorFrame(
+                ptsUs, decodedAtNs, PresentationEvent::DISCONTINUITY, slotClock);
+        }
+        reanchorPending_ = true;
+        pendingReanchorEvent_ = PresentationEvent::DISCONTINUITY;
+        PresentationPlan plan;
+        plan.event = PresentationEvent::WAIT_FOR_DRAIN;
+        return plan;
     }
     lastPtsUs_ = ptsUs;
 
@@ -137,36 +272,30 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
     // normal decoder output burst (which has no debt) for excessive queuing.
     const int64_t surplusLeadNs =
         targetTimeNs - decodedAtNs - initialLeadNs_;
-    if (phaseShiftDebtNs_ > 0 && surplusLeadNs > kDriftDeadbandNs) {
+    PresentationEvent event = PresentationEvent::NONE;
+    int64_t latenessNs = 0;
+    if (queueEmpty && phaseShiftDebtNs_ > 0 &&
+        surplusLeadNs > kDriftDeadbandNs) {
         const int64_t repaymentNs = std::min(phaseShiftDebtNs_, surplusLeadNs);
         anchorTargetNs_ -= repaymentNs;
         targetTimeNs -= repaymentNs;
         phaseShiftDebtNs_ -= repaymentNs;
         driftErrorEmaNs_ = 0;
-        consecutiveSevereLateFrames_ = 0;
-
-        if (targetTimeNs - decodedAtNs <= maxFutureLeadNs_) {
-            PresentationPlan plan;
-            plan.action = PresentationAction::SCHEDULE;
-            plan.event = PresentationEvent::PHASE_SHIFT;
-            plan.targetTimeNs = targetTimeNs;
-            plan.latenessNs = -repaymentNs;
-            return plan;
-        }
+        event = PresentationEvent::PHASE_SHIFT;
+        latenessNs = -repaymentNs;
     }
 
-    if (targetTimeNs - decodedAtNs > maxFutureLeadNs_) {
-        // This is not jitter absorbed by our own phase shift; it is decoded
-        // output arriving in a burst ahead of the presentation timeline. A
-        // fresh anchor gives all queued burst frames an immediate timestamp,
-        // so the Surface can keep the newest frame instead of preserving lag.
-        return AnchorFrame(ptsUs, decodedAtNs, PresentationEvent::CATCH_UP);
+    if (queueEmpty && targetTimeNs - decodedAtNs > maxFutureLeadNs_) {
+        return AnchorFrame(
+            ptsUs, decodedAtNs, PresentationEvent::CATCH_UP, slotClock);
     }
 
-    ApplySlowDriftCorrection(decodedAtNs, targetTimeNs);
+    if (queueEmpty) {
+        ApplySlowDriftCorrection(decodedAtNs, targetTimeNs);
+    }
 
     const int64_t requiredTargetNs = decodedAtNs + submitLeadNs_;
-    if (targetTimeNs < requiredTargetNs) {
+    if (queueEmpty && targetTimeNs < requiredTargetNs) {
         const int64_t latenessNs = requiredTargetNs - targetTimeNs;
         if (latenessNs <= frameIntervalNs_ / 2) {
             // Move the complete timeline forward. This keeps all following PTS
@@ -174,30 +303,16 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
             anchorTargetNs_ += latenessNs;
             phaseShiftDebtNs_ += latenessNs;
             driftErrorEmaNs_ = 0;
-            consecutiveSevereLateFrames_ = 0;
-
-            PresentationPlan plan;
-            plan.action = PresentationAction::SCHEDULE;
-            plan.event = PresentationEvent::PHASE_SHIFT;
-            plan.targetTimeNs = requiredTargetNs;
-            plan.latenessNs = latenessNs;
-            return plan;
+            event = PresentationEvent::PHASE_SHIFT;
+            targetTimeNs = requiredTargetNs;
+            return ScheduleTarget(
+                targetTimeNs, decodedAtNs, event, latenessNs, slotClock);
         }
 
-        consecutiveSevereLateFrames_++;
-        if (consecutiveSevereLateFrames_ >= kSevereLateFramesBeforeRebuffer) {
-            return AnchorFrame(ptsUs, decodedAtNs, PresentationEvent::REBUFFER);
-        }
-
-        PresentationPlan plan;
-        plan.event = PresentationEvent::LATE_DROP;
-        plan.latenessNs = latenessNs;
-        return plan;
+        return AnchorFrame(
+            ptsUs, decodedAtNs, PresentationEvent::REBUFFER, slotClock);
     }
 
-    consecutiveSevereLateFrames_ = 0;
-    PresentationPlan plan;
-    plan.action = PresentationAction::SCHEDULE;
-    plan.targetTimeNs = targetTimeNs;
-    return plan;
+    return ScheduleTarget(
+        targetTimeNs, decodedAtNs, event, latenessNs, slotClock);
 }
