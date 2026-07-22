@@ -106,7 +106,7 @@ void TestSustained120FpsPeriodicJitterDoesNotDrop() {
     assert(phaseShiftCount >= 20);
 }
 
-void Test120FpsBurstPreservesAllFrames() {
+void Test120FpsBurstUsesThreeUniqueSlots() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(120.0);
     const PresentationVsyncTiming timing = Timing(120.0);
@@ -116,55 +116,44 @@ void Test120FpsBurstPreservesAllFrames() {
     const PresentationPlan second = scheduler.PlanFrame(8334, decodedAtNs, timing);
     const PresentationPlan third = scheduler.PlanFrame(16667, decodedAtNs, timing);
     const PresentationPlan fourth = scheduler.PlanFrame(25000, decodedAtNs, timing);
-    const PresentationPlan fifth = scheduler.PlanFrame(33333, decodedAtNs, timing);
 
     AssertOnVsyncSlot(first, timing);
     AssertOnVsyncSlot(second, timing);
     AssertOnVsyncSlot(third, timing);
-    AssertOnVsyncSlot(fourth, timing);
-    AssertOnVsyncSlot(fifth, timing);
     assert(second.targetTimeNs - first.targetTimeNs == timing.periodNs);
     assert(third.targetTimeNs - second.targetTimeNs == timing.periodNs);
-    assert(fourth.targetTimeNs - third.targetTimeNs == timing.periodNs);
-    assert(fifth.targetTimeNs - fourth.targetTimeNs == timing.periodNs);
+    assert(fourth.action == PresentationAction::DROP);
+    assert(fourth.event == PresentationEvent::QUEUE_FULL);
 }
 
-void TestRepeated120FpsBurstsDrainBetweenCallbacks() {
+void TestQueueFullRetriesAtNextAvailableSlot() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(120.0);
     const PresentationVsyncTiming timing = Timing(120.0);
-    const int64_t firstDecodedAtNs = kStartNs + kMs;
-    constexpr double kPtsIntervalUs = 1000000.0 / 120.0;
-    constexpr int kBurstSize = 5;
+    const int64_t burstTimeNs = kStartNs + kMs;
 
-    PresentationPlan previous;
-    for (int burst = 0; burst < 120; ++burst) {
-        const int firstFrame = burst * kBurstSize;
-        const int64_t decodedAtNs =
-            firstDecodedAtNs + firstFrame * timing.periodNs;
-        for (int offset = 0; offset < kBurstSize; ++offset) {
-            const int frame = firstFrame + offset;
-            const int64_t ptsUs = static_cast<int64_t>(
-                std::llround(frame * kPtsIntervalUs));
-            const PresentationPlan current = scheduler.PlanFrame(
-                ptsUs, decodedAtNs, timing);
+    const PresentationPlan first = scheduler.PlanFrame(0, burstTimeNs, timing);
+    scheduler.PlanFrame(8334, burstTimeNs, timing);
+    const PresentationPlan third = scheduler.PlanFrame(16667, burstTimeNs, timing);
+    const PresentationPlan full = scheduler.PlanFrame(25000, burstTimeNs, timing);
+    const PresentationPlan stillFull = scheduler.PlanFrame(
+        33333, burstTimeNs, timing);
+    const PresentationPlan recovered = scheduler.PlanFrame(
+        41667, first.targetTimeNs + kMs, timing);
+    const PresentationPlan next = scheduler.PlanFrame(
+        50000, first.targetTimeNs + timing.periodNs + kMs, timing);
 
-            AssertOnVsyncSlot(current, timing);
-            if (frame > 0) {
-                assert(current.targetTimeNs ==
-                    previous.targetTimeNs + timing.periodNs);
-            }
-            previous = current;
-        }
-    }
-
-    const int64_t lastDecodedAtNs = firstDecodedAtNs +
-        (120 - 1) * kBurstSize * timing.periodNs;
-    assert(previous.targetTimeNs - lastDecodedAtNs <=
-        kBurstSize * timing.periodNs);
+    assert(full.event == PresentationEvent::QUEUE_FULL);
+    assert(stillFull.action == PresentationAction::DROP);
+    assert(stillFull.event == PresentationEvent::QUEUE_FULL);
+    assert(recovered.action == PresentationAction::SCHEDULE);
+    assert(recovered.event == PresentationEvent::CATCH_UP);
+    assert(recovered.targetTimeNs == third.targetTimeNs + timing.periodNs);
+    assert(next.action == PresentationAction::SCHEDULE);
+    assert(next.targetTimeNs == recovered.targetTimeNs + timing.periodNs);
 }
 
-void Test90FpsBurstPreservesAllFrames() {
+void Test90FpsPairBurstUsesTwoSlots() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(90.0);
     const PresentationVsyncTiming timing = Timing(90.0);
@@ -176,12 +165,12 @@ void Test90FpsBurstPreservesAllFrames() {
 
     AssertOnVsyncSlot(first, timing);
     AssertOnVsyncSlot(second, timing);
-    AssertOnVsyncSlot(third, timing);
     assert(second.targetTimeNs - first.targetTimeNs == timing.periodNs);
-    assert(third.targetTimeNs - second.targetTimeNs == timing.periodNs);
+    assert(third.action == PresentationAction::DROP);
+    assert(third.event == PresentationEvent::QUEUE_FULL);
 }
 
-void Test60FpsBurstPreservesAllFrames() {
+void Test60FpsDoesNotGrowPresentationQueue() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
     const PresentationVsyncTiming timing = Timing(60.0);
@@ -193,10 +182,11 @@ void Test60FpsBurstPreservesAllFrames() {
         33333, first.targetTimeNs + kMs, timing);
 
     AssertOnVsyncSlot(first, timing);
-    AssertOnVsyncSlot(burst, timing);
-    AssertOnVsyncSlot(recovered, timing);
-    assert(burst.targetTimeNs == first.targetTimeNs + timing.periodNs);
-    assert(recovered.targetTimeNs == burst.targetTimeNs + timing.periodNs);
+    assert(burst.action == PresentationAction::DROP);
+    assert(burst.event == PresentationEvent::QUEUE_FULL);
+    assert(recovered.action == PresentationAction::SCHEDULE);
+    assert(recovered.event == PresentationEvent::CATCH_UP);
+    assert(recovered.targetTimeNs == first.targetTimeNs + timing.periodNs);
 }
 
 void TestSmallLateFrameShiftsWholeTimeline() {
@@ -248,23 +238,22 @@ void TestDiscontinuityUsesNextAvailableSlot() {
     assert(reanchored.targetTimeNs == first.targetTimeNs + timing.periodNs);
 }
 
-void TestDuplicatePtsReanchorsWithoutDropping() {
+void TestDuplicatePtsRecoversAfterQueuedSlot() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
     const PresentationVsyncTiming timing = Timing(60.0);
     const int64_t decodedAtNs = kStartNs + kMs;
 
     const PresentationPlan first = scheduler.PlanFrame(1000, decodedAtNs, timing);
-    const PresentationPlan duplicate = scheduler.PlanFrame(1000, decodedAtNs, timing);
+    const PresentationPlan full = scheduler.PlanFrame(1000, decodedAtNs, timing);
     const PresentationPlan reanchored = scheduler.PlanFrame(
         1000, first.targetTimeNs + kMs, timing);
 
-    assert(duplicate.action == PresentationAction::SCHEDULE);
-    assert(duplicate.event == PresentationEvent::DUPLICATE_PTS);
+    assert(full.action == PresentationAction::DROP);
+    assert(full.event == PresentationEvent::QUEUE_FULL);
     assert(reanchored.action == PresentationAction::SCHEDULE);
     assert(reanchored.event == PresentationEvent::DUPLICATE_PTS);
-    assert(duplicate.targetTimeNs == first.targetTimeNs + timing.periodNs);
-    assert(reanchored.targetTimeNs == duplicate.targetTimeNs + timing.periodNs);
+    assert(reanchored.targetTimeNs == first.targetTimeNs + timing.periodNs);
 }
 
 void TestNtscCadenceSkipsARealSlotWithoutRegression() {
@@ -329,14 +318,14 @@ int main() {
     TestRefreshRateTierBudgets();
     TestTransient120FpsJitterUsesTemporaryPhaseShift();
     TestSustained120FpsPeriodicJitterDoesNotDrop();
-    Test120FpsBurstPreservesAllFrames();
-    TestRepeated120FpsBurstsDrainBetweenCallbacks();
-    Test90FpsBurstPreservesAllFrames();
-    Test60FpsBurstPreservesAllFrames();
+    Test120FpsBurstUsesThreeUniqueSlots();
+    TestQueueFullRetriesAtNextAvailableSlot();
+    Test90FpsPairBurstUsesTwoSlots();
+    Test60FpsDoesNotGrowPresentationQueue();
     TestSmallLateFrameShiftsWholeTimeline();
     TestSevereLateFrameReanchorsImmediately();
     TestDiscontinuityUsesNextAvailableSlot();
-    TestDuplicatePtsReanchorsWithoutDropping();
+    TestDuplicatePtsRecoversAfterQueuedSlot();
     TestNtscCadenceSkipsARealSlotWithoutRegression();
     TestObservedVsyncPhaseCannotReuseFallbackSlot();
     TestInvalidPtsDropsWithoutScheduling();

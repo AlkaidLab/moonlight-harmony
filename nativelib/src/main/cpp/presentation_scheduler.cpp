@@ -25,6 +25,15 @@ constexpr double kNtscTripleBurstFps = 119.88;
 constexpr int64_t kDriftDeadbandNs = 2 * kNanosecondsPerMillisecond;
 constexpr int64_t kMaxDriftCorrectionPerFrameNs = 20 * kNanosecondsPerMicrosecond;
 
+PresentationEvent ReanchorEventForRetry(PresentationEvent event) {
+    if (event == PresentationEvent::DISCONTINUITY ||
+        event == PresentationEvent::REBUFFER ||
+        event == PresentationEvent::DUPLICATE_PTS) {
+        return event;
+    }
+    return PresentationEvent::CATCH_UP;
+}
+
 int64_t FloorDiv(int64_t value, int64_t divisor) {
     int64_t quotient = value / divisor;
     if (value % divisor < 0) {
@@ -86,6 +95,8 @@ void PtsPresentationScheduler::Reset() {
     driftErrorEmaNs_ = 0;
     phaseShiftDebtNs_ = 0;
     lastScheduledTargetNs_ = 0;
+    reanchorRetryPending_ = false;
+    pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
 }
 
 PresentationPlan PtsPresentationScheduler::AnchorFrame(
@@ -97,6 +108,8 @@ PresentationPlan PtsPresentationScheduler::AnchorFrame(
     lastPtsUs_ = ptsUs;
     driftErrorEmaNs_ = 0;
     phaseShiftDebtNs_ = 0;
+    reanchorRetryPending_ = false;
+    pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
 
     return ScheduleTarget(
         anchorTargetNs_, decodedAtNs, event, latenessNs, slotClock);
@@ -119,6 +132,21 @@ PresentationPlan PtsPresentationScheduler::ScheduleTarget(
         if (scheduledSlotNs <= lastOccupiedSlotNs) {
             scheduledSlotNs = lastOccupiedSlotNs + slotClock.periodNs;
         }
+    }
+
+    // Start the existing cadence budget at the first slot that still has the
+    // submit margin. Being close to a VSync must not reduce burst capacity.
+    const int64_t firstEligibleSlotNs = CeilToSlot(
+        requiredTargetNs, slotClock.anchorNs, slotClock.periodNs);
+    const int64_t maxScheduledSlotNs = firstEligibleSlotNs +
+        GetAdditionalQueueSlots(slotClock.periodNs) * slotClock.periodNs;
+    if (scheduledSlotNs > maxScheduledSlotNs) {
+        reanchorRetryPending_ = true;
+        pendingReanchorEvent_ = ReanchorEventForRetry(event);
+        PresentationPlan plan;
+        plan.event = PresentationEvent::QUEUE_FULL;
+        plan.latenessNs = latenessNs;
+        return plan;
     }
 
     lastScheduledTargetNs_ = scheduledSlotNs;
@@ -154,6 +182,13 @@ bool PtsPresentationScheduler::IsPresentationQueueEmpty(
     const int64_t lastOccupiedSlotNs = CeilToSlot(
         lastScheduledTargetNs_, slotClock.anchorNs, slotClock.periodNs);
     return lastOccupiedSlotNs <= slotClock.currentSlotNs;
+}
+
+int64_t PtsPresentationScheduler::GetAdditionalQueueSlots(
+        int64_t vsyncPeriodNs) const {
+    const int64_t cadenceBudgetNs = std::max<int64_t>(
+        0, maxFutureLeadNs_ - initialLeadNs_);
+    return cadenceBudgetNs / vsyncPeriodNs;
 }
 
 void PtsPresentationScheduler::ApplySlowDriftCorrection(
@@ -193,6 +228,11 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
 
     const SlotClock slotClock = ResolveSlotClock(decodedAtNs, vsyncTiming);
     const bool queueEmpty = IsPresentationQueueEmpty(slotClock);
+
+    if (reanchorRetryPending_) {
+        return AnchorFrame(
+            ptsUs, decodedAtNs, pendingReanchorEvent_, slotClock);
+    }
 
     if (!initialized_) {
         return AnchorFrame(
