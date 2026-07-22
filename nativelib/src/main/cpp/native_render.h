@@ -30,7 +30,6 @@
 #include <multimedia/player_framework/native_avcodec_videodecoder.h>
 #include <hilog/log.h>
 
-#include "presentation_diagnostics.h"
 #include "presentation_scheduler.h"
 
 #include <cstdint>
@@ -127,9 +126,6 @@ private:
     // 应用帧率范围（通过 NativeVSync，API 20+）
     void ApplyFrameRateRange();
 
-    // 请求低频率的只读 VSync 时间样本，用于呈现诊断
-    void RequestVSyncSample(int64_t nowNs);
-    
     // 应用 NativeWindow 帧率（Surface buffer queue 级别，API 12+）
     void ApplyNativeWindowFrameRate();
     
@@ -166,7 +162,6 @@ private:
     // separate clocks so switching decoder modes cannot perturb PTS cadence.
     mutable std::mutex presentationMutex_;
     PtsPresentationScheduler ptsScheduler_;
-    PresentationDiagnostics presentationDiagnostics_;
 
     // Legacy VSync clock, kept isolated from the host-paced scheduler.
     int64_t estimatedOffsetNs_ = 0;  // 平滑后的 (本地 - host) 偏移均值(纳秒)
@@ -178,20 +173,9 @@ private:
     int64_t vsyncFrameCount_ = 0;
     int64_t vsyncLateFrameCount_ = 0;
     int64_t vsyncResyncCount_ = 0;
-    int64_t preciseScheduledCount_ = 0;
-    int64_t preciseDroppedCount_ = 0;
-    int64_t preciseLateCount_ = 0;
-    int64_t precisePhaseShiftCount_ = 0;
-    int64_t preciseRebufferCount_ = 0;
-    int64_t preciseResyncCount_ = 0;
-    int64_t preciseApiFailureCount_ = 0;
-    int64_t preciseMaxTargetLeadNs_ = 0;
-    
     // NativeVSync（用于设置期望帧率范围，API 20+）
     std::mutex nativeVsyncMutex_;
     OH_NativeVSync* nativeVSync_ = nullptr;
-    uint64_t nativeVsyncGeneration_ = 0;
-    std::atomic<int64_t> lastVsyncSampleRequestNs_{0};
     
 };
 

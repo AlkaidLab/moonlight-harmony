@@ -26,6 +26,7 @@ enum class PresentationEvent {
     REBUFFER,
     DUPLICATE_PTS,
     INVALID_PTS,
+    LATE_DROP,
 };
 
 struct PresentationPlan {
@@ -62,6 +63,7 @@ private:
     int64_t lastPtsUs_ = 0;
     int64_t driftErrorEmaNs_ = 0;
     int64_t phaseShiftDebtNs_ = 0;
+    int consecutiveSevereLateFrames_ = 0;
 };
 
 #endif // PRESENTATION_SCHEDULER_H

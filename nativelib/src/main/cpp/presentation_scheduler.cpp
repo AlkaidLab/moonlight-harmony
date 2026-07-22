@@ -23,6 +23,7 @@ constexpr int64_t kMaxSubmitLeadNs = 2 * kNanosecondsPerMillisecond;
 constexpr double kDefaultFps = 60.0;
 constexpr int64_t kDriftDeadbandNs = 2 * kNanosecondsPerMillisecond;
 constexpr int64_t kMaxDriftCorrectionPerFrameNs = 20 * kNanosecondsPerMicrosecond;
+constexpr int kSevereLateFramesBeforeRebuffer = 2;
 } // namespace
 
 void PtsPresentationScheduler::Configure(double fps) {
@@ -45,6 +46,7 @@ void PtsPresentationScheduler::Reset() {
     lastPtsUs_ = 0;
     driftErrorEmaNs_ = 0;
     phaseShiftDebtNs_ = 0;
+    consecutiveSevereLateFrames_ = 0;
 }
 
 PresentationPlan PtsPresentationScheduler::AnchorFrame(
@@ -56,6 +58,7 @@ PresentationPlan PtsPresentationScheduler::AnchorFrame(
     lastPtsUs_ = ptsUs;
     driftErrorEmaNs_ = 0;
     phaseShiftDebtNs_ = 0;
+    consecutiveSevereLateFrames_ = 0;
 
     PresentationPlan plan;
     plan.action = PresentationAction::SCHEDULE;
@@ -117,12 +120,15 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
 
     const int64_t surplusLeadNs =
         targetTimeNs - decodedAtNs - initialLeadNs_;
+    // Reclaim only delay previously added by a late phase shift. The stable
+    // one-frame reserve is never reduced by this recovery path.
     if (phaseShiftDebtNs_ > 0 && surplusLeadNs > kDriftDeadbandNs) {
         const int64_t repaymentNs = std::min(phaseShiftDebtNs_, surplusLeadNs);
         anchorTargetNs_ -= repaymentNs;
         targetTimeNs -= repaymentNs;
         phaseShiftDebtNs_ -= repaymentNs;
         driftErrorEmaNs_ = 0;
+        consecutiveSevereLateFrames_ = 0;
 
         PresentationPlan plan;
         plan.action = PresentationAction::SCHEDULE;
@@ -141,6 +147,7 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
             anchorTargetNs_ += latenessNs;
             phaseShiftDebtNs_ += latenessNs;
             driftErrorEmaNs_ = 0;
+            consecutiveSevereLateFrames_ = 0;
 
             PresentationPlan plan;
             plan.action = PresentationAction::SCHEDULE;
@@ -150,10 +157,20 @@ PresentationPlan PtsPresentationScheduler::PlanFrame(
             return plan;
         }
 
-        return AnchorFrame(
-            ptsUs, decodedAtNs, PresentationEvent::REBUFFER, latenessNs);
+        consecutiveSevereLateFrames_++;
+        if (consecutiveSevereLateFrames_ >=
+            kSevereLateFramesBeforeRebuffer) {
+            return AnchorFrame(
+                ptsUs, decodedAtNs, PresentationEvent::REBUFFER, latenessNs);
+        }
+
+        PresentationPlan plan;
+        plan.event = PresentationEvent::LATE_DROP;
+        plan.latenessNs = latenessNs;
+        return plan;
     }
 
+    consecutiveSevereLateFrames_ = 0;
     PresentationPlan plan;
     plan.action = PresentationAction::SCHEDULE;
     plan.targetTimeNs = targetTimeNs;

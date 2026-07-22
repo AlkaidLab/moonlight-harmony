@@ -120,18 +120,62 @@ void TestSmallLateFrameShiftsWholeTimeline() {
     assert(next.targetTimeNs - shifted.targetTimeNs == 16666 * kNanosecondsPerMicrosecond);
 }
 
-void TestSevereLateFrameReanchorsImmediately() {
+void TestLateShiftDebtIsReclaimedAfterRecovery() {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(60.0);
+
+    scheduler.PlanFrame(0, kStartNs);
+    const PresentationPlan shifted = scheduler.PlanFrame(
+        16667, kStartNs + 36 * kMs);
+    const PresentationPlan recovered = scheduler.PlanFrame(
+        50000, kStartNs + 50 * kMs);
+
+    assert(shifted.action == PresentationAction::SCHEDULE);
+    assert(shifted.event == PresentationEvent::PHASE_SHIFT);
+    assert(shifted.latenessNs > 0);
+    assert(recovered.action == PresentationAction::SCHEDULE);
+    assert(recovered.event == PresentationEvent::PHASE_SHIFT);
+    assert(recovered.latenessNs == -shifted.latenessNs);
+    assert(std::llabs(
+        recovered.targetTimeNs - (kStartNs + 50 * kMs) -
+        scheduler.GetInitialLeadNs()) <= kNanosecondsPerMicrosecond);
+}
+
+void TestSevereLateFrameDropsThenReanchorsNextFrame() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
 
     scheduler.PlanFrame(0, kStartNs);
     const int64_t decodedAtNs = kStartNs + 100 * kMs;
-    const PresentationPlan rebuffered = scheduler.PlanFrame(16667, decodedAtNs);
+    const PresentationPlan dropped = scheduler.PlanFrame(16667, decodedAtNs);
+    const PresentationPlan rebuffered = scheduler.PlanFrame(
+        33333, decodedAtNs + kMs);
 
+    assert(dropped.action == PresentationAction::DROP);
+    assert(dropped.event == PresentationEvent::LATE_DROP);
+    assert(dropped.latenessNs > FrameIntervalNs(60.0) / 2);
     assert(rebuffered.action == PresentationAction::SCHEDULE);
     assert(rebuffered.event == PresentationEvent::REBUFFER);
     assert(rebuffered.latenessNs > FrameIntervalNs(60.0) / 2);
-    assert(rebuffered.targetTimeNs == decodedAtNs + scheduler.GetInitialLeadNs());
+    assert(rebuffered.targetTimeNs ==
+        decodedAtNs + kMs + scheduler.GetInitialLeadNs());
+}
+
+void TestSingleSevereLateSpikeKeepsUsableTimeline() {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(60.0);
+
+    const PresentationPlan first = scheduler.PlanFrame(0, kStartNs);
+    const PresentationPlan dropped = scheduler.PlanFrame(
+        16667, kStartNs + 100 * kMs);
+    const PresentationPlan recovered = scheduler.PlanFrame(
+        100000, kStartNs + 101 * kMs);
+
+    assert(dropped.action == PresentationAction::DROP);
+    assert(dropped.event == PresentationEvent::LATE_DROP);
+    assert(recovered.action == PresentationAction::SCHEDULE);
+    assert(recovered.event == PresentationEvent::NONE);
+    assert(recovered.targetTimeNs - first.targetTimeNs == 100 * kMs);
 }
 
 void TestDuplicatePtsReanchorsWithoutDropping() {
@@ -227,7 +271,9 @@ int main() {
     TestSubFrame120FpsJitterIsAbsorbedByReserve();
     TestSustained120FpsPeriodicJitterDoesNotDrop();
     TestSmallLateFrameShiftsWholeTimeline();
-    TestSevereLateFrameReanchorsImmediately();
+    TestLateShiftDebtIsReclaimedAfterRecovery();
+    TestSevereLateFrameDropsThenReanchorsNextFrame();
+    TestSingleSevereLateSpikeKeepsUsableTimeline();
     TestDuplicatePtsReanchorsWithoutDropping();
     TestDiscontinuityReanchors();
     TestNtscCadencePreservesPtsIntervals();
