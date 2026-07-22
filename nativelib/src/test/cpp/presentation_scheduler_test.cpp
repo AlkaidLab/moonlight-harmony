@@ -35,11 +35,9 @@ void AssertFutureCadenceBudget(double fps, int numerator, int denominator) {
     const int64_t expectedCadenceBudgetNs =
         FrameIntervalNs(fps) * numerator / denominator;
 
-    const int64_t expectedInitialLeadNs =
-        kExpectedSubmitLeadNs + FrameIntervalNs(fps);
-    assert(scheduler.GetInitialLeadNs() == expectedInitialLeadNs);
+    assert(scheduler.GetInitialLeadNs() == kExpectedSubmitLeadNs);
     assert(scheduler.GetMaxFutureLeadNs() ==
-        expectedInitialLeadNs + expectedCadenceBudgetNs +
+        kExpectedSubmitLeadNs + expectedCadenceBudgetNs +
         kNanosecondsPerMicrosecond);
 }
 
@@ -54,7 +52,7 @@ void TestRefreshRateTierBudgets() {
     AssertFutureCadenceBudget(144.0, 2, 1);
 }
 
-void TestOneFrameReserveAbsorbsSubFrameDecodeJitter() {
+void TestTransient120FpsJitterUsesTemporaryPhaseShift() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(120.0);
     const PresentationVsyncTiming timing = Timing(120.0);
@@ -64,13 +62,48 @@ void TestOneFrameReserveAbsorbsSubFrameDecodeJitter() {
         0, firstDecodedAtNs, timing);
     const PresentationPlan jittered = scheduler.PlanFrame(
         8334, firstDecodedAtNs + timing.periodNs + 5 * kMs, timing);
-    const int64_t firstEligibleSlotNs = kStartNs + timing.periodNs;
+    const PresentationPlan recovered = scheduler.PlanFrame(
+        16667, firstDecodedAtNs + 2 * timing.periodNs, timing);
 
     AssertOnVsyncSlot(first, timing);
     AssertOnVsyncSlot(jittered, timing);
-    assert(first.targetTimeNs == firstEligibleSlotNs + timing.periodNs);
-    assert(jittered.event == PresentationEvent::NONE);
+    AssertOnVsyncSlot(recovered, timing);
+    assert(jittered.event == PresentationEvent::PHASE_SHIFT);
+    assert(jittered.latenessNs > timing.periodNs / 2);
+    assert(jittered.latenessNs <= timing.periodNs);
+    assert(recovered.event == PresentationEvent::PHASE_SHIFT);
+    assert(recovered.latenessNs < 0);
     assert(jittered.targetTimeNs == first.targetTimeNs + timing.periodNs);
+    assert(recovered.targetTimeNs == jittered.targetTimeNs + timing.periodNs);
+}
+
+void TestSustained120FpsPeriodicJitterDoesNotDrop() {
+    PtsPresentationScheduler scheduler;
+    scheduler.Configure(120.0);
+    const PresentationVsyncTiming timing = Timing(120.0);
+    constexpr double kPtsIntervalUs = 1000000.0 / 120.0;
+    const int64_t firstDecodedAtNs = kStartNs + kMs;
+
+    PresentationPlan previous = scheduler.PlanFrame(
+        0, firstDecodedAtNs, timing);
+    int phaseShiftCount = 0;
+    for (int i = 1; i <= 1201; ++i) {
+        const int64_t ptsUs = static_cast<int64_t>(
+            std::llround(i * kPtsIntervalUs));
+        const int64_t jitterNs = i % 120 == 0 ? 5 * kMs : 0;
+        const int64_t decodedAtNs =
+            firstDecodedAtNs + i * timing.periodNs + jitterNs;
+        const PresentationPlan current = scheduler.PlanFrame(
+            ptsUs, decodedAtNs, timing);
+
+        AssertOnVsyncSlot(current, timing);
+        assert(current.targetTimeNs > previous.targetTimeNs);
+        if (current.event == PresentationEvent::PHASE_SHIFT) {
+            phaseShiftCount++;
+        }
+        previous = current;
+    }
+    assert(phaseShiftCount >= 20);
 }
 
 void Test120FpsBurstUsesThreeUniqueSlots() {
@@ -93,7 +126,7 @@ void Test120FpsBurstUsesThreeUniqueSlots() {
     assert(fourth.event == PresentationEvent::QUEUE_FULL);
 }
 
-void TestQueueFullWaitsForDrainBeforeReanchor() {
+void TestQueueFullRetriesAtNextAvailableSlot() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(120.0);
     const PresentationVsyncTiming timing = Timing(120.0);
@@ -103,17 +136,21 @@ void TestQueueFullWaitsForDrainBeforeReanchor() {
     scheduler.PlanFrame(8334, burstTimeNs, timing);
     const PresentationPlan third = scheduler.PlanFrame(16667, burstTimeNs, timing);
     const PresentationPlan full = scheduler.PlanFrame(25000, burstTimeNs, timing);
-    const PresentationPlan waiting = scheduler.PlanFrame(
-        33333, first.targetTimeNs + kMs, timing);
+    const PresentationPlan stillFull = scheduler.PlanFrame(
+        33333, burstTimeNs, timing);
     const PresentationPlan recovered = scheduler.PlanFrame(
-        41667, third.targetTimeNs + kMs, timing);
+        41667, first.targetTimeNs + kMs, timing);
+    const PresentationPlan next = scheduler.PlanFrame(
+        50000, first.targetTimeNs + timing.periodNs + kMs, timing);
 
     assert(full.event == PresentationEvent::QUEUE_FULL);
-    assert(waiting.action == PresentationAction::DROP);
-    assert(waiting.event == PresentationEvent::WAIT_FOR_DRAIN);
+    assert(stillFull.action == PresentationAction::DROP);
+    assert(stillFull.event == PresentationEvent::QUEUE_FULL);
     assert(recovered.action == PresentationAction::SCHEDULE);
     assert(recovered.event == PresentationEvent::CATCH_UP);
-    assert(recovered.targetTimeNs == third.targetTimeNs + 2 * timing.periodNs);
+    assert(recovered.targetTimeNs == third.targetTimeNs + timing.periodNs);
+    assert(next.action == PresentationAction::SCHEDULE);
+    assert(next.targetTimeNs == recovered.targetTimeNs + timing.periodNs);
 }
 
 void Test90FpsPairBurstUsesTwoSlots() {
@@ -149,7 +186,7 @@ void Test60FpsDoesNotGrowPresentationQueue() {
     assert(burst.event == PresentationEvent::QUEUE_FULL);
     assert(recovered.action == PresentationAction::SCHEDULE);
     assert(recovered.event == PresentationEvent::CATCH_UP);
-    assert(recovered.targetTimeNs == first.targetTimeNs + 2 * timing.periodNs);
+    assert(recovered.targetTimeNs == first.targetTimeNs + timing.periodNs);
 }
 
 void TestSmallLateFrameShiftsWholeTimeline() {
@@ -160,9 +197,9 @@ void TestSmallLateFrameShiftsWholeTimeline() {
     const PresentationPlan first = scheduler.PlanFrame(
         0, kStartNs + kMs, timing);
     const PresentationPlan shifted = scheduler.PlanFrame(
-        16667, kStartNs + 35 * kMs, timing);
+        16667, kStartNs + 18 * kMs, timing);
     const PresentationPlan next = scheduler.PlanFrame(
-        33333, kStartNs + 51 * kMs, timing);
+        33333, kStartNs + 34 * kMs, timing);
 
     assert(shifted.action == PresentationAction::SCHEDULE);
     assert(shifted.event == PresentationEvent::PHASE_SHIFT);
@@ -171,40 +208,34 @@ void TestSmallLateFrameShiftsWholeTimeline() {
     assert(next.targetTimeNs - shifted.targetTimeNs == timing.periodNs);
 }
 
-void TestSevereLateFrameDropsBeforeRebuffer() {
+void TestSevereLateFrameReanchorsImmediately() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(60.0);
     const PresentationVsyncTiming timing = Timing(60.0);
 
     scheduler.PlanFrame(0, kStartNs + kMs, timing);
-    const PresentationPlan dropped = scheduler.PlanFrame(
-        16667, kStartNs + 100 * kMs, timing);
     const PresentationPlan rebuffered = scheduler.PlanFrame(
-        33333, kStartNs + 101 * kMs, timing);
+        16667, kStartNs + 100 * kMs, timing);
 
-    assert(dropped.action == PresentationAction::DROP);
-    assert(dropped.event == PresentationEvent::LATE_DROP);
     assert(rebuffered.action == PresentationAction::SCHEDULE);
     assert(rebuffered.event == PresentationEvent::REBUFFER);
+    assert(rebuffered.latenessNs > timing.periodNs);
     assert(rebuffered.targetTimeNs > kStartNs + 100 * kMs);
 }
 
-void TestDiscontinuityWaitsForQueuedSlot() {
+void TestDiscontinuityUsesNextAvailableSlot() {
     PtsPresentationScheduler scheduler;
     scheduler.Configure(120.0);
     const PresentationVsyncTiming timing = Timing(120.0);
     const int64_t decodedAtNs = kStartNs + kMs;
 
     const PresentationPlan first = scheduler.PlanFrame(1000000, decodedAtNs, timing);
-    const PresentationPlan waiting = scheduler.PlanFrame(500000, decodedAtNs, timing);
     const PresentationPlan reanchored = scheduler.PlanFrame(
-        500001, first.targetTimeNs + kMs, timing);
+        500000, decodedAtNs, timing);
 
-    assert(waiting.action == PresentationAction::DROP);
-    assert(waiting.event == PresentationEvent::WAIT_FOR_DRAIN);
     assert(reanchored.action == PresentationAction::SCHEDULE);
     assert(reanchored.event == PresentationEvent::DISCONTINUITY);
-    assert(reanchored.targetTimeNs == first.targetTimeNs + 2 * timing.periodNs);
+    assert(reanchored.targetTimeNs == first.targetTimeNs + timing.periodNs);
 }
 
 void TestDuplicatePtsRecoversAfterQueuedSlot() {
@@ -214,14 +245,15 @@ void TestDuplicatePtsRecoversAfterQueuedSlot() {
     const int64_t decodedAtNs = kStartNs + kMs;
 
     const PresentationPlan first = scheduler.PlanFrame(1000, decodedAtNs, timing);
-    const PresentationPlan waiting = scheduler.PlanFrame(1000, decodedAtNs, timing);
+    const PresentationPlan full = scheduler.PlanFrame(1000, decodedAtNs, timing);
     const PresentationPlan reanchored = scheduler.PlanFrame(
         1000, first.targetTimeNs + kMs, timing);
 
-    assert(waiting.action == PresentationAction::DROP);
-    assert(waiting.event == PresentationEvent::WAIT_FOR_DRAIN);
+    assert(full.action == PresentationAction::DROP);
+    assert(full.event == PresentationEvent::QUEUE_FULL);
     assert(reanchored.action == PresentationAction::SCHEDULE);
     assert(reanchored.event == PresentationEvent::DUPLICATE_PTS);
+    assert(reanchored.targetTimeNs == first.targetTimeNs + timing.periodNs);
 }
 
 void TestNtscCadenceSkipsARealSlotWithoutRegression() {
@@ -284,14 +316,15 @@ void TestInvalidPtsDropsWithoutScheduling() {
 
 int main() {
     TestRefreshRateTierBudgets();
-    TestOneFrameReserveAbsorbsSubFrameDecodeJitter();
+    TestTransient120FpsJitterUsesTemporaryPhaseShift();
+    TestSustained120FpsPeriodicJitterDoesNotDrop();
     Test120FpsBurstUsesThreeUniqueSlots();
-    TestQueueFullWaitsForDrainBeforeReanchor();
+    TestQueueFullRetriesAtNextAvailableSlot();
     Test90FpsPairBurstUsesTwoSlots();
     Test60FpsDoesNotGrowPresentationQueue();
     TestSmallLateFrameShiftsWholeTimeline();
-    TestSevereLateFrameDropsBeforeRebuffer();
-    TestDiscontinuityWaitsForQueuedSlot();
+    TestSevereLateFrameReanchorsImmediately();
+    TestDiscontinuityUsesNextAvailableSlot();
     TestDuplicatePtsRecoversAfterQueuedSlot();
     TestNtscCadenceSkipsARealSlotWithoutRegression();
     TestObservedVsyncPhaseCannotReuseFallbackSlot();
