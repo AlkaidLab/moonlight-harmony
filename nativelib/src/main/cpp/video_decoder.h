@@ -391,8 +391,7 @@ private:
     double recentHostLatencyWindowTotalMs_{0.0};
     int64_t recentHostLatencyWindowStartTimeMs_{0};
     RollingFrameRateTracker receivedFrameRate_;
-    mutable std::mutex renderedRateMutex_;
-    RollingFrameRateTracker renderedFrameRate_;
+    mutable RollingFrameRateTracker renderedFrameRate_;
 
     // Output/drop counters are updated atomically so decoder callbacks never
     // wait on the receive-statistics snapshot mutex.

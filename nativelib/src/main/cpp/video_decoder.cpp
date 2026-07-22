@@ -1395,9 +1395,8 @@ VideoDecoderStats VideoDecoder::GetStats() const {
         std::lock_guard<std::mutex> lock(statsMutex_);
         snapshot = stats_;
         snapshot.currentFps = receivedFrameRate_.GetRate(currentTimeMs);
-    }
-    {
-        std::lock_guard<std::mutex> lock(renderedRateMutex_);
+        renderedFrameRate_.Record(
+            currentTimeMs, decodedFrames_.load(std::memory_order_relaxed));
         snapshot.renderedFps = renderedFrameRate_.GetRate(currentTimeMs);
     }
 
@@ -1608,10 +1607,7 @@ void VideoDecoder::UpdateDecodedStats(int64_t enqueueTimeMs, uint32_t flags,
     const uint64_t outputFrames =
         codecOutputFrames_.fetch_add(1, std::memory_order_relaxed) + 1;
     if (presented) {
-        std::lock_guard<std::mutex> lock(renderedRateMutex_);
-        const uint64_t decodedFrames =
-            decodedFrames_.fetch_add(1, std::memory_order_relaxed) + 1;
-        renderedFrameRate_.Record(currentTimeMs, decodedFrames);
+        decodedFrames_.fetch_add(1, std::memory_order_relaxed);
     }
     
     if (enqueueTimeMs > 0) {
