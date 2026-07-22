@@ -438,7 +438,6 @@ void NativeRender::ResetPresentationStatsLocked() {
     precisePhaseShiftCount_ = 0;
     preciseRebufferCount_ = 0;
     preciseResyncCount_ = 0;
-    preciseQueueFullCount_ = 0;
     preciseApiFailureCount_ = 0;
     preciseMaxTargetLeadNs_ = 0;
     presentationDiagnostics_.Reset();
@@ -577,7 +576,6 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                 plan.event == PresentationEvent::DUPLICATE_PTS) {
                 preciseResyncCount_++;
             }
-            if (plan.event == PresentationEvent::QUEUE_FULL) preciseQueueFullCount_++;
             if (plan.action == PresentationAction::SCHEDULE) {
                 preciseMaxTargetLeadNs_ = std::max(
                     preciseMaxTargetLeadNs_, plan.targetTimeNs - decodedAtNs);
@@ -591,7 +589,7 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                 const PresentationTimingStats& timing =
                     presentationDiagnostics_.GetStats();
                 OH_LOG_INFO(LOG_APP,
-                    "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, catchUp=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, queueFull=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus, maxLead=%{public}lldus, sameSlot=%{public}lld, slotRegression=%{public}lld, targetRegression=%{public}lld, maxRegression=%{public}lldus, maxQueueSlots=%{public}lld, vsyncPeriod=%{public}lldus, vsyncAge=%{public}lldus, vsyncSampleFailure=%{public}lld",
+                    "Host-paced stats: frames=%{public}lld, scheduled=%{public}lld, dropped=%{public}lld, late=%{public}lld, catchUp=%{public}lld, phaseShift=%{public}lld, rebuffer=%{public}lld, resync=%{public}lld, apiFailure=%{public}lld, lead=%{public}lldus, maxLead=%{public}lldus, sameSlot=%{public}lld, slotRegression=%{public}lld, targetRegression=%{public}lld, maxRegression=%{public}lldus, maxQueueSlots=%{public}lld, vsyncPeriod=%{public}lldus, vsyncAge=%{public}lldus, vsyncSampleFailure=%{public}lld",
                     static_cast<long long>(totalFrames),
                     static_cast<long long>(preciseScheduledCount_),
                     static_cast<long long>(preciseDroppedCount_),
@@ -600,7 +598,6 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                     static_cast<long long>(precisePhaseShiftCount_),
                     static_cast<long long>(preciseRebufferCount_),
                     static_cast<long long>(preciseResyncCount_),
-                    static_cast<long long>(preciseQueueFullCount_),
                     static_cast<long long>(preciseApiFailureCount_),
                     static_cast<long long>(ptsScheduler_.GetInitialLeadNs() / 1000),
                     static_cast<long long>(preciseMaxTargetLeadNs_ / 1000),

@@ -27,7 +27,6 @@ enum class PresentationEvent {
     REBUFFER,
     DUPLICATE_PTS,
     INVALID_PTS,
-    QUEUE_FULL,
 };
 
 struct PresentationVsyncTiming {
@@ -74,7 +73,6 @@ private:
         int64_t decodedAtNs,
         const PresentationVsyncTiming& vsyncTiming) const;
     bool IsPresentationQueueEmpty(const SlotClock& slotClock) const;
-    int64_t GetAdditionalQueueSlots(int64_t vsyncPeriodNs) const;
 
     int64_t frameIntervalNs_ = 16666667LL;
     int64_t initialLeadNs_ = 2000000LL;
@@ -89,8 +87,6 @@ private:
     int64_t driftErrorEmaNs_ = 0;
     int64_t phaseShiftDebtNs_ = 0;
     int64_t lastScheduledTargetNs_ = 0;
-    bool reanchorRetryPending_ = false;
-    PresentationEvent pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
 };
 
 #endif // PRESENTATION_SCHEDULER_H
