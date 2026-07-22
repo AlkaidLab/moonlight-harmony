@@ -27,9 +27,7 @@ enum class PresentationEvent {
     REBUFFER,
     DUPLICATE_PTS,
     INVALID_PTS,
-    LATE_DROP,
     QUEUE_FULL,
-    WAIT_FOR_DRAIN,
 };
 
 struct PresentationVsyncTiming {
@@ -66,7 +64,8 @@ private:
 
     PresentationPlan AnchorFrame(int64_t ptsUs, int64_t decodedAtNs,
                                  PresentationEvent event,
-                                 const SlotClock& slotClock);
+                                 const SlotClock& slotClock,
+                                 int64_t latenessNs = 0);
     PresentationPlan ScheduleTarget(int64_t targetTimeNs, int64_t decodedAtNs,
                                     PresentationEvent event, int64_t latenessNs,
                                     const SlotClock& slotClock);
@@ -78,9 +77,9 @@ private:
     int64_t GetAdditionalQueueSlots(int64_t vsyncPeriodNs) const;
 
     int64_t frameIntervalNs_ = 16666667LL;
-    int64_t initialLeadNs_ = 18666667LL;
+    int64_t initialLeadNs_ = 2000000LL;
     int64_t submitLeadNs_ = 2000000LL;
-    int64_t maxFutureLeadNs_ = 27001000LL;
+    int64_t maxFutureLeadNs_ = 10334333LL;
     int64_t discontinuityNs_ = 250000000LL;
 
     bool initialized_ = false;
@@ -90,8 +89,7 @@ private:
     int64_t driftErrorEmaNs_ = 0;
     int64_t phaseShiftDebtNs_ = 0;
     int64_t lastScheduledTargetNs_ = 0;
-    int consecutiveSevereLateFrames_ = 0;
-    bool reanchorPending_ = false;
+    bool reanchorRetryPending_ = false;
     PresentationEvent pendingReanchorEvent_ = PresentationEvent::CATCH_UP;
 };
 

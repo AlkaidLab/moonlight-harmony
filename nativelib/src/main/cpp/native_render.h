@@ -186,7 +186,6 @@ private:
     int64_t preciseRebufferCount_ = 0;
     int64_t preciseResyncCount_ = 0;
     int64_t preciseQueueFullCount_ = 0;
-    int64_t preciseWaitForDrainCount_ = 0;
     int64_t preciseApiFailureCount_ = 0;
     int64_t preciseMaxTargetLeadNs_ = 0;
     
