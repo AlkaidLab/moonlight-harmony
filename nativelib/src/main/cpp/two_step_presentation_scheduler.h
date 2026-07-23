@@ -1,0 +1,71 @@
+#ifndef TWO_STEP_PRESENTATION_SCHEDULER_H
+#define TWO_STEP_PRESENTATION_SCHEDULER_H
+
+#include "presentation_scheduler.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+
+enum class PreparedPresentationAction {
+    SCHEDULE,
+    IMMEDIATE,
+    DROP,
+};
+
+enum class PreparedPresentationEvent {
+    NONE,
+    MISSING_TARGET,
+    EXPIRED_TARGET,
+    FUTURE_TARGET,
+    NON_MONOTONIC_PTS,
+};
+
+struct PreparedPresentationPlan {
+    PreparedPresentationAction action = PreparedPresentationAction::IMMEDIATE;
+    PreparedPresentationEvent event = PreparedPresentationEvent::NONE;
+    int64_t targetTimeNs = 0;
+    int64_t targetLeadNs = 0;
+};
+
+// Computes targets before decode and validates them after decode. Targets are
+// keyed by PTS, so decoder buffer indices and output callback order are not
+// part of the association contract.
+class TwoStepPresentationScheduler {
+public:
+    void Configure(double fps);
+    void Reset();
+
+    bool PrepareFrame(int64_t ptsUs, int64_t preparedAtNs);
+    void DiscardFrame(int64_t ptsUs);
+    PreparedPresentationPlan PlanDecodedFrame(
+        int64_t ptsUs, int64_t decodedAtNs);
+
+    size_t GetPendingTargetCount() const { return pendingTargetCount_; }
+    int64_t GetInitialLeadNs() const { return scheduler_.GetInitialLeadNs(); }
+
+private:
+    struct PreparedTarget {
+        int64_t ptsUs = 0;
+        int64_t targetTimeNs = 0;
+        bool valid = false;
+    };
+
+    void ClearTargets();
+    void StoreTarget(int64_t ptsUs, int64_t targetTimeNs);
+    bool TakeTarget(int64_t ptsUs, int64_t& targetTimeNs);
+    void NoteSubmittedPts(int64_t ptsUs);
+
+    static constexpr size_t kTargetCapacity = 64;
+
+    PtsPresentationScheduler scheduler_;
+    std::array<PreparedTarget, kTargetCapacity> targets_{};
+    size_t targetWriteIndex_ = 0;
+    size_t pendingTargetCount_ = 0;
+    int64_t submitLeadNs_ = 2000000LL;
+    int64_t maxFutureLeadNs_ = 50000000LL;
+    int64_t lastSubmittedPtsUs_ = 0;
+    bool hasSubmittedPts_ = false;
+};
+
+#endif // TWO_STEP_PRESENTATION_SCHEDULER_H
