@@ -37,6 +37,7 @@
 #include <native_buffer/native_buffer.h>
 
 #include "rolling_frame_rate.h"
+#include "two_step_presentation_scheduler.h"
 
 class NativeRender;
 #include <hilog/log.h>
@@ -361,6 +362,7 @@ private:
         VideoFrameType frameType;
         int64_t timestamp;
         uint16_t hostProcessingLatency;
+        PresentationTargetHandle presentationTarget;
     };
     std::mutex pendingFrameMutex_;
     std::condition_variable pendingFrameCond_;

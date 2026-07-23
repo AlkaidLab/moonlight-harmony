@@ -87,7 +87,8 @@ public:
     bool IsHostPacedPresentationActive() const;
 
     // Step 1: reserve the host-PTS target before the frame enters the decoder.
-    bool PreparePresentationFrame(int64_t ptsUs);
+    PresentationTargetHandle PreparePresentationFrame(int64_t ptsUs);
+    void DiscardPresentationFrame(PresentationTargetHandle handle);
     void DiscardPresentationFrame(int64_t ptsUs);
     
     /**

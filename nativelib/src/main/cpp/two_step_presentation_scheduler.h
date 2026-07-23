@@ -28,6 +28,19 @@ struct PreparedPresentationPlan {
     int64_t targetLeadNs = 0;
 };
 
+class PresentationTargetHandle {
+public:
+    PresentationTargetHandle() = default;
+    explicit operator bool() const { return id_ != 0; }
+
+private:
+    explicit PresentationTargetHandle(uint64_t id) : id_(id) {}
+
+    uint64_t id_ = 0;
+
+    friend class TwoStepPresentationScheduler;
+};
+
 // Computes targets before decode and validates them after decode. Targets are
 // keyed by PTS, so decoder buffer indices and output callback order are not
 // part of the association contract.
@@ -36,7 +49,8 @@ public:
     void Configure(double fps);
     void Reset();
 
-    bool PrepareFrame(int64_t ptsUs, int64_t preparedAtNs);
+    PresentationTargetHandle PrepareFrame(int64_t ptsUs, int64_t preparedAtNs);
+    void DiscardFrame(PresentationTargetHandle handle);
     void DiscardFrame(int64_t ptsUs);
     PreparedPresentationPlan PlanDecodedFrame(
         int64_t ptsUs, int64_t decodedAtNs);
@@ -46,13 +60,14 @@ public:
 
 private:
     struct PreparedTarget {
+        uint64_t id = 0;
         int64_t ptsUs = 0;
         int64_t targetTimeNs = 0;
         bool valid = false;
     };
 
     void ClearTargets();
-    void StoreTarget(int64_t ptsUs, int64_t targetTimeNs);
+    PresentationTargetHandle StoreTarget(int64_t ptsUs, int64_t targetTimeNs);
     bool TakeTarget(int64_t ptsUs, int64_t& targetTimeNs);
     void NoteSubmittedPts(int64_t ptsUs);
 
@@ -62,6 +77,8 @@ private:
     std::array<PreparedTarget, kTargetCapacity> targets_{};
     size_t targetWriteIndex_ = 0;
     size_t pendingTargetCount_ = 0;
+    // Keep IDs monotonic across Reset so stale guards cannot match new targets.
+    uint64_t nextTargetId_ = 1;
     int64_t submitLeadNs_ = 2000000LL;
     int64_t maxFutureLeadNs_ = 50000000LL;
     int64_t lastSubmittedPtsUs_ = 0;

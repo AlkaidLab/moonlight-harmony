@@ -246,14 +246,24 @@ bool NativeRender::IsHostPacedPresentationActive() const {
     return hostPacedPresentationEnabled_.load() && GetRenderAtTimeFunc() != nullptr;
 }
 
-bool NativeRender::PreparePresentationFrame(int64_t ptsUs) {
+PresentationTargetHandle NativeRender::PreparePresentationFrame(int64_t ptsUs) {
     if (!IsHostPacedPresentationActive()) {
-        return false;
+        return {};
     }
 
     const int64_t preparedAtNs = GetMonotonicTimeNs();
     std::lock_guard<std::mutex> lock(presentationMutex_);
     return twoStepScheduler_.PrepareFrame(ptsUs, preparedAtNs);
+}
+
+void NativeRender::DiscardPresentationFrame(
+        PresentationTargetHandle handle) {
+    if (!handle) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(presentationMutex_);
+    twoStepScheduler_.DiscardFrame(handle);
 }
 
 void NativeRender::DiscardPresentationFrame(int64_t ptsUs) {

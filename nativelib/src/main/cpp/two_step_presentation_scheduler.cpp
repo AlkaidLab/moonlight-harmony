@@ -35,14 +35,20 @@ void TwoStepPresentationScheduler::ClearTargets() {
     pendingTargetCount_ = 0;
 }
 
-void TwoStepPresentationScheduler::StoreTarget(
+PresentationTargetHandle TwoStepPresentationScheduler::StoreTarget(
         int64_t ptsUs, int64_t targetTimeNs) {
+    const PresentationTargetHandle handle(nextTargetId_++);
+    if (nextTargetId_ == 0) {
+        nextTargetId_ = 1;
+    }
+
     PreparedTarget& target = targets_[targetWriteIndex_];
     if (!target.valid) {
         pendingTargetCount_++;
     }
-    target = {ptsUs, targetTimeNs, true};
+    target = {handle.id_, ptsUs, targetTimeNs, true};
     targetWriteIndex_ = (targetWriteIndex_ + 1) % targets_.size();
+    return handle;
 }
 
 bool TwoStepPresentationScheduler::TakeTarget(
@@ -61,19 +67,33 @@ bool TwoStepPresentationScheduler::TakeTarget(
     return false;
 }
 
-bool TwoStepPresentationScheduler::PrepareFrame(
+PresentationTargetHandle TwoStepPresentationScheduler::PrepareFrame(
         int64_t ptsUs, int64_t preparedAtNs) {
     const PresentationPlan plan = scheduler_.PlanFrame(ptsUs, preparedAtNs);
     if (plan.action != PresentationAction::SCHEDULE) {
-        return false;
+        return {};
     }
 
     if (plan.event == PresentationEvent::DISCONTINUITY) {
         ClearTargets();
         hasSubmittedPts_ = false;
     }
-    StoreTarget(ptsUs, plan.targetTimeNs);
-    return true;
+    return StoreTarget(ptsUs, plan.targetTimeNs);
+}
+
+void TwoStepPresentationScheduler::DiscardFrame(
+        PresentationTargetHandle handle) {
+    if (!handle) {
+        return;
+    }
+
+    for (PreparedTarget& target : targets_) {
+        if (target.valid && target.id == handle.id_) {
+            target.valid = false;
+            pendingTargetCount_--;
+            return;
+        }
+    }
 }
 
 void TwoStepPresentationScheduler::DiscardFrame(int64_t ptsUs) {

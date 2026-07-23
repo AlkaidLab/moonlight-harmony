@@ -1059,29 +1059,32 @@ static OH_AVCodecBufferAttr MakeInputBufferAttr(int32_t size, int64_t pts, Video
 
 class PresentationTargetGuard {
 public:
-    PresentationTargetGuard(NativeRender* render, int64_t pts, bool prepare)
-        : render_(render), pts_(pts), active_(
-            render_ != nullptr && render_->IsHostPacedPresentationActive()) {
-        if (active_ && prepare) {
-            render_->PreparePresentationFrame(pts_);
+    PresentationTargetGuard(NativeRender* render, int64_t pts)
+        : render_(render) {
+        if (render_ != nullptr) {
+            target_ = render_->PreparePresentationFrame(pts);
         }
     }
 
+    PresentationTargetGuard(
+            NativeRender* render, PresentationTargetHandle target)
+        : render_(render), target_(target) {}
+
     ~PresentationTargetGuard() {
-        if (active_ && !committed_) {
-            render_->DiscardPresentationFrame(pts_);
+        if (render_ != nullptr && target_ && !committed_) {
+            render_->DiscardPresentationFrame(target_);
         }
     }
 
     void Commit() { committed_ = true; }
+    PresentationTargetHandle GetTarget() const { return target_; }
 
     PresentationTargetGuard(const PresentationTargetGuard&) = delete;
     PresentationTargetGuard& operator=(const PresentationTargetGuard&) = delete;
 
 private:
     NativeRender* render_ = nullptr;
-    int64_t pts_ = 0;
-    bool active_ = false;
+    PresentationTargetHandle target_;
     bool committed_ = false;
 };
 
@@ -1182,7 +1185,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
         return recoveryResult;  // -1 = DR_NEED_IDR
     }
 
-    PresentationTargetGuard presentationTarget(render_, timestamp, true);
+    PresentationTargetGuard presentationTarget(render_, timestamp);
 
     // 同步模式：直接提交到解码器（scatter-gather 直写 AVBuffer）
     if (config_.decoderMode == DecoderMode::SYNC) {
@@ -1241,7 +1244,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
             std::lock_guard<std::mutex> lock(pendingFrameMutex_);
             while (pendingFrameQueue_.size() >= maxPendingFrames_) {
                 render_->DiscardPresentationFrame(
-                    pendingFrameQueue_.front().timestamp);
+                    pendingFrameQueue_.front().presentationTarget);
                 pendingFrameQueue_.pop();
                 overflowCount++;
             }
@@ -1256,6 +1259,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
             frame.frameType = frameType;
             frame.timestamp = timestamp;
             frame.hostProcessingLatency = hostProcessingLatency;
+            frame.presentationTarget = presentationTarget.GetTarget();
             
             pendingFrameQueue_.push(std::move(frame));
             pendingFrameCond_.notify_one();
@@ -2056,7 +2060,7 @@ int VideoDecoder::SyncProcessInput(int64_t timeoutUs) {
         pendingFrameQueue_.pop();
     }
     PresentationTargetGuard presentationTarget(
-        render_, frame.timestamp, false);
+        render_, frame.presentationTarget);
     // 成功获得输入 buffer，继续处理帧
     static bool firstInputLog = true;
     if (firstInputLog) {

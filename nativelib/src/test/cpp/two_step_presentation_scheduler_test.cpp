@@ -1,10 +1,12 @@
 #include "presentation_scheduler.h"
 #include "two_step_presentation_scheduler.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <iterator>
 
 namespace {
 constexpr int64_t kMs = 1000000LL;
@@ -54,6 +56,42 @@ void TestMissingTargetDoesNotPoisonNewTimeline() {
     const PreparedPresentationPlan first = scheduler.PlanDecodedFrame(
         0, kStartNs + 3 * kMs);
     assert(first.action == PreparedPresentationAction::SCHEDULE);
+}
+
+void TestStaleHandleCannotDiscardTargetAfterReset() {
+    TwoStepPresentationScheduler scheduler;
+    scheduler.Configure(120.0);
+
+    const PresentationTargetHandle stale = scheduler.PrepareFrame(0, kStartNs);
+    scheduler.Reset();
+    const PresentationTargetHandle current = scheduler.PrepareFrame(
+        0, kStartNs + kMs);
+
+    assert(stale);
+    assert(current);
+    scheduler.DiscardFrame(stale);
+    assert(scheduler.GetPendingTargetCount() == 1);
+    const PreparedPresentationPlan plan = scheduler.PlanDecodedFrame(
+        0, kStartNs + 3 * kMs);
+    assert(plan.action == PreparedPresentationAction::SCHEDULE);
+}
+
+void TestHandleDiscardsExactDuplicateTarget() {
+    TwoStepPresentationScheduler scheduler;
+    scheduler.Configure(60.0);
+
+    const PresentationTargetHandle older = scheduler.PrepareFrame(
+        1000, kStartNs);
+    const PresentationTargetHandle newer = scheduler.PrepareFrame(
+        1000, kStartNs + 17 * kMs);
+
+    assert(older);
+    assert(newer);
+    scheduler.DiscardFrame(older);
+    assert(scheduler.GetPendingTargetCount() == 1);
+    const PreparedPresentationPlan plan = scheduler.PlanDecodedFrame(
+        1000, kStartNs + 18 * kMs);
+    assert(plan.action == PreparedPresentationAction::SCHEDULE);
 }
 
 void TestFarFutureTargetRendersImmediately() {
@@ -234,6 +272,8 @@ int main() {
     TestDecodeTimeConsumesPreparedLead();
     TestExpiredPreparedTargetRendersImmediately();
     TestMissingTargetDoesNotPoisonNewTimeline();
+    TestStaleHandleCannotDiscardTargetAfterReset();
+    TestHandleDiscardsExactDuplicateTarget();
     TestFarFutureTargetRendersImmediately();
     TestTargetsFollowPtsAcrossOutputLookup();
     TestSyncDrainKeepsOnlyLatestPreparedTarget();
