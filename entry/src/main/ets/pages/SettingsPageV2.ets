@@ -12,6 +12,7 @@ import { router, promptAction, display } from '@kit.ArkUI';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { common, Want, bundleManager } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { util } from '@kit.ArkTS';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { StreamingSession, DecoderCapabilities } from '../service/streaming/StreamingSession';
@@ -4129,8 +4130,35 @@ struct SettingsPageV2 {
 interface OpenSourceLibrary {
   name: string;
   license: string;
+  licenseType: string;
   desc: string;
   url: string;
+  showInAbout: boolean;
+}
+
+interface OpenSourceManifest {
+  schemaVersion: number;
+  libraries: OpenSourceLibrary[];
+}
+
+function loadOpenSourceLibraries(context: common.Context): OpenSourceLibrary[] {
+  try {
+    const rawData = context.resourceManager.getRawFileContentSync(
+      'open_source_libraries.json');
+    const decoder = util.TextDecoder.create('utf-8');
+    const manifest = JSON.parse(
+      decoder.decodeToString(rawData)) as OpenSourceManifest;
+    if (manifest.schemaVersion !== 1) {
+      console.error(
+        `[OpenSource] 不支持的清单版本: ${manifest.schemaVersion}`);
+      return [];
+    }
+    return manifest.libraries.filter(
+      (library: OpenSourceLibrary): boolean => library.showInAbout);
+  } catch (error) {
+    console.error(`[OpenSource] 加载开源库清单失败: ${error}`);
+    return [];
+  }
 }
 
 /**
@@ -4148,16 +4176,12 @@ interface PrivacySection {
 struct OpenSourceLicensesDialog {
   controller: CustomDialogController;
 
-  // 开源库数据
-  private libraries: OpenSourceLibrary[] = [
-    { name: 'Moonlight', license: 'GPLv3', desc: '游戏串流客户端核心项目', url: 'github.com/moonlight-stream' } as OpenSourceLibrary,
-    { name: 'moonlight-common-c', license: 'GPLv3', desc: 'GameStream 协议实现', url: 'github.com/moonlight-stream/moonlight-common-c' } as OpenSourceLibrary,
-    { name: 'ENet', license: 'MIT', desc: '可靠 UDP 网络库', url: 'github.com/lsalzman/enet' } as OpenSourceLibrary,
-    { name: 'OpenSSL', license: 'Apache 2.0', desc: 'TLS/SSL 加密库', url: 'www.openssl.org' } as OpenSourceLibrary,
-    { name: 'ohos-openssl', license: 'MIT', desc: 'OpenSSL HarmonyOS 移植', url: 'github.com/ohos-rs/ohos-openssl' } as OpenSourceLibrary,
-    { name: 'Reed-Solomon', license: 'BSD 2-Clause', desc: '前向纠错算法', url: '' } as OpenSourceLibrary,
-    { name: 'SDL GameControllerDB', license: 'zlib', desc: '手柄映射数据库', url: 'github.com/gabomdq/SDL_GameControllerDB' } as OpenSourceLibrary
-  ];
+  @State private libraries: OpenSourceLibrary[] = [];
+
+  aboutToAppear(): void {
+    const context = getContext(this) as common.Context;
+    this.libraries = loadOpenSourceLibraries(context);
+  }
 
   build() {
     Column() {

@@ -27,6 +27,8 @@ env:
   CI_TARGET_API_VERSION: '24'
   CMDLINE_TOOLS_VERSION: '5.1.0.840'
   CACHE_VERSION: 'v10'
+  # v0.6.0
+  AUDIO_HAPTICS_SDK_REF: 'b71b47a08fd400996ed374a97e1bff73bac2932e'
 
 jobs:
   build:
@@ -49,6 +51,15 @@ jobs:
 
     - name: Run repository checks
       run: npm run check
+
+    - name: Checkout audio haptics SDK
+      uses: actions/checkout@v4
+      with:
+        repository: AlkaidLab/moonlight-audio-haptics
+        ref: ${{ env.AUDIO_HAPTICS_SDK_REF }}
+        path: audio-haptics-sdk
+        fetch-depth: 1
+        persist-credentials: false
 
     - name: Setup Java 17
       uses: actions/setup-java@v4

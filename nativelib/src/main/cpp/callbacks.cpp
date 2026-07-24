@@ -20,9 +20,12 @@
 #include "opus_libopus.h"
 #include "video_decoder.h"
 #include "audio_renderer.h"
-#include "bass_energy_analyzer.h"
+#include "audio_haptics_engine.h"
 #include "moonlight_bridge.h"
 #include <hilog/log.h>
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstring>
 
 // 外部函数：更新 mic 编码器丢包率（定义在 moonlight_bridge.cpp）
@@ -58,8 +61,8 @@ ConnectionListenerCallbacks g_connCallbacks = {0};
 static OPUS_MULTISTREAM_CONFIGURATION g_opusConfig;
 static short* g_decodedAudioBuffer = nullptr;
 
-// 低频能量分析器（extern 供 moonlight_bridge.cpp 访问）
-BassEnergyAnalyzer g_bassAnalyzer;
+// SDK Core 仅由音频解码线程持有和处理。
+AudioHapticsEngine g_audioHapticsEngine;
 
 // =============================================================================
 // 辅助函数
@@ -148,6 +151,11 @@ typedef struct {
     void* ptrParam;
     int ptrSize;
 } CallbackData;
+
+struct AudioHapticCallbackData {
+    AhHapticFrame frame{};
+    double presentationDelayMs = 0.0;
+};
 
 static void CallJs_StageStarting(napi_env env, napi_value js_callback, void* context, void* data) {
     CallbackData* cbData = (CallbackData*)data;
@@ -420,19 +428,59 @@ static void CallJs_Void(napi_env env, napi_value js_callback, void* context, voi
     }
 }
 
-static void CallJs_BassEnergy(napi_env env, napi_value js_callback, void* context, void* data) {
-    CallbackData* cbData = (CallbackData*)data;
+static void SetObjectUint32(napi_env env,
+                            napi_value object,
+                            const char* name,
+                            uint32_t value) {
+    napi_value property;
+    napi_create_uint32(env, value, &property);
+    napi_set_named_property(env, object, name, property);
+}
+
+static void SetObjectDouble(napi_env env,
+                            napi_value object,
+                            const char* name,
+                            double value) {
+    napi_value property;
+    napi_create_double(env, value, &property);
+    napi_set_named_property(env, object, name, property);
+}
+
+static void CallJs_AudioHapticFrame(napi_env env,
+                                    napi_value js_callback,
+                                    void* context,
+                                    void* data) {
+    auto* callbackData = static_cast<AudioHapticCallbackData*>(data);
     if (env != nullptr && js_callback != nullptr) {
-        napi_value argv[3];
-        napi_create_int32(env, cbData->intParams[0], &argv[0]); // intensity (0-100)
-        napi_create_int32(env, cbData->intParams[1], &argv[1]); // lowFreqRatio (0-100)
-        napi_create_int32(env, cbData->intParams[2], &argv[2]); // stereoBalance (0-100)
+        napi_value frameObject;
+        napi_create_object(env, &frameObject);
+        SetObjectUint32(env, frameObject, "flags", callbackData->frame.flags);
+        SetObjectDouble(env, frameObject, "timestampUs",
+                        static_cast<double>(callbackData->frame.timestamp_us));
+        SetObjectDouble(env, frameObject, "continuousAmplitude",
+                        callbackData->frame.continuous_amplitude);
+        SetObjectDouble(env, frameObject, "transientAmplitude",
+                        callbackData->frame.transient_amplitude);
+        SetObjectDouble(env, frameObject, "transientDurationMs",
+                        callbackData->frame.transient_duration_ms);
+        SetObjectDouble(env, frameObject, "sharpness",
+                        callbackData->frame.sharpness);
+        SetObjectDouble(env, frameObject, "lowBandRatio",
+                        callbackData->frame.low_band_ratio);
+        SetObjectDouble(env, frameObject, "stereoPan",
+                        callbackData->frame.stereo_pan);
+        SetObjectDouble(env, frameObject, "confidence",
+                        callbackData->frame.confidence);
+        SetObjectUint32(env, frameObject, "activeScene",
+                        callbackData->frame.active_scene);
+        SetObjectDouble(env, frameObject, "presentationDelayMs",
+                        callbackData->presentationDelayMs);
 
         napi_value undefined;
         napi_get_undefined(env, &undefined);
-        napi_call_function(env, undefined, js_callback, 3, argv, nullptr);
+        napi_call_function(env, undefined, js_callback, 1, &frameObject, nullptr);
     }
-    delete cbData;
+    delete callbackData;
 }
 
 // =============================================================================
@@ -478,8 +526,10 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     if (napi_get_named_property(env, callbacks, "arPlaySample", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "arPlaySample", CallJs_ArPlaySample, &g_audioCallbacks.tsfn_playSample);
     }
-    if (napi_get_named_property(env, callbacks, "bassEnergy", &callback) == napi_ok) {
-        CreateThreadsafeFunction(env, callback, "bassEnergy", CallJs_BassEnergy, &g_audioCallbacks.tsfn_bassEnergy);
+    if (napi_get_named_property(env, callbacks, "audioHapticFrame", &callback) == napi_ok) {
+        CreateThreadsafeFunction(env, callback, "audioHapticFrame",
+                                 CallJs_AudioHapticFrame,
+                                 &g_audioCallbacks.tsfn_audioHapticFrame);
     }
     
     // 连接监听器回调
@@ -541,7 +591,10 @@ void Callbacks_Cleanup(void) {
     if (g_audioCallbacks.tsfn_stop) napi_release_threadsafe_function(g_audioCallbacks.tsfn_stop, napi_tsfn_release);
     if (g_audioCallbacks.tsfn_cleanup) napi_release_threadsafe_function(g_audioCallbacks.tsfn_cleanup, napi_tsfn_release);
     if (g_audioCallbacks.tsfn_playSample) napi_release_threadsafe_function(g_audioCallbacks.tsfn_playSample, napi_tsfn_release);
-    if (g_audioCallbacks.tsfn_bassEnergy) napi_release_threadsafe_function(g_audioCallbacks.tsfn_bassEnergy, napi_tsfn_release);
+    if (g_audioCallbacks.tsfn_audioHapticFrame) {
+        napi_release_threadsafe_function(
+            g_audioCallbacks.tsfn_audioHapticFrame, napi_tsfn_release);
+    }
     
     if (g_connCallbacks.tsfn_stageStarting) napi_release_threadsafe_function(g_connCallbacks.tsfn_stageStarting, napi_tsfn_release);
     if (g_connCallbacks.tsfn_stageComplete) napi_release_threadsafe_function(g_connCallbacks.tsfn_stageComplete, napi_tsfn_release);
@@ -749,10 +802,19 @@ int BridgeArInit(int audioConfiguration, void* opusConfigPtr, void* context, int
         // 继续执行，让 ArkTS 层处理音频
     }
     
-    // 初始化低频能量分析器
-    g_bassAnalyzer.Init(opusConfig->sampleRate, opusConfig->channelCount);
-    OH_LOG_INFO(LOG_APP, "Bass energy analyzer initialized: rate=%{public}d, ch=%{public}d",
-                opusConfig->sampleRate, opusConfig->channelCount);
+    if (!g_audioHapticsEngine.Init(opusConfig->sampleRate,
+                                   opusConfig->channelCount)) {
+        OH_LOG_ERROR(LOG_APP,
+                     "Audio haptics SDK init failed: rate=%{public}d, ch=%{public}d",
+                     opusConfig->sampleRate, opusConfig->channelCount);
+    } else {
+        OH_LOG_INFO(
+            LOG_APP,
+            "Audio haptics SDK initialized: version=%{public}s params=%{public}s "
+            "rate=%{public}d ch=%{public}d",
+            ah_get_version_string(), ah_get_parameter_set_version(),
+            opusConfig->sampleRate, opusConfig->channelCount);
+    }
     
     if (g_audioCallbacks.tsfn_init) {
         CallbackData* data = new CallbackData();
@@ -781,6 +843,7 @@ void BridgeArStop(void) {
     
     // 停止音频播放器
     AudioRendererInstance::Stop();
+    g_audioHapticsEngine.Reset();
     
     if (g_audioCallbacks.tsfn_stop) {
         napi_call_threadsafe_function(g_audioCallbacks.tsfn_stop, nullptr, napi_tsfn_blocking);
@@ -795,6 +858,7 @@ void BridgeArCleanup(void) {
     
     // 清理 AVCodec Opus 解码器
     MoonlightOpusDecoder::Cleanup();
+    g_audioHapticsEngine.Cleanup();
     
     if (g_decodedAudioBuffer) {
         free(g_decodedAudioBuffer);
@@ -888,8 +952,9 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     static thread_local int64_t  s_arvAbsSum = 0;
     static thread_local int      s_arvMaxAbs = 0;
     static thread_local int      s_arvSampleCount = 0;
-    static thread_local int      s_arvBassFires = 0;
-    static thread_local int      s_arvLastIntensityMax = 0;
+    static thread_local int      s_arvHapticFrames = 0;
+    static thread_local int      s_arvHapticAmplitudeMax = 0;
+    static thread_local uint64_t s_arvHapticErrors = 0;
     constexpr int kSatThreshold = 30000;
     constexpr int kFramesPerLog = 200;  // ~1s @5ms/frame
 
@@ -933,20 +998,61 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                         frameMaxAbs, totalSamples);
         }
 
-        // 低频能量分析（音频振动）
-        int bassIntensity = 0;
-        int bassLowFreqRatio = 50;
-        int bassStereoBalance = 50;
-        if (g_bassAnalyzer.ProcessFrame(g_decodedAudioBuffer, decodeLen, bassIntensity, bassLowFreqRatio, bassStereoBalance)) {
-            s_arvBassFires++;
-            if (bassIntensity > s_arvLastIntensityMax) s_arvLastIntensityMax = bassIntensity;
-            if (g_audioCallbacks.tsfn_bassEnergy) {
-                CallbackData* data = new CallbackData();
-                data->intParams[0] = bassIntensity;
-                data->intParams[1] = bassLowFreqRatio;
-                data->intParams[2] = bassStereoBalance;
-                napi_status st = napi_call_threadsafe_function(g_audioCallbacks.tsfn_bassEnergy, data, napi_tsfn_nonblocking);
-                if (st != napi_ok) delete data;
+        // Portable SDK: decoded PCM -> sparse haptic IR.
+        std::array<AhHapticFrame, 32> hapticFrames{};
+        uint32_t hapticFrameCount = 0;
+        if (!g_audioHapticsEngine.ProcessFrame(
+                g_decodedAudioBuffer,
+                static_cast<uint32_t>(decodeLen),
+                hapticFrames.data(),
+                static_cast<uint32_t>(hapticFrames.size()),
+                &hapticFrameCount)) {
+            ++s_arvHapticErrors;
+            if (s_arvHapticErrors <= 3U || (s_arvHapticErrors % 200U) == 0U) {
+                OH_LOG_WARN(LOG_APP,
+                            "[AUDIO_HAPTICS] SDK process failed: count=%{public}llu",
+                            static_cast<unsigned long long>(s_arvHapticErrors));
+            }
+        } else if (hapticFrameCount > 0) {
+            napi_threadsafe_function hapticTsfn = nullptr;
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                hapticTsfn = g_audioCallbacks.tsfn_audioHapticFrame;
+                if (hapticTsfn != nullptr &&
+                    napi_acquire_threadsafe_function(hapticTsfn) != napi_ok) {
+                    hapticTsfn = nullptr;
+                }
+            }
+
+            if (hapticTsfn != nullptr) {
+                // The decoded PCM is ahead of audible output by the current ring
+                // buffer depth. Subtract a conservative actuator lead and let
+                // ArkTS schedule the sparse frame on the presentation timeline.
+                constexpr double kActuatorLeadMs = 8.0;
+                constexpr double kMaximumPresentationDelayMs = 50.0;
+                const double presentationDelayMs = std::clamp(
+                    AudioRendererInstance::GetBufferLatencyMs() - kActuatorLeadMs,
+                    0.0, kMaximumPresentationDelayMs);
+
+                for (uint32_t index = 0; index < hapticFrameCount; ++index) {
+                    auto* data = new AudioHapticCallbackData();
+                    data->frame = hapticFrames[index];
+                    data->presentationDelayMs = presentationDelayMs;
+                    const float amplitude = std::max(
+                        data->frame.continuous_amplitude,
+                        data->frame.transient_amplitude);
+                    s_arvHapticAmplitudeMax = std::max(
+                        s_arvHapticAmplitudeMax,
+                        static_cast<int>(std::lround(amplitude * 100.0F)));
+                    ++s_arvHapticFrames;
+                    const napi_status status = napi_call_threadsafe_function(
+                        hapticTsfn, data, napi_tsfn_nonblocking);
+                    if (status != napi_ok) {
+                        delete data;
+                    }
+                }
+                napi_release_threadsafe_function(
+                    hapticTsfn, napi_tsfn_release);
             }
         }
     }
@@ -956,17 +1062,20 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
         const int meanAbs = (int)(s_arvAbsSum / s_arvSampleCount);
         OH_LOG_INFO(LOG_APP,
             "[AUDIO_DIAG] window seq=%{public}llu frames=%{public}d samples=%{public}d "
-            "maxAbs=%{public}d meanAbs=%{public}d satPct=%{public}d%% bassFires=%{public}d intensityMax=%{public}d decodeFails=%{public}llu",
+            "maxAbs=%{public}d meanAbs=%{public}d satPct=%{public}d%% "
+            "hapticFrames=%{public}d amplitudeMax=%{public}d "
+            "hapticErrors=%{public}llu decodeFails=%{public}llu",
             (unsigned long long)s_arvFrameSeq, kFramesPerLog,
             s_arvSampleCount, s_arvMaxAbs, meanAbs, satPct,
-            s_arvBassFires, s_arvLastIntensityMax,
+            s_arvHapticFrames, s_arvHapticAmplitudeMax,
+            static_cast<unsigned long long>(s_arvHapticErrors),
             (unsigned long long)s_arvDecodeFailCount);
         s_arvSatSum = 0;
         s_arvAbsSum = 0;
         s_arvSampleCount = 0;
         s_arvMaxAbs = 0;
-        s_arvBassFires = 0;
-        s_arvLastIntensityMax = 0;
+        s_arvHapticFrames = 0;
+        s_arvHapticAmplitudeMax = 0;
         // decodeFails 不清零，便于看累计
     }
 }

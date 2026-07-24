@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "libraries": [
+    {
+      "name": "Moonlight",
+      "license": "GPLv3",
+      "licenseType": "Copyleft",
+      "desc": "游戏串流客户端核心项目",
+      "url": "github.com/moonlight-stream",
+      "showInAbout": true
+    },
+    {
+      "name": "moonlight-common-c",
+      "license": "GPLv3",
+      "licenseType": "Copyleft",
+      "desc": "GameStream 协议实现",
+      "url": "github.com/moonlight-stream/moonlight-common-c",
+      "showInAbout": true
+    },
+    {
+      "name": "ENet",
+      "license": "MIT",
+      "licenseType": "Permissive",
+      "desc": "可靠 UDP 网络库",
+      "url": "github.com/lsalzman/enet",
+      "showInAbout": true
+    },
+    {
+      "name": "OpenSSL",
+      "license": "Apache 2.0",
+      "licenseType": "Permissive",
+      "desc": "TLS/SSL 加密库",
+      "url": "www.openssl.org",
+      "showInAbout": true
+    },
+    {
+      "name": "ohos-openssl",
+      "license": "MIT",
+      "licenseType": "Permissive",
+      "desc": "OpenSSL HarmonyOS 移植",
+      "url": "github.com/ohos-rs/ohos-openssl",
+      "showInAbout": true
+    },
+    {
+      "name": "Reed-Solomon",
+      "license": "BSD 2-Clause",
+      "licenseType": "Permissive",
+      "desc": "前向纠错算法",
+      "url": "",
+      "showInAbout": true
+    },
+    {
+      "name": "Moonlight Audio Haptics SDK",
+      "license": "Apache 2.0",
+      "licenseType": "Permissive",
+      "desc": "跨平台音频触觉分析与 Haptic IR",
+      "url": "github.com/AlkaidLab/moonlight-audio-haptics",
+      "showInAbout": true
+    },
+    {
+      "name": "libfvad / WebRTC VAD",
+      "license": "BSD 3-Clause + PATENTS",
+      "licenseType": "Permissive",
+      "desc": "语音活动检测",
+      "url": "github.com/dpirch/libfvad",
+      "showInAbout": true
+    },
+    {
+      "name": "AOSP HapticGenerator",
+      "license": "Apache 2.0",
+      "licenseType": "Permissive",
+      "desc": "触觉包络滤波算法适配",
+      "url": "android.googlesource.com/platform/frameworks/av",
+      "showInAbout": true
+    },
+    {
+      "name": "SDL GameControllerDB",
+      "license": "zlib",
+      "licenseType": "Permissive",
+      "desc": "手柄映射数据库",
+      "url": "github.com/gabomdq/SDL_GameControllerDB",
+      "showInAbout": true
+    },
+    {
+      "name": "@ohos/hypium",
+      "license": "Apache 2.0",
+      "licenseType": "Development",
+      "desc": "HarmonyOS 单元测试框架",
+      "url": "ohpm.openharmony.cn/#/cn/detail/@ohos%2Fhypium",
+      "showInAbout": false
+    }
+  ]
+}

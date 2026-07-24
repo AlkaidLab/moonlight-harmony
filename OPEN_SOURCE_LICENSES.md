@@ -112,30 +112,20 @@ The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 ```
 
-### aubio
+### Moonlight Audio Haptics SDK
 
-- **项目**: aubio
-- **网站**: https://aubio.org/
-- **GitHub**: https://github.com/aubio/aubio
-- **许可证**: GNU General Public License v3.0 (GPLv3)
-- **说明**: 音频标注与分析库，用于实时 onset/beat 检测。本应用使用其 onset detection（频谱 flux + 自适应白化 + 峰值提取）功能，为音乐/节奏场景的振动反馈提供精准的节拍识别。仅编译 onset 检测最小集，使用内置 Ooura FFT，无额外外部依赖。
+- **项目**: Moonlight Audio Haptics
+- **GitHub**: https://github.com/AlkaidLab/moonlight-audio-haptics
+- **固定版本**: `v0.6.0` (`b71b47a08fd400996ed374a97e1bff73bac2932e`)
+- **许可证**: Apache License 2.0
+- **说明**: 提供跨平台、实时、因果的 PCM 音频分析核心和 Haptic IR。本应用静态链接 SDK Core；SDK 不包含或链接 aubio。
 
-```
-Copyright (C) 2003-2024 Paul Brossier <piem@aubio.org>
+#### libfvad / WebRTC VAD
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-```
+SDK 同时包含 BSD 3-Clause + WebRTC `PATENTS` 授权的 libfvad 源码，以及
+Apache-2.0 的 AOSP HapticGenerator 适配。完整声明位于 SDK 仓库的
+`THIRD_PARTY_NOTICES.md`、`ALGORITHM_PROVENANCE.md` 和
+`third_party/libfvad/`。
 
 ### OpenSSL
 
@@ -220,19 +210,12 @@ freely, subject to the following restrictions:
 
 ---
 
-## 许可证摘要
+## 许可证清单
 
-| 库名称 | 许可证 | 类型 |
-|--------|--------|------|
-| Moonlight | GPLv3 | Copyleft |
-| moonlight-common-c | GPLv3 | Copyleft |
-| ENet | MIT | Permissive |
-| Reed-Solomon | BSD 2-Clause | Permissive |
-| OpenSSL | Apache 2.0 | Permissive |
-| ohos-openssl | MIT | Permissive |
-| aubio | GPLv3 | Copyleft |
-| SDL GameControllerDB | zlib | Permissive |
-| @ohos/hypium | Apache 2.0 | Permissive |
+组件名称、许可证、类型、来源和“关于”页展示状态统一维护在
+[open_source_libraries.json](./entry/src/main/resources/rawfile/open_source_libraries.json)。
+应用内“设置 → 关于 → 开源库说明”直接读取同一份随包清单；CI 会校验清单结构
+以及本长版说明是否覆盖每个组件。
 
 ---
 
@@ -250,11 +233,11 @@ freely, subject to the following restrictions:
 ### 获取源代码
 
 如需获取本应用的完整源代码，请访问：
-- GitHub: [待补充仓库地址]
+- GitHub: https://github.com/AlkaidLab/moonlight-harmony
 
 或通过以下方式联系我们获取：
 - 邮箱: [待补充]
 
 ---
 
-*最后更新: 2025年1月*
+*最后更新: 2026年7月*
