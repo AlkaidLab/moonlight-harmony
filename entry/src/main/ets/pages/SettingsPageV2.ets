@@ -2115,14 +2115,20 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '主机 PTS 平滑呈现 (实验性)',
-                subtitle: '按主机时间线送显；积压时跳到最新帧，不固定增加一帧延迟',
+                title: '相位调谐 (实验性)',
+                subtitle: this.developerMode
+                  ? '配合 Foundation Sunshine 主机的帧律感知；不是更快，只是每一帧都很会挑时机'
+                  : '开发者模式解锁后才让你碰',
                 type: 'toggle',
                 value: this.enableHostPacedPresentation,
+                isPro: true,
+                disabled: !this.developerMode,
                 action: () => {
-                  this.enableHostPacedPresentation = !this.enableHostPacedPresentation;
-                  this.saveSetting(SettingsKeys.ENABLE_HOST_PACED_PRESENTATION,
-                    this.enableHostPacedPresentation);
+                  if (this.developerMode) {
+                    this.enableHostPacedPresentation = !this.enableHostPacedPresentation;
+                    this.saveSetting(SettingsKeys.ENABLE_HOST_PACED_PRESENTATION,
+                      this.enableHostPacedPresentation);
+                  }
                 }
               },
               {
