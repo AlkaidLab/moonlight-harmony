@@ -26,9 +26,21 @@ import {
   normalizeGameVibrationStrength
 } from '../../model/StreamConfig';
 
+interface MotorPair {
+  low: number;
+  high: number;
+}
+
 // ==================== 震动服务 ====================
 
 export class GamepadVibrationService {
+  private static readonly MINIMUM_DEVICE_INTENSITY = 5;
+  private static readonly DEVICE_RUMBLE_UPDATE_THRESHOLD = 3000;
+  private static readonly GAME_DEVICE_LEASE_MS = 500;
+  private static readonly AUDIO_MUSIC_LEASE_MS = 240;
+  private static readonly AUDIO_GAME_LEASE_MS = 1000;
+  private static readonly AUDIO_GAME_FALLBACK_DURATION_MS = 500;
+  private static readonly MUSIC_SCENE = 1;
   private usbDriverService: UsbDriverService;
   
   // 设置
@@ -54,9 +66,9 @@ export class GamepadVibrationService {
   private stopConfirmTimer: number = -1;
 
   // 游戏与音频分别保存状态，只有本服务可以写最终执行器。
-  // 游戏是主信号，音频只填充剩余动态范围，避免简单相加削顶。
-  private gameUsbRumble = new Map<number, number[]>();
-  private audioUsbRumble = new Map<number, number[]>();
+  // 两路幅度使用有界 headroom 混合，避免简单相加削顶。
+  private gameUsbRumble = new Map<number, MotorPair>();
+  private audioUsbRumble = new Map<number, MotorPair>();
   private gameDeviceLow: number = 0;
   private gameDeviceHigh: number = 0;
   private audioDeviceContinuous: number = 0;
@@ -176,10 +188,10 @@ export class GamepadVibrationService {
   /** 更新音频来源的 USB 振动；最终输出会与游戏来源混合。 */
   submitAudioUsbRumble(controllerNumber: number,
     lowFreqMotor: number, highFreqMotor: number): void {
-    this.audioUsbRumble.set(controllerNumber, [
-      this.clampRumbleValue(lowFreqMotor),
-      this.clampRumbleValue(highFreqMotor)
-    ]);
+    this.audioUsbRumble.set(controllerNumber, {
+      low: this.clampRumbleValue(lowFreqMotor),
+      high: this.clampRumbleValue(highFreqMotor)
+    });
     const controllers = this.usbDriverService.getControllers();
     if (controllers.length > 0) {
       this.renderMixedUsb(controllers, controllerNumber);
@@ -187,16 +199,16 @@ export class GamepadVibrationService {
   }
 
   /**
-   * 更新音频来源的设备触觉。游戏连续振动是主信号，音频瞬态与连续
-   * 只占用剩余动态范围；音频 stop 不会再停止仍活跃的游戏振动。
+   * 更新音频来源的设备触觉。游戏与音频分别保存状态并有界混合；
+   * 音频 stop 不会再停止仍活跃的游戏振动。
    */
   submitAudioDeviceHaptics(continuous: number, transient: number,
     transientDurationMs: number, sharpness: number, hasTransient: boolean,
     activeScene: number): void {
     this.audioDeviceContinuous = this.clampIntensity(continuous);
     this.audioDeviceContinuousUntilMs =
-      this.audioDeviceContinuous >= 5
-        ? Date.now() + (activeScene === 1 ? 240 : 1000)
+      this.audioDeviceContinuous >= GamepadVibrationService.MINIMUM_DEVICE_INTENSITY
+        ? Date.now() + this.getAudioContinuousLeaseMs(activeScene)
         : 0;
     this.audioDeviceTransient = hasTransient
       ? this.clampIntensity(transient)
@@ -259,7 +271,7 @@ export class GamepadVibrationService {
   private stopGameSource(): void {
     this.clearGameTimers();
     const affectedSlots = new Set<number>();
-    this.gameUsbRumble.forEach((_: number[], slot: number): void => {
+    this.gameUsbRumble.forEach((_: MotorPair, slot: number): void => {
       affectedSlots.add(slot);
     });
     this.gameUsbRumble.clear();
@@ -316,10 +328,10 @@ export class GamepadVibrationService {
     lowFreqMotor: number,
     highFreqMotor: number
   ): void {
-    this.gameUsbRumble.set(controllerNumber, [
-      this.applyGameVibrationStrength(lowFreqMotor),
-      this.applyGameVibrationStrength(highFreqMotor)
-    ]);
+    this.gameUsbRumble.set(controllerNumber, {
+      low: this.applyGameVibrationStrength(lowFreqMotor),
+      high: this.applyGameVibrationStrength(highFreqMotor)
+    });
     this.renderMixedUsb(controllers, controllerNumber);
   }
 
@@ -328,11 +340,13 @@ export class GamepadVibrationService {
     const controller = this.findControllerBySlot(controllers, controllerNumber);
     if (!controller) return;
 
-    const game = this.gameUsbRumble.get(controllerNumber) ?? [0, 0];
-    const audio = this.audioUsbRumble.get(controllerNumber) ?? [0, 0];
+    const game = this.gameUsbRumble.get(controllerNumber) ??
+      { low: 0, high: 0 };
+    const audio = this.audioUsbRumble.get(controllerNumber) ??
+      { low: 0, high: 0 };
     controller.rumble(
-      this.mixPrimaryWithOverlay(game[0], audio[0], RUMBLE_MAX),
-      this.mixPrimaryWithOverlay(game[1], audio[1], RUMBLE_MAX)
+      this.mixWithHeadroom(game.low, audio.low, RUMBLE_MAX),
+      this.mixWithHeadroom(game.high, audio.high, RUMBLE_MAX)
     );
   }
 
@@ -356,15 +370,15 @@ export class GamepadVibrationService {
   }
 
   /**
-   * 游戏为主信号，音频按剩余 headroom 混入：
-   * primary + overlay * (1 - primary / max)。
+   * 有界概率和：a + b - a*b/max。
+   * 该公式保留任一路单独输出，并避免两路叠加发生硬削顶。
    */
-  private mixPrimaryWithOverlay(primary: number, overlay: number,
+  private mixWithHeadroom(first: number, second: number,
     maximum: number): number {
-    const safePrimary = Math.max(0, Math.min(maximum, primary));
-    const safeOverlay = Math.max(0, Math.min(maximum, overlay));
+    const safeFirst = Math.max(0, Math.min(maximum, first));
+    const safeSecond = Math.max(0, Math.min(maximum, second));
     return Math.max(0, Math.min(maximum, Math.round(
-      safePrimary + safeOverlay * (maximum - safePrimary) / maximum)));
+      safeFirst + safeSecond * (maximum - safeFirst) / maximum)));
   }
 
   private scheduleUsbStopConfirm(controllerNumber: number): void {
@@ -390,11 +404,11 @@ export class GamepadVibrationService {
 
     const lowDelta = Math.abs(lowFreqMotor - this.lastLowFreq);
     const highDelta = Math.abs(highFreqMotor - this.lastHighFreq);
-    const threshold = 3000;  // 约 5% 的变化阈值
-
     const gameWasActive =
       this.gameDeviceLow > 0 || this.gameDeviceHigh > 0;
-    if (gameWasActive && lowDelta < threshold && highDelta < threshold) {
+    if (gameWasActive &&
+        lowDelta < GamepadVibrationService.DEVICE_RUMBLE_UPDATE_THRESHOLD &&
+        highDelta < GamepadVibrationService.DEVICE_RUMBLE_UPDATE_THRESHOLD) {
       return;  // 变化太小，不更新
     }
 
@@ -418,12 +432,18 @@ export class GamepadVibrationService {
       Date.now() <= this.audioDeviceContinuousUntilMs
         ? this.audioDeviceContinuous
         : 0;
-    const mixedContinuous = this.mixPrimaryWithOverlay(
+    const mixedContinuous = this.mixWithHeadroom(
       gameIntensity, audioContinuous, 100);
     const mixedTransient = hasAudioTransient
-      ? this.mixPrimaryWithOverlay(
+      ? this.mixWithHeadroom(
         gameIntensity, this.audioDeviceTransient, 100)
       : 0;
+
+    if (mixedContinuous < GamepadVibrationService.MINIMUM_DEVICE_INTENSITY &&
+        mixedTransient < GamepadVibrationService.MINIMUM_DEVICE_INTENSITY) {
+      if (this.isVibrating) this.stopVibrationImmediate();
+      return;
+    }
 
     if (this.hdHapticSupported === null) {
       try {
@@ -448,7 +468,7 @@ export class GamepadVibrationService {
         this.triggerMixedTimeFallback(
           mixedContinuous, mixedTransient, hasAudioTransient, renderEpoch);
       }
-      this.isVibrating = mixedContinuous >= 5 || mixedTransient >= 5;
+      this.isVibrating = true;
     } catch (err) {
       console.warn(`[VIBRATION] 设备震动异常: ${err}`);
       this.triggerMixedTimeFallback(
@@ -476,12 +496,10 @@ export class GamepadVibrationService {
   private triggerMixedPattern(lowIntensity: number, highIntensity: number,
     mixedContinuous: number, mixedTransient: number,
     hasAudioTransient: boolean, renderEpoch: number): void {
-    const hasContinuous = mixedContinuous >= 5;
-    const hasTransient = hasAudioTransient && mixedTransient >= 5;
-    if (!hasContinuous && !hasTransient) {
-      if (this.isVibrating) this.stopVibrationImmediate();
-      return;
-    }
+    const hasContinuous =
+      mixedContinuous >= GamepadVibrationService.MINIMUM_DEVICE_INTENSITY;
+    const hasTransient = hasAudioTransient &&
+      mixedTransient >= GamepadVibrationService.MINIMUM_DEVICE_INTENSITY;
 
     const builder = new vibrator.VibratorPatternBuilder();
     const audioFrequency = Math.round(
@@ -506,8 +524,8 @@ export class GamepadVibrationService {
         : 0;
       const gameActive = Math.max(lowIntensity, highIntensity) > 0;
       const leaseMs = gameActive
-        ? 500
-        : (this.audioDeviceScene === 1 ? 240 : 1000);
+        ? GamepadVibrationService.GAME_DEVICE_LEASE_MS
+        : this.getAudioContinuousLeaseMs(this.audioDeviceScene);
       builder.addContinuousEvent(startMs, leaseMs, {
         intensity: mixedContinuous,
         frequency: frequency,
@@ -543,11 +561,6 @@ export class GamepadVibrationService {
     const selected = hasAudioTransient
       ? Math.max(mixedTransient, mixedContinuous)
       : mixedContinuous;
-    if (selected < 5) {
-      if (this.isVibrating) this.stopVibrationImmediate();
-      return;
-    }
-
     let duration: number;
     if (hasAudioTransient) {
       const authored = Math.max(
@@ -555,9 +568,11 @@ export class GamepadVibrationService {
       duration = Math.max(
         15, Math.round(authored * (0.65 + selected / 285)));
     } else if (this.gameDeviceLow > 0 || this.gameDeviceHigh > 0) {
-      duration = 500;
+      duration = GamepadVibrationService.GAME_DEVICE_LEASE_MS;
     } else {
-      duration = this.audioDeviceScene === 1 ? 240 : 500;
+      duration = this.audioDeviceScene === GamepadVibrationService.MUSIC_SCENE
+        ? GamepadVibrationService.AUDIO_MUSIC_LEASE_MS
+        : GamepadVibrationService.AUDIO_GAME_FALLBACK_DURATION_MS;
     }
 
     vibrator.startVibration({
@@ -569,5 +584,11 @@ export class GamepadVibrationService {
     }).catch((err: Error): void => {
       console.warn(`[VIBRATION] 时长震动失败: ${err.message}`);
     });
+  }
+
+  private getAudioContinuousLeaseMs(scene: number): number {
+    return scene === GamepadVibrationService.MUSIC_SCENE
+      ? GamepadVibrationService.AUDIO_MUSIC_LEASE_MS
+      : GamepadVibrationService.AUDIO_GAME_LEASE_MS;
   }
 }

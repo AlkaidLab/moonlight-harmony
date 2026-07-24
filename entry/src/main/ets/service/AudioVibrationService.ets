@@ -44,8 +44,8 @@ export class AudioVibrationService {
   private vibrationMode: string = '自动';
   private sceneMode: string = '游戏/电影';
 
-  private isDeviceVibrating: boolean = false;
-  private isUsbRumbling: boolean = false;
+  private isDeviceSourceActive: boolean = false;
+  private isUsbSourceActive: boolean = false;
 
   private currentContinuousIntensity: number = 0;
   private currentLowBandRatio: number = 50;
@@ -166,7 +166,7 @@ export class AudioVibrationService {
         hasTransient,
         frame.activeScene
       );
-    } else if (this.isDeviceVibrating) {
+    } else if (this.isDeviceSourceActive) {
       this.stopDeviceVibration();
     }
 
@@ -179,7 +179,7 @@ export class AudioVibrationService {
         lowBandRatio,
         stereoBalance
       );
-    } else if (this.isUsbRumbling) {
+    } else if (this.isUsbSourceActive) {
       this.stopUsbRumble();
     }
   }
@@ -221,7 +221,7 @@ export class AudioVibrationService {
       hasTransient,
       activeScene
     );
-    this.isDeviceVibrating = true;
+    this.isDeviceSourceActive = true;
   }
 
   private renderUsb(continuous: number, transient: number,
@@ -264,13 +264,13 @@ export class AudioVibrationService {
     const high = Math.max(0, Math.min(RUMBLE_MAX,
       Math.floor(base * highWeight * (1 + spatialFactor))));
     GamepadManager.getInstance().submitAudioUsbRumble(0, low, high);
-    this.isUsbRumbling = true;
+    this.isUsbSourceActive = true;
   }
 
   private stopAll(): void {
     this.usbEffectEpoch++;
-    if (this.isDeviceVibrating) this.stopDeviceVibration();
-    if (this.isUsbRumbling) this.stopUsbRumble();
+    if (this.isDeviceSourceActive) this.stopDeviceVibration();
+    if (this.isUsbSourceActive) this.stopUsbRumble();
     this.currentContinuousIntensity = 0;
     this.currentLowBandRatio = 50;
     this.currentStereoBalance = 50;
@@ -278,11 +278,11 @@ export class AudioVibrationService {
 
   private stopDeviceVibration(): void {
     GamepadManager.getInstance().clearAudioDeviceHaptics();
-    this.isDeviceVibrating = false;
+    this.isDeviceSourceActive = false;
   }
 
   private stopUsbRumble(): void {
     GamepadManager.getInstance().submitAudioUsbRumble(0, 0, 0);
-    this.isUsbRumbling = false;
+    this.isUsbSourceActive = false;
   }
 }
