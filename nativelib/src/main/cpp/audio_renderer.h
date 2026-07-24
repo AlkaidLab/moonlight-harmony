@@ -109,6 +109,13 @@ public:
      * 轻量级调用，仅做两次 atomic load + 简单算术
      */
     double GetBufferLatencyMs() const;
+
+    /**
+     * Get queued application and renderer frames that have not been presented.
+     * Falls back to the application ring-buffer latency when OHAudio cannot
+     * provide a presentation timestamp.
+     */
+    double GetPresentationLatencyMs() const;
     
     /**
      * 检查是否已初始化
@@ -251,6 +258,8 @@ namespace AudioRendererInstance {
      * 轻量级调用，用于延迟控制决策
      */
     double GetBufferLatencyMs();
+
+    double GetPresentationLatencyMs();
 }
 
 #endif // AUDIO_RENDERER_H

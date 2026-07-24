@@ -24,6 +24,7 @@
 #include <dlfcn.h>
 #include <qos/qos.h>
 #include <algorithm>
+#include <ctime>
 
 #define LOG_TAG "AudioRenderer"
 
@@ -576,6 +577,29 @@ double AudioRenderer::GetBufferLatencyMs() const {
         : 0.0;
 }
 
+double AudioRenderer::GetPresentationLatencyMs() const {
+    const double ringBufferLatencyMs = GetBufferLatencyMs();
+    if (renderer_ == nullptr || config_.sampleRate <= 0) {
+        return ringBufferLatencyMs;
+    }
+
+    int64_t framesWritten = 0;
+    int64_t presentedFrames = 0;
+    int64_t presentationTimestampNs = 0;
+    if (OH_AudioRenderer_GetFramesWritten(renderer_, &framesWritten) !=
+            AUDIOSTREAM_SUCCESS ||
+        OH_AudioRenderer_GetTimestamp(renderer_, CLOCK_MONOTONIC,
+            &presentedFrames, &presentationTimestampNs) != AUDIOSTREAM_SUCCESS ||
+        framesWritten < presentedFrames) {
+        return ringBufferLatencyMs;
+    }
+
+    const int64_t pendingRendererFrames = framesWritten - presentedFrames;
+    return ringBufferLatencyMs +
+        (static_cast<double>(pendingRendererFrames) * 1000.0 /
+         static_cast<double>(config_.sampleRate));
+}
+
 // =============================================================================
 // OHAudio 回调实现
 // =============================================================================
@@ -878,6 +902,14 @@ double GetBufferLatencyMs() {
     AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
     if (renderer != nullptr) {
         return renderer->GetBufferLatencyMs();
+    }
+    return 0.0;
+}
+
+double GetPresentationLatencyMs() {
+    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    if (renderer != nullptr) {
+        return renderer->GetPresentationLatencyMs();
     }
     return 0.0;
 }
