@@ -2451,14 +2451,15 @@ export class GamepadManager implements UsbDriverListener {
   /** 更新音频来源的设备触觉；最终只有振动服务写系统马达。 */
   submitAudioDeviceHaptics(continuous: number, transient: number,
     transientDurationMs: number, sharpness: number, hasTransient: boolean,
-    activeScene: number): void {
+    activeScene: number, frameFlags: number): void {
     this.vibrationService.submitAudioDeviceHaptics(
       continuous,
       transient,
       transientDurationMs,
       sharpness,
       hasTransient,
-      activeScene
+      activeScene,
+      frameFlags
     );
   }
 

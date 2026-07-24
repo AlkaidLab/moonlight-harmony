@@ -41,6 +41,11 @@ export class GamepadVibrationService {
   private static readonly AUDIO_GAME_LEASE_MS = 1000;
   private static readonly AUDIO_GAME_FALLBACK_DURATION_MS = 500;
   private static readonly MUSIC_SCENE = 1;
+  private static readonly FRAME_RHYTHM_PREDICTED = 1 << 4;
+  private static readonly FRAME_MUSIC_RESTART = 1 << 5;
+  private static readonly MUSIC_RESTART_MINIMUM_INTENSITY = 58;
+  private static readonly MUSIC_RHYTHM_MINIMUM_INTENSITY = 70;
+  private static readonly MUSIC_TRANSIENT_MINIMUM_INTENSITY = 72;
   private usbDriverService: UsbDriverService;
   
   // 设置
@@ -204,7 +209,7 @@ export class GamepadVibrationService {
    */
   submitAudioDeviceHaptics(continuous: number, transient: number,
     transientDurationMs: number, sharpness: number, hasTransient: boolean,
-    activeScene: number): void {
+    activeScene: number, frameFlags: number): void {
     this.audioDeviceContinuous = this.clampIntensity(continuous);
     this.audioDeviceContinuousUntilMs =
       this.audioDeviceContinuous >= GamepadVibrationService.MINIMUM_DEVICE_INTENSITY
@@ -217,6 +222,10 @@ export class GamepadVibrationService {
       0, Math.min(100, Math.round(transientDurationMs)));
     this.audioDeviceSharpness = Math.max(0, Math.min(1, sharpness));
     this.audioDeviceScene = activeScene;
+    if (hasTransient &&
+        activeScene === GamepadVibrationService.MUSIC_SCENE) {
+      this.applyMusicTransientPolicy(frameFlags);
+    }
     this.renderMixedDevice(hasTransient);
     this.audioDeviceTransient = 0;
   }
@@ -439,19 +448,15 @@ export class GamepadVibrationService {
         gameIntensity, this.audioDeviceTransient, 100)
       : 0;
 
+    this.ensureHdHapticSupport();
+    const minimumTransientIntensity = this.hdHapticSupported
+      ? 1
+      : GamepadVibrationService.MINIMUM_DEVICE_INTENSITY;
     if (mixedContinuous < GamepadVibrationService.MINIMUM_DEVICE_INTENSITY &&
-        mixedTransient < GamepadVibrationService.MINIMUM_DEVICE_INTENSITY) {
+        (!hasAudioTransient ||
+         mixedTransient < minimumTransientIntensity)) {
       if (this.isVibrating) this.stopVibrationImmediate();
       return;
-    }
-
-    if (this.hdHapticSupported === null) {
-      try {
-        this.hdHapticSupported = vibrator.isHdHapticSupported();
-        console.info(`[VIBRATION] 高清振动支持: ${this.hdHapticSupported}`);
-      } catch (_) {
-        this.hdHapticSupported = false;
-      }
     }
 
     try {
@@ -499,7 +504,7 @@ export class GamepadVibrationService {
     const hasContinuous =
       mixedContinuous >= GamepadVibrationService.MINIMUM_DEVICE_INTENSITY;
     const hasTransient = hasAudioTransient &&
-      mixedTransient >= GamepadVibrationService.MINIMUM_DEVICE_INTENSITY;
+      mixedTransient > 0;
 
     const builder = new vibrator.VibratorPatternBuilder();
     const audioFrequency = Math.round(
@@ -590,5 +595,50 @@ export class GamepadVibrationService {
     return scene === GamepadVibrationService.MUSIC_SCENE
       ? GamepadVibrationService.AUDIO_MUSIC_LEASE_MS
       : GamepadVibrationService.AUDIO_GAME_LEASE_MS;
+  }
+
+  /**
+   * 对齐 Android 渲染器的音乐瞬态策略。高清马达保留创作幅度并缩短事件；
+   * 时长回退马达需要更高的幅度下限与稍长脉冲，才能稳定感知弱节拍。
+   */
+  private applyMusicTransientPolicy(frameFlags: number): void {
+    this.ensureHdHapticSupport();
+    if (this.hdHapticSupported) {
+      this.audioDeviceTransientDurationMs = Math.round(Math.max(
+        28, Math.min(34, this.audioDeviceTransientDurationMs * 0.58)));
+      return;
+    }
+
+    const predicted =
+      (frameFlags & GamepadVibrationService.FRAME_RHYTHM_PREDICTED) !== 0;
+    const restart =
+      (frameFlags & GamepadVibrationService.FRAME_MUSIC_RESTART) !== 0;
+    const minimumIntensity = restart
+      ? GamepadVibrationService.MUSIC_RESTART_MINIMUM_INTENSITY
+      : (predicted
+        ? GamepadVibrationService.MUSIC_RHYTHM_MINIMUM_INTENSITY
+        : GamepadVibrationService.MUSIC_TRANSIENT_MINIMUM_INTENSITY);
+    if (this.audioDeviceTransient > 0) {
+      this.audioDeviceTransient = Math.max(
+        this.audioDeviceTransient, minimumIntensity);
+    }
+
+    const durationScale = predicted ? 0.75 : 0.78;
+    const minimumDurationMs = predicted ? 36 : 40;
+    const maximumDurationMs = predicted ? 42 : 46;
+    this.audioDeviceTransientDurationMs = Math.round(Math.max(
+      minimumDurationMs,
+      Math.min(maximumDurationMs,
+        this.audioDeviceTransientDurationMs * durationScale)));
+  }
+
+  private ensureHdHapticSupport(): void {
+    if (this.hdHapticSupported !== null) return;
+    try {
+      this.hdHapticSupported = vibrator.isHdHapticSupported();
+      console.info(`[VIBRATION] 高清振动支持: ${this.hdHapticSupported}`);
+    } catch (_) {
+      this.hdHapticSupported = false;
+    }
   }
 }

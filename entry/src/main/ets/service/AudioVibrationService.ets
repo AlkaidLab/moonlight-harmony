@@ -38,6 +38,8 @@ export class AudioVibrationService {
   private static readonly MINIMUM_INTENSITY: number = 4;
   private static readonly TRANSIENT_MINIMUM_INTERVAL_MS: number = 12;
   private static readonly CONTINUOUS_MINIMUM_INTERVAL_MS: number = 60;
+  private static readonly DEFAULT_ONSET_SENSITIVITY: number = 1.0;
+  private static readonly MUSIC_ONSET_SENSITIVITY: number = 2.5;
 
   private enabled: boolean = false;
   private strength: number = 100;
@@ -50,7 +52,8 @@ export class AudioVibrationService {
   private currentContinuousIntensity: number = 0;
   private currentLowBandRatio: number = 50;
   private currentStereoBalance: number = 50;
-  private lastSubmitTimeMs: number = 0;
+  private lastTransientSubmitTimeMs: number = 0;
+  private lastContinuousSubmitTimeMs: number = 0;
   private renderEpoch: number = 0;
   private usbEffectEpoch: number = 0;
 
@@ -77,6 +80,12 @@ export class AudioVibrationService {
       case '游戏/电影':
       default: return 0;
     }
+  }
+
+  getOnsetSensitivity(): number {
+    return this.sceneMode === '音乐/节奏'
+      ? AudioVibrationService.MUSIC_ONSET_SENSITIVITY
+      : AudioVibrationService.DEFAULT_ONSET_SENSITIVITY;
   }
 
   handleHapticFrame(frame: AudioHapticFrame): void {
@@ -143,7 +152,10 @@ export class AudioVibrationService {
     const selected = hasTransient
       ? Math.max(transient, continuous)
       : continuous;
-    if (selected < AudioVibrationService.MINIMUM_INTENSITY) {
+    // Valid transient intent must reach the actuator policy. Some motors need
+    // a platform-specific amplitude floor to make weak musical beats tangible.
+    if (!hasTransient &&
+        selected < AudioVibrationService.MINIMUM_INTENSITY) {
       if (continuousChanged || hasStop) this.stopAll();
       return;
     }
@@ -152,8 +164,15 @@ export class AudioVibrationService {
     const minimumInterval = hasTransient
       ? AudioVibrationService.TRANSIENT_MINIMUM_INTERVAL_MS
       : AudioVibrationService.CONTINUOUS_MINIMUM_INTERVAL_MS;
-    if (now - this.lastSubmitTimeMs < minimumInterval) return;
-    this.lastSubmitTimeMs = now;
+    const lastSubmitTimeMs = hasTransient
+      ? this.lastTransientSubmitTimeMs
+      : this.lastContinuousSubmitTimeMs;
+    if (now - lastSubmitTimeMs < minimumInterval) return;
+    if (hasTransient) {
+      this.lastTransientSubmitTimeMs = now;
+    } else {
+      this.lastContinuousSubmitTimeMs = now;
+    }
 
     const shouldDevice = this.shouldVibrateDevice();
     const shouldUsb = this.shouldVibrateGamepad();
@@ -164,7 +183,8 @@ export class AudioVibrationService {
         frame.transientDurationMs,
         frame.sharpness,
         hasTransient,
-        frame.activeScene
+        frame.activeScene,
+        frame.flags
       );
     } else if (this.isDeviceSourceActive) {
       this.stopDeviceVibration();
@@ -212,14 +232,15 @@ export class AudioVibrationService {
 
   private renderDevice(continuous: number, transient: number,
     transientDurationMs: number, sharpness: number, hasTransient: boolean,
-    activeScene: number): void {
+    activeScene: number, frameFlags: number): void {
     GamepadManager.getInstance().submitAudioDeviceHaptics(
       continuous,
       transient,
       transientDurationMs,
       sharpness,
       hasTransient,
-      activeScene
+      activeScene,
+      frameFlags
     );
     this.isDeviceSourceActive = true;
   }
@@ -274,6 +295,8 @@ export class AudioVibrationService {
     this.currentContinuousIntensity = 0;
     this.currentLowBandRatio = 50;
     this.currentStereoBalance = 50;
+    this.lastTransientSubmitTimeMs = 0;
+    this.lastContinuousSubmitTimeMs = 0;
   }
 
   private stopDeviceVibration(): void {
