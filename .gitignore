@@ -74,6 +74,7 @@ scripts/*
 !scripts/sunshine-mock-connection-test.js
 !scripts/archive-native-symbols.js
 !scripts/check-repository.js
+!scripts/check-open-source-licenses.js
 
 # Local release artifacts
 release-symbols/

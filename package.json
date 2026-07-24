@@ -4,9 +4,10 @@
   "private": true,
   "description": "Moonlight for HarmonyOS - PC Game Streaming",
   "scripts": {
-    "check": "npm run check:scripts && npm run check:repository && npm test",
+    "check": "npm run check:scripts && npm run check:repository && npm run check:licenses && npm test",
+    "check:licenses": "node scripts/check-open-source-licenses.js",
     "check:repository": "node scripts/check-repository.js",
-    "check:scripts": "node --check hvigorw.js && node --check scripts/check-repository.js && node --check scripts/gen-changelog.js && node --check scripts/release.js && node --check scripts/sunshine-mock-connection-test.js",
+    "check:scripts": "node --check hvigorw.js && node --check scripts/check-repository.js && node --check scripts/check-open-source-licenses.js && node --check scripts/gen-changelog.js && node --check scripts/release.js && node --check scripts/sunshine-mock-connection-test.js",
     "test": "npm run test:sunshine-mock",
     "release": "node scripts/release.js",
     "changelog": "node scripts/gen-changelog.js",
