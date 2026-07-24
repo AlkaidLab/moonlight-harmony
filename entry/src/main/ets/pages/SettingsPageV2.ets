@@ -4156,6 +4156,9 @@ struct OpenSourceLicensesDialog {
     { name: 'OpenSSL', license: 'Apache 2.0', desc: 'TLS/SSL 加密库', url: 'www.openssl.org' } as OpenSourceLibrary,
     { name: 'ohos-openssl', license: 'MIT', desc: 'OpenSSL HarmonyOS 移植', url: 'github.com/ohos-rs/ohos-openssl' } as OpenSourceLibrary,
     { name: 'Reed-Solomon', license: 'BSD 2-Clause', desc: '前向纠错算法', url: '' } as OpenSourceLibrary,
+    { name: 'Moonlight Audio Haptics SDK', license: 'Apache 2.0', desc: '跨平台音频触觉分析与 Haptic IR', url: 'github.com/AlkaidLab/moonlight-audio-haptics' } as OpenSourceLibrary,
+    { name: 'libfvad / WebRTC VAD', license: 'BSD 3-Clause + PATENTS', desc: '语音活动检测', url: 'github.com/dpirch/libfvad' } as OpenSourceLibrary,
+    { name: 'AOSP HapticGenerator', license: 'Apache 2.0', desc: '触觉包络滤波算法适配', url: 'android.googlesource.com/platform/frameworks/av' } as OpenSourceLibrary,
     { name: 'SDL GameControllerDB', license: 'zlib', desc: '手柄映射数据库', url: 'github.com/gabomdq/SDL_GameControllerDB' } as OpenSourceLibrary
   ];
 
