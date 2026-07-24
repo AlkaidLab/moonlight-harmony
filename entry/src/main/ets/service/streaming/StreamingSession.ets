@@ -656,6 +656,28 @@ export class StreamingSession {
     return this.config?.bitrate || 0;
   }
 
+  /**
+   * 热更新当前会话的音频振动设置。
+   *
+   * SDK 只接收场景创作配置；用户强度继续由平台渲染层统一缩放，
+   * 避免同时暴露 sensitivity 和输出增益两套旋钮。
+   */
+  updateAudioVibrationSettings(enabled: boolean, strength: number,
+    vibrationMode: string, sceneMode: string): void {
+    const normalizedStrength = Math.max(0, Math.min(100, Math.round(strength)));
+    if (this.config) {
+      this.config.enableAudioVibration = enabled;
+      this.config.audioVibrationStrength = normalizedStrength;
+      this.config.vibrationMode = vibrationMode;
+      this.config.audioVibrationSceneMode = sceneMode;
+    }
+
+    this.audioVibrationService.setSettings(
+      enabled, normalizedStrength, vibrationMode, sceneMode);
+    this.nativeModule.setAudioHapticsConfig(
+      enabled, 1.0, this.audioVibrationService.getSceneModeInt());
+  }
+
   // ---------------------------------------------------------------------------
   // 服务器控制
   // ---------------------------------------------------------------------------
@@ -1111,9 +1133,12 @@ export class StreamingSession {
 
   private applyPostConnectionSettings(config: StreamConfig): void {
     // 必须在 connectToServer() 之后，确保 SDK Core 已按实际 PCM 格式创建。
-    const sceneMode = this.audioVibrationService.getSceneModeInt();
-    this.nativeModule.setAudioHapticsConfig(
-      config.enableAudioVibration, 1.0, sceneMode);
+    this.updateAudioVibrationSettings(
+      config.enableAudioVibration,
+      config.audioVibrationStrength,
+      config.vibrationMode,
+      config.audioVibrationSceneMode
+    );
     if (config.enableAudioVibration) {
       console.info(`音频振动已启用, 强度=${config.audioVibrationStrength}, 模式=${config.vibrationMode}, 场景=${config.audioVibrationSceneMode}`);
     }
