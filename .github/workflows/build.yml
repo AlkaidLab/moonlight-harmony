@@ -58,6 +58,7 @@ jobs:
         ref: ${{ env.AUDIO_HAPTICS_SDK_REF }}
         path: audio-haptics-sdk
         fetch-depth: 1
+        persist-credentials: false
 
     - name: Setup Java 17
       uses: actions/setup-java@v4

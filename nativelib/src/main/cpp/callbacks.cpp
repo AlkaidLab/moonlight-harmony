@@ -1013,34 +1013,46 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                             "[AUDIO_HAPTICS] SDK process failed: count=%{public}llu",
                             static_cast<unsigned long long>(s_arvHapticErrors));
             }
-        } else if (g_audioCallbacks.tsfn_audioHapticFrame != nullptr) {
-            // The decoded PCM is ahead of audible output by the current ring
-            // buffer depth. Subtract a conservative actuator lead and let
-            // ArkTS schedule the sparse frame on the presentation timeline.
-            constexpr double kActuatorLeadMs = 8.0;
-            constexpr double kMaximumPresentationDelayMs = 50.0;
-            const double presentationDelayMs = std::clamp(
-                AudioRendererInstance::GetBufferLatencyMs() - kActuatorLeadMs,
-                0.0, kMaximumPresentationDelayMs);
-
-            for (uint32_t index = 0; index < hapticFrameCount; ++index) {
-                auto* data = new AudioHapticCallbackData();
-                data->frame = hapticFrames[index];
-                data->presentationDelayMs = presentationDelayMs;
-                const float amplitude = std::max(
-                    data->frame.continuous_amplitude,
-                    data->frame.transient_amplitude);
-                s_arvHapticAmplitudeMax = std::max(
-                    s_arvHapticAmplitudeMax,
-                    static_cast<int>(std::lround(amplitude * 100.0F)));
-                ++s_arvHapticFrames;
-                const napi_status status = napi_call_threadsafe_function(
-                    g_audioCallbacks.tsfn_audioHapticFrame,
-                    data,
-                    napi_tsfn_nonblocking);
-                if (status != napi_ok) {
-                    delete data;
+        } else if (hapticFrameCount > 0) {
+            napi_threadsafe_function hapticTsfn = nullptr;
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                hapticTsfn = g_audioCallbacks.tsfn_audioHapticFrame;
+                if (hapticTsfn != nullptr &&
+                    napi_acquire_threadsafe_function(hapticTsfn) != napi_ok) {
+                    hapticTsfn = nullptr;
                 }
+            }
+
+            if (hapticTsfn != nullptr) {
+                // The decoded PCM is ahead of audible output by the current ring
+                // buffer depth. Subtract a conservative actuator lead and let
+                // ArkTS schedule the sparse frame on the presentation timeline.
+                constexpr double kActuatorLeadMs = 8.0;
+                constexpr double kMaximumPresentationDelayMs = 50.0;
+                const double presentationDelayMs = std::clamp(
+                    AudioRendererInstance::GetBufferLatencyMs() - kActuatorLeadMs,
+                    0.0, kMaximumPresentationDelayMs);
+
+                for (uint32_t index = 0; index < hapticFrameCount; ++index) {
+                    auto* data = new AudioHapticCallbackData();
+                    data->frame = hapticFrames[index];
+                    data->presentationDelayMs = presentationDelayMs;
+                    const float amplitude = std::max(
+                        data->frame.continuous_amplitude,
+                        data->frame.transient_amplitude);
+                    s_arvHapticAmplitudeMax = std::max(
+                        s_arvHapticAmplitudeMax,
+                        static_cast<int>(std::lround(amplitude * 100.0F)));
+                    ++s_arvHapticFrames;
+                    const napi_status status = napi_call_threadsafe_function(
+                        hapticTsfn, data, napi_tsfn_nonblocking);
+                    if (status != napi_ok) {
+                        delete data;
+                    }
+                }
+                napi_release_threadsafe_function(
+                    hapticTsfn, napi_tsfn_release);
             }
         }
     }
