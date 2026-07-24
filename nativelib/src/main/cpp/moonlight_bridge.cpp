@@ -32,12 +32,13 @@ int LiSendClipboardData(const void* payload, int length);
 #include "callbacks.h"
 #include "video_decoder.h"
 #include "audio_renderer.h"
-#include "bass_energy_analyzer.h"
+#include "audio_haptics_engine.h"
 #include "native_render.h"
 #include "gl_post_processor.h"
 #include "opus_encoder.h"
 #include "mic_capturer.h"
 #include <hilog/log.h>
+#include <algorithm>
 #include <cstring>
 #include <arpa/inet.h>
 #include <native_window/external_window.h>
@@ -2115,15 +2116,19 @@ napi_value MoonBridge_GetPerformanceModeEnabled(napi_env env, napi_callback_info
 // 音频振动
 // =============================================================================
 
-extern BassEnergyAnalyzer g_bassAnalyzer;
+extern AudioHapticsEngine g_audioHapticsEngine;
 
-napi_value MoonBridge_SetBassVibrationConfig(napi_env env, napi_callback_info info) {
+napi_value MoonBridge_SetAudioHapticsConfig(napi_env env,
+                                             napi_callback_info info) {
     size_t argc = 3;
     napi_value argv[3];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
 
     if (argc < 2) {
-        OH_LOG_WARN(LOG_APP, "SetBassVibrationConfig: need 2-3 args (enabled, sensitivity, [sceneMode])");
+        OH_LOG_WARN(
+            LOG_APP,
+            "SetAudioHapticsConfig: need 2-3 args "
+            "(enabled, sensitivity, [sceneMode])");
         return GetUndefined(env);
     }
 
@@ -2139,11 +2144,14 @@ napi_value MoonBridge_SetBassVibrationConfig(napi_env env, napi_callback_info in
         napi_get_value_int32(env, argv[2], &sceneMode);
     }
 
-    g_bassAnalyzer.SetEnabled(enabled);
-    g_bassAnalyzer.SetSensitivity(static_cast<float>(sensitivity));
-    g_bassAnalyzer.SetSceneMode(sceneMode);
+    g_audioHapticsEngine.SetConfig(
+        enabled,
+        static_cast<float>(sensitivity),
+        static_cast<uint32_t>(std::max(0, std::min(sceneMode, 2))));
 
-    OH_LOG_INFO(LOG_APP, "SetBassVibrationConfig: enabled=%{public}s, sensitivity=%.2f, sceneMode=%{public}d",
+    OH_LOG_INFO(LOG_APP,
+                "SetAudioHapticsConfig: enabled=%{public}s, "
+                "sensitivity=%.2f, sceneMode=%{public}d",
                 enabled ? "true" : "false", sensitivity, sceneMode);
 
     return GetUndefined(env);

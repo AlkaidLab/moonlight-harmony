@@ -19,7 +19,6 @@ nativelib/.preview/
 /build-profile.json5
 /.signing/
 nativelib/BuildProfile.ets
-nativelib/src/main/cpp/aubio/src/config.h
 nativelib/src/main/cpp/include/
 nativelib/src/main/cpp/rs_include/
 
@@ -78,3 +77,6 @@ scripts/*
 
 # Local release artifacts
 release-symbols/
+
+# Standalone SDK checkout used by CI/local native builds.
+/audio-haptics-sdk/

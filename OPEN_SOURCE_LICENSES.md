@@ -112,30 +112,18 @@ The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 ```
 
-### aubio
+### Moonlight Audio Haptics SDK
 
-- **项目**: aubio
-- **网站**: https://aubio.org/
-- **GitHub**: https://github.com/aubio/aubio
-- **许可证**: GNU General Public License v3.0 (GPLv3)
-- **说明**: 音频标注与分析库，用于实时 onset/beat 检测。本应用使用其 onset detection（频谱 flux + 自适应白化 + 峰值提取）功能，为音乐/节奏场景的振动反馈提供精准的节拍识别。仅编译 onset 检测最小集，使用内置 Ooura FFT，无额外外部依赖。
+- **项目**: Moonlight Audio Haptics
+- **GitHub**: https://github.com/AlkaidLab/moonlight-audio-haptics
+- **固定版本**: `b3f97c3bb7500ea7b1985aea568e5c7b40308d3b`
+- **许可证**: Apache License 2.0
+- **说明**: 提供跨平台、实时、因果的 PCM 音频分析核心和 Haptic IR。本应用静态链接 SDK Core；SDK 不包含或链接 aubio。
 
-```
-Copyright (C) 2003-2024 Paul Brossier <piem@aubio.org>
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-```
+SDK 同时包含 BSD 3-Clause + WebRTC `PATENTS` 授权的 libfvad 源码，以及
+Apache-2.0 的 AOSP HapticGenerator 适配。完整声明位于 SDK 仓库的
+`THIRD_PARTY_NOTICES.md`、`ALGORITHM_PROVENANCE.md` 和
+`third_party/libfvad/`。
 
 ### OpenSSL
 
@@ -230,7 +218,8 @@ freely, subject to the following restrictions:
 | Reed-Solomon | BSD 2-Clause | Permissive |
 | OpenSSL | Apache 2.0 | Permissive |
 | ohos-openssl | MIT | Permissive |
-| aubio | GPLv3 | Copyleft |
+| Moonlight Audio Haptics SDK | Apache 2.0 | Permissive |
+| libfvad / WebRTC VAD | BSD 3-Clause + patent grant | Permissive |
 | SDL GameControllerDB | zlib | Permissive |
 | @ohos/hypium | Apache 2.0 | Permissive |
 

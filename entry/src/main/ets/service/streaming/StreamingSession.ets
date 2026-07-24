@@ -20,7 +20,7 @@ import { display } from '@kit.ArkUI';
 import { GamepadManager } from '../input/GamepadManager';
 import { MoonlightButton } from '../input/GamepadTypes';
 import { MicrophoneStream } from '../microphone/MicrophoneStream';
-import { AudioVibrationService } from '../AudioVibrationService';
+import { AudioHapticFrame, AudioVibrationService } from '../AudioVibrationService';
 import { AdaptiveBitrateService } from './AdaptiveBitrateService';
 import { NetworkBoostService } from '../network/NetworkBoostService';
 import { MoonBridge as ClipboardNativeBridge } from '../jni/ClipboardBridge';
@@ -171,7 +171,7 @@ interface NativeModule {
   setAudioVolume(volume: number): boolean;
   setPerformanceModeEnabled(enabled: boolean): void;
   getPerformanceModeEnabled(): boolean;
-  setBassVibrationConfig(enabled: boolean, sensitivity: number, sceneMode?: number): void;
+  setAudioHapticsConfig(enabled: boolean, sensitivity: number, sceneMode?: number): void;
   getEstimatedRttInfo(): number;
   sendMouseMove(deltaX: number, deltaY: number): void;
   sendMouseButton(buttonEvent: number, mouseButton: number): void;
@@ -215,7 +215,7 @@ interface StreamCallbacks {
   setControllerLED?: (controllerNumber: number, r: number, g: number, b: number) => void;
   resolutionChanged?: (width: number, height: number) => void;
   clipboardData?: (kind: number, token: number, payload: Uint8Array) => void;
-  bassEnergy?: (intensity: number, lowFreqRatio: number, stereoBalance: number) => void;
+  audioHapticFrame?: (frame: AudioHapticFrame) => void;
 }
 
 interface VideoStats {
@@ -1110,10 +1110,10 @@ export class StreamingSession {
   }
 
   private applyPostConnectionSettings(config: StreamConfig): void {
-    // 必须在 connectToServer() 之后，因为 BridgeArInit() 会重置 enabled_=false
-    // 第三个参数: sceneMode (游戏/电影=0, 音乐/节奏=1, 自动=2)
+    // 必须在 connectToServer() 之后，确保 SDK Core 已按实际 PCM 格式创建。
     const sceneMode = this.audioVibrationService.getSceneModeInt();
-    this.nativeModule.setBassVibrationConfig(config.enableAudioVibration, 1.0, sceneMode);
+    this.nativeModule.setAudioHapticsConfig(
+      config.enableAudioVibration, 1.0, sceneMode);
     if (config.enableAudioVibration) {
       console.info(`音频振动已启用, 强度=${config.audioVibrationStrength}, 模式=${config.vibrationMode}, 场景=${config.audioVibrationSceneMode}`);
     }
@@ -1157,8 +1157,14 @@ export class StreamingSession {
         console.info(`音频初始化: config=${audioConfiguration}, rate=${sampleRate}, samples=${samplesPerFrame}`);
       },
       arStart: (): void => { console.info('音频渲染器启动'); },
-      arStop: (): void => { console.info('音频渲染器停止'); },
-      arCleanup: (): void => { console.info('音频渲染器清理'); },
+      arStop: (): void => {
+        console.info('音频渲染器停止');
+        this.audioVibrationService.stop();
+      },
+      arCleanup: (): void => {
+        console.info('音频渲染器清理');
+        this.audioVibrationService.stop();
+      },
       stageStarting: (stage: number): void => {
         const name = STAGE_NAMES[stage] || `阶段 ${stage}`;
         console.info(`连接阶段开始: ${stage} (${name})`);
@@ -1223,8 +1229,8 @@ export class StreamingSession {
         console.info(`分辨率变化: ${width}x${height}`);
         if (this.resolutionChangedCallback) this.resolutionChangedCallback(width, height);
       },
-      bassEnergy: (intensity: number, lowFreqRatio: number, stereoBalance: number): void => {
-        this.audioVibrationService.handleBassEnergy(intensity, lowFreqRatio, stereoBalance);
+      audioHapticFrame: (frame: AudioHapticFrame): void => {
+        this.audioVibrationService.handleHapticFrame(frame);
       }
     };
 

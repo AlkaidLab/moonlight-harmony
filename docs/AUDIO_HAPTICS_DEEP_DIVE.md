@@ -1,5 +1,10 @@
 # 音频驱动触觉反馈：从游戏串流到你指尖的震动
 
+> 历史说明：本文主体归档旧 `BassEnergyAnalyzer + aubio` 方案的研究过程，
+> 对应实现已从仓库移除。当前生产链路已切换到独立的 Moonlight Audio
+> Haptics SDK，集成边界与验收状态见
+> [AUDIO_HAPTICS_SDK_HARMONYOS.md](./AUDIO_HAPTICS_SDK_HARMONYOS.md)。
+
 > **让你"摸到"声音** —— 一篇关于音频触觉（Audio Haptics）技术的深度科普
 
 ---

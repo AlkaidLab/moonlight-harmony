@@ -242,13 +242,6 @@ if not patched:
         raise SystemExit('Could not patch hmos-sdk-loader.js; candidates=' + ','.join(candidates))
 PY
 
-# ─── aubio config.h ───
-AUBIO_CONFIG="nativelib/src/main/cpp/aubio/src/config.h"
-if [ ! -f "$AUBIO_CONFIG" ]; then
-  cp "$STUBS_DIR/aubio-config.h" "$AUBIO_CONFIG"
-  echo "  Created aubio config.h"
-fi
-
 # ─── libimage_transcoder_shared stub ───
 case "$(uname -s)" in
   Darwin) IMAGE_TRANSCODER_LIB="libimage_transcoder_shared.dylib" ;;

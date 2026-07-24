@@ -148,7 +148,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "getPerformanceModeEnabled", nullptr, MoonBridge_GetPerformanceModeEnabled, nullptr, nullptr, nullptr, napi_default, nullptr },
         
         // 音频振动
-        { "setBassVibrationConfig", nullptr, MoonBridge_SetBassVibrationConfig, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "setAudioHapticsConfig", nullptr, MoonBridge_SetAudioHapticsConfig, nullptr, nullptr, nullptr, napi_default, nullptr },
         
         // XComponent 帧率设置（通过 FrameNode → ArkUI_NodeHandle，无需 libraryname）
         { "setXComponentFrameRate", nullptr, MoonBridge_SetXComponentFrameRate, nullptr, nullptr, nullptr, napi_default, nullptr },
