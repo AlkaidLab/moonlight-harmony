@@ -6,8 +6,8 @@ HarmonyOS 客户端直接消费独立仓库
 [AlkaidLab/moonlight-audio-haptics](https://github.com/AlkaidLab/moonlight-audio-haptics)
 的公共 C ABI。
 
-- 固定提交：`b3f97c3bb7500ea7b1985aea568e5c7b40308d3b`
-- SDK 版本：`0.5.14` 之后的 capability-aware / dialogue-aware 修订
+- 固定提交：`b71b47a08fd400996ed374a97e1bff73bac2932e`
+- SDK 版本：`v0.6.0`
 - ABI：v1
 - 许可证：Apache License 2.0
 

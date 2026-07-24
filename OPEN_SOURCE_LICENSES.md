@@ -116,7 +116,7 @@ copies or substantial portions of the Software.
 
 - **项目**: Moonlight Audio Haptics
 - **GitHub**: https://github.com/AlkaidLab/moonlight-audio-haptics
-- **固定版本**: `b3f97c3bb7500ea7b1985aea568e5c7b40308d3b`
+- **固定版本**: `v0.6.0` (`b71b47a08fd400996ed374a97e1bff73bac2932e`)
 - **许可证**: Apache License 2.0
 - **说明**: 提供跨平台、实时、因果的 PCM 音频分析核心和 Haptic IR。本应用静态链接 SDK Core；SDK 不包含或链接 aubio。
 
