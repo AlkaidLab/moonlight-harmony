@@ -86,6 +86,7 @@ set(SOURCE_FILES
     usb_ddk_poller.cpp
     native_render.cpp
     presentation_scheduler.cpp
+    two_step_presentation_scheduler.cpp
     rolling_frame_rate.cpp
     gl_post_processor.cpp
     sdl_gamecontrollerdb.cpp

@@ -37,6 +37,7 @@
 #include <native_buffer/native_buffer.h>
 
 #include "rolling_frame_rate.h"
+#include "two_step_presentation_scheduler.h"
 
 class NativeRender;
 #include <hilog/log.h>
@@ -151,7 +152,9 @@ struct VideoDecoderStats {
     double maxDecodeTimeMs;
     int64_t lastStatsCalculationTime; // 周期统计更新时间（毫秒）
     double currentFps;           // 最近 3 秒接收帧率 (Rx)
+    double codecOutputFps;       // 最近 3 秒解码器输出帧率
     double renderedFps;          // 最近 3 秒成功提交帧率 (Rd)
+    uint64_t codecOutputFrames;  // 解码器累计输出帧数
     // 会话平均帧率（用于串流结束后的 toast）
     int64_t sessionStartTime;           // 会话开始时间（毫秒）
     double globalAvgFps;                // 全局平均渲染帧率
@@ -176,6 +179,11 @@ struct VideoDecoderStats {
     uint64_t droppedByL5;                // L5: async 渲染跳帧（输出间隔过短+延迟偏高）
     uint64_t droppedByQueueOverflow;     // pending queue 溢出丢弃
     uint64_t droppedByTimeout;           // 输入 buffer 超时丢弃
+    uint64_t syncDrainEvents;             // sync drain-to-latest 累计触发次数
+    uint64_t syncDrainFrames;             // sync drain-to-latest 累计跳过帧数
+    bool syncDecode;                      // 实际解码模式
+    bool hostPacedPresentationActive;     // 定时提交 API 实际可用且已启用
+    TwoStepPresentationStats presentation;
 };
 
 /**
@@ -361,6 +369,7 @@ private:
         VideoFrameType frameType;
         int64_t timestamp;
         uint16_t hostProcessingLatency;
+        PresentationTargetHandle presentationTarget;
     };
     std::mutex pendingFrameMutex_;
     std::condition_variable pendingFrameCond_;
@@ -386,11 +395,12 @@ private:
     
     // 统计信息
     mutable std::mutex statsMutex_;
-    VideoDecoderStats stats_;
+    VideoDecoderStats stats_{};
     uint64_t recentHostLatencyWindowFrames_{0};
     double recentHostLatencyWindowTotalMs_{0.0};
     int64_t recentHostLatencyWindowStartTimeMs_{0};
     RollingFrameRateTracker receivedFrameRate_;
+    mutable RollingFrameRateTracker codecOutputFrameRate_;
     mutable RollingFrameRateTracker renderedFrameRate_;
 
     // Output/drop counters are updated atomically so decoder callbacks never
@@ -414,6 +424,8 @@ private:
     // Sync diagnostics are owned by syncDecodeThread_.
     uint64_t syncDrainEventsSinceLog_{0};
     uint64_t syncDrainFramesSinceLog_{0};
+    std::atomic<uint64_t> syncDrainEvents_{0};
+    std::atomic<uint64_t> syncDrainFrames_{0};
     
     // 运行状态
     std::atomic<bool> running_{false};

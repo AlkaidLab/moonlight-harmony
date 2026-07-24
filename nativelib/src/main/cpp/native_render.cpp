@@ -202,7 +202,7 @@ void NativeRender::SetConfiguredFps(double fps) {
     {
         std::lock_guard<std::mutex> lock(presentationMutex_);
         configuredFps_.store(fps);
-        ptsScheduler_.Configure(fps);
+        twoStepScheduler_.Configure(fps);
         ResetPresentationClockLocked();
     }
     OH_LOG_INFO(LOG_APP, "Configured FPS set to: %.3f", fps);
@@ -244,6 +244,40 @@ void NativeRender::SetHostPacedPresentationEnabled(bool enable) {
 
 bool NativeRender::IsHostPacedPresentationActive() const {
     return hostPacedPresentationEnabled_.load() && GetRenderAtTimeFunc() != nullptr;
+}
+
+TwoStepPresentationStats NativeRender::GetTwoStepPresentationStats() const {
+    std::lock_guard<std::mutex> lock(presentationMutex_);
+    return twoStepScheduler_.GetStats();
+}
+
+PresentationTargetHandle NativeRender::PreparePresentationFrame(int64_t ptsUs) {
+    if (!IsHostPacedPresentationActive()) {
+        return {};
+    }
+
+    const int64_t preparedAtNs = GetMonotonicTimeNs();
+    std::lock_guard<std::mutex> lock(presentationMutex_);
+    return twoStepScheduler_.PrepareFrame(ptsUs, preparedAtNs);
+}
+
+void NativeRender::DiscardPresentationFrame(
+        PresentationTargetHandle handle) {
+    if (!handle) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(presentationMutex_);
+    twoStepScheduler_.DiscardFrame(handle);
+}
+
+void NativeRender::DiscardPresentationFrame(int64_t ptsUs) {
+    if (!hostPacedPresentationEnabled_.load()) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(presentationMutex_);
+    twoStepScheduler_.DiscardFrame(ptsUs);
 }
 
 void NativeRender::ConfigureNativeWindow() {
@@ -356,7 +390,7 @@ void NativeRender::ApplyFrameRateRange() {
 // =============================================================================
 
 void NativeRender::ResetPresentationClockLocked() {
-    ptsScheduler_.Reset();
+    twoStepScheduler_.Reset();
     timeBaseInitialized_ = false;
     estimatedOffsetNs_ = 0;
     skewNs_ = 0;
@@ -368,6 +402,7 @@ void NativeRender::ResetPresentationStatsLocked() {
     vsyncFrameCount_ = 0;
     vsyncLateFrameCount_ = 0;
     vsyncResyncCount_ = 0;
+    twoStepScheduler_.ResetStats();
 }
 
 void NativeRender::ResetPresentationClock() {
@@ -477,14 +512,17 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
             }
         } else {
             const int64_t decodedAtNs = GetMonotonicTimeNs();
-            PresentationPlan plan;
+            PreparedPresentationPlan plan;
             {
                 std::lock_guard<std::mutex> lock(presentationMutex_);
-                plan = ptsScheduler_.PlanFrame(frame.ptsUs, decodedAtNs);
+                plan = twoStepScheduler_.PlanDecodedFrame(
+                    frame.ptsUs, decodedAtNs);
             }
 
-            if (plan.action == PresentationAction::DROP) {
+            if (plan.action == PreparedPresentationAction::DROP) {
                 renderResult = freeFrame();
+            } else if (plan.action == PreparedPresentationAction::IMMEDIATE) {
+                renderResult = renderImmediately();
             } else {
                 renderResult = renderAtTime(
                     frame.codec, frame.bufferIndex, plan.targetTimeNs);
@@ -492,6 +530,10 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                     bufferConsumed = true;
                     framePresented = true;
                 } else {
+                    {
+                        std::lock_guard<std::mutex> lock(presentationMutex_);
+                        twoStepScheduler_.NoteRenderAtTimeFallback();
+                    }
                     OH_LOG_WARN(LOG_APP,
                         "Host-paced render failed: %{public}d, pts=%{public}lld, targetNs=%{public}lld; falling back",
                         renderResult, static_cast<long long>(frame.ptsUs),

@@ -45,6 +45,7 @@ public:
     PresentationPlan PlanFrame(int64_t ptsUs, int64_t decodedAtNs);
 
     int64_t GetInitialLeadNs() const { return initialLeadNs_; }
+    int64_t GetSubmitLeadNs() const { return submitLeadNs_; }
 
 private:
     PresentationPlan AnchorFrame(int64_t ptsUs, int64_t decodedAtNs,

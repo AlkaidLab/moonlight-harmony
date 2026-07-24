@@ -30,7 +30,7 @@
 #include <multimedia/player_framework/native_avcodec_videodecoder.h>
 #include <hilog/log.h>
 
-#include "presentation_scheduler.h"
+#include "two_step_presentation_scheduler.h"
 
 #include <cstdint>
 #include <mutex>
@@ -85,6 +85,12 @@ public:
     */
     void SetHostPacedPresentationEnabled(bool enable);
     bool IsHostPacedPresentationActive() const;
+    TwoStepPresentationStats GetTwoStepPresentationStats() const;
+
+    // Step 1: reserve the host-PTS target before the frame enters the decoder.
+    PresentationTargetHandle PreparePresentationFrame(int64_t ptsUs);
+    void DiscardPresentationFrame(PresentationTargetHandle handle);
+    void DiscardPresentationFrame(int64_t ptsUs);
     
     /**
      * 强制下一帧重新锚定（Flush/重连/Surface 切换）。
@@ -161,7 +167,7 @@ private:
     // Timed presentation state. Legacy VSync and host-paced presentation use
     // separate clocks so switching decoder modes cannot perturb PTS cadence.
     mutable std::mutex presentationMutex_;
-    PtsPresentationScheduler ptsScheduler_;
+    TwoStepPresentationScheduler twoStepScheduler_;
 
     // Legacy VSync clock, kept isolated from the host-paced scheduler.
     int64_t estimatedOffsetNs_ = 0;  // 平滑后的 (本地 - host) 偏移均值(纳秒)

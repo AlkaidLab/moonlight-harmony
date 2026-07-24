@@ -450,9 +450,7 @@ static int ResolveEffectiveBufferCount(int requestedCount, DecoderMode mode) {
 // VideoDecoder 类实现
 // =============================================================================
 
-VideoDecoder::VideoDecoder() {
-    memset(&stats_, 0, sizeof(stats_));
-}
+VideoDecoder::VideoDecoder() = default;
 
 VideoDecoder::~VideoDecoder() {
     Cleanup();
@@ -1057,6 +1055,37 @@ static OH_AVCodecBufferAttr MakeInputBufferAttr(int32_t size, int64_t pts, Video
     return attr;
 }
 
+class PresentationTargetGuard {
+public:
+    PresentationTargetGuard(NativeRender* render, int64_t pts)
+        : render_(render) {
+        if (render_ != nullptr) {
+            target_ = render_->PreparePresentationFrame(pts);
+        }
+    }
+
+    PresentationTargetGuard(
+            NativeRender* render, PresentationTargetHandle target)
+        : render_(render), target_(target) {}
+
+    ~PresentationTargetGuard() {
+        if (render_ != nullptr && target_ && !committed_) {
+            render_->DiscardPresentationFrame(target_);
+        }
+    }
+
+    void Commit() { committed_ = true; }
+    PresentationTargetHandle GetTarget() const { return target_; }
+
+    PresentationTargetGuard(const PresentationTargetGuard&) = delete;
+    PresentationTargetGuard& operator=(const PresentationTargetGuard&) = delete;
+
+private:
+    NativeRender* render_ = nullptr;
+    PresentationTargetHandle target_;
+    bool committed_ = false;
+};
+
 void VideoDecoder::RecordEnqueueTimestamp(int64_t timestamp) {
     const int64_t enqueueTimeMs = GetSteadyTimeMs();
     std::lock_guard<std::mutex> lock(timestampMutex_);
@@ -1154,6 +1183,8 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
         return recoveryResult;  // -1 = DR_NEED_IDR
     }
 
+    PresentationTargetGuard presentationTarget(render_, timestamp);
+
     // 同步模式：直接提交到解码器（scatter-gather 直写 AVBuffer）
     if (config_.decoderMode == DecoderMode::SYNC) {
         UpdateReceivedStats(totalSize, frameNumber, hostProcessingLatency);
@@ -1194,6 +1225,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
                         if (ret == AV_ERR_OK) {
                             // 唤醒解码线程立即轮询输出，避免 wait_for(halfFrame) 空等
                             pendingFrameCond_.notify_one();
+                            presentationTarget.Commit();
                             return 0;  // 直接提交成功
                         }
                     }
@@ -1209,6 +1241,8 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
             uint64_t overflowCount = 0;
             std::lock_guard<std::mutex> lock(pendingFrameMutex_);
             while (pendingFrameQueue_.size() >= maxPendingFrames_) {
+                render_->DiscardPresentationFrame(
+                    pendingFrameQueue_.front().presentationTarget);
                 pendingFrameQueue_.pop();
                 overflowCount++;
             }
@@ -1223,9 +1257,11 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
             frame.frameType = frameType;
             frame.timestamp = timestamp;
             frame.hostProcessingLatency = hostProcessingLatency;
+            frame.presentationTarget = presentationTarget.GetTarget();
             
             pendingFrameQueue_.push(std::move(frame));
             pendingFrameCond_.notify_one();
+            presentationTarget.Commit();
             
             // 队列溢出 = 丢弃了中间 P 帧 → 后续 P 帧缺少参考帧会损坏
             // 激活恢复模式：丢弃后续 P 帧，等待 IDR 重建参考链
@@ -1299,6 +1335,8 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
         OH_LOG_ERROR(LOG_APP, "Failed to push input buffer: %{public}d", ret);
         return -1;
     }
+
+    presentationTarget.Commit();
 
     UpdateReceivedStats(totalSize, frameNumber, hostProcessingLatency);
     
@@ -1395,11 +1433,15 @@ VideoDecoderStats VideoDecoder::GetStats() const {
         std::lock_guard<std::mutex> lock(statsMutex_);
         snapshot = stats_;
         snapshot.currentFps = receivedFrameRate_.GetRate(currentTimeMs);
+        codecOutputFrameRate_.Record(
+            currentTimeMs, codecOutputFrames_.load(std::memory_order_relaxed));
+        snapshot.codecOutputFps = codecOutputFrameRate_.GetRate(currentTimeMs);
         renderedFrameRate_.Record(
             currentTimeMs, decodedFrames_.load(std::memory_order_relaxed));
         snapshot.renderedFps = renderedFrameRate_.GetRate(currentTimeMs);
     }
 
+    snapshot.codecOutputFrames = codecOutputFrames_.load(std::memory_order_relaxed);
     snapshot.decodedFrames = decodedFrames_.load(std::memory_order_relaxed);
     snapshot.droppedFrames = droppedFrames_.load(std::memory_order_relaxed);
     snapshot.droppedByL1 = droppedByL1_.load(std::memory_order_relaxed);
@@ -1409,6 +1451,14 @@ VideoDecoderStats VideoDecoder::GetStats() const {
     snapshot.droppedByL5 = droppedByL5_.load(std::memory_order_relaxed);
     snapshot.droppedByQueueOverflow = droppedByQueueOverflow_.load(std::memory_order_relaxed);
     snapshot.droppedByTimeout = droppedByTimeout_.load(std::memory_order_relaxed);
+    snapshot.syncDrainEvents = syncDrainEvents_.load(std::memory_order_relaxed);
+    snapshot.syncDrainFrames = syncDrainFrames_.load(std::memory_order_relaxed);
+    snapshot.syncDecode = config_.decoderMode == DecoderMode::SYNC;
+    if (render_ != nullptr) {
+        snapshot.hostPacedPresentationActive =
+            render_->IsHostPacedPresentationActive();
+        snapshot.presentation = render_->GetTwoStepPresentationStats();
+    }
     if (snapshot.sessionStartTime > 0 &&
         currentTimeMs > snapshot.sessionStartTime) {
         snapshot.globalAvgFps =
@@ -1502,6 +1552,7 @@ void VideoDecoder::OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index,
     const int64_t pts = attr.pts;
 
     if (attr.flags & AVCODEC_BUFFER_FLAGS_EOS) {
+        self->render_->DiscardPresentationFrame(pts);
         OH_VideoDecoder_FreeOutputBuffer(codec, index);
         return;
     }
@@ -2018,6 +2069,8 @@ int VideoDecoder::SyncProcessInput(int64_t timeoutUs) {
         frame = std::move(pendingFrameQueue_.front());
         pendingFrameQueue_.pop();
     }
+    PresentationTargetGuard presentationTarget(
+        render_, frame.presentationTarget);
     // 成功获得输入 buffer，继续处理帧
     static bool firstInputLog = true;
     if (firstInputLog) {
@@ -2061,6 +2114,8 @@ int VideoDecoder::SyncProcessInput(int64_t timeoutUs) {
         OH_LOG_ERROR(LOG_APP, "Sync PushInputBuffer failed: %{public}d", ret);
         return -1;  // API 错误
     }
+
+    presentationTarget.Commit();
 
     return 1;  // 成功处理了一帧
 }
@@ -2115,18 +2170,9 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     // 检查 EOS
     if (attr.flags & AVCODEC_BUFFER_FLAGS_EOS) {
         OH_LOG_INFO(LOG_APP, "Sync: received EOS");
+        render_->DiscardPresentationFrame(attr.pts);
         OH_VideoDecoder_FreeOutputBuffer(decoder_, outputIndex);
         return 0;  // EOS 不是错误
-    }
-
-    // Host-paced presentation must see every PTS. Do not apply the low-latency
-    // drain-to-latest policy before the shared presentation scheduler.
-    if (render_->IsHostPacedPresentationActive()) {
-        const int64_t pts = attr.pts;
-        const int64_t enqueueTimeMs = TakeEnqueueTimestamp(pts);
-        const int64_t outputTimeMs = GetSteadyTimeMs();
-        SubmitDecodedFrame(decoder_, outputIndex, attr, enqueueTimeMs, outputTimeMs);
-        return 1;
     }
     
     // ================================================================
@@ -2172,6 +2218,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
         
         // EOS 帧不参与收集
         if (nextAttr.flags & AVCODEC_BUFFER_FLAGS_EOS) {
+            render_->DiscardPresentationFrame(nextAttr.pts);
             OH_VideoDecoder_FreeOutputBuffer(decoder_, nextOutputIndex);
             break;
         }
@@ -2183,11 +2230,14 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
         const uint64_t drainedCount = totalFrames - 1;
         for (size_t i = 0; i < drainedCount; ++i) {
             TakeEnqueueTimestamp(outputFrames[i].attr.pts);
+            render_->DiscardPresentationFrame(outputFrames[i].attr.pts);
             OH_VideoDecoder_FreeOutputBuffer(decoder_, outputFrames[i].index);
         }
         RecordDroppedFrames(DropReason::L1, drainedCount);
         syncDrainEventsSinceLog_++;
         syncDrainFramesSinceLog_ += drainedCount;
+        syncDrainEvents_.fetch_add(1, std::memory_order_relaxed);
+        syncDrainFrames_.fetch_add(drainedCount, std::memory_order_relaxed);
     }
 
     const QueuedFrame& latestFrame = outputFrames[totalFrames - 1];
@@ -2197,9 +2247,8 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
     const int64_t enqueueTimeMs = TakeEnqueueTimestamp(pts);
     const int64_t outputTimeMs = GetSteadyTimeMs();
     
-    // Decoder output selection and presentation are separate policies: sync
-    // mode still drains to the latest frame, while the shared presenter uses
-    // that frame's PTS when legacy VSync is enabled.
+    // Step 2 consumes only the newest decoded frame and looks up the target
+    // prepared before decode. Drained targets are removed above.
     SubmitDecodedFrame(decoder_, latestIndex, latestAttr,
                        enqueueTimeMs, outputTimeMs);
 

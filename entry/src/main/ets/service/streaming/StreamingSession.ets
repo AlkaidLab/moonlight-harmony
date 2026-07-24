@@ -55,6 +55,7 @@ import nativeLib from 'libmoonlight_nativelib.so';
  */
 export interface StreamStats {
   fps: number;             // 接收帧率 (Rx)
+  codecOutputFps: number;  // 解码器输出帧率
   renderedFps: number;     // 渲染帧率 (Rd)
   bitrate: number;         // Kbps
   latency: number;         // 解码延迟 ms (EMA 瞬时值)
@@ -62,7 +63,10 @@ export interface StreamStats {
   networkLatency: number;  // 网络延迟（RTT）ms
   packetLoss: number;      // %
   decodedFrames: number;
+  codecOutputFrames: number;
   droppedFrames: number;
+  framesLost: number;
+  totalFrames: number;
   globalAvgDecodeLatency: number;  // 全局平均解码延迟 ms
   globalAvgHostLatency: number;    // 全局平均主机延迟 ms
   globalAvgFps: number;            // 全局平均帧率
@@ -72,6 +76,25 @@ export interface StreamStats {
   droppedByL3: number;     // L3: 临界延迟 IDR 恢复
   droppedByL4: number;     // L4: 网络突发检测
   droppedByL5: number;     // L5: async 渲染跳帧
+  droppedByQueueOverflow: number;
+  droppedByTimeout: number;
+  syncDrainEvents: number;
+  syncDrainFrames: number;
+  syncDecode: boolean;
+  hostPacedPresentationActive: boolean;
+  presentationPrepared: number;
+  presentationScheduled: number;
+  presentationExpired: number;
+  presentationMissing: number;
+  presentationFuture: number;
+  presentationNonMonotonicDrops: number;
+  presentationRenderFallbacks: number;
+  presentationLeadUnder1Ms: number;
+  presentationLead1To2Ms: number;
+  presentationLead2To4Ms: number;
+  presentationLead4To8Ms: number;
+  presentationLeadAtLeast8Ms: number;
+  presentationPendingHighWater: number;
 }
 
 /**
@@ -197,9 +220,11 @@ interface StreamCallbacks {
 
 interface VideoStats {
   framesDecoded: number;
+  codecOutputFrames: number;
   framesDropped: number;
   avgDecodeTimeMs: number;
   fps: number;
+  codecOutputFps: number;
   renderedFps: number;
   bitrate: number;
   hostLatency: number;
@@ -219,6 +244,23 @@ interface VideoStats {
   droppedByL5: number;
   droppedByQueueOverflow: number;
   droppedByTimeout: number;
+  syncDrainEvents: number;
+  syncDrainFrames: number;
+  syncDecode: boolean;
+  hostPacedPresentationActive: boolean;
+  presentationPrepared: number;
+  presentationScheduled: number;
+  presentationExpired: number;
+  presentationMissing: number;
+  presentationFuture: number;
+  presentationNonMonotonicDrops: number;
+  presentationRenderFallbacks: number;
+  presentationLeadUnder1Ms: number;
+  presentationLead1To2Ms: number;
+  presentationLead2To4Ms: number;
+  presentationLead4To8Ms: number;
+  presentationLeadAtLeast8Ms: number;
+  presentationPendingHighWater: number;
 }
 
 interface ControllerState {
@@ -393,11 +435,21 @@ export class StreamingSession {
   // ---------------------------------------------------------------------------
 
   private stats: StreamStats = {
-    fps: 0, renderedFps: 0, bitrate: 0, latency: 0,
+    fps: 0, codecOutputFps: 0, renderedFps: 0, bitrate: 0, latency: 0,
     hostLatency: 0, networkLatency: 0, packetLoss: 0,
-    decodedFrames: 0, droppedFrames: 0,
+    decodedFrames: 0, codecOutputFrames: 0, droppedFrames: 0,
+    framesLost: 0, totalFrames: 0,
     globalAvgDecodeLatency: 0, globalAvgHostLatency: 0, globalAvgFps: 0,
-    droppedByL1: 0, droppedByL2: 0, droppedByL3: 0, droppedByL4: 0, droppedByL5: 0
+    droppedByL1: 0, droppedByL2: 0, droppedByL3: 0, droppedByL4: 0, droppedByL5: 0,
+    droppedByQueueOverflow: 0, droppedByTimeout: 0,
+    syncDrainEvents: 0, syncDrainFrames: 0,
+    syncDecode: false, hostPacedPresentationActive: false,
+    presentationPrepared: 0, presentationScheduled: 0,
+    presentationExpired: 0, presentationMissing: 0, presentationFuture: 0,
+    presentationNonMonotonicDrops: 0, presentationRenderFallbacks: 0,
+    presentationLeadUnder1Ms: 0, presentationLead1To2Ms: 0,
+    presentationLead2To4Ms: 0, presentationLead4To8Ms: 0,
+    presentationLeadAtLeast8Ms: 0, presentationPendingHighWater: 0
   };
   private lastValidStats: StreamStats | null = null;
 
@@ -826,8 +878,10 @@ export class StreamingSession {
     try {
       const vs = this.nativeModule.getVideoStats();
       this.stats.decodedFrames = vs.framesDecoded;
+      this.stats.codecOutputFrames = vs.codecOutputFrames || 0;
       this.stats.droppedFrames = vs.framesDropped;
       this.stats.fps = vs.fps || 0;
+      this.stats.codecOutputFps = vs.codecOutputFps || 0;
       this.stats.renderedFps = vs.renderedFps || 0;
       this.stats.bitrate = vs.bitrate || 0;
       this.stats.latency = vs.avgDecodeTimeMs || 0;
@@ -836,6 +890,8 @@ export class StreamingSession {
       // 滑动窗口丢包率（对齐 Android: ~2秒窗口 = lastWindow + activeWindow）
       const totalFrames = vs.totalFrames || 0;
       const framesLost = vs.framesLost || 0;
+      this.stats.totalFrames = totalFrames;
+      this.stats.framesLost = framesLost;
       const now = Date.now();
       if (this.lastWindowFlipTime === 0) {
         // 首次调用：初始化窗口
@@ -863,6 +919,25 @@ export class StreamingSession {
       this.stats.droppedByL3 = vs.droppedByL3 || 0;
       this.stats.droppedByL4 = vs.droppedByL4 || 0;
       this.stats.droppedByL5 = vs.droppedByL5 || 0;
+      this.stats.droppedByQueueOverflow = vs.droppedByQueueOverflow || 0;
+      this.stats.droppedByTimeout = vs.droppedByTimeout || 0;
+      this.stats.syncDrainEvents = vs.syncDrainEvents || 0;
+      this.stats.syncDrainFrames = vs.syncDrainFrames || 0;
+      this.stats.syncDecode = vs.syncDecode || false;
+      this.stats.hostPacedPresentationActive = vs.hostPacedPresentationActive || false;
+      this.stats.presentationPrepared = vs.presentationPrepared || 0;
+      this.stats.presentationScheduled = vs.presentationScheduled || 0;
+      this.stats.presentationExpired = vs.presentationExpired || 0;
+      this.stats.presentationMissing = vs.presentationMissing || 0;
+      this.stats.presentationFuture = vs.presentationFuture || 0;
+      this.stats.presentationNonMonotonicDrops = vs.presentationNonMonotonicDrops || 0;
+      this.stats.presentationRenderFallbacks = vs.presentationRenderFallbacks || 0;
+      this.stats.presentationLeadUnder1Ms = vs.presentationLeadUnder1Ms || 0;
+      this.stats.presentationLead1To2Ms = vs.presentationLead1To2Ms || 0;
+      this.stats.presentationLead2To4Ms = vs.presentationLead2To4Ms || 0;
+      this.stats.presentationLead4To8Ms = vs.presentationLead4To8Ms || 0;
+      this.stats.presentationLeadAtLeast8Ms = vs.presentationLeadAtLeast8Ms || 0;
+      this.stats.presentationPendingHighWater = vs.presentationPendingHighWater || 0;
 
       if ((vs.validDecodeFrames || 0) > 0) {
         this.stats.globalAvgDecodeLatency = (vs.totalDecodeTimeMs || 0) / vs.validDecodeFrames;
@@ -882,6 +957,7 @@ export class StreamingSession {
 
     const copy: StreamStats = {
       fps: this.stats.fps,
+      codecOutputFps: this.stats.codecOutputFps,
       renderedFps: this.stats.renderedFps,
       bitrate: this.stats.bitrate,
       latency: this.stats.latency,
@@ -889,7 +965,10 @@ export class StreamingSession {
       networkLatency: this.stats.networkLatency,
       packetLoss: this.stats.packetLoss,
       decodedFrames: this.stats.decodedFrames,
+      codecOutputFrames: this.stats.codecOutputFrames,
       droppedFrames: this.stats.droppedFrames,
+      framesLost: this.stats.framesLost,
+      totalFrames: this.stats.totalFrames,
       globalAvgDecodeLatency: this.stats.globalAvgDecodeLatency,
       globalAvgHostLatency: this.stats.globalAvgHostLatency,
       globalAvgFps: this.stats.globalAvgFps,
@@ -898,8 +977,28 @@ export class StreamingSession {
       droppedByL3: this.stats.droppedByL3,
       droppedByL4: this.stats.droppedByL4,
       droppedByL5: this.stats.droppedByL5,
+      droppedByQueueOverflow: this.stats.droppedByQueueOverflow,
+      droppedByTimeout: this.stats.droppedByTimeout,
+      syncDrainEvents: this.stats.syncDrainEvents,
+      syncDrainFrames: this.stats.syncDrainFrames,
+      syncDecode: this.stats.syncDecode,
+      hostPacedPresentationActive: this.stats.hostPacedPresentationActive,
+      presentationPrepared: this.stats.presentationPrepared,
+      presentationScheduled: this.stats.presentationScheduled,
+      presentationExpired: this.stats.presentationExpired,
+      presentationMissing: this.stats.presentationMissing,
+      presentationFuture: this.stats.presentationFuture,
+      presentationNonMonotonicDrops: this.stats.presentationNonMonotonicDrops,
+      presentationRenderFallbacks: this.stats.presentationRenderFallbacks,
+      presentationLeadUnder1Ms: this.stats.presentationLeadUnder1Ms,
+      presentationLead1To2Ms: this.stats.presentationLead1To2Ms,
+      presentationLead2To4Ms: this.stats.presentationLead2To4Ms,
+      presentationLead4To8Ms: this.stats.presentationLead4To8Ms,
+      presentationLeadAtLeast8Ms: this.stats.presentationLeadAtLeast8Ms,
+      presentationPendingHighWater: this.stats.presentationPendingHighWater,
     };
     copy.fps = Math.round(copy.fps);
+    copy.codecOutputFps = Math.round(copy.codecOutputFps);
     copy.renderedFps = Math.round(copy.renderedFps);
     copy.bitrate = Math.round(copy.bitrate);
 
