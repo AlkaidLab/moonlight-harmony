@@ -85,6 +85,7 @@ public:
     */
     void SetHostPacedPresentationEnabled(bool enable);
     bool IsHostPacedPresentationActive() const;
+    TwoStepPresentationStats GetTwoStepPresentationStats() const;
 
     // Step 1: reserve the host-PTS target before the frame enters the decoder.
     PresentationTargetHandle PreparePresentationFrame(int64_t ptsUs);

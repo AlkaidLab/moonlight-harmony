@@ -28,6 +28,22 @@ struct PreparedPresentationPlan {
     int64_t targetLeadNs = 0;
 };
 
+struct TwoStepPresentationStats {
+    uint64_t preparedTargets = 0;
+    uint64_t scheduledFrames = 0;
+    uint64_t expiredTargets = 0;
+    uint64_t missingTargets = 0;
+    uint64_t futureTargets = 0;
+    uint64_t nonMonotonicDrops = 0;
+    uint64_t renderAtTimeFallbacks = 0;
+    uint64_t leadUnder1Ms = 0;
+    uint64_t lead1To2Ms = 0;
+    uint64_t lead2To4Ms = 0;
+    uint64_t lead4To8Ms = 0;
+    uint64_t leadAtLeast8Ms = 0;
+    uint64_t pendingHighWater = 0;
+};
+
 class PresentationTargetHandle {
 public:
     PresentationTargetHandle() = default;
@@ -54,9 +70,12 @@ public:
     void DiscardFrame(int64_t ptsUs);
     PreparedPresentationPlan PlanDecodedFrame(
         int64_t ptsUs, int64_t decodedAtNs);
+    void NoteRenderAtTimeFallback();
+    void ResetStats();
 
     size_t GetPendingTargetCount() const { return pendingTargetCount_; }
     int64_t GetInitialLeadNs() const { return scheduler_.GetInitialLeadNs(); }
+    TwoStepPresentationStats GetStats() const { return stats_; }
 
 private:
     struct PreparedTarget {
@@ -70,6 +89,7 @@ private:
     PresentationTargetHandle StoreTarget(int64_t ptsUs, int64_t targetTimeNs);
     bool TakeTarget(int64_t ptsUs, int64_t& targetTimeNs);
     void NoteSubmittedPts(int64_t ptsUs);
+    void RecordTargetLead(int64_t targetLeadNs);
 
     static constexpr size_t kTargetCapacity = 64;
 
@@ -83,6 +103,7 @@ private:
     int64_t maxFutureLeadNs_ = 50000000LL;
     int64_t lastSubmittedPtsUs_ = 0;
     bool hasSubmittedPts_ = false;
+    TwoStepPresentationStats stats_{};
 };
 
 #endif // TWO_STEP_PRESENTATION_SCHEDULER_H

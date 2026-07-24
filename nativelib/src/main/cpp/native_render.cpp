@@ -246,6 +246,11 @@ bool NativeRender::IsHostPacedPresentationActive() const {
     return hostPacedPresentationEnabled_.load() && GetRenderAtTimeFunc() != nullptr;
 }
 
+TwoStepPresentationStats NativeRender::GetTwoStepPresentationStats() const {
+    std::lock_guard<std::mutex> lock(presentationMutex_);
+    return twoStepScheduler_.GetStats();
+}
+
 PresentationTargetHandle NativeRender::PreparePresentationFrame(int64_t ptsUs) {
     if (!IsHostPacedPresentationActive()) {
         return {};
@@ -397,6 +402,7 @@ void NativeRender::ResetPresentationStatsLocked() {
     vsyncFrameCount_ = 0;
     vsyncLateFrameCount_ = 0;
     vsyncResyncCount_ = 0;
+    twoStepScheduler_.ResetStats();
 }
 
 void NativeRender::ResetPresentationClock() {
@@ -524,6 +530,10 @@ NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& fr
                     bufferConsumed = true;
                     framePresented = true;
                 } else {
+                    {
+                        std::lock_guard<std::mutex> lock(presentationMutex_);
+                        twoStepScheduler_.NoteRenderAtTimeFallback();
+                    }
                     OH_LOG_WARN(LOG_APP,
                         "Host-paced render failed: %{public}d, pts=%{public}lld, targetNs=%{public}lld; falling back",
                         renderResult, static_cast<long long>(frame.ptsUs),
