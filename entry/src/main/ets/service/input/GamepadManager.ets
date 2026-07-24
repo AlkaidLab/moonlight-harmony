@@ -2441,9 +2441,30 @@ export class GamepadManager implements UsbDriverListener {
     this.vibrationService.handleRumbleTriggers(controllerNumber, leftTrigger, rightTrigger);
   }
 
-  /** 仅向 USB 控制器发送振动（跳过设备马达和模式路由） */
-  rumbleUsbControllers(controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
-    this.vibrationService.rumbleUsbControllersOnly(controllerNumber, lowFreqMotor, highFreqMotor);
+  /** 更新音频来源的 USB 振动；由平台层与游戏振动统一混合。 */
+  submitAudioUsbRumble(controllerNumber: number,
+    lowFreqMotor: number, highFreqMotor: number): void {
+    this.vibrationService.submitAudioUsbRumble(
+      controllerNumber, lowFreqMotor, highFreqMotor);
+  }
+
+  /** 更新音频来源的设备触觉；最终只有振动服务写系统马达。 */
+  submitAudioDeviceHaptics(continuous: number, transient: number,
+    transientDurationMs: number, sharpness: number, hasTransient: boolean,
+    activeScene: number): void {
+    this.vibrationService.submitAudioDeviceHaptics(
+      continuous,
+      transient,
+      transientDurationMs,
+      sharpness,
+      hasTransient,
+      activeScene
+    );
+  }
+
+  /** 只清除音频来源的设备触觉，保留游戏振动。 */
+  clearAudioDeviceHaptics(): void {
+    this.vibrationService.clearAudioDeviceHaptics();
   }
 
   /** 检查是否有 USB 控制器连接 */

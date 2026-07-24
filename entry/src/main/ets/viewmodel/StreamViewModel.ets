@@ -523,6 +523,25 @@ export class StreamViewModel {
   getSession(): StreamingSession | null {
     return this.streamingSession;
   }
+
+  /**
+   * 更新当前串流的音频振动设置，持久化由调用方在交互结束时处理。
+   */
+  updateAudioVibrationSettings(enabled: boolean, strength: number,
+    sceneMode: string): void {
+    if (!this.streamConfig) return;
+
+    const normalizedStrength = Math.max(0, Math.min(100, Math.round(strength)));
+    this.streamConfig.enableAudioVibration = enabled;
+    this.streamConfig.audioVibrationStrength = normalizedStrength;
+    this.streamConfig.audioVibrationSceneMode = sceneMode;
+    this.streamingSession?.updateAudioVibrationSettings(
+      enabled,
+      normalizedStrength,
+      this.streamConfig.vibrationMode,
+      sceneMode
+    );
+  }
   
   /**
    * 将设置中的位置字符串转换为 SnapPosition

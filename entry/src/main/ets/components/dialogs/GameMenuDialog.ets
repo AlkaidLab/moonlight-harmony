@@ -101,6 +101,7 @@ const CARD_SHORTCUT = 'shortcut';
 const CARD_SUPERCMD = 'supercmd';
 const CARD_BITRATE = 'bitrate';
 const CARD_CUSTOMKEY = 'customkey';
+const CARD_AUDIO_VIBRATION = 'audio_vibration';
 const CARD_UNLOCK = 'unlock';
 const CARD_MIC = 'mic';
 const CARD_USAGE_KEY = 'game_menu_card_usage';
@@ -165,6 +166,11 @@ export struct GameMenuDialog {
   @State private abrEnabled: boolean = false;
   private bitrateDebounceTimer: number = -1;
 
+  // 音频振动会话设置
+  @State private audioVibrationEnabled: boolean = false;
+  @State private audioVibrationStrength: number = 60;
+  @State private audioVibrationSceneMode: string = '游戏/电影';
+
   // 体感助手状态
   @State private gyroEnabled: boolean = false;
   @State private gyroSensitivity: number = 1.0;
@@ -220,6 +226,17 @@ export struct GameMenuDialog {
     this.currentBitrate = this.viewModel.getCurrentBitrate();
     this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
     this.abrEnabled = this.viewModel.isAbrEnabled();
+    const streamConfig = this.viewModel.streamConfig;
+    if (streamConfig) {
+      this.audioVibrationEnabled = streamConfig.enableAudioVibration;
+      this.audioVibrationStrength = Math.max(
+        10, Math.min(100, streamConfig.audioVibrationStrength));
+      // ABI v1 的 AUTO 当前按 GAME 处理，菜单只展示两个实际不同的场景。
+      this.audioVibrationSceneMode =
+        streamConfig.audioVibrationSceneMode === '音乐/节奏'
+          ? '音乐/节奏'
+          : '游戏/电影';
+    }
     this.controllerOpacityLocal = this.controllerOpacity;
     this.controllerScaleLocal = this.controllerScale;
     this.touchPassthroughLocal = this.touchPassthrough;
@@ -588,6 +605,7 @@ export struct GameMenuDialog {
     if (this.shortcuts.length > 0) visible.push(CARD_SHORTCUT);
     if (this.superCmds.length > 0) visible.push(CARD_SUPERCMD);
     visible.push(CARD_BITRATE);
+    visible.push(CARD_AUDIO_VIBRATION);
     visible.push(CARD_CUSTOMKEY);
     // 按使用次数降序排列，次数相同保持原始顺序
     visible.sort((a: string, b: string): number => {
@@ -631,6 +649,34 @@ export struct GameMenuDialog {
     } catch (error) {
       console.error('[GyroAssist] 保存设置失败:', error);
     }
+  }
+
+  private applyAudioVibrationSettings(persist: boolean): void {
+    this.viewModel.updateAudioVibrationSettings(
+      this.audioVibrationEnabled,
+      this.audioVibrationStrength,
+      this.audioVibrationSceneMode
+    );
+    if (!persist) return;
+
+    PreferencesUtil.put(
+      SettingsKeys.ENABLE_AUDIO_VIBRATION,
+      this.audioVibrationEnabled
+    ).catch((error: Error) => {
+      console.error('[AudioVibration] 保存启用状态失败:', error);
+    });
+    PreferencesUtil.put(
+      SettingsKeys.AUDIO_VIBRATION_STRENGTH,
+      this.audioVibrationStrength
+    ).catch((error: Error) => {
+      console.error('[AudioVibration] 保存强度失败:', error);
+    });
+    PreferencesUtil.put(
+      SettingsKeys.AUDIO_VIBRATION_SCENE_MODE,
+      this.audioVibrationSceneMode
+    ).catch((error: Error) => {
+      console.error('[AudioVibration] 保存场景失败:', error);
+    });
   }
 
   build() {
@@ -757,6 +803,8 @@ export struct GameMenuDialog {
       this.BitrateCard()
     } else if (cardId === CARD_CUSTOMKEY) {
       this.CustomKeyCard()
+    } else if (cardId === CARD_AUDIO_VIBRATION) {
+      this.AudioVibrationCard()
     }
   }
 
@@ -1194,6 +1242,153 @@ export struct GameMenuDialog {
     }
     .width(OV_CARD_WIDTH)
     .cardStyle()
+  }
+
+  @Builder
+  AudioVibrationCard() {
+    Column() {
+      Row() {
+        Image($r('app.media.ic_pulse'))
+          .width(OV_FONT_LG)
+          .height(OV_FONT_LG)
+          .fillColor(OV_TEXT_BRIGHT)
+        Text(' 音频振动')
+          .fontSize(OV_FONT_LG)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(OV_TEXT_BRIGHT)
+        Blank()
+        Toggle({
+          type: ToggleType.Switch,
+          isOn: this.audioVibrationEnabled
+        })
+          .selectedColor(OV_ACCENT_PINK)
+          .switchPointColor(OV_TEXT_WHITE)
+          .width(40)
+          .height(22)
+          .onChange((isOn: boolean) => {
+            this.audioVibrationEnabled = isOn;
+            this.applyAudioVibrationSettings(true);
+            this.recordCardUsage(CARD_AUDIO_VIBRATION);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 12, top: 14, bottom: 4 })
+
+      Text(this.audioVibrationEnabled
+        ? '场景和强度会在当前串流中即时生效'
+        : '跟随游戏或音乐节奏产生触觉反馈')
+        .fontSize(OV_FONT_SM)
+        .fontColor(OV_TEXT_FAINT)
+        .width('100%')
+        .padding({
+          left: 16,
+          right: 16,
+          bottom: this.audioVibrationEnabled ? 8 : 14
+        })
+
+      if (this.audioVibrationEnabled) {
+        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
+
+        Column() {
+          Text('场景')
+            .fontSize(OV_FONT_MD)
+            .fontColor(OV_TEXT_MEDIUM)
+            .width('100%')
+            .padding({ bottom: 6 })
+          Row({ space: 8 }) {
+            this.AudioVibrationSceneButton('游戏', '游戏/电影')
+            this.AudioVibrationSceneButton('音乐', '音乐/节奏')
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ left: 14, right: 14, top: 10, bottom: 8 })
+
+        Column() {
+          Row() {
+            Text('强度').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
+            Blank()
+            Text(`${this.audioVibrationStrength}%`)
+              .fontSize(OV_FONT_MD)
+              .fontColor(OV_ACCENT_PINK)
+              .fontWeight(FontWeight.Medium)
+          }
+          .width('100%')
+          .padding({ bottom: 4 })
+
+          Slider({
+            value: this.audioVibrationStrength,
+            min: 10,
+            max: 100,
+            step: 5,
+            style: SliderStyle.OutSet
+          })
+            .width('100%')
+            .blockColor(OV_ACCENT_PINK)
+            .trackColor(OV_BG_TRACK)
+            .selectedColor(OV_ACCENT_PINK)
+            .showSteps(false)
+            .showTips(false)
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+            .onChange((value: number, mode: SliderChangeMode) => {
+              this.audioVibrationStrength =
+                Math.max(10, Math.min(100, Math.round(value / 5) * 5));
+              const persist =
+                mode === SliderChangeMode.End ||
+                mode === SliderChangeMode.Click;
+              this.applyAudioVibrationSettings(persist);
+              if (persist) {
+                this.recordCardUsage(CARD_AUDIO_VIBRATION);
+              }
+            })
+
+          Row() {
+            Text('10%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+            Blank()
+            Text('100%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ left: 14, right: 14, bottom: 12 })
+      }
+    }
+    .width(OV_CARD_WIDTH)
+    .cardStyle()
+  }
+
+  @Builder
+  AudioVibrationSceneButton(label: string, sceneMode: string) {
+    Text(label)
+      .fontSize(OV_FONT_MD)
+      .fontWeight(
+        this.audioVibrationSceneMode === sceneMode
+          ? FontWeight.Bold
+          : FontWeight.Normal)
+      .fontColor(
+        this.audioVibrationSceneMode === sceneMode
+          ? OV_TEXT_WHITE
+          : OV_TEXT_DIM)
+      .textAlign(TextAlign.Center)
+      .layoutWeight(1)
+      .padding({ top: 7, bottom: 7 })
+      .borderRadius(14)
+      .backgroundColor(
+        this.audioVibrationSceneMode === sceneMode
+          ? OV_BLUE_50
+          : OV_BG_DIVIDER)
+      .border({
+        width: 1,
+        color: this.audioVibrationSceneMode === sceneMode
+          ? OV_ACCENT_BLUE
+          : (this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER)
+      })
+      .onClick(() => {
+        if (this.audioVibrationSceneMode === sceneMode) return;
+        this.audioVibrationSceneMode = sceneMode;
+        this.applyAudioVibrationSettings(true);
+        this.recordCardUsage(CARD_AUDIO_VIBRATION);
+      })
   }
 
   @Builder

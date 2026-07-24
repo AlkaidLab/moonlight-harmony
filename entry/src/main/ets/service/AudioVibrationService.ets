@@ -8,7 +8,6 @@
  * (at your option) any later version.
  */
 
-import { vibrator } from '@kit.SensorServiceKit';
 import { GamepadManager } from './input/GamepadManager';
 import { RUMBLE_MAX } from './input/GamepadTypes';
 
@@ -36,21 +35,17 @@ export class AudioVibrationService {
   private static readonly FLAG_CONTINUOUS_CHANGED: number = 1 << 0;
   private static readonly FLAG_TRANSIENT: number = 1 << 1;
   private static readonly FLAG_STOP: number = 1 << 2;
-  private static readonly SCENE_MUSIC: number = 1;
   private static readonly MINIMUM_INTENSITY: number = 4;
   private static readonly TRANSIENT_MINIMUM_INTERVAL_MS: number = 12;
   private static readonly CONTINUOUS_MINIMUM_INTERVAL_MS: number = 60;
-  private static readonly GAME_CONTINUOUS_LEASE_MS: number = 1000;
-  private static readonly MUSIC_CONTINUOUS_LEASE_MS: number = 240;
 
   private enabled: boolean = false;
   private strength: number = 100;
   private vibrationMode: string = '自动';
   private sceneMode: string = '游戏/电影';
 
-  private hdHapticSupported: boolean | null = null;
-  private isDeviceVibrating: boolean = false;
-  private isUsbRumbling: boolean = false;
+  private isDeviceSourceActive: boolean = false;
+  private isUsbSourceActive: boolean = false;
 
   private currentContinuousIntensity: number = 0;
   private currentLowBandRatio: number = 50;
@@ -171,7 +166,7 @@ export class AudioVibrationService {
         hasTransient,
         frame.activeScene
       );
-    } else if (this.isDeviceVibrating) {
+    } else if (this.isDeviceSourceActive) {
       this.stopDeviceVibration();
     }
 
@@ -184,7 +179,7 @@ export class AudioVibrationService {
         lowBandRatio,
         stereoBalance
       );
-    } else if (this.isUsbRumbling) {
+    } else if (this.isUsbSourceActive) {
       this.stopUsbRumble();
     }
   }
@@ -218,126 +213,15 @@ export class AudioVibrationService {
   private renderDevice(continuous: number, transient: number,
     transientDurationMs: number, sharpness: number, hasTransient: boolean,
     activeScene: number): void {
-    if (this.hdHapticSupported === null) {
-      try {
-        this.hdHapticSupported = vibrator.isHdHapticSupported();
-      } catch (_) {
-        this.hdHapticSupported = false;
-      }
-    }
-
-    try {
-      if (this.hdHapticSupported) {
-        this.renderHdPattern(
-          continuous,
-          transient,
-          transientDurationMs,
-          sharpness,
-          hasTransient,
-          activeScene
-        );
-      } else {
-        this.renderTimeFallback(
-          continuous,
-          transient,
-          transientDurationMs,
-          hasTransient,
-          activeScene
-        );
-      }
-      this.isDeviceVibrating = true;
-    } catch (_) {
-      this.renderTimeFallback(
-        continuous,
-        transient,
-        transientDurationMs,
-        hasTransient,
-        activeScene
-      );
-    }
-  }
-
-  private renderHdPattern(continuous: number, transient: number,
-    transientDurationMs: number, sharpness: number, hasTransient: boolean,
-    activeScene: number): void {
-    const builder = new vibrator.VibratorPatternBuilder();
-    const frequency = Math.round(30 + Math.max(0, Math.min(1, sharpness)) * 40);
-    let hasEvent = false;
-
-    if (hasTransient &&
-        transient >= AudioVibrationService.MINIMUM_INTENSITY) {
-      builder.addTransientEvent(0, {
-        intensity: transient,
-        frequency: frequency,
-        index: 0
-      });
-      hasEvent = true;
-    }
-
-    if (continuous >= AudioVibrationService.MINIMUM_INTENSITY) {
-      const startMs = hasTransient
-        ? Math.max(8, Math.min(35, Math.round(transientDurationMs)))
-        : 0;
-      const leaseMs = activeScene === AudioVibrationService.SCENE_MUSIC
-        ? AudioVibrationService.MUSIC_CONTINUOUS_LEASE_MS
-        : AudioVibrationService.GAME_CONTINUOUS_LEASE_MS;
-      builder.addContinuousEvent(startMs, leaseMs, {
-        intensity: continuous,
-        frequency: Math.max(25, frequency - 8),
-        index: 0
-      });
-      hasEvent = true;
-    }
-
-    if (!hasEvent) {
-      this.stopDeviceVibration();
-      return;
-    }
-
-    vibrator.startVibration({
-      type: 'pattern',
-      pattern: builder.build()
-    }, {
-      id: 0,
-      usage: 'physicalFeedback'
-    }).catch((_: Error): void => {
-      this.renderTimeFallback(
-        continuous,
-        transient,
-        transientDurationMs,
-        hasTransient,
-        activeScene
-      );
-    });
-  }
-
-  private renderTimeFallback(continuous: number, transient: number,
-    transientDurationMs: number, hasTransient: boolean,
-    activeScene: number): void {
-    const selected = hasTransient
-      ? Math.max(transient, continuous)
-      : continuous;
-    if (selected < AudioVibrationService.MINIMUM_INTENSITY) return;
-
-    let duration: number;
-    if (hasTransient) {
-      const authored = Math.max(18, Math.min(100,
-        Math.round(transientDurationMs)));
-      duration = Math.max(15, Math.round(authored * (0.65 + selected / 285)));
-    } else {
-      duration = activeScene === AudioVibrationService.SCENE_MUSIC
-        ? AudioVibrationService.MUSIC_CONTINUOUS_LEASE_MS
-        : 500;
-    }
-
-    vibrator.startVibration({
-      type: 'time',
-      duration: duration
-    }, {
-      id: 0,
-      usage: 'physicalFeedback'
-    }).catch((_: Error): void => { /* best-effort fallback */ });
-    this.isDeviceVibrating = true;
+    GamepadManager.getInstance().submitAudioDeviceHaptics(
+      continuous,
+      transient,
+      transientDurationMs,
+      sharpness,
+      hasTransient,
+      activeScene
+    );
+    this.isDeviceSourceActive = true;
   }
 
   private renderUsb(continuous: number, transient: number,
@@ -379,32 +263,26 @@ export class AudioVibrationService {
       Math.floor(base * lowWeight * (1 - spatialFactor))));
     const high = Math.max(0, Math.min(RUMBLE_MAX,
       Math.floor(base * highWeight * (1 + spatialFactor))));
-    GamepadManager.getInstance().rumbleUsbControllers(0, low, high);
-    this.isUsbRumbling = true;
+    GamepadManager.getInstance().submitAudioUsbRumble(0, low, high);
+    this.isUsbSourceActive = true;
   }
 
   private stopAll(): void {
     this.usbEffectEpoch++;
-    if (this.isDeviceVibrating) this.stopDeviceVibration();
-    if (this.isUsbRumbling) this.stopUsbRumble();
+    if (this.isDeviceSourceActive) this.stopDeviceVibration();
+    if (this.isUsbSourceActive) this.stopUsbRumble();
     this.currentContinuousIntensity = 0;
     this.currentLowBandRatio = 50;
     this.currentStereoBalance = 50;
   }
 
   private stopDeviceVibration(): void {
-    try {
-      vibrator.stopVibrationSync();
-    } catch (_) {
-      try {
-        vibrator.stopVibration();
-      } catch (_) { /* best effort */ }
-    }
-    this.isDeviceVibrating = false;
+    GamepadManager.getInstance().clearAudioDeviceHaptics();
+    this.isDeviceSourceActive = false;
   }
 
   private stopUsbRumble(): void {
-    GamepadManager.getInstance().rumbleUsbControllers(0, 0, 0);
-    this.isUsbRumbling = false;
+    GamepadManager.getInstance().submitAudioUsbRumble(0, 0, 0);
+    this.isUsbSourceActive = false;
   }
 }
