@@ -25,6 +25,11 @@ export interface AudioHapticFrame {
   presentationDelayMs: number;
 }
 
+interface UsbMotorPair {
+  low: number;
+  high: number;
+}
+
 /**
  * Platform renderer for the portable audio-haptics SDK IR.
  *
@@ -272,49 +277,72 @@ export class AudioVibrationService {
     // Standard rumble exposes frequency motors, not independent left/right
     // haptic channels. Keep stereoPan as a bounded spatial hint only.
     const spatialFactor = ((stereoBalance - 50) / 50) * 0.3;
-    const continuousScale = continuous / 100;
-    const transientScale = transient / 100;
-
-    const continuousLow = this.toRumbleMotor(
-      continuousScale * (0.55 + 0.45 * lowRatio) * (1 - spatialFactor));
-    const continuousHigh = this.toRumbleMotor(
-      continuousScale * (1 - lowRatio) * 0.25 * (1 + spatialFactor));
+    let continuousMotors: UsbMotorPair = { low: 0, high: 0 };
+    if (continuous >= AudioVibrationService.MINIMUM_INTENSITY) {
+      continuousMotors = this.mapContinuousUsbMotors(
+        continuous, lowRatio, spatialFactor);
+    }
     if (continuousChanged || !this.isUsbSourceActive) {
-      this.currentContinuousUsbLow = continuousLow;
-      this.currentContinuousUsbHigh = continuousHigh;
+      this.currentContinuousUsbLow = continuousMotors.low;
+      this.currentContinuousUsbHigh = continuousMotors.high;
     }
 
-    if (hasTransient) {
-      const transientLow = this.toRumbleMotor(
-        transientScale * (0.25 + 0.75 * lowRatio) *
-        (1 - 0.35 * normalizedSharpness) * (1 - spatialFactor));
-      const transientHigh = this.toRumbleMotor(
-        transientScale * (0.35 + 0.65 * normalizedSharpness) *
-        (1 + spatialFactor));
-      this.submitUsbRumble(
-        Math.max(this.currentContinuousUsbLow, transientLow),
-        Math.max(this.currentContinuousUsbHigh, transientHigh)
-      );
-      const effectEpoch = ++this.usbEffectEpoch;
-      const restoreDelayMs = Math.max(18, Math.min(100,
-        Math.round(transientDurationMs)));
-      setTimeout((): void => {
-        if (!this.enabled || effectEpoch !== this.usbEffectEpoch) return;
-        if (this.currentContinuousUsbLow > 0 ||
-            this.currentContinuousUsbHigh > 0) {
-          this.submitUsbRumble(
-            this.currentContinuousUsbLow,
-            this.currentContinuousUsbHigh
-          );
-        } else {
-          this.stopUsbRumble();
-        }
-      }, restoreDelayMs);
-    } else {
+    if (!hasTransient) {
+      this.renderCurrentUsbContinuous();
+      return;
+    }
+    if (transient < AudioVibrationService.MINIMUM_INTENSITY) {
+      if (continuousChanged) this.renderCurrentUsbContinuous();
+      return;
+    }
+
+    const transientMotors = this.mapTransientUsbMotors(
+      transient, lowRatio, normalizedSharpness, spatialFactor);
+    this.submitUsbRumble(
+      Math.max(this.currentContinuousUsbLow, transientMotors.low),
+      Math.max(this.currentContinuousUsbHigh, transientMotors.high)
+    );
+    const effectEpoch = ++this.usbEffectEpoch;
+    const restoreDelayMs = Math.max(18, Math.min(100,
+      Math.round(transientDurationMs)));
+    setTimeout((): void => {
+      if (!this.enabled || effectEpoch !== this.usbEffectEpoch) return;
+      this.renderCurrentUsbContinuous();
+    }, restoreDelayMs);
+  }
+
+  private mapContinuousUsbMotors(intensity: number, lowRatio: number,
+    spatialFactor: number): UsbMotorPair {
+    const amplitude = intensity / 100;
+    return {
+      low: this.toRumbleMotor(
+        amplitude * (0.55 + 0.45 * lowRatio) * (1 - spatialFactor)),
+      high: this.toRumbleMotor(
+        amplitude * (1 - lowRatio) * 0.25 * (1 + spatialFactor))
+    };
+  }
+
+  private mapTransientUsbMotors(intensity: number, lowRatio: number,
+    sharpness: number, spatialFactor: number): UsbMotorPair {
+    const amplitude = intensity / 100;
+    return {
+      low: this.toRumbleMotor(
+        amplitude * (0.25 + 0.75 * lowRatio) *
+        (1 - 0.35 * sharpness) * (1 - spatialFactor)),
+      high: this.toRumbleMotor(
+        amplitude * (0.35 + 0.65 * sharpness) * (1 + spatialFactor))
+    };
+  }
+
+  private renderCurrentUsbContinuous(): void {
+    if (this.currentContinuousUsbLow > 0 ||
+        this.currentContinuousUsbHigh > 0) {
       this.submitUsbRumble(
         this.currentContinuousUsbLow,
         this.currentContinuousUsbHigh
       );
+    } else if (this.isUsbSourceActive) {
+      this.stopUsbRumble();
     }
   }
 

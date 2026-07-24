@@ -623,6 +623,8 @@ export class GamepadVibrationService {
         this.audioDeviceTransient, minimumIntensity);
     }
 
+    // Match the SDK Android device policy: restart lowers the amplitude floor;
+    // rhythm prediction still owns duration when both flags are present.
     const durationScale = predicted ? 0.75 : 0.78;
     const minimumDurationMs = predicted ? 36 : 40;
     const maximumDurationMs = predicted ? 42 : 46;
