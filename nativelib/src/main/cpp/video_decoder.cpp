@@ -450,9 +450,7 @@ static int ResolveEffectiveBufferCount(int requestedCount, DecoderMode mode) {
 // VideoDecoder 类实现
 // =============================================================================
 
-VideoDecoder::VideoDecoder() {
-    memset(&stats_, 0, sizeof(stats_));
-}
+VideoDecoder::VideoDecoder() = default;
 
 VideoDecoder::~VideoDecoder() {
     Cleanup();
@@ -1459,23 +1457,7 @@ VideoDecoderStats VideoDecoder::GetStats() const {
     if (render_ != nullptr) {
         snapshot.hostPacedPresentationActive =
             render_->IsHostPacedPresentationActive();
-        const TwoStepPresentationStats presentation =
-            render_->GetTwoStepPresentationStats();
-        snapshot.presentationPrepared = presentation.preparedTargets;
-        snapshot.presentationScheduled = presentation.scheduledFrames;
-        snapshot.presentationExpired = presentation.expiredTargets;
-        snapshot.presentationMissing = presentation.missingTargets;
-        snapshot.presentationFuture = presentation.futureTargets;
-        snapshot.presentationNonMonotonicDrops =
-            presentation.nonMonotonicDrops;
-        snapshot.presentationRenderFallbacks =
-            presentation.renderAtTimeFallbacks;
-        snapshot.presentationLeadUnder1Ms = presentation.leadUnder1Ms;
-        snapshot.presentationLead1To2Ms = presentation.lead1To2Ms;
-        snapshot.presentationLead2To4Ms = presentation.lead2To4Ms;
-        snapshot.presentationLead4To8Ms = presentation.lead4To8Ms;
-        snapshot.presentationLeadAtLeast8Ms = presentation.leadAtLeast8Ms;
-        snapshot.presentationPendingHighWater = presentation.pendingHighWater;
+        snapshot.presentation = render_->GetTwoStepPresentationStats();
     }
     if (snapshot.sessionStartTime > 0 &&
         currentTimeMs > snapshot.sessionStartTime) {

@@ -183,19 +183,7 @@ struct VideoDecoderStats {
     uint64_t syncDrainFrames;             // sync drain-to-latest 累计跳过帧数
     bool syncDecode;                      // 实际解码模式
     bool hostPacedPresentationActive;     // 定时提交 API 实际可用且已启用
-    uint64_t presentationPrepared;
-    uint64_t presentationScheduled;
-    uint64_t presentationExpired;
-    uint64_t presentationMissing;
-    uint64_t presentationFuture;
-    uint64_t presentationNonMonotonicDrops;
-    uint64_t presentationRenderFallbacks;
-    uint64_t presentationLeadUnder1Ms;
-    uint64_t presentationLead1To2Ms;
-    uint64_t presentationLead2To4Ms;
-    uint64_t presentationLead4To8Ms;
-    uint64_t presentationLeadAtLeast8Ms;
-    uint64_t presentationPendingHighWater;
+    TwoStepPresentationStats presentation;
 };
 
 /**
@@ -407,7 +395,7 @@ private:
     
     // 统计信息
     mutable std::mutex statsMutex_;
-    VideoDecoderStats stats_;
+    VideoDecoderStats stats_{};
     uint64_t recentHostLatencyWindowFrames_{0};
     double recentHostLatencyWindowTotalMs_{0.0};
     int64_t recentHostLatencyWindowStartTimeMs_{0};
