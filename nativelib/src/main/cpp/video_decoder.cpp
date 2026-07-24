@@ -1435,11 +1435,15 @@ VideoDecoderStats VideoDecoder::GetStats() const {
         std::lock_guard<std::mutex> lock(statsMutex_);
         snapshot = stats_;
         snapshot.currentFps = receivedFrameRate_.GetRate(currentTimeMs);
+        codecOutputFrameRate_.Record(
+            currentTimeMs, codecOutputFrames_.load(std::memory_order_relaxed));
+        snapshot.codecOutputFps = codecOutputFrameRate_.GetRate(currentTimeMs);
         renderedFrameRate_.Record(
             currentTimeMs, decodedFrames_.load(std::memory_order_relaxed));
         snapshot.renderedFps = renderedFrameRate_.GetRate(currentTimeMs);
     }
 
+    snapshot.codecOutputFrames = codecOutputFrames_.load(std::memory_order_relaxed);
     snapshot.decodedFrames = decodedFrames_.load(std::memory_order_relaxed);
     snapshot.droppedFrames = droppedFrames_.load(std::memory_order_relaxed);
     snapshot.droppedByL1 = droppedByL1_.load(std::memory_order_relaxed);
@@ -1449,6 +1453,30 @@ VideoDecoderStats VideoDecoder::GetStats() const {
     snapshot.droppedByL5 = droppedByL5_.load(std::memory_order_relaxed);
     snapshot.droppedByQueueOverflow = droppedByQueueOverflow_.load(std::memory_order_relaxed);
     snapshot.droppedByTimeout = droppedByTimeout_.load(std::memory_order_relaxed);
+    snapshot.syncDrainEvents = syncDrainEvents_.load(std::memory_order_relaxed);
+    snapshot.syncDrainFrames = syncDrainFrames_.load(std::memory_order_relaxed);
+    snapshot.syncDecode = config_.decoderMode == DecoderMode::SYNC;
+    if (render_ != nullptr) {
+        snapshot.hostPacedPresentationActive =
+            render_->IsHostPacedPresentationActive();
+        const TwoStepPresentationStats presentation =
+            render_->GetTwoStepPresentationStats();
+        snapshot.presentationPrepared = presentation.preparedTargets;
+        snapshot.presentationScheduled = presentation.scheduledFrames;
+        snapshot.presentationExpired = presentation.expiredTargets;
+        snapshot.presentationMissing = presentation.missingTargets;
+        snapshot.presentationFuture = presentation.futureTargets;
+        snapshot.presentationNonMonotonicDrops =
+            presentation.nonMonotonicDrops;
+        snapshot.presentationRenderFallbacks =
+            presentation.renderAtTimeFallbacks;
+        snapshot.presentationLeadUnder1Ms = presentation.leadUnder1Ms;
+        snapshot.presentationLead1To2Ms = presentation.lead1To2Ms;
+        snapshot.presentationLead2To4Ms = presentation.lead2To4Ms;
+        snapshot.presentationLead4To8Ms = presentation.lead4To8Ms;
+        snapshot.presentationLeadAtLeast8Ms = presentation.leadAtLeast8Ms;
+        snapshot.presentationPendingHighWater = presentation.pendingHighWater;
+    }
     if (snapshot.sessionStartTime > 0 &&
         currentTimeMs > snapshot.sessionStartTime) {
         snapshot.globalAvgFps =
@@ -2226,6 +2254,8 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
         RecordDroppedFrames(DropReason::L1, drainedCount);
         syncDrainEventsSinceLog_++;
         syncDrainFramesSinceLog_ += drainedCount;
+        syncDrainEvents_.fetch_add(1, std::memory_order_relaxed);
+        syncDrainFrames_.fetch_add(drainedCount, std::memory_order_relaxed);
     }
 
     const QueuedFrame& latestFrame = outputFrames[totalFrames - 1];

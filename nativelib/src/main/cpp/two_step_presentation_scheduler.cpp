@@ -20,6 +20,7 @@ void TwoStepPresentationScheduler::Configure(double fps) {
     submitLeadNs_ = scheduler_.GetSubmitLeadNs();
     maxFutureLeadNs_ = frameIntervalNs * kMaxFutureIntervals;
     Reset();
+    ResetStats();
 }
 
 void TwoStepPresentationScheduler::Reset() {
@@ -48,6 +49,9 @@ PresentationTargetHandle TwoStepPresentationScheduler::StoreTarget(
     }
     target = {handle.id_, ptsUs, targetTimeNs, true};
     targetWriteIndex_ = (targetWriteIndex_ + 1) % targets_.size();
+    stats_.preparedTargets++;
+    stats_.pendingHighWater = std::max<uint64_t>(
+        stats_.pendingHighWater, pendingTargetCount_);
     return handle;
 }
 
@@ -106,12 +110,35 @@ void TwoStepPresentationScheduler::NoteSubmittedPts(int64_t ptsUs) {
     hasSubmittedPts_ = true;
 }
 
+void TwoStepPresentationScheduler::RecordTargetLead(int64_t targetLeadNs) {
+    if (targetLeadNs < kNanosecondsPerMillisecond) {
+        stats_.leadUnder1Ms++;
+    } else if (targetLeadNs < 2 * kNanosecondsPerMillisecond) {
+        stats_.lead1To2Ms++;
+    } else if (targetLeadNs < 4 * kNanosecondsPerMillisecond) {
+        stats_.lead2To4Ms++;
+    } else if (targetLeadNs < 8 * kNanosecondsPerMillisecond) {
+        stats_.lead4To8Ms++;
+    } else {
+        stats_.leadAtLeast8Ms++;
+    }
+}
+
+void TwoStepPresentationScheduler::NoteRenderAtTimeFallback() {
+    stats_.renderAtTimeFallbacks++;
+}
+
+void TwoStepPresentationScheduler::ResetStats() {
+    stats_ = {};
+}
+
 PreparedPresentationPlan TwoStepPresentationScheduler::PlanDecodedFrame(
         int64_t ptsUs, int64_t decodedAtNs) {
     PreparedPresentationPlan plan;
     if (hasSubmittedPts_ && ptsUs <= lastSubmittedPtsUs_) {
         plan.action = PreparedPresentationAction::DROP;
         plan.event = PreparedPresentationEvent::NON_MONOTONIC_PTS;
+        stats_.nonMonotonicDrops++;
         DiscardFrame(ptsUs);
         return plan;
     }
@@ -119,24 +146,29 @@ PreparedPresentationPlan TwoStepPresentationScheduler::PlanDecodedFrame(
     int64_t targetTimeNs = 0;
     if (!TakeTarget(ptsUs, targetTimeNs)) {
         plan.event = PreparedPresentationEvent::MISSING_TARGET;
+        stats_.missingTargets++;
         return plan;
     }
 
     const int64_t targetLeadNs = targetTimeNs - decodedAtNs;
     plan.targetLeadNs = targetLeadNs;
+    RecordTargetLead(targetLeadNs);
     if (targetLeadNs < submitLeadNs_) {
         plan.event = PreparedPresentationEvent::EXPIRED_TARGET;
+        stats_.expiredTargets++;
         NoteSubmittedPts(ptsUs);
         return plan;
     }
     if (targetLeadNs > maxFutureLeadNs_) {
         plan.event = PreparedPresentationEvent::FUTURE_TARGET;
+        stats_.futureTargets++;
         NoteSubmittedPts(ptsUs);
         return plan;
     }
 
     plan.action = PreparedPresentationAction::SCHEDULE;
     plan.targetTimeNs = targetTimeNs;
+    stats_.scheduledFrames++;
     NoteSubmittedPts(ptsUs);
     return plan;
 }

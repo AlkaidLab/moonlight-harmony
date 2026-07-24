@@ -2354,6 +2354,14 @@ struct SettingsPageV2 {
                 }
               },
               {
+                title: '上次串流诊断',
+                subtitle: '复制最近一次串流的帧率与 PTS 调度数据',
+                type: 'action',
+                action: async () => {
+                  await this.copyLastStreamDiagnostics();
+                }
+              },
+              {
                 title: '更新日志',
                 subtitle: '查看版本更新历史',
                 type: 'action',
@@ -4051,6 +4059,24 @@ struct SettingsPageV2 {
   private async failDeveloperUnlockVerification(message: string): Promise<void> {
     this.developerMode = false;
     ToastQueue.show({ message: `开发者模式验证失败: ${message}`, duration: 3000 });
+  }
+
+  private async copyLastStreamDiagnostics(): Promise<void> {
+    try {
+      const diagnostics = await PreferencesUtil.get<string>(
+        SettingsKeys.LAST_STREAM_DIAGNOSTICS, '');
+      if (diagnostics.length === 0) {
+        this.showToast('暂无串流诊断数据');
+        return;
+      }
+      const pasteData = pasteboard.createData(
+        pasteboard.MIMETYPE_TEXT_PLAIN, diagnostics);
+      pasteboard.getSystemPasteboard().setDataSync(pasteData);
+      this.showToast('上次串流诊断已复制');
+    } catch (err) {
+      console.error('[SettingsPage] 复制串流诊断失败:', JSON.stringify(err));
+      this.showToast('复制串流诊断失败');
+    }
   }
 
   /**

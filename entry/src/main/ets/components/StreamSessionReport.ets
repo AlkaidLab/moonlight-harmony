@@ -14,7 +14,8 @@
  * 轻量分析本次串流统计，展示可爱的结论、改进建议，并生成可分享 PNG 卡片。
  */
 import { componentSnapshot, display } from '@kit.ArkUI';
-import { common } from '@kit.AbilityKit';
+import { common, bundleManager } from '@kit.AbilityKit';
+import { deviceInfo, pasteboard } from '@kit.BasicServicesKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { systemShare } from '@kit.ShareKit';
@@ -37,6 +38,7 @@ const REPORT_MIN_FIT_SCALE = 0.82;
 
 export class StreamReportStats {
   fps: number = 0;
+  codecOutputFps: number = 0;
   renderedFps: number = 0;
   bitrate: number = 0;
   latency: number = 0;
@@ -44,7 +46,10 @@ export class StreamReportStats {
   networkLatency: number = 0;
   packetLoss: number = 0;
   decodedFrames: number = 0;
+  codecOutputFrames: number = 0;
   droppedFrames: number = 0;
+  framesLost: number = 0;
+  totalFrames: number = 0;
   globalAvgDecodeLatency: number = 0;
   globalAvgHostLatency: number = 0;
   globalAvgFps: number = 0;
@@ -53,6 +58,25 @@ export class StreamReportStats {
   droppedByL3: number = 0;
   droppedByL4: number = 0;
   droppedByL5: number = 0;
+  droppedByQueueOverflow: number = 0;
+  droppedByTimeout: number = 0;
+  syncDrainEvents: number = 0;
+  syncDrainFrames: number = 0;
+  syncDecode: boolean = false;
+  hostPacedPresentationActive: boolean = false;
+  presentationPrepared: number = 0;
+  presentationScheduled: number = 0;
+  presentationExpired: number = 0;
+  presentationMissing: number = 0;
+  presentationFuture: number = 0;
+  presentationNonMonotonicDrops: number = 0;
+  presentationRenderFallbacks: number = 0;
+  presentationLeadUnder1Ms: number = 0;
+  presentationLead1To2Ms: number = 0;
+  presentationLead2To4Ms: number = 0;
+  presentationLead4To8Ms: number = 0;
+  presentationLeadAtLeast8Ms: number = 0;
+  presentationPendingHighWater: number = 0;
 }
 
 export interface StreamReportMetric {
@@ -76,6 +100,12 @@ export class StreamReportConfigSnapshot {
   bitrate: number = 0;
   codec: string = 'Auto';
   hdr: boolean = false;
+  clientRefreshRateX100: number = 0;
+  decoderBufferCount: number = 0;
+  syncDecode: boolean = false;
+  vsync: boolean = false;
+  hostPacedPresentation: boolean = false;
+  vrr: boolean = false;
 }
 
 export interface StreamReportData {
@@ -108,6 +138,12 @@ export function createStreamReportConfigSnapshot(config: StreamConfig | null | u
   snapshot.bitrate = config.bitrate;
   snapshot.codec = config.codec;
   snapshot.hdr = config.hdr;
+  snapshot.clientRefreshRateX100 = config.clientRefreshRateX100;
+  snapshot.decoderBufferCount = config.decoderBufferCount;
+  snapshot.syncDecode = config.enableSyncDecode;
+  snapshot.vsync = config.enableVsync;
+  snapshot.hostPacedPresentation = config.enableHostPacedPresentation;
+  snapshot.vrr = config.enableVrr;
   return snapshot;
 }
 
@@ -238,6 +274,94 @@ function getNowText(): string {
   const hour = now.getHours().toString().padStart(2, '0');
   const minute = now.getMinutes().toString().padStart(2, '0');
   return `${month}-${day} ${hour}:${minute}`;
+}
+
+function formatDiagnosticFps(value: number): string {
+  return Math.max(0, safeNumber(value, 0)).toFixed(1);
+}
+
+function formatDiagnosticCount(value: number): string {
+  return Math.max(0, Math.round(safeNumber(value, 0))).toString();
+}
+
+function getDiagnosticBuildText(): string {
+  try {
+    const bundleInfo = bundleManager.getBundleInfoForSelfSync(
+      bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+    return bundleInfo.versionName + ' (' + bundleInfo.versionCode.toString() + ')';
+  } catch (_) {
+    return 'unknown';
+  }
+}
+
+export function buildStreamDiagnosticsText(stats: StreamReportStats,
+  config: StreamReportConfigSnapshot | null | undefined, appName: string, durationMs: number): string {
+  const durationSeconds = Math.max(0, durationMs) / 1000;
+  const receivedAvgFps = durationSeconds > 0 ? stats.totalFrames / durationSeconds : stats.fps;
+  const outputAvgFps = durationSeconds > 0 ? stats.codecOutputFrames / durationSeconds : stats.codecOutputFps;
+  const submittedAvgFps = stats.globalAvgFps > 0 ? stats.globalAvgFps : stats.renderedFps;
+  const deviceName = deviceInfo.marketName || deviceInfo.productModel || 'unknown';
+  const streamText = config
+    ? config.width.toString() + 'x' + config.height.toString() + '@' + config.fps.toString() + ' ' + config.codec
+    : 'unknown';
+  const refreshText = config && config.clientRefreshRateX100 > 0
+    ? (config.clientRefreshRateX100 / 100).toFixed(2) + 'Hz'
+    : 'unknown';
+  const bufferText = config
+    ? (config.decoderBufferCount > 0 ? config.decoderBufferCount.toString() : 'auto')
+    : 'unknown';
+  const decodeMode = stats.syncDecode ? 'sync' : 'async';
+  const ptsMode = stats.hostPacedPresentationActive
+    ? 'active'
+    : (config && config.hostPacedPresentation ? 'configured-unavailable' : 'off');
+  const vsyncMode = config && config.vsync ? 'on' : 'off';
+  const vrrMode = config && config.vrr ? 'on' : 'off';
+  const lines: string[] = [];
+
+  lines.push('Moonlight Harmony Diagnostics');
+  lines.push('build: ' + getDiagnosticBuildText());
+  lines.push('device: ' + deviceName);
+  lines.push('os: ' + deviceInfo.osFullName + ' / API ' + deviceInfo.sdkApiVersion.toString());
+  lines.push('app: ' + (appName || 'unknown'));
+  lines.push('stream: ' + streamText + ' / display ' + refreshText);
+  lines.push('mode: decode=' + decodeMode + ', pts=' + ptsMode + ', vsync=' + vsyncMode +
+    ', vrr=' + vrrMode + ', buffers=' + bufferText);
+  lines.push('duration: ' + formatDuration(durationMs));
+  lines.push('');
+  lines.push('fps-avg: rx=' + formatDiagnosticFps(receivedAvgFps) +
+    ', output=' + formatDiagnosticFps(outputAvgFps) +
+    ', submit=' + formatDiagnosticFps(submittedAvgFps));
+  lines.push('fps-window: rx=' + formatDiagnosticFps(stats.fps) +
+    ', output=' + formatDiagnosticFps(stats.codecOutputFps) +
+    ', submit=' + formatDiagnosticFps(stats.renderedFps));
+  lines.push('frames: rx=' + formatDiagnosticCount(stats.totalFrames) +
+    ', output=' + formatDiagnosticCount(stats.codecOutputFrames) +
+    ', submit=' + formatDiagnosticCount(stats.decodedFrames) +
+    ', network-lost=' + formatDiagnosticCount(stats.framesLost));
+  lines.push('drops: total=' + formatDiagnosticCount(stats.droppedFrames) +
+    ', L1=' + formatDiagnosticCount(stats.droppedByL1) +
+    ', L2=' + formatDiagnosticCount(stats.droppedByL2) +
+    ', L3=' + formatDiagnosticCount(stats.droppedByL3) +
+    ', L4=' + formatDiagnosticCount(stats.droppedByL4) +
+    ', L5=' + formatDiagnosticCount(stats.droppedByL5) +
+    ', queue=' + formatDiagnosticCount(stats.droppedByQueueOverflow) +
+    ', timeout=' + formatDiagnosticCount(stats.droppedByTimeout));
+  lines.push('pacing: prepared=' + formatDiagnosticCount(stats.presentationPrepared) +
+    ', scheduled=' + formatDiagnosticCount(stats.presentationScheduled) +
+    ', expired=' + formatDiagnosticCount(stats.presentationExpired) +
+    ', missing=' + formatDiagnosticCount(stats.presentationMissing) +
+    ', future=' + formatDiagnosticCount(stats.presentationFuture) +
+    ', non-monotonic-drop=' + formatDiagnosticCount(stats.presentationNonMonotonicDrops) +
+    ', render-fallback=' + formatDiagnosticCount(stats.presentationRenderFallbacks));
+  lines.push('target-lead: <1ms=' + formatDiagnosticCount(stats.presentationLeadUnder1Ms) +
+    ', 1-2ms=' + formatDiagnosticCount(stats.presentationLead1To2Ms) +
+    ', 2-4ms=' + formatDiagnosticCount(stats.presentationLead2To4Ms) +
+    ', 4-8ms=' + formatDiagnosticCount(stats.presentationLead4To8Ms) +
+    ', >=8ms=' + formatDiagnosticCount(stats.presentationLeadAtLeast8Ms));
+  lines.push('sync-drain: events=' + formatDiagnosticCount(stats.syncDrainEvents) +
+    ', frames=' + formatDiagnosticCount(stats.syncDrainFrames) +
+    ', pending-high-water=' + formatDiagnosticCount(stats.presentationPendingHighWater));
+  return lines.join('\n');
 }
 
 function buildSuggestions(score: number, networkLatency: number, decodeLatency: number, hostLatency: number,
@@ -423,6 +547,7 @@ export function buildStreamReportDataFromSnapshot(stats: StreamReportStats,
 @Component
 export struct StreamSessionReport {
   @Prop data: StreamReportData = createEmptyStreamReport();
+  @Prop diagnosticsText: string = '';
   onClose?: () => void;
 
   @State private overlayOpacity: number = 0;
@@ -517,6 +642,22 @@ export struct StreamSessionReport {
       ToastQueue.show({ message: '分享图片生成失败', duration: 1600 });
     } finally {
       this.isSharing = false;
+    }
+  }
+
+  private copyDiagnostics(): void {
+    if (this.diagnosticsText.length === 0) {
+      ToastQueue.show({ message: '暂无诊断数据', duration: 1500 });
+      return;
+    }
+    try {
+      const pasteData = pasteboard.createData(
+        pasteboard.MIMETYPE_TEXT_PLAIN, this.diagnosticsText);
+      pasteboard.getSystemPasteboard().setDataSync(pasteData);
+      ToastQueue.show({ message: '诊断数据已复制', duration: 1500 });
+    } catch (err) {
+      console.error('[StreamSessionReport] 复制诊断数据失败:', JSON.stringify(err));
+      ToastQueue.show({ message: '复制诊断数据失败', duration: 1600 });
     }
   }
 
@@ -874,6 +1015,25 @@ export struct StreamSessionReport {
             .enabled(!this.isSharing)
             .onClick(() => {
               this.shareReportImage();
+            })
+
+            Button() {
+              Text('复制诊断')
+                .fontSize(13)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .textAlign(TextAlign.Center)
+                .width('100%')
+            }
+            .layoutWeight(1)
+            .constraintSize({ minWidth: 0 })
+            .height(40)
+            .borderRadius(22)
+            .fontColor('#E8FFFFFF')
+            .backgroundColor('#22FFFFFF')
+            .clip(true)
+            .onClick(() => {
+              this.copyDiagnostics();
             })
 
             Button() {

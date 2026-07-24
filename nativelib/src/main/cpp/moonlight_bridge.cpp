@@ -1728,13 +1728,14 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     auto stats = VideoDecoderInstance::GetStats();
     
     napi_value framesDecoded, framesDropped, avgDecodeTime;
-    napi_value fps, renderedFps, bitrate, hostLatency;
+    napi_value fps, codecOutputFps, renderedFps, bitrate, hostLatency;
     napi_value totalDecodeTime, validDecodeFrames, totalHostLatency, framesWithHostLat;
     
     napi_create_uint32(env, static_cast<uint32_t>(stats.decodedFrames), &framesDecoded);
     napi_create_uint32(env, static_cast<uint32_t>(stats.droppedFrames), &framesDropped);
     napi_create_double(env, stats.averageDecodeTimeMs, &avgDecodeTime);
     napi_create_double(env, stats.currentFps, &fps);          // 接收帧率 (Rx)
+    napi_create_double(env, stats.codecOutputFps, &codecOutputFps);
     napi_create_double(env, stats.renderedFps, &renderedFps); // 渲染帧率 (Rd)
     napi_create_double(env, stats.currentBitrate, &bitrate);
     napi_create_double(env, stats.recentHostProcessingLatency, &hostLatency);  // 最近 1 秒主机处理延迟
@@ -1756,6 +1757,7 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     napi_set_named_property(env, result, "framesDropped", framesDropped);
     napi_set_named_property(env, result, "avgDecodeTimeMs", avgDecodeTime);
     napi_set_named_property(env, result, "fps", fps);             // 接收帧率 (Rx)
+    napi_set_named_property(env, result, "codecOutputFps", codecOutputFps);
     napi_set_named_property(env, result, "renderedFps", renderedFps); // 渲染帧率 (Rd)
     napi_set_named_property(env, result, "bitrate", bitrate);
     napi_set_named_property(env, result, "hostLatency", hostLatency);  // 最近 1 秒主机处理延迟（编码时间）
@@ -1785,6 +1787,36 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     napi_set_named_property(env, result, "droppedByL5", dropL5);
     napi_set_named_property(env, result, "droppedByQueueOverflow", dropQueue);
     napi_set_named_property(env, result, "droppedByTimeout", dropTimeout);
+
+    auto setCounter = [env, result](const char* name, uint64_t value) {
+        napi_value jsValue;
+        napi_create_double(env, static_cast<double>(value), &jsValue);
+        napi_set_named_property(env, result, name, jsValue);
+    };
+    auto setBoolean = [env, result](const char* name, bool value) {
+        napi_value jsValue;
+        napi_get_boolean(env, value, &jsValue);
+        napi_set_named_property(env, result, name, jsValue);
+    };
+
+    setCounter("codecOutputFrames", stats.codecOutputFrames);
+    setCounter("syncDrainEvents", stats.syncDrainEvents);
+    setCounter("syncDrainFrames", stats.syncDrainFrames);
+    setBoolean("syncDecode", stats.syncDecode);
+    setBoolean("hostPacedPresentationActive", stats.hostPacedPresentationActive);
+    setCounter("presentationPrepared", stats.presentationPrepared);
+    setCounter("presentationScheduled", stats.presentationScheduled);
+    setCounter("presentationExpired", stats.presentationExpired);
+    setCounter("presentationMissing", stats.presentationMissing);
+    setCounter("presentationFuture", stats.presentationFuture);
+    setCounter("presentationNonMonotonicDrops", stats.presentationNonMonotonicDrops);
+    setCounter("presentationRenderFallbacks", stats.presentationRenderFallbacks);
+    setCounter("presentationLeadUnder1Ms", stats.presentationLeadUnder1Ms);
+    setCounter("presentationLead1To2Ms", stats.presentationLead1To2Ms);
+    setCounter("presentationLead2To4Ms", stats.presentationLead2To4Ms);
+    setCounter("presentationLead4To8Ms", stats.presentationLead4To8Ms);
+    setCounter("presentationLeadAtLeast8Ms", stats.presentationLeadAtLeast8Ms);
+    setCounter("presentationPendingHighWater", stats.presentationPendingHighWater);
     
     return result;
 }

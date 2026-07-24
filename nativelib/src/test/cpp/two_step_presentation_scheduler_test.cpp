@@ -266,6 +266,56 @@ void TestDuplicateOutputIsDroppedOnce() {
     assert(duplicate.event == PreparedPresentationEvent::NON_MONOTONIC_PTS);
     assert(scheduler.GetPendingTargetCount() == 0);
 }
+
+void TestDiagnosticsCountWithoutChangingTimelineReset() {
+    TwoStepPresentationScheduler scheduler;
+    scheduler.Configure(120.0);
+
+    assert(scheduler.PrepareFrame(0, kStartNs));
+    assert(scheduler.PlanDecodedFrame(0, kStartNs + 3 * kMs).action ==
+        PreparedPresentationAction::SCHEDULE);
+    assert(scheduler.PlanDecodedFrame(8333, kStartNs + 8 * kMs).event ==
+        PreparedPresentationEvent::MISSING_TARGET);
+
+    scheduler.Reset();
+    assert(scheduler.PrepareFrame(0, kStartNs + 20 * kMs));
+    assert(scheduler.PlanDecodedFrame(0, kStartNs + 32 * kMs).event ==
+        PreparedPresentationEvent::EXPIRED_TARGET);
+
+    scheduler.Reset();
+    assert(scheduler.PrepareFrame(0, kStartNs));
+    assert(scheduler.PrepareFrame(33333, kStartNs));
+    assert(scheduler.PlanDecodedFrame(33333, kStartNs).event ==
+        PreparedPresentationEvent::FUTURE_TARGET);
+
+    scheduler.Reset();
+    assert(scheduler.PrepareFrame(1000, kStartNs));
+    assert(scheduler.PlanDecodedFrame(1000, kStartNs + 3 * kMs).action ==
+        PreparedPresentationAction::SCHEDULE);
+    assert(scheduler.PlanDecodedFrame(1000, kStartNs + 4 * kMs).event ==
+        PreparedPresentationEvent::NON_MONOTONIC_PTS);
+    scheduler.NoteRenderAtTimeFallback();
+
+    const TwoStepPresentationStats stats = scheduler.GetStats();
+    assert(stats.preparedTargets == 5);
+    assert(stats.scheduledFrames == 2);
+    assert(stats.expiredTargets == 1);
+    assert(stats.missingTargets == 1);
+    assert(stats.futureTargets == 1);
+    assert(stats.nonMonotonicDrops == 1);
+    assert(stats.renderAtTimeFallbacks == 1);
+    assert(stats.leadUnder1Ms == 1);
+    assert(stats.lead1To2Ms == 0);
+    assert(stats.lead2To4Ms == 0);
+    assert(stats.lead4To8Ms == 2);
+    assert(stats.leadAtLeast8Ms == 1);
+    assert(stats.pendingHighWater == 2);
+
+    scheduler.Reset();
+    assert(scheduler.GetStats().scheduledFrames == 2);
+    scheduler.ResetStats();
+    assert(scheduler.GetStats().preparedTargets == 0);
+}
 } // namespace
 
 int main() {
@@ -282,6 +332,7 @@ int main() {
     TestNtscCadencePreservesPreparedTargets();
     TestDiscontinuityClearsOldTargets();
     TestDuplicateOutputIsDroppedOnce();
+    TestDiagnosticsCountWithoutChangingTimelineReset();
     std::cout << "two-step presentation scheduler tests passed\n";
     return 0;
 }

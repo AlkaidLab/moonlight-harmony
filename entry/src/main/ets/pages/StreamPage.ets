@@ -44,7 +44,7 @@ import { StreamLifecycleManager } from '../service/streaming/StreamLifecycleMana
 import { StreamIMEManager } from '../service/streaming/StreamIMEManager';
 import { VirtualKeyboard } from '../components/virtual/VirtualKeyboard';
 import { CustomKeyOverlay } from '../components/CustomKeyOverlay';
-import { StreamSessionReport, StreamReportData, StreamReportStats, StreamReportConfigSnapshot, createEmptyStreamReport, createStreamReportConfigSnapshot, buildStreamReportDataFromSnapshot, markStreamReportAiLoading } from '../components/StreamSessionReport';
+import { StreamSessionReport, StreamReportData, StreamReportStats, StreamReportConfigSnapshot, createEmptyStreamReport, createStreamReportConfigSnapshot, buildStreamReportDataFromSnapshot, buildStreamDiagnosticsText, markStreamReportAiLoading } from '../components/StreamSessionReport';
 import { CustomKeyManager, CustomKeyManagerHost, SessionLike } from '../service/customkey/CustomKeyManager';
 import { CustomKeyStore } from '../service/customkey/CustomKeyStore';
 import { PanZoomHandler, PanZoomState, PointXY } from '../service/input/PanZoomHandler';
@@ -98,6 +98,7 @@ class BuiltStreamReport {
   stats: StreamReportStats = new StreamReportStats();
   config: StreamReportConfigSnapshot | null = null;
   durationMs: number = 0;
+  diagnosticsText: string = '';
 }
 
 /** StreamPage 对 CustomKeyManager 的宿主回调实现 */
@@ -188,6 +189,7 @@ struct StreamPage {
   /** 串流结束后的可分享战报 */
   @State private showStreamReport: boolean = false;
   @State private streamReportData: StreamReportData = createEmptyStreamReport();
+  @State private streamDiagnosticsText: string = '';
   /** 用户设置：优先使用虚拟键盘 */
   private useVirtualKeyboard: boolean = false;
   /** 待对话框关闭后显示 IME */
@@ -1496,7 +1498,8 @@ struct StreamPage {
    */
   private buildCurrentStreamReport(): BuiltStreamReport {
     const session = this.viewModel.getSession();
-    const stats = session ? session.getSummaryStats() : this.viewModel.performanceStats;
+    const sessionStats = session ? session.getSummaryStats() : null;
+    const stats = sessionStats || this.viewModel.performanceStats;
     const durationMs = this.streamStartedAtMs > 0 ? Date.now() - this.streamStartedAtMs : 0;
     const snapshot = new StreamReportStats();
     snapshot.fps = stats.fps;
@@ -1516,12 +1519,50 @@ struct StreamPage {
     snapshot.droppedByL3 = stats.droppedByL3;
     snapshot.droppedByL4 = stats.droppedByL4;
     snapshot.droppedByL5 = stats.droppedByL5;
+    if (sessionStats) {
+      snapshot.codecOutputFps = sessionStats.codecOutputFps;
+      snapshot.codecOutputFrames = sessionStats.codecOutputFrames;
+      snapshot.framesLost = sessionStats.framesLost;
+      snapshot.totalFrames = sessionStats.totalFrames;
+      snapshot.droppedByQueueOverflow = sessionStats.droppedByQueueOverflow;
+      snapshot.droppedByTimeout = sessionStats.droppedByTimeout;
+      snapshot.syncDrainEvents = sessionStats.syncDrainEvents;
+      snapshot.syncDrainFrames = sessionStats.syncDrainFrames;
+      snapshot.syncDecode = sessionStats.syncDecode;
+      snapshot.hostPacedPresentationActive = sessionStats.hostPacedPresentationActive;
+      snapshot.presentationPrepared = sessionStats.presentationPrepared;
+      snapshot.presentationScheduled = sessionStats.presentationScheduled;
+      snapshot.presentationExpired = sessionStats.presentationExpired;
+      snapshot.presentationMissing = sessionStats.presentationMissing;
+      snapshot.presentationFuture = sessionStats.presentationFuture;
+      snapshot.presentationNonMonotonicDrops = sessionStats.presentationNonMonotonicDrops;
+      snapshot.presentationRenderFallbacks = sessionStats.presentationRenderFallbacks;
+      snapshot.presentationLeadUnder1Ms = sessionStats.presentationLeadUnder1Ms;
+      snapshot.presentationLead1To2Ms = sessionStats.presentationLead1To2Ms;
+      snapshot.presentationLead2To4Ms = sessionStats.presentationLead2To4Ms;
+      snapshot.presentationLead4To8Ms = sessionStats.presentationLead4To8Ms;
+      snapshot.presentationLeadAtLeast8Ms = sessionStats.presentationLeadAtLeast8Ms;
+      snapshot.presentationPendingHighWater = sessionStats.presentationPendingHighWater;
+    }
     const result = new BuiltStreamReport();
     result.stats = snapshot;
     result.config = createStreamReportConfigSnapshot(this.viewModel.streamConfig);
     result.durationMs = durationMs;
     result.data = buildStreamReportDataFromSnapshot(snapshot, result.config, this.appName || '远程游戏', durationMs);
+    result.diagnosticsText = buildStreamDiagnosticsText(
+      snapshot, result.config, this.appName || '远程游戏', durationMs);
     return result;
+  }
+
+  private async saveStreamDiagnostics(text: string): Promise<void> {
+    if (text.length === 0) {
+      return;
+    }
+    try {
+      await PreferencesUtil.put(SettingsKeys.LAST_STREAM_DIAGNOSTICS, text);
+    } catch (err) {
+      console.warn('[StreamPage] 保存串流诊断失败:', JSON.stringify(err));
+    }
   }
 
   private enrichStreamReportWithAi(report: BuiltStreamReport): void {
@@ -1731,6 +1772,9 @@ struct StreamPage {
 
     this.stopClipboardSync();
 
+    const report = this.buildCurrentStreamReport();
+    await this.saveStreamDiagnostics(report.diagnosticsText);
+
     if (!this.endStreamReportEnabled) {
       await this.prepareStreamEndUi();
       await this.exitStreamAndReturn();
@@ -1738,9 +1782,9 @@ struct StreamPage {
       return;
     }
 
-    const report = this.buildCurrentStreamReport();
     this.prepareStreamEndUiImmediate();
     this.streamReportData = report.data;
+    this.streamDiagnosticsText = report.diagnosticsText;
     this.showStreamReport = true;
     this.enrichStreamReportWithAi(report);
     this.runStreamShutdownInBackground('正在断开串流', async (): Promise<void> => {
@@ -1762,10 +1806,11 @@ struct StreamPage {
 
     this.stopClipboardSync();
 
-    const report = this.endStreamReportEnabled ? this.buildCurrentStreamReport() : null;
+    const report = this.buildCurrentStreamReport();
+    await this.saveStreamDiagnostics(report.diagnosticsText);
     this.prepareStreamEndUiImmediate();
 
-    if (!this.endStreamReportEnabled || !report) {
+    if (!this.endStreamReportEnabled) {
       await this.lifecycleManager.stopBackgroundTask();
       await this.sendLockScreenShortcutBeforeDisconnect();
       await this.exitStreamAndReturn();
@@ -1774,6 +1819,7 @@ struct StreamPage {
     }
 
     this.streamReportData = report.data;
+    this.streamDiagnosticsText = report.diagnosticsText;
     this.showStreamReport = true;
     this.enrichStreamReportWithAi(report);
     this.runStreamShutdownInBackground('正在退出游戏', async (): Promise<void> => {
@@ -2132,6 +2178,7 @@ struct StreamPage {
       if (this.showStreamReport) {
         StreamSessionReport({
           data: this.streamReportData,
+          diagnosticsText: this.streamDiagnosticsText,
           onClose: (): void => {
             this.closeStreamReportAndReturn();
           }
