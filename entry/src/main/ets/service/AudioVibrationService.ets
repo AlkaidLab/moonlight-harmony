@@ -10,19 +10,11 @@
 
 import { GamepadManager } from './input/GamepadManager';
 import { RUMBLE_MAX } from './input/GamepadTypes';
+import { AudioHapticFrame, AudioHapticFrameFlag } from './AudioHapticFrame';
 
-export interface AudioHapticFrame {
-  flags: number;
-  timestampUs: number;
-  continuousAmplitude: number;
-  transientAmplitude: number;
-  transientDurationMs: number;
-  sharpness: number;
-  lowBandRatio: number;
-  stereoPan: number;
-  confidence: number;
-  activeScene: number;
-  presentationDelayMs: number;
+interface UsbMotorPair {
+  low: number;
+  high: number;
 }
 
 /**
@@ -32,12 +24,13 @@ export interface AudioHapticFrame {
  * device capability fallback, user strength and device/USB routing.
  */
 export class AudioVibrationService {
-  private static readonly FLAG_CONTINUOUS_CHANGED: number = 1 << 0;
-  private static readonly FLAG_TRANSIENT: number = 1 << 1;
-  private static readonly FLAG_STOP: number = 1 << 2;
   private static readonly MINIMUM_INTENSITY: number = 4;
   private static readonly TRANSIENT_MINIMUM_INTERVAL_MS: number = 12;
-  private static readonly CONTINUOUS_MINIMUM_INTERVAL_MS: number = 60;
+  private static readonly CONTINUOUS_MINIMUM_INTERVAL_MS: number = 100;
+  private static readonly CONTINUOUS_AMPLITUDE_HYSTERESIS: number = 8;
+  private static readonly MAXIMUM_PRESENTATION_DELAY_MS: number = 300;
+  private static readonly DEFAULT_ONSET_SENSITIVITY: number = 1.0;
+  private static readonly MUSIC_ONSET_SENSITIVITY: number = 2.5;
 
   private enabled: boolean = false;
   private strength: number = 100;
@@ -47,16 +40,19 @@ export class AudioVibrationService {
   private isDeviceSourceActive: boolean = false;
   private isUsbSourceActive: boolean = false;
 
-  private currentContinuousIntensity: number = 0;
-  private currentLowBandRatio: number = 50;
-  private currentStereoBalance: number = 50;
-  private lastSubmitTimeMs: number = 0;
+  private currentContinuousUsbLow: number = 0;
+  private currentContinuousUsbHigh: number = 0;
+  private lastRenderedContinuousIntensity: number = 0;
+  private lastRenderedTimestampUs: number = -1;
+  private lastTransientSubmitTimeMs: number = 0;
+  private lastContinuousSubmitTimeMs: number = 0;
   private renderEpoch: number = 0;
   private usbEffectEpoch: number = 0;
 
   setSettings(enabled: boolean, strength: number, vibrationMode: string,
     sceneMode: string = '游戏/电影'): void {
     this.renderEpoch++;
+    this.lastRenderedTimestampUs = -1;
     this.enabled = enabled;
     this.strength = Math.max(0, Math.min(100, strength));
     this.vibrationMode = vibrationMode;
@@ -79,20 +75,28 @@ export class AudioVibrationService {
     }
   }
 
+  getOnsetSensitivity(): number {
+    return this.sceneMode === '音乐/节奏'
+      ? AudioVibrationService.MUSIC_ONSET_SENSITIVITY
+      : AudioVibrationService.DEFAULT_ONSET_SENSITIVITY;
+  }
+
   handleHapticFrame(frame: AudioHapticFrame): void {
     if (!this.enabled) return;
 
-    const hasStop = (frame.flags & AudioVibrationService.FLAG_STOP) !== 0;
+    const hasStop = (frame.flags & AudioHapticFrameFlag.STOP) !== 0;
     const hasTransient =
-      (frame.flags & AudioVibrationService.FLAG_TRANSIENT) !== 0;
+      (frame.flags & AudioHapticFrameFlag.TRANSIENT) !== 0;
     if (hasStop) {
       this.renderEpoch++;
+      this.lastRenderedTimestampUs = -1;
       this.stopAll();
       if (!hasTransient) return;
     }
 
     const epoch = this.renderEpoch;
-    const delayMs = Math.max(0, Math.min(50,
+    const delayMs = Math.max(0, Math.min(
+      AudioVibrationService.MAXIMUM_PRESENTATION_DELAY_MS,
       Math.round(frame.presentationDelayMs)));
     if (delayMs > 1) {
       setTimeout((): void => {
@@ -107,17 +111,19 @@ export class AudioVibrationService {
 
   stop(): void {
     this.renderEpoch++;
+    this.lastRenderedTimestampUs = -1;
     this.stopAll();
   }
 
   private renderFrame(frame: AudioHapticFrame): void {
     if (!this.enabled) return;
+    if (frame.timestampUs < this.lastRenderedTimestampUs) return;
 
     const hasTransient =
-      (frame.flags & AudioVibrationService.FLAG_TRANSIENT) !== 0;
+      (frame.flags & AudioHapticFrameFlag.TRANSIENT) !== 0;
     const continuousChanged =
-      (frame.flags & AudioVibrationService.FLAG_CONTINUOUS_CHANGED) !== 0;
-    const hasStop = (frame.flags & AudioVibrationService.FLAG_STOP) !== 0;
+      (frame.flags & AudioHapticFrameFlag.CONTINUOUS_CHANGED) !== 0;
+    const hasStop = (frame.flags & AudioHapticFrameFlag.STOP) !== 0;
 
     if (hasStop) {
       this.stopAll();
@@ -134,26 +140,46 @@ export class AudioVibrationService {
     const stereoBalance = Math.max(0, Math.min(100,
       Math.round((frame.stereoPan + 1) * 50)));
 
-    if (continuousChanged || hasStop) {
-      this.currentContinuousIntensity = continuous;
-    }
-    this.currentLowBandRatio = lowBandRatio;
-    this.currentStereoBalance = stereoBalance;
-
     const selected = hasTransient
       ? Math.max(transient, continuous)
       : continuous;
-    if (selected < AudioVibrationService.MINIMUM_INTENSITY) {
+    // Valid transient intent must reach the actuator policy. Some motors need
+    // a platform-specific amplitude floor to make weak musical beats tangible.
+    if (!hasTransient &&
+        selected < AudioVibrationService.MINIMUM_INTENSITY) {
       if (continuousChanged || hasStop) this.stopAll();
       return;
     }
 
     const now = Date.now();
+    if (!hasTransient) {
+      // Do not let a continuous refresh replace a beat that is still being
+      // presented, and ignore small envelope jitter while output is active.
+      if (now - this.lastTransientSubmitTimeMs <
+          AudioVibrationService.CONTINUOUS_MINIMUM_INTERVAL_MS) {
+        return;
+      }
+      if (!hasStop &&
+          (this.isDeviceSourceActive || this.isUsbSourceActive) &&
+          Math.abs(continuous - this.lastRenderedContinuousIntensity) <
+            AudioVibrationService.CONTINUOUS_AMPLITUDE_HYSTERESIS) {
+        return;
+      }
+    }
     const minimumInterval = hasTransient
       ? AudioVibrationService.TRANSIENT_MINIMUM_INTERVAL_MS
       : AudioVibrationService.CONTINUOUS_MINIMUM_INTERVAL_MS;
-    if (now - this.lastSubmitTimeMs < minimumInterval) return;
-    this.lastSubmitTimeMs = now;
+    const lastSubmitTimeMs = hasTransient
+      ? this.lastTransientSubmitTimeMs
+      : this.lastContinuousSubmitTimeMs;
+    if (now - lastSubmitTimeMs < minimumInterval) return;
+    if (hasTransient) {
+      this.lastTransientSubmitTimeMs = now;
+    } else {
+      this.lastContinuousSubmitTimeMs = now;
+      this.lastRenderedContinuousIntensity = continuous;
+    }
+    this.lastRenderedTimestampUs = frame.timestampUs;
 
     const shouldDevice = this.shouldVibrateDevice();
     const shouldUsb = this.shouldVibrateGamepad();
@@ -164,7 +190,8 @@ export class AudioVibrationService {
         frame.transientDurationMs,
         frame.sharpness,
         hasTransient,
-        frame.activeScene
+        frame.activeScene,
+        frame.flags
       );
     } else if (this.isDeviceSourceActive) {
       this.stopDeviceVibration();
@@ -177,7 +204,9 @@ export class AudioVibrationService {
         frame.transientDurationMs,
         hasTransient,
         lowBandRatio,
-        stereoBalance
+        stereoBalance,
+        frame.sharpness,
+        continuousChanged
       );
     } else if (this.isUsbSourceActive) {
       this.stopUsbRumble();
@@ -212,57 +241,103 @@ export class AudioVibrationService {
 
   private renderDevice(continuous: number, transient: number,
     transientDurationMs: number, sharpness: number, hasTransient: boolean,
-    activeScene: number): void {
+    activeScene: number, frameFlags: AudioHapticFrameFlag): void {
     GamepadManager.getInstance().submitAudioDeviceHaptics(
       continuous,
       transient,
       transientDurationMs,
       sharpness,
       hasTransient,
-      activeScene
+      activeScene,
+      frameFlags
     );
     this.isDeviceSourceActive = true;
   }
 
   private renderUsb(continuous: number, transient: number,
     transientDurationMs: number, hasTransient: boolean, lowBandRatio: number,
-    stereoBalance: number): void {
-    const selected = hasTransient
-      ? Math.max(transient, continuous)
-      : continuous;
-    this.submitUsbRumble(selected, lowBandRatio, stereoBalance);
+    stereoBalance: number, sharpness: number,
+    continuousChanged: boolean): void {
+    const lowRatio = Math.max(0, Math.min(1, lowBandRatio / 100));
+    const normalizedSharpness = Math.max(0, Math.min(1, sharpness));
+    // Standard rumble exposes frequency motors, not independent left/right
+    // haptic channels. Keep stereoPan as a bounded spatial hint only.
+    const spatialFactor = ((stereoBalance - 50) / 50) * 0.3;
+    let continuousMotors: UsbMotorPair = { low: 0, high: 0 };
+    if (continuous >= AudioVibrationService.MINIMUM_INTENSITY) {
+      continuousMotors = this.mapContinuousUsbMotors(
+        continuous, lowRatio, spatialFactor);
+    }
+    if (continuousChanged || !this.isUsbSourceActive) {
+      this.currentContinuousUsbLow = continuousMotors.low;
+      this.currentContinuousUsbHigh = continuousMotors.high;
+    }
 
-    if (hasTransient) {
-      const effectEpoch = ++this.usbEffectEpoch;
-      const restoreDelayMs = Math.max(18, Math.min(100,
-        Math.round(transientDurationMs)));
-      setTimeout((): void => {
-        if (!this.enabled || effectEpoch !== this.usbEffectEpoch) return;
-        if (this.currentContinuousIntensity >=
-            AudioVibrationService.MINIMUM_INTENSITY) {
-          this.submitUsbRumble(
-            this.currentContinuousIntensity,
-            this.currentLowBandRatio,
-            this.currentStereoBalance
-          );
-        } else {
-          this.stopUsbRumble();
-        }
-      }, restoreDelayMs);
+    if (!hasTransient) {
+      this.renderCurrentUsbContinuous();
+      return;
+    }
+    if (transient < AudioVibrationService.MINIMUM_INTENSITY) {
+      if (continuousChanged) this.renderCurrentUsbContinuous();
+      return;
+    }
+
+    const transientMotors = this.mapTransientUsbMotors(
+      transient, lowRatio, normalizedSharpness, spatialFactor);
+    this.submitUsbRumble(
+      Math.max(this.currentContinuousUsbLow, transientMotors.low),
+      Math.max(this.currentContinuousUsbHigh, transientMotors.high)
+    );
+    const effectEpoch = ++this.usbEffectEpoch;
+    const restoreDelayMs = Math.max(18, Math.min(100,
+      Math.round(transientDurationMs)));
+    setTimeout((): void => {
+      if (!this.enabled || effectEpoch !== this.usbEffectEpoch) return;
+      this.renderCurrentUsbContinuous();
+    }, restoreDelayMs);
+  }
+
+  private mapContinuousUsbMotors(intensity: number, lowRatio: number,
+    spatialFactor: number): UsbMotorPair {
+    const amplitude = intensity / 100;
+    return {
+      low: this.toRumbleMotor(
+        amplitude * (0.55 + 0.45 * lowRatio) * (1 - spatialFactor)),
+      high: this.toRumbleMotor(
+        amplitude * (1 - lowRatio) * 0.25 * (1 + spatialFactor))
+    };
+  }
+
+  private mapTransientUsbMotors(intensity: number, lowRatio: number,
+    sharpness: number, spatialFactor: number): UsbMotorPair {
+    const amplitude = intensity / 100;
+    return {
+      low: this.toRumbleMotor(
+        amplitude * (0.25 + 0.75 * lowRatio) *
+        (1 - 0.35 * sharpness) * (1 - spatialFactor)),
+      high: this.toRumbleMotor(
+        amplitude * (0.35 + 0.65 * sharpness) * (1 + spatialFactor))
+    };
+  }
+
+  private renderCurrentUsbContinuous(): void {
+    if (this.currentContinuousUsbLow > 0 ||
+        this.currentContinuousUsbHigh > 0) {
+      this.submitUsbRumble(
+        this.currentContinuousUsbLow,
+        this.currentContinuousUsbHigh
+      );
+    } else if (this.isUsbSourceActive) {
+      this.stopUsbRumble();
     }
   }
 
-  private submitUsbRumble(intensity: number, lowBandRatio: number,
-    stereoBalance: number): void {
-    const base = Math.floor(intensity * RUMBLE_MAX / 100);
-    const lowWeight = Math.max(0.15, Math.min(0.85, lowBandRatio / 100));
-    const highWeight = 1 - lowWeight;
-    const spatialFactor = ((stereoBalance - 50) / 50) * 0.3;
+  private toRumbleMotor(amplitude: number): number {
+    return Math.max(0, Math.min(RUMBLE_MAX,
+      Math.floor(amplitude * RUMBLE_MAX)));
+  }
 
-    const low = Math.max(0, Math.min(RUMBLE_MAX,
-      Math.floor(base * lowWeight * (1 - spatialFactor))));
-    const high = Math.max(0, Math.min(RUMBLE_MAX,
-      Math.floor(base * highWeight * (1 + spatialFactor))));
+  private submitUsbRumble(low: number, high: number): void {
     GamepadManager.getInstance().submitAudioUsbRumble(0, low, high);
     this.isUsbSourceActive = true;
   }
@@ -271,9 +346,11 @@ export class AudioVibrationService {
     this.usbEffectEpoch++;
     if (this.isDeviceSourceActive) this.stopDeviceVibration();
     if (this.isUsbSourceActive) this.stopUsbRumble();
-    this.currentContinuousIntensity = 0;
-    this.currentLowBandRatio = 50;
-    this.currentStereoBalance = 50;
+    this.currentContinuousUsbLow = 0;
+    this.currentContinuousUsbHigh = 0;
+    this.lastRenderedContinuousIntensity = 0;
+    this.lastTransientSubmitTimeMs = 0;
+    this.lastContinuousSubmitTimeMs = 0;
   }
 
   private stopDeviceVibration(): void {

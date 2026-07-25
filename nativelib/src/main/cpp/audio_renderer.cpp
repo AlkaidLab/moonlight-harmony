@@ -24,6 +24,8 @@
 #include <dlfcn.h>
 #include <qos/qos.h>
 #include <algorithm>
+#include <ctime>
+#include <memory>
 
 #define LOG_TAG "AudioRenderer"
 
@@ -46,6 +48,12 @@ typedef OH_AudioStream_Result (*PFN_SetRendererErrorCb)(
     OH_AudioStreamBuilder*, OH_AudioRenderer_OnErrorCallback, void*);
 typedef OH_AudioStream_Result (*PFN_SetRendererOutputDeviceChangeCb)(
     OH_AudioStreamBuilder*, OH_AudioRenderer_OutputDeviceChangeCallback, void*);
+typedef OH_AudioStream_Result (*PFN_SetRendererFastStatusChangeCb)(
+    OH_AudioStreamBuilder*, OH_AudioRenderer_OnFastStatusChange, void*);
+typedef OH_AudioStream_Result (*PFN_GetAudioTimestampInfo)(
+    OH_AudioRenderer*, int64_t*, int64_t*);
+typedef OH_AudioStream_Result (*PFN_GetRendererLatency)(
+    OH_AudioRenderer*, OH_AudioStream_LatencyType, int32_t*);
 
 // 函数指针类型定义 — 空间音频 (API 20+)
 typedef OH_AudioStream_Result (*PFN_SetSpatializationEnabled)(
@@ -56,7 +64,10 @@ static PFN_SetRendererWriteDataCb       g_pfnSetRendererWriteDataCb = nullptr;
 static PFN_SetRendererInterruptCb       g_pfnSetRendererInterruptCb = nullptr;
 static PFN_SetRendererErrorCb           g_pfnSetRendererErrorCb = nullptr;
 static PFN_SetRendererOutputDeviceChangeCb g_pfnSetRendererDeviceChangeCb = nullptr;
+static PFN_SetRendererFastStatusChangeCb g_pfnSetRendererFastStatusChangeCb = nullptr;
 static PFN_SetSpatializationEnabled     g_pfnSetSpatializationEnabled = nullptr;
+static PFN_GetAudioTimestampInfo        g_pfnGetAudioTimestampInfo = nullptr;
+static PFN_GetRendererLatency           g_pfnGetRendererLatency = nullptr;
 
 static bool g_audioApisChecked = false;
 static bool g_writeDataCbAvailable = false;
@@ -82,6 +93,12 @@ static void LoadAudioApis() {
         dlsym(handle, "OH_AudioStreamBuilder_SetRendererErrorCallback");
     g_pfnSetRendererDeviceChangeCb = (PFN_SetRendererOutputDeviceChangeCb)
         dlsym(handle, "OH_AudioStreamBuilder_SetRendererOutputDeviceChangeCallback");
+    g_pfnSetRendererFastStatusChangeCb = (PFN_SetRendererFastStatusChangeCb)
+        dlsym(handle, "OH_AudioStreamBuilder_SetRendererFastStatusChangeCallback");
+    g_pfnGetAudioTimestampInfo = (PFN_GetAudioTimestampInfo)
+        dlsym(handle, "OH_AudioRenderer_GetAudioTimestampInfo");
+    g_pfnGetRendererLatency = (PFN_GetRendererLatency)
+        dlsym(handle, "OH_AudioRenderer_GetLatency");
 
     // 空间音频 (API 20+)
     g_pfnSetSpatializationEnabled = (PFN_SetSpatializationEnabled)
@@ -91,11 +108,15 @@ static void LoadAudioApis() {
     g_spatialAudioAvailable = (g_pfnSetSpatializationEnabled != nullptr);
 
     OH_LOG_INFO(LOG_APP, "OHAudio API probe: WriteDataCb=%{public}s InterruptCb=%{public}s "
-                "ErrorCb=%{public}s DeviceChangeCb=%{public}s SpatialAudio=%{public}s",
+                "ErrorCb=%{public}s DeviceChangeCb=%{public}s FastStatusCb=%{public}s "
+                "AudioTimestamp=%{public}s RouteLatency=%{public}s SpatialAudio=%{public}s",
                 g_pfnSetRendererWriteDataCb ? "Y" : "N",
                 g_pfnSetRendererInterruptCb ? "Y" : "N",
                 g_pfnSetRendererErrorCb ? "Y" : "N",
                 g_pfnSetRendererDeviceChangeCb ? "Y" : "N",
+                g_pfnSetRendererFastStatusChangeCb ? "Y" : "N",
+                g_pfnGetAudioTimestampInfo ? "Y" : "N",
+                g_pfnGetRendererLatency ? "Y" : "N",
                 g_pfnSetSpatializationEnabled ? "Y" : "N");
     // 不 dlclose，保持库加载
 }
@@ -328,6 +349,14 @@ int AudioRenderer::Init(const AudioRendererConfig& config) {
     } else {
         OH_LOG_INFO(LOG_APP, "SetRendererOutputDeviceChangeCallback not available, skipping");
     }
+
+    if (g_pfnSetRendererFastStatusChangeCb) {
+        result = g_pfnSetRendererFastStatusChangeCb(
+            builder_, OnFastStatusChange, this);
+        if (result != AUDIOSTREAM_SUCCESS) {
+            OH_LOG_WARN(LOG_APP, "Failed to set fast status callback: %{public}d", result);
+        }
+    }
     
     // 创建渲染器
     result = OH_AudioStreamBuilder_GenerateRenderer(builder_, &renderer_);
@@ -383,6 +412,7 @@ int AudioRenderer::Start() {
     ringTail_.store(0, std::memory_order_relaxed);
     wasUnderrun_.store(false, std::memory_order_relaxed);
     
+    InvalidatePresentationEstimate();
     OH_AudioStream_Result result = OH_AudioRenderer_Start(renderer_);
     if (result != AUDIOSTREAM_SUCCESS) {
         OH_LOG_ERROR(LOG_APP, "Failed to start renderer: %{public}d", result);
@@ -392,6 +422,7 @@ int AudioRenderer::Start() {
     running_ = true;
     needRestart_ = false;
     consecutiveErrors_ = 0;
+    RefreshRouteLatency();
     OH_LOG_INFO(LOG_APP, "Audio renderer started");
     
     return 0;
@@ -399,6 +430,7 @@ int AudioRenderer::Start() {
 
 int AudioRenderer::Stop() {
     running_ = false;
+    InvalidatePresentationEstimate();
     
     if (renderer_ != nullptr) {
         OH_AudioRenderer_Stop(renderer_);
@@ -496,6 +528,7 @@ int AudioRenderer::TryRestart() {
     
     // 先停止当前渲染器
     OH_AudioRenderer_Stop(renderer_);
+    InvalidatePresentationEstimate();
     
     // 清空环形缓冲区 + OHAudio 内部缓冲，避免播放过时数据
     ringHead_.store(0, std::memory_order_relaxed);
@@ -538,6 +571,7 @@ int AudioRenderer::TryRestart() {
     running_ = true;
     needRestart_ = false;
     consecutiveErrors_ = 0;
+    RefreshRouteLatency();
     OH_LOG_INFO(LOG_APP, "Audio renderer restarted successfully");
     return 0;
 }
@@ -574,6 +608,134 @@ double AudioRenderer::GetBufferLatencyMs() const {
     return (config_.sampleRate > 0)
         ? ((double)(buffered / channelCount) * 1000.0 / config_.sampleRate)
         : 0.0;
+}
+
+void AudioRenderer::InvalidatePresentationEstimate() {
+    presentationClockRefreshNs_.store(0, std::memory_order_relaxed);
+    previousPresentedFrames_.store(-1, std::memory_order_relaxed);
+    previousPresentationTimestampNs_.store(0, std::memory_order_relaxed);
+    presentationClockStableSamples_.store(0, std::memory_order_relaxed);
+    cachedRendererLatencyUs_.store(-1, std::memory_order_relaxed);
+    routeLatencyMs_.store(-1, std::memory_order_relaxed);
+}
+
+void AudioRenderer::RefreshRouteLatency() {
+    if (renderer_ == nullptr || g_pfnGetRendererLatency == nullptr) {
+        routeLatencyMs_.store(-1, std::memory_order_relaxed);
+        return;
+    }
+
+    int32_t latencyMs = 0;
+    if (g_pfnGetRendererLatency(
+            renderer_, AUDIOSTREAM_LATENCY_TYPE_ALL, &latencyMs) ==
+            AUDIOSTREAM_SUCCESS &&
+        latencyMs >= 0 && latencyMs <= 1000) {
+        routeLatencyMs_.store(latencyMs, std::memory_order_relaxed);
+        OH_LOG_INFO(LOG_APP, "Audio route latency estimate: %{public}dms", latencyMs);
+    } else {
+        routeLatencyMs_.store(-1, std::memory_order_relaxed);
+    }
+}
+
+void AudioRenderer::RefreshPresentationClock(int64_t nowNs) {
+    int64_t lastRefreshNs =
+        presentationClockRefreshNs_.load(std::memory_order_relaxed);
+    if (lastRefreshNs > 0 &&
+        nowNs - lastRefreshNs < PRESENTATION_CLOCK_REFRESH_NS) {
+        return;
+    }
+    if (!presentationClockRefreshNs_.compare_exchange_strong(
+            lastRefreshNs, nowNs, std::memory_order_acq_rel,
+            std::memory_order_relaxed)) {
+        return;
+    }
+
+    int64_t presentedFrames = 0;
+    int64_t presentationTimestampNs = 0;
+    OH_AudioStream_Result timestampResult;
+    if (g_pfnGetAudioTimestampInfo != nullptr) {
+        timestampResult = g_pfnGetAudioTimestampInfo(
+            renderer_, &presentedFrames, &presentationTimestampNs);
+    } else {
+        timestampResult = OH_AudioRenderer_GetTimestamp(
+            renderer_, CLOCK_MONOTONIC, &presentedFrames,
+            &presentationTimestampNs);
+    }
+
+    int64_t framesWritten = 0;
+    if (timestampResult != AUDIOSTREAM_SUCCESS ||
+        OH_AudioRenderer_GetFramesWritten(renderer_, &framesWritten) !=
+            AUDIOSTREAM_SUCCESS ||
+        presentedFrames < 0 || framesWritten < presentedFrames ||
+        presentationTimestampNs <= 0) {
+        return;
+    }
+
+    const int64_t timestampAgeNs = nowNs - presentationTimestampNs;
+    if (timestampAgeNs < -5000000 || timestampAgeNs > 1000000000) {
+        return;
+    }
+    const int64_t elapsedFrames = timestampAgeNs > 0
+        ? timestampAgeNs * static_cast<int64_t>(config_.sampleRate) /
+            1000000000
+        : 0;
+    const int64_t presentedNow =
+        std::min(framesWritten, presentedFrames + elapsedFrames);
+    const int64_t pendingFrames = framesWritten - presentedNow;
+
+    const int64_t previousFrames =
+        previousPresentedFrames_.exchange(presentedFrames,
+            std::memory_order_relaxed);
+    const int64_t previousTimestamp =
+        previousPresentationTimestampNs_.exchange(presentationTimestampNs,
+            std::memory_order_relaxed);
+    int stableSamples = presentationClockStableSamples_.load(
+        std::memory_order_relaxed);
+    if (previousFrames >= 0 && presentedFrames >= previousFrames &&
+        presentationTimestampNs > previousTimestamp) {
+        stableSamples = std::min(stableSamples + 1, 2);
+    } else {
+        stableSamples = 1;
+    }
+    presentationClockStableSamples_.store(
+        stableSamples, std::memory_order_relaxed);
+
+    if (stableSamples >= 2) {
+        const int64_t latencyUs =
+            pendingFrames * 1000000 / config_.sampleRate;
+        // Frame position can reset after a route change while frames-written
+        // remains stream-relative. Reject that mismatched origin and keep the
+        // route-latency fallback instead of manufacturing a long haptic delay.
+        if (latencyUs >= 0 && latencyUs <= 500000) {
+            cachedRendererLatencyUs_.store(
+                latencyUs, std::memory_order_release);
+        }
+    }
+}
+
+double AudioRenderer::GetPresentationLatencyMs() {
+    const double ringBufferLatencyMs = GetBufferLatencyMs();
+    if (renderer_ == nullptr || config_.sampleRate <= 0) {
+        return ringBufferLatencyMs;
+    }
+
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    const int64_t nowNs =
+        static_cast<int64_t>(now.tv_sec) * 1000000000 + now.tv_nsec;
+    RefreshPresentationClock(nowNs);
+
+    const int64_t cachedRendererLatencyUs =
+        cachedRendererLatencyUs_.load(std::memory_order_acquire);
+    if (cachedRendererLatencyUs >= 0) {
+        return ringBufferLatencyMs +
+            static_cast<double>(cachedRendererLatencyUs) / 1000.0;
+    }
+
+    const int32_t routeLatencyMs =
+        routeLatencyMs_.load(std::memory_order_relaxed);
+    return ringBufferLatencyMs +
+        static_cast<double>(std::max(routeLatencyMs, 0));
 }
 
 // =============================================================================
@@ -715,6 +877,7 @@ void AudioRenderer::OnDeviceChange(OH_AudioRenderer* renderer, void* userData,
     
     AudioRenderer* self = static_cast<AudioRenderer*>(userData);
     if (self == nullptr) return;
+    self->InvalidatePresentationEstimate();
     
     if (reason == REASON_OLD_DEVICE_UNAVAILABLE) {
         // 旧设备不可用（如拔出耳机），标记重启
@@ -730,6 +893,7 @@ void AudioRenderer::OnInterruptEvent(OH_AudioRenderer* renderer, void* userData,
     
     AudioRenderer* self = static_cast<AudioRenderer*>(userData);
     if (self == nullptr) return;
+    self->InvalidatePresentationEstimate();
     
     if (hint == AUDIOSTREAM_INTERRUPT_HINT_PAUSE) {
         OH_LOG_WARN(LOG_APP, "Audio paused by system interrupt");
@@ -761,15 +925,31 @@ void AudioRenderer::OnError(OH_AudioRenderer* renderer, void* userData,
     }
 }
 
+void AudioRenderer::OnFastStatusChange(OH_AudioRenderer* renderer,
+                                       void* userData,
+                                       OH_AudioStream_FastStatus status) {
+    AudioRenderer* self = static_cast<AudioRenderer*>(userData);
+    if (self == nullptr) return;
+
+    self->InvalidatePresentationEstimate();
+    OH_LOG_INFO(LOG_APP, "Audio renderer fast status changed: %{public}s",
+                status == AUDIOSTREAM_FASTSTATUS_FAST ? "FAST" : "NORMAL");
+}
+
 // =============================================================================
 // 全局简化接口
 // =============================================================================
 
 namespace {
-    // 使用原子指针保证 PlaySamples 等高频调用的线程安全
-    // Cleanup 通过 mutex 保证与 Init 的互斥
-    static std::atomic<AudioRenderer*> g_audioRenderer{nullptr};
+    // Atomic shared ownership keeps the renderer alive for the full duration
+    // of each wrapper call while Init and Cleanup replace the global instance.
+    static std::shared_ptr<AudioRenderer> g_audioRenderer;
     static std::mutex g_audioRendererMutex;
+
+    std::shared_ptr<AudioRenderer> AcquireAudioRenderer() {
+        return std::atomic_load_explicit(
+            &g_audioRenderer, std::memory_order_acquire);
+    }
 }
 
 namespace AudioRendererInstance {
@@ -799,13 +979,13 @@ bool IsAudioCompatMode() {
 
 int Init(int sampleRate, int channelCount, int samplesPerFrame) {
     std::lock_guard<std::mutex> lock(g_audioRendererMutex);
-    
-    AudioRenderer* old = g_audioRenderer.exchange(nullptr, std::memory_order_acq_rel);
-    if (old != nullptr) {
-        delete old;
-    }
-    
-    AudioRenderer* renderer = new AudioRenderer();
+
+    std::shared_ptr<AudioRenderer> old = std::atomic_exchange_explicit(
+        &g_audioRenderer, std::shared_ptr<AudioRenderer>{},
+        std::memory_order_acq_rel);
+    old.reset();
+
+    auto renderer = std::make_shared<AudioRenderer>();
     
     AudioRendererConfig config;
     config.sampleRate = sampleRate;
@@ -818,15 +998,14 @@ int Init(int sampleRate, int channelCount, int samplesPerFrame) {
     
     int ret = renderer->Init(config);
     if (ret == 0) {
-        g_audioRenderer.store(renderer, std::memory_order_release);
-    } else {
-        delete renderer;
+        std::atomic_store_explicit(
+            &g_audioRenderer, renderer, std::memory_order_release);
     }
     return ret;
 }
 
 int SetVolume(float volume) {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer == nullptr) {
         return -1;
     }
@@ -834,7 +1013,7 @@ int SetVolume(float volume) {
 }
 
 int PlaySamples(const int16_t* pcmData, int sampleCount) {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer == nullptr) {
         return -1;
     }
@@ -842,7 +1021,7 @@ int PlaySamples(const int16_t* pcmData, int sampleCount) {
 }
 
 int Start() {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer == nullptr) {
         return -1;
     }
@@ -850,7 +1029,7 @@ int Start() {
 }
 
 int Stop() {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer == nullptr) {
         return -1;
     }
@@ -859,15 +1038,14 @@ int Stop() {
 
 void Cleanup() {
     std::lock_guard<std::mutex> lock(g_audioRendererMutex);
-    
-    AudioRenderer* old = g_audioRenderer.exchange(nullptr, std::memory_order_acq_rel);
-    if (old != nullptr) {
-        delete old;
-    }
+
+    std::shared_ptr<AudioRenderer> old = std::atomic_exchange_explicit(
+        &g_audioRenderer, std::shared_ptr<AudioRenderer>{},
+        std::memory_order_acq_rel);
 }
 
 AudioRendererStats GetStats() {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer != nullptr) {
         return renderer->GetStats();
     }
@@ -875,9 +1053,17 @@ AudioRendererStats GetStats() {
 }
 
 double GetBufferLatencyMs() {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer != nullptr) {
         return renderer->GetBufferLatencyMs();
+    }
+    return 0.0;
+}
+
+double GetPresentationLatencyMs() {
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
+    if (renderer != nullptr) {
+        return renderer->GetPresentationLatencyMs();
     }
     return 0.0;
 }

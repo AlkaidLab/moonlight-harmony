@@ -21,6 +21,7 @@ import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from '
 import { MoonBridge } from '../streaming/MoonBridge';
 import { MouseEmulationService, MouseEmulationCallback } from './MouseEmulationService';
 import { GamepadVibrationService } from './GamepadVibrationService';
+import { AudioHapticFrameFlag } from '../AudioHapticFrame';
 import {
   GamepadState, GamepadInfo, GamepadInputListener, DeviceBusType,
   MoonlightButton, GCButton2313Action, GCButton2313ActionCallback,
@@ -2451,14 +2452,15 @@ export class GamepadManager implements UsbDriverListener {
   /** 更新音频来源的设备触觉；最终只有振动服务写系统马达。 */
   submitAudioDeviceHaptics(continuous: number, transient: number,
     transientDurationMs: number, sharpness: number, hasTransient: boolean,
-    activeScene: number): void {
+    activeScene: number, frameFlags: AudioHapticFrameFlag): void {
     this.vibrationService.submitAudioDeviceHaptics(
       continuous,
       transient,
       transientDurationMs,
       sharpness,
       hasTransient,
-      activeScene
+      activeScene,
+      frameFlags
     );
   }
 

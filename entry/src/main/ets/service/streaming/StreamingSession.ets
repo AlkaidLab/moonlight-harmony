@@ -20,7 +20,8 @@ import { display } from '@kit.ArkUI';
 import { GamepadManager } from '../input/GamepadManager';
 import { MoonlightButton } from '../input/GamepadTypes';
 import { MicrophoneStream } from '../microphone/MicrophoneStream';
-import { AudioHapticFrame, AudioVibrationService } from '../AudioVibrationService';
+import { AudioHapticFrame } from '../AudioHapticFrame';
+import { AudioVibrationService } from '../AudioVibrationService';
 import { AdaptiveBitrateService } from './AdaptiveBitrateService';
 import { NetworkBoostService } from '../network/NetworkBoostService';
 import { MoonBridge as ClipboardNativeBridge } from '../jni/ClipboardBridge';
@@ -659,8 +660,8 @@ export class StreamingSession {
   /**
    * 热更新当前会话的音频振动设置。
    *
-   * SDK 只接收场景创作配置；用户强度继续由平台渲染层统一缩放，
-   * 避免同时暴露 sensitivity 和输出增益两套旋钮。
+   * SDK 接收场景创作配置及对应的内部检测灵敏度；用户强度继续由平台
+   * 渲染层统一缩放，避免同时暴露 sensitivity 和输出增益两套旋钮。
    */
   updateAudioVibrationSettings(enabled: boolean, strength: number,
     vibrationMode: string, sceneMode: string): void {
@@ -675,7 +676,9 @@ export class StreamingSession {
     this.audioVibrationService.setSettings(
       enabled, normalizedStrength, vibrationMode, sceneMode);
     this.nativeModule.setAudioHapticsConfig(
-      enabled, 1.0, this.audioVibrationService.getSceneModeInt());
+      enabled,
+      this.audioVibrationService.getOnsetSensitivity(),
+      this.audioVibrationService.getSceneModeInt());
   }
 
   // ---------------------------------------------------------------------------

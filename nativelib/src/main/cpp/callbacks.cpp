@@ -25,6 +25,7 @@
 #include <hilog/log.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 
@@ -155,6 +156,7 @@ typedef struct {
 struct AudioHapticCallbackData {
     AhHapticFrame frame{};
     double presentationDelayMs = 0.0;
+    std::chrono::steady_clock::time_point enqueuedAt{};
 };
 
 static void CallJs_StageStarting(napi_env env, napi_value js_callback, void* context, void* data) {
@@ -451,6 +453,11 @@ static void CallJs_AudioHapticFrame(napi_env env,
                                     void* context,
                                     void* data) {
     auto* callbackData = static_cast<AudioHapticCallbackData*>(data);
+    const double bridgeDelayMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - callbackData->enqueuedAt).count();
+    const double remainingPresentationDelayMs =
+        std::max(0.0, callbackData->presentationDelayMs - bridgeDelayMs);
     if (env != nullptr && js_callback != nullptr) {
         napi_value frameObject;
         napi_create_object(env, &frameObject);
@@ -474,7 +481,7 @@ static void CallJs_AudioHapticFrame(napi_env env,
         SetObjectUint32(env, frameObject, "activeScene",
                         callbackData->frame.active_scene);
         SetObjectDouble(env, frameObject, "presentationDelayMs",
-                        callbackData->presentationDelayMs);
+                        remainingPresentationDelayMs);
 
         napi_value undefined;
         napi_get_undefined(env, &undefined);
@@ -1029,15 +1036,20 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                 // buffer depth. Subtract a conservative actuator lead and let
                 // ArkTS schedule the sparse frame on the presentation timeline.
                 constexpr double kActuatorLeadMs = 8.0;
-                constexpr double kMaximumPresentationDelayMs = 50.0;
+                // Bluetooth and processed routes can legitimately exceed
+                // 50 ms. The renderer clock validates the route estimate
+                // before it reaches this bounded scheduling window.
+                constexpr double kMaximumPresentationDelayMs = 300.0;
                 const double presentationDelayMs = std::clamp(
-                    AudioRendererInstance::GetBufferLatencyMs() - kActuatorLeadMs,
+                    AudioRendererInstance::GetPresentationLatencyMs() -
+                        kActuatorLeadMs,
                     0.0, kMaximumPresentationDelayMs);
 
                 for (uint32_t index = 0; index < hapticFrameCount; ++index) {
                     auto* data = new AudioHapticCallbackData();
                     data->frame = hapticFrames[index];
                     data->presentationDelayMs = presentationDelayMs;
+                    data->enqueuedAt = std::chrono::steady_clock::now();
                     const float amplitude = std::max(
                         data->frame.continuous_amplitude,
                         data->frame.transient_amplitude);
