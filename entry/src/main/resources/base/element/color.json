@@ -111,6 +111,98 @@
     {
       "name": "overlay",
       "value": "#00000060"
+    },
+    {
+      "name": "stream_menu_scrim",
+      "value": "#14000000"
+    },
+    {
+      "name": "stream_menu_surface",
+      "value": "#EAF7F9FC"
+    },
+    {
+      "name": "stream_menu_control",
+      "value": "#18FFFFFF"
+    },
+    {
+      "name": "stream_menu_border",
+      "value": "#26000000"
+    },
+    {
+      "name": "stream_menu_divider",
+      "value": "#18000000"
+    },
+    {
+      "name": "stream_menu_track",
+      "value": "#30000000"
+    },
+    {
+      "name": "stream_menu_shadow",
+      "value": "#30000000"
+    },
+    {
+      "name": "stream_menu_text_bright",
+      "value": "#F01A2630"
+    },
+    {
+      "name": "stream_menu_text_medium",
+      "value": "#E03B4852"
+    },
+    {
+      "name": "stream_menu_text_dim",
+      "value": "#ED48545E"
+    },
+    {
+      "name": "stream_menu_text_faint",
+      "value": "#E044505A"
+    },
+    {
+      "name": "stream_menu_accent_blue",
+      "value": "#1F5F99"
+    },
+    {
+      "name": "stream_menu_accent_pink",
+      "value": "#9C294B"
+    },
+    {
+      "name": "stream_menu_accent_gold",
+      "value": "#8A5700"
+    },
+    {
+      "name": "stream_menu_blue_surface",
+      "value": "#141F5F99"
+    },
+    {
+      "name": "stream_menu_blue_border",
+      "value": "#801F5F99"
+    },
+    {
+      "name": "stream_menu_pink_surface",
+      "value": "#149C294B"
+    },
+    {
+      "name": "stream_menu_pink_border",
+      "value": "#809C294B"
+    },
+    {
+      "name": "stream_menu_selected_surface",
+      "value": "#241F5F99"
+    },
+    {
+      "name": "stream_menu_on_accent",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "stream_menu_success",
+      "value": "#126638"
+    },
+    {
+      "name": "stream_menu_success_surface",
+      "value": "#14126638"
+    },
+    {
+      "name": "stream_menu_on_pastel",
+      "value": "#E61A1E24"
     }
   ]
 }

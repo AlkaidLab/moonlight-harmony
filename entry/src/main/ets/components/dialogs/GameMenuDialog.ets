@@ -12,7 +12,6 @@
  * 串流游戏菜单弹窗 - 奶油风格 + 透明玻璃效果
  */
 import { display, promptAction } from '@kit.ArkUI';
-import { ConfigurationConstant } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { StreamViewModel } from '../../viewmodel/StreamViewModel';
@@ -27,11 +26,7 @@ import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService } from '../../service/input/DeviceSensorService';
 import { ToastQueue } from '../../utils/ToastQueue';
 import {
-  OV_ACCENT_BLUE, OV_ACCENT_PINK, OV_ACCENT_RED,
-  OV_TEXT_BRIGHT, OV_TEXT_MEDIUM, OV_TEXT_DIM, OV_TEXT_FAINT, OV_TEXT_WHITE, OV_TEXT_ULTRA,
-  OV_BG_TRACK, OV_BG_CARD_LIGHT, OV_BG_CARD_LIGHTER, OV_BG_DIVIDER,
-  OV_BG_CARD_DARK, OV_BG_CARD_DARKER, OV_SHADOW_MEDIUM, OV_SHADOW_LIGHT,
-  OV_BLUE_40, OV_BLUE_50,
+  StreamMenuColors,
   OV_FONT_XS, OV_FONT_SM, OV_FONT_MD, OV_FONT_LG,
   OV_CARD_WIDTH, OV_CARD_RADIUS, OV_CARD_BLUR,
 } from '../../common/OverlayConstants';
@@ -184,9 +179,6 @@ export struct GameMenuDialog {
 
   // 布局判断：屏幕 2/3 宽度能否放下两列卡片
   @State private useTwoColumns: boolean = true;
-  // 深浅主题（自动跟随系统切换）
-  @StorageProp('colorMode') currentColorMode: number = ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
-
   // 卡片使用频率排序
   @State private sortedMainCards: string[] = [];
   private cardUsageCounts: Map<string, number> = new Map();
@@ -207,11 +199,11 @@ export struct GameMenuDialog {
 
   // 通用卡片样式
   @Styles cardStyle() {
-    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_CARD_LIGHT)
+    .backgroundColor(StreamMenuColors.Surface)
     .backdropBlur(OV_CARD_BLUR)
     .borderRadius(OV_CARD_RADIUS)
-    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER })
-    .shadow({ radius: 12, color: this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_SHADOW_LIGHT, offsetY: 2 })
+    .border({ width: 1, color: StreamMenuColors.Border })
+    .shadow({ radius: 12, color: StreamMenuColors.Shadow, offsetY: 3 })
   }
 
   aboutToDisappear(): void {
@@ -261,10 +253,12 @@ export struct GameMenuDialog {
     } catch (_) {}
   }
 
-  /** 当前是否深色主题，直接在布局中使用以确保 ArkTS 响应式更新 */
-  // COLOR_MODE_LIGHT = 1; 深色时黑透卡片，浅色时白透卡片
-  isCurrentDark(): boolean {
-    return this.currentColorMode !== 1;
+  private shortcutSurfaceColor(color: string): string {
+    return '#20' + color.replace('#', '');
+  }
+
+  private shortcutBorderColor(color: string): string {
+    return '#80' + color.replace('#', '');
   }
 
   private animateIn(): void {
@@ -714,6 +708,7 @@ export struct GameMenuDialog {
     }
     .width('100%')
     .height('100%')
+    .backgroundColor(StreamMenuColors.Scrim)
     .transition(TransitionEffect.OPACITY.animation({ duration: ANIMATION_DURATION_IN, curve: Curve.EaseOut })
       .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: ANIMATION_DURATION_IN, curve: Curve.EaseOut })))
   }
@@ -829,11 +824,11 @@ export struct GameMenuDialog {
       Image($r('app.media.ic_lock_open'))
         .width(22)
         .height(22)
-        .fillColor(OV_TEXT_BRIGHT)
+        .fillColor(StreamMenuColors.TextBright)
       Text('解锁')
         .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Medium)
-        .fontColor(OV_TEXT_BRIGHT)
+        .fontColor(StreamMenuColors.TextBright)
         .margin({ top: 4 })
     }
     .width(BUTTON_CARD_SIZE)
@@ -853,11 +848,11 @@ export struct GameMenuDialog {
       Image($r('app.media.ic_pulse'))
         .width(22)
         .height(22)
-        .fillColor(OV_TEXT_BRIGHT)
+        .fillColor(StreamMenuColors.TextBright)
       Text('监控')
         .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Medium)
-        .fontColor(OV_TEXT_BRIGHT)
+        .fontColor(StreamMenuColors.TextBright)
         .margin({ top: 4 })
     }
     .width(BUTTON_CARD_SIZE)
@@ -876,11 +871,11 @@ export struct GameMenuDialog {
       Image(this.micActive ? $r('app.media.ic_microphone') : $r('app.media.ic_microphone_slash'))
         .width(22)
         .height(22)
-        .fillColor(this.micActive ? OV_TEXT_BRIGHT : OV_TEXT_DIM)
+        .fillColor(this.micActive ? StreamMenuColors.TextBright : StreamMenuColors.TextDim)
       Text(this.micActive ? '麦克风' : '已静音')
         .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Medium)
-        .fontColor(this.micActive ? OV_TEXT_BRIGHT : OV_TEXT_DIM)
+        .fontColor(this.micActive ? StreamMenuColors.TextBright : StreamMenuColors.TextDim)
         .margin({ top: 4 })
     }
     .width(BUTTON_CARD_SIZE)
@@ -914,20 +909,21 @@ export struct GameMenuDialog {
     Row() {
       Text(this.showMoreCards ? '▾' : '▸')
         .fontSize(12)
-        .fontColor(OV_TEXT_DIM)
+        .fontColor(StreamMenuColors.TextDim)
         .margin({ right: 6 })
       Text('更多设置')
         .fontSize(OV_FONT_MD)
-        .fontColor(OV_TEXT_DIM)
+        .fontColor(StreamMenuColors.TextDim)
       Text(` · 虚拟手柄${this.hasGyroscope ? '、体感助手' : ''}`)
         .fontSize(OV_FONT_SM)
-        .fontColor(OV_TEXT_FAINT)
+        .fontColor(StreamMenuColors.TextFaint)
     }
     .width(OV_CARD_WIDTH)
     .height(36)
     .padding({ left: 14, right: 14 })
     .borderRadius(OV_CARD_RADIUS)
-    .backgroundColor(this.isCurrentDark() ? '#08FFFFFF' : '#08000000')
+    .backgroundColor(StreamMenuColors.Surface)
+    .border({ width: 1, color: StreamMenuColors.Border })
     .alignItems(VerticalAlign.Center)
     .onClick(() => {
       animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
@@ -941,15 +937,15 @@ export struct GameMenuDialog {
     Column() {
       Row() {
         Image($r('app.media.ic_crown'))
-          .width(14).height(14).fillColor(Color.Orange)
+          .width(14).height(14).fillColor(StreamMenuColors.AccentGold)
         Text(' 自定义按键')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_TEXT_BRIGHT)
+          .fontColor(StreamMenuColors.TextBright)
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.showCustomKeys })
-          .selectedColor(OV_ACCENT_PINK)
-          .switchPointColor(OV_TEXT_WHITE)
+          .selectedColor(StreamMenuColors.AccentPink)
+          .switchPointColor(StreamMenuColors.OnAccent)
           .width(40)
           .height(22)
           .onChange((isOn: boolean) => {
@@ -965,7 +961,7 @@ export struct GameMenuDialog {
 
       Text('自由放置的屏幕虚拟按键')
         .fontSize(OV_FONT_SM)
-        .fontColor(OV_TEXT_FAINT)
+        .fontColor(StreamMenuColors.TextFaint)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 6 })
 
@@ -977,13 +973,13 @@ export struct GameMenuDialog {
               Text(name)
                 .fontSize(11)
                 .fontWeight(name === this.customKeyActiveProfile ? FontWeight.Bold : FontWeight.Medium)
-                .fontColor(name === this.customKeyActiveProfile ? OV_TEXT_WHITE : OV_TEXT_MEDIUM)
+                .fontColor(name === this.customKeyActiveProfile ? StreamMenuColors.OnAccent : StreamMenuColors.TextMedium)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .padding({ left: 10, right: 10, top: 4, bottom: 4 })
                 .borderRadius(12)
-                .backgroundColor(name === this.customKeyActiveProfile ? OV_ACCENT_BLUE : '#15FFFFFF')
-                .border({ width: 1, color: name === this.customKeyActiveProfile ? OV_BLUE_40 : '#10FFFFFF' })
+                .backgroundColor(name === this.customKeyActiveProfile ? StreamMenuColors.AccentBlue : StreamMenuColors.Control)
+                .border({ width: 1, color: name === this.customKeyActiveProfile ? StreamMenuColors.BlueBorder : StreamMenuColors.Border })
                 .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
                 .onClick(() => {
                   if (name !== this.customKeyActiveProfile) {
@@ -1005,11 +1001,11 @@ export struct GameMenuDialog {
         Text('编辑布局')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_ACCENT_PINK)
+          .fontColor(StreamMenuColors.AccentPink)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(14)
-          .backgroundColor('#20FFB7C5')
-          .border({ width: 1, color: '#40FFB7C5' })
+          .backgroundColor(StreamMenuColors.PinkSurface)
+          .border({ width: 1, color: StreamMenuColors.PinkBorder })
           .onClick(() => {
             this.callbacks.onEditCustomKeys?.();
             this.animateOut();
@@ -1017,11 +1013,11 @@ export struct GameMenuDialog {
         Text('导出')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_ACCENT_BLUE)
+          .fontColor(StreamMenuColors.AccentBlue)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(14)
-          .backgroundColor('#20A8D8EA')
-          .border({ width: 1, color: OV_BLUE_40 })
+          .backgroundColor(StreamMenuColors.BlueSurface)
+          .border({ width: 1, color: StreamMenuColors.BlueBorder })
           .onClick(() => {
             this.callbacks.onExportCustomKeys?.();
             this.animateOut();
@@ -1029,11 +1025,11 @@ export struct GameMenuDialog {
         Text('导入')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_ACCENT_BLUE)
+          .fontColor(StreamMenuColors.AccentBlue)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(14)
-          .backgroundColor('#20A8D8EA')
-          .border({ width: 1, color: OV_BLUE_40 })
+          .backgroundColor(StreamMenuColors.BlueSurface)
+          .border({ width: 1, color: StreamMenuColors.BlueBorder })
           .onClick(() => {
             this.callbacks.onImportCustomKeys?.();
             this.animateOut();
@@ -1044,32 +1040,32 @@ export struct GameMenuDialog {
       .padding({ bottom: 10 })
 
       // ── 画面缩放（合并在自定义按键卡片内） ──
-      Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
+      Row().width('85%').height(1).backgroundColor(StreamMenuColors.Divider)
 
       Row() {
-        Image($r('app.media.ic_magnifying_glass')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
+        Image($r('app.media.ic_magnifying_glass')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(StreamMenuColors.TextBright)
         Text(' 画面缩放')
           .fontSize(OV_FONT_MD)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_TEXT_MEDIUM)
+          .fontColor(StreamMenuColors.TextMedium)
         Blank()
         if (this.isPanZoomActive) {
           Text('重置')
             .fontSize(11)
-            .fontColor(OV_ACCENT_BLUE)
+            .fontColor(StreamMenuColors.AccentBlue)
             .fontWeight(FontWeight.Medium)
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
             .borderRadius(10)
-            .backgroundColor('#20A8D8EA')
-            .border({ width: 1, color: OV_BLUE_40 })
+            .backgroundColor(StreamMenuColors.BlueSurface)
+            .border({ width: 1, color: StreamMenuColors.BlueBorder })
             .margin({ right: 8 })
             .onClick(() => {
               this.callbacks.onResetPanZoom?.();
             })
         }
         Toggle({ type: ToggleType.Switch, isOn: this.isPanZoomActive })
-          .selectedColor(OV_ACCENT_BLUE)
-          .switchPointColor(OV_TEXT_WHITE)
+          .selectedColor(StreamMenuColors.AccentBlue)
+          .switchPointColor(StreamMenuColors.OnAccent)
           .width(40)
           .height(22)
           .onChange((isOn: boolean) => {
@@ -1085,7 +1081,7 @@ export struct GameMenuDialog {
 
       Text('双指缩放操控画面，最大 10x')
         .fontSize(OV_FONT_SM)
-        .fontColor(OV_TEXT_FAINT)
+        .fontColor(StreamMenuColors.TextFaint)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 14 })
     }
@@ -1097,15 +1093,15 @@ export struct GameMenuDialog {
   VirtualControllerCard() {
     Column() {
       Row() {
-        Image($r('app.media.ic_game_controller')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
+        Image($r('app.media.ic_game_controller')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(StreamMenuColors.TextBright)
         Text(' 虚拟手柄')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_TEXT_BRIGHT)
+          .fontColor(StreamMenuColors.TextBright)
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.viewModel.showController })
-          .selectedColor(OV_ACCENT_BLUE)
-          .switchPointColor(OV_TEXT_WHITE)
+          .selectedColor(StreamMenuColors.AccentBlue)
+          .switchPointColor(StreamMenuColors.OnAccent)
           .width(40)
           .height(22)
           .onChange((isOn: boolean) => {
@@ -1119,20 +1115,20 @@ export struct GameMenuDialog {
 
       Text('屏幕虚拟手柄叠加层')
         .fontSize(OV_FONT_SM)
-        .fontColor(OV_TEXT_FAINT)
+        .fontColor(StreamMenuColors.TextFaint)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: this.viewModel.showController ? 8 : 14 })
 
       if (this.viewModel.showController) {
-        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
+        Row().width('85%').height(1).backgroundColor(StreamMenuColors.Divider)
 
         // 触摸穿透开关
         Row() {
-          Text('触摸穿透').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
+          Text('触摸穿透').fontSize(OV_FONT_MD).fontColor(StreamMenuColors.TextMedium)
           Blank()
           Toggle({ type: ToggleType.Switch, isOn: this.touchPassthroughLocal })
-            .selectedColor(OV_ACCENT_BLUE)
-            .switchPointColor(OV_TEXT_WHITE)
+            .selectedColor(StreamMenuColors.AccentBlue)
+            .switchPointColor(StreamMenuColors.OnAccent)
             .width(36)
             .height(20)
             .onChange((isOn: boolean) => {
@@ -1145,20 +1141,20 @@ export struct GameMenuDialog {
 
         Text('允许触摸穿透手柄操控画面')
           .fontSize(OV_FONT_XS)
-          .fontColor('#50FFFFFF')
+          .fontColor(StreamMenuColors.TextFaint)
           .width('100%')
           .padding({ left: 16, right: 16, bottom: 4 })
 
-        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
+        Row().width('85%').height(1).backgroundColor(StreamMenuColors.Divider)
 
         // 透明度
         Column() {
           Row() {
-            Text('透明度').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
+            Text('透明度').fontSize(OV_FONT_MD).fontColor(StreamMenuColors.TextMedium)
             Blank()
             Text(`${Math.round(this.controllerOpacityLocal * 100)}%`)
               .fontSize(OV_FONT_MD)
-              .fontColor(OV_ACCENT_BLUE)
+              .fontColor(StreamMenuColors.AccentBlue)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -1172,10 +1168,10 @@ export struct GameMenuDialog {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .blockColor(OV_ACCENT_BLUE)
+            .blockColor(StreamMenuColors.AccentBlue)
             .blockSize({ width: 12, height: 12 })
-            .trackColor(OV_BG_TRACK)
-            .selectedColor(OV_ACCENT_BLUE)
+            .trackColor(StreamMenuColors.Track)
+            .selectedColor(StreamMenuColors.AccentBlue)
             .showSteps(false)
             .showTips(false)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
@@ -1185,25 +1181,25 @@ export struct GameMenuDialog {
             })
 
           Row() {
-            Text('20%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+            Text('20%').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
             Blank()
-            Text('100%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+            Text('100%').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
           }
           .width('100%')
         }
         .width('100%')
         .padding({ left: 14, right: 14, top: 10, bottom: 4 })
 
-        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
+        Row().width('85%').height(1).backgroundColor(StreamMenuColors.Divider)
 
         // 大小调整
         Column() {
           Row() {
-            Text('大小').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
+            Text('大小').fontSize(OV_FONT_MD).fontColor(StreamMenuColors.TextMedium)
             Blank()
             Text(`${Math.round(this.controllerScaleLocal * 100)}%`)
               .fontSize(OV_FONT_MD)
-              .fontColor(OV_ACCENT_BLUE)
+              .fontColor(StreamMenuColors.AccentBlue)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -1217,10 +1213,10 @@ export struct GameMenuDialog {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .blockColor(OV_ACCENT_BLUE)
+            .blockColor(StreamMenuColors.AccentBlue)
             .blockSize({ width: 12, height: 12 })
-            .trackColor(OV_BG_TRACK)
-            .selectedColor(OV_ACCENT_BLUE)
+            .trackColor(StreamMenuColors.Track)
+            .selectedColor(StreamMenuColors.AccentBlue)
             .showSteps(false)
             .showTips(false)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
@@ -1230,9 +1226,9 @@ export struct GameMenuDialog {
             })
 
           Row() {
-            Text('50%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+            Text('50%').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
             Blank()
-            Text('200%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+            Text('200%').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
           }
           .width('100%')
         }
@@ -1251,18 +1247,18 @@ export struct GameMenuDialog {
         Image($r('app.media.ic_pulse'))
           .width(OV_FONT_LG)
           .height(OV_FONT_LG)
-          .fillColor(OV_TEXT_BRIGHT)
+          .fillColor(StreamMenuColors.TextBright)
         Text(' 音频振动')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_TEXT_BRIGHT)
+          .fontColor(StreamMenuColors.TextBright)
         Blank()
         Toggle({
           type: ToggleType.Switch,
           isOn: this.audioVibrationEnabled
         })
-          .selectedColor(OV_ACCENT_PINK)
-          .switchPointColor(OV_TEXT_WHITE)
+          .selectedColor(StreamMenuColors.AccentPink)
+          .switchPointColor(StreamMenuColors.OnAccent)
           .width(40)
           .height(22)
           .onChange((isOn: boolean) => {
@@ -1278,7 +1274,7 @@ export struct GameMenuDialog {
         ? '场景和强度会在当前串流中即时生效'
         : '跟随游戏或音乐节奏产生触觉反馈')
         .fontSize(OV_FONT_SM)
-        .fontColor(OV_TEXT_FAINT)
+        .fontColor(StreamMenuColors.TextFaint)
         .width('100%')
         .padding({
           left: 16,
@@ -1287,12 +1283,12 @@ export struct GameMenuDialog {
         })
 
       if (this.audioVibrationEnabled) {
-        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
+        Row().width('85%').height(1).backgroundColor(StreamMenuColors.Divider)
 
         Column() {
           Text('场景')
             .fontSize(OV_FONT_MD)
-            .fontColor(OV_TEXT_MEDIUM)
+            .fontColor(StreamMenuColors.TextMedium)
             .width('100%')
             .padding({ bottom: 6 })
           Row({ space: 8 }) {
@@ -1306,11 +1302,11 @@ export struct GameMenuDialog {
 
         Column() {
           Row() {
-            Text('强度').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
+            Text('强度').fontSize(OV_FONT_MD).fontColor(StreamMenuColors.TextMedium)
             Blank()
             Text(`${this.audioVibrationStrength}%`)
               .fontSize(OV_FONT_MD)
-              .fontColor(OV_ACCENT_PINK)
+              .fontColor(StreamMenuColors.AccentPink)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -1324,9 +1320,9 @@ export struct GameMenuDialog {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .blockColor(OV_ACCENT_PINK)
-            .trackColor(OV_BG_TRACK)
-            .selectedColor(OV_ACCENT_PINK)
+            .blockColor(StreamMenuColors.AccentPink)
+            .trackColor(StreamMenuColors.Track)
+            .selectedColor(StreamMenuColors.AccentPink)
             .showSteps(false)
             .showTips(false)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
@@ -1343,9 +1339,9 @@ export struct GameMenuDialog {
             })
 
           Row() {
-            Text('10%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+            Text('10%').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
             Blank()
-            Text('100%').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+            Text('100%').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
           }
           .width('100%')
         }
@@ -1367,21 +1363,21 @@ export struct GameMenuDialog {
           : FontWeight.Normal)
       .fontColor(
         this.audioVibrationSceneMode === sceneMode
-          ? OV_TEXT_WHITE
-          : OV_TEXT_DIM)
+          ? StreamMenuColors.TextBright
+          : StreamMenuColors.TextDim)
       .textAlign(TextAlign.Center)
       .layoutWeight(1)
       .padding({ top: 7, bottom: 7 })
       .borderRadius(14)
       .backgroundColor(
         this.audioVibrationSceneMode === sceneMode
-          ? OV_BLUE_50
-          : OV_BG_DIVIDER)
+          ? StreamMenuColors.SelectedSurface
+          : StreamMenuColors.Control)
       .border({
         width: 1,
         color: this.audioVibrationSceneMode === sceneMode
-          ? OV_ACCENT_BLUE
-          : (this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER)
+          ? StreamMenuColors.AccentBlue
+          : StreamMenuColors.Border
       })
       .onClick(() => {
         if (this.audioVibrationSceneMode === sceneMode) return;
@@ -1395,15 +1391,15 @@ export struct GameMenuDialog {
   BitrateCard() {
     Column() {
       Row() {
-        Image($r('app.media.ic_chart_bar')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
+        Image($r('app.media.ic_chart_bar')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(StreamMenuColors.TextBright)
         Text(' 码率调整')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_TEXT_BRIGHT)
+          .fontColor(StreamMenuColors.TextBright)
         Blank()
         Text(this.formatBitrate(this.currentBitrate))
           .fontSize(12)
-          .fontColor(OV_ACCENT_PINK)
+          .fontColor(StreamMenuColors.AccentPink)
           .fontWeight(FontWeight.Medium)
       }
       .width('100%')
@@ -1413,15 +1409,15 @@ export struct GameMenuDialog {
       Row() {
         Text('智能码率')
           .fontSize(OV_FONT_MD)
-          .fontColor(OV_TEXT_MEDIUM)
+          .fontColor(StreamMenuColors.TextMedium)
         Text(this.abrEnabled ? (this.viewModel.getAbrStatusText() || '运行中') : '')
           .fontSize(OV_FONT_SM)
-          .fontColor(OV_TEXT_FAINT)
+          .fontColor(StreamMenuColors.TextFaint)
           .margin({ left: 6 })
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.abrEnabled })
-          .selectedColor(OV_ACCENT_BLUE)
-          .switchPointColor(OV_TEXT_WHITE)
+          .selectedColor(StreamMenuColors.AccentBlue)
+          .switchPointColor(StreamMenuColors.OnAccent)
           .width(40)
           .height(22)
           .onChange(async (isOn: boolean) => {
@@ -1443,7 +1439,7 @@ export struct GameMenuDialog {
       if (!this.abrEnabled) {
         Text('实时调整串流画质，需 Foundation Sunshine 支持')
           .fontSize(OV_FONT_SM)
-          .fontColor(OV_TEXT_FAINT)
+          .fontColor(StreamMenuColors.TextFaint)
           .width('100%')
           .padding({ left: 16, right: 16, bottom: 8 })
 
@@ -1456,9 +1452,9 @@ export struct GameMenuDialog {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .blockColor(OV_ACCENT_PINK)
-            .trackColor(OV_BG_TRACK)
-            .selectedColor(OV_ACCENT_PINK)
+            .blockColor(StreamMenuColors.AccentPink)
+            .trackColor(StreamMenuColors.Track)
+            .selectedColor(StreamMenuColors.AccentPink)
             .showSteps(false)
             .showTips(false)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
@@ -1470,14 +1466,14 @@ export struct GameMenuDialog {
             })
 
           Row() {
-            Text('0.5').fontSize(OV_FONT_SM).fontColor(OV_TEXT_DIM)
+            Text('0.5').fontSize(OV_FONT_SM).fontColor(StreamMenuColors.TextDim)
             Blank()
             Text(this.isAdjustingBitrate ? '调整中...' : this.formatBitrate(this.sliderValueToBitrate(this.bitrateSliderValue)))
               .fontSize(OV_FONT_MD)
-              .fontColor(this.isAdjustingBitrate ? OV_TEXT_DIM : OV_ACCENT_PINK)
+              .fontColor(this.isAdjustingBitrate ? StreamMenuColors.TextDim : StreamMenuColors.AccentPink)
               .fontWeight(FontWeight.Bold)
             Blank()
-            Text('200').fontSize(OV_FONT_SM).fontColor(OV_TEXT_DIM)
+            Text('200').fontSize(OV_FONT_SM).fontColor(StreamMenuColors.TextDim)
           }
           .width('100%')
         }
@@ -1486,7 +1482,7 @@ export struct GameMenuDialog {
       } else {
         Text('网络自适应调节中，丢包升高自动降码率')
           .fontSize(OV_FONT_SM)
-          .fontColor(OV_TEXT_FAINT)
+          .fontColor(StreamMenuColors.TextFaint)
           .width('100%')
           .padding({ left: 16, right: 16, bottom: 14 })
       }
@@ -1499,15 +1495,15 @@ export struct GameMenuDialog {
   GyroAssistCard() {
     Column() {
       Row() {
-        Image($r('app.media.ic_game_controller')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
+        Image($r('app.media.ic_game_controller')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(StreamMenuColors.TextBright)
         Text(' 体感助手')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_TEXT_BRIGHT)
+          .fontColor(StreamMenuColors.TextBright)
         Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.gyroEnabled })
-          .selectedColor(OV_ACCENT_BLUE)
-          .switchPointColor(OV_TEXT_WHITE)
+          .selectedColor(StreamMenuColors.AccentBlue)
+          .switchPointColor(StreamMenuColors.OnAccent)
           .width(40)
           .height(22)
           .onChange((isOn: boolean) => {
@@ -1521,20 +1517,20 @@ export struct GameMenuDialog {
 
       Text(this.hasGyroscope ? '陀螺仪 → 右摇杆映射' : '⚠ 设备无陀螺仪')
         .fontSize(OV_FONT_SM)
-        .fontColor(this.hasGyroscope ? OV_TEXT_FAINT : OV_ACCENT_PINK)
+        .fontColor(this.hasGyroscope ? StreamMenuColors.TextFaint : StreamMenuColors.AccentPink)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: this.gyroEnabled ? 8 : 14 })
 
       if (this.gyroEnabled) {
-        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
+        Row().width('85%').height(1).backgroundColor(StreamMenuColors.Divider)
 
         Column() {
           Row() {
-            Text('灵敏度').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
+            Text('灵敏度').fontSize(OV_FONT_MD).fontColor(StreamMenuColors.TextMedium)
             Blank()
             Text(`${this.gyroSensitivity.toFixed(1)}x`)
               .fontSize(OV_FONT_MD)
-              .fontColor(OV_ACCENT_BLUE)
+              .fontColor(StreamMenuColors.AccentBlue)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -1548,9 +1544,9 @@ export struct GameMenuDialog {
             style: SliderStyle.OutSet
           })
             .width('100%')
-            .blockColor(OV_ACCENT_BLUE)
-            .trackColor(OV_BG_TRACK)
-            .selectedColor(OV_ACCENT_BLUE)
+            .blockColor(StreamMenuColors.AccentBlue)
+            .trackColor(StreamMenuColors.Track)
+            .selectedColor(StreamMenuColors.AccentBlue)
             .showSteps(false)
             .showTips(false)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
@@ -1563,9 +1559,9 @@ export struct GameMenuDialog {
             })
 
           Row() {
-            Text('0.5x').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+            Text('0.5x').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
             Blank()
-            Text('3.0x').fontSize(OV_FONT_XS).fontColor(OV_TEXT_FAINT)
+            Text('3.0x').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
           }
           .width('100%')
         }
@@ -1584,10 +1580,10 @@ export struct GameMenuDialog {
           this.saveGyroSetting(SettingsKeys.GYRO_INVERT_Y, isOn);
         })
 
-        Row().width('85%').height(1).backgroundColor(OV_BG_DIVIDER)
+        Row().width('85%').height(1).backgroundColor(StreamMenuColors.Divider)
 
         Column() {
-          Text('激活方式').fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM).width('100%').padding({ bottom: 6 })
+          Text('激活方式').fontSize(OV_FONT_MD).fontColor(StreamMenuColors.TextMedium).width('100%').padding({ bottom: 6 })
           Row({ space: 8 }) {
             this.ActivationButton('始终', GYRO_ACTIVATION_ALWAYS)
             this.ActivationButton('LT', GYRO_ACTIVATION_LT)
@@ -1607,11 +1603,11 @@ export struct GameMenuDialog {
   @Builder
   GyroToggleRow(label: string, isOn: boolean, onChange: (isOn: boolean) => void) {
     Row() {
-      Text(label).fontSize(OV_FONT_MD).fontColor(OV_TEXT_MEDIUM)
+      Text(label).fontSize(OV_FONT_MD).fontColor(StreamMenuColors.TextMedium)
       Blank()
       Toggle({ type: ToggleType.Switch, isOn: isOn })
-        .selectedColor(OV_ACCENT_BLUE)
-        .switchPointColor(OV_TEXT_WHITE)
+        .selectedColor(StreamMenuColors.AccentBlue)
+        .switchPointColor(StreamMenuColors.OnAccent)
         .width(36)
         .height(20)
         .onChange(onChange)
@@ -1625,11 +1621,11 @@ export struct GameMenuDialog {
     Text(label)
       .fontSize(OV_FONT_MD)
       .fontWeight(this.gyroActivationKey === key ? FontWeight.Bold : FontWeight.Normal)
-      .fontColor(this.gyroActivationKey === key ? '#FFFFFF' : (this.isCurrentDark() ? '#80000000' : OV_TEXT_DIM))
+      .fontColor(this.gyroActivationKey === key ? StreamMenuColors.TextBright : StreamMenuColors.TextDim)
       .padding({ left: 16, right: 16, top: 6, bottom: 6 })
       .borderRadius(14)
-      .backgroundColor(this.gyroActivationKey === key ? OV_BLUE_50 : (this.isCurrentDark() ? OV_SHADOW_MEDIUM : OV_BG_DIVIDER))
-      .border({ width: 1, color: this.gyroActivationKey === key ? OV_ACCENT_BLUE : (this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER) })
+      .backgroundColor(this.gyroActivationKey === key ? StreamMenuColors.SelectedSurface : StreamMenuColors.Control)
+      .border({ width: 1, color: this.gyroActivationKey === key ? StreamMenuColors.AccentBlue : StreamMenuColors.Border })
       .onClick(() => {
         this.gyroActivationKey = key;
         GyroAssistService.getInstance().setActivationKey(key);
@@ -1641,18 +1637,18 @@ export struct GameMenuDialog {
   SuperCmdCard() {
     Column() {
       Row() {
-        Image($r('app.media.ic_crosshair')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
+        Image($r('app.media.ic_crosshair')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(StreamMenuColors.TextBright)
         Text(' 服务端指令')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_TEXT_BRIGHT)
+          .fontColor(StreamMenuColors.TextBright)
       }
       .width('100%')
       .padding({ left: 16, right: 12, top: 14, bottom: 4 })
 
       Text('执行 Sunshine 预设脚本')
         .fontSize(OV_FONT_SM)
-        .fontColor(OV_TEXT_FAINT)
+        .fontColor(StreamMenuColors.TextFaint)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 6 })
 
@@ -1677,34 +1673,34 @@ export struct GameMenuDialog {
   ShortcutCard() {
     Column() {
       Row() {
-        Image($r('app.media.ic_lightning')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(OV_TEXT_BRIGHT)
+        Image($r('app.media.ic_lightning')).width(OV_FONT_LG).height(OV_FONT_LG).fillColor(StreamMenuColors.TextBright)
         Text(' 快捷键')
           .fontSize(OV_FONT_LG)
           .fontWeight(FontWeight.Medium)
-          .fontColor(OV_TEXT_BRIGHT)
+          .fontColor(StreamMenuColors.TextBright)
         Blank()
         // 编辑模式切换按钮
         Text(this.isEditMode ? '✓' : '✎')
           .fontSize(this.isEditMode ? 14 : 12)
-          .fontColor(this.isEditMode ? '#4ADE80' : OV_TEXT_WHITE)
+          .fontColor(this.isEditMode ? StreamMenuColors.Success : StreamMenuColors.TextBright)
           .fontWeight(FontWeight.Bold)
           .width(24)
           .height(24)
           .textAlign(TextAlign.Center)
           .borderRadius(12)
-          .backgroundColor(this.isEditMode ? '#404ADE80' : '#40A8E8B0')
+          .backgroundColor(this.isEditMode ? StreamMenuColors.SuccessSurface : StreamMenuColors.BlueSurface)
           .margin({ right: 6 })
           .onClick(() => { this.isEditMode = !this.isEditMode; })
         // 添加按钮
         Text('＋')
           .fontSize(14)
-          .fontColor(OV_TEXT_WHITE)
+          .fontColor(StreamMenuColors.TextBright)
           .fontWeight(FontWeight.Bold)
           .width(24)
           .height(24)
           .textAlign(TextAlign.Center)
           .borderRadius(12)
-          .backgroundColor('#40A8E8B0')
+          .backgroundColor(StreamMenuColors.BlueSurface)
           .onClick(() => this.showAddShortcutMenu())
       }
       .width('100%')
@@ -1739,8 +1735,8 @@ export struct GameMenuDialog {
       Row() {
         Text(this.getMenuLabel(index))
           .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.getMenuBorderColor(index))
+          .fontWeight(FontWeight.Bold)
+          .fontColor(StreamMenuColors.OnPastel)
       }
       .width(75)
       .height(36)
@@ -1764,6 +1760,7 @@ export struct GameMenuDialog {
     }
     .height(40)
     .padding(2)
+    .shadow({ radius: 6, color: StreamMenuColors.Shadow, offsetY: 2 })
     .scale({ x: this.scales[index], y: this.scales[index] })
     .translate({ x: this.positions[index] })
     .margin({ right: MENU_OFFSETS[index], bottom: 4 })
@@ -1797,20 +1794,20 @@ export struct GameMenuDialog {
         if (shortcut.icon) {
           Text(shortcut.icon).fontSize(OV_FONT_MD).margin({ right: 4 })
         }
-        Text(shortcut.name).fontSize(OV_FONT_MD).fontColor(OV_TEXT_ULTRA)
+        Text(shortcut.name).fontSize(OV_FONT_MD).fontColor(StreamMenuColors.TextBright)
       }
       .height(28)
       .alignItems(VerticalAlign.Center)
       .padding({ left: 12, right: this.isEditMode ? 16 : 12 })
-      .backgroundColor(`#50${(shortcut.color || '#9DABB2').replace('#', '')}`)
+      .backgroundColor(this.shortcutSurfaceColor(shortcut.color || '#9DABB2'))
       .border({
         width: this.isEditMode && this.dragOverIndex === this.shortcuts.indexOf(shortcut) ? 2 : 1,
         color: this.isEditMode && this.dragOverIndex === this.shortcuts.indexOf(shortcut)
-          ? '#4ADE80'
-          : `#80${(shortcut.color || '#9DABB2').replace('#', '')}`
+          ? StreamMenuColors.Success
+          : this.shortcutBorderColor(shortcut.color || '#9DABB2')
       })
       .borderRadius(14)
-      .opacity(this.isEditMode && this.dragFromIndex === this.shortcuts.indexOf(shortcut) ? 0.4 : 1.0)
+      .opacity(this.isEditMode && this.dragFromIndex === this.shortcuts.indexOf(shortcut) ? 0.9 : 1.0)
 
       // 编辑模式下的删除 badge
       if (this.isEditMode) {
@@ -1901,18 +1898,18 @@ export struct GameMenuDialog {
       Text(cmd.name.charAt(0) || '?')
         .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Bold)
-        .fontColor(OV_TEXT_WHITE)
+        .fontColor(StreamMenuColors.OnAccent)
         .width(20)
         .height(20)
         .textAlign(TextAlign.Center)
-        .backgroundColor('#60A5FA')
+        .backgroundColor(StreamMenuColors.AccentBlue)
         .borderRadius(10)
         .margin({ right: 6 })
-      Text(cmd.name).fontSize(OV_FONT_MD).fontColor(OV_TEXT_ULTRA)
+      Text(cmd.name).fontSize(OV_FONT_MD).fontColor(StreamMenuColors.TextBright)
     }
     .padding({ left: 6, right: 12, top: 6, bottom: 6 })
-    .backgroundColor(this.isCurrentDark() ? OV_BG_CARD_DARKER : OV_BG_CARD_LIGHTER)
-    .border({ width: 1, color: this.isCurrentDark() ? OV_BG_CARD_DARK : OV_BG_TRACK })
+    .backgroundColor(StreamMenuColors.Control)
+    .border({ width: 1, color: StreamMenuColors.Border })
     .borderRadius(16)
     .margin({ right: 6, bottom: 6 })
     .focusable(true)

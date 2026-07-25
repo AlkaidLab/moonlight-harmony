@@ -37,6 +37,33 @@ export const OV_TEXT_WHITE = '#FFFFFF';          // 纯白（图标、按钮文�
 export const OV_TEXT_ULTRA = '#F0FFFFFF';        // 接近纯白
 export const OV_TEXT_SUBTLE = '#CCFFFFFF';       // 偏弱白
 
+/** 串流菜单语义色，通过 base/dark 资源自动跟随系统主题。 */
+export class StreamMenuColors {
+  static readonly Scrim = $r('app.color.stream_menu_scrim');
+  static readonly Surface = $r('app.color.stream_menu_surface');
+  static readonly Control = $r('app.color.stream_menu_control');
+  static readonly Border = $r('app.color.stream_menu_border');
+  static readonly Divider = $r('app.color.stream_menu_divider');
+  static readonly Track = $r('app.color.stream_menu_track');
+  static readonly Shadow = $r('app.color.stream_menu_shadow');
+  static readonly TextBright = $r('app.color.stream_menu_text_bright');
+  static readonly TextMedium = $r('app.color.stream_menu_text_medium');
+  static readonly TextDim = $r('app.color.stream_menu_text_dim');
+  static readonly TextFaint = $r('app.color.stream_menu_text_faint');
+  static readonly AccentBlue = $r('app.color.stream_menu_accent_blue');
+  static readonly AccentPink = $r('app.color.stream_menu_accent_pink');
+  static readonly AccentGold = $r('app.color.stream_menu_accent_gold');
+  static readonly BlueSurface = $r('app.color.stream_menu_blue_surface');
+  static readonly BlueBorder = $r('app.color.stream_menu_blue_border');
+  static readonly PinkSurface = $r('app.color.stream_menu_pink_surface');
+  static readonly PinkBorder = $r('app.color.stream_menu_pink_border');
+  static readonly SelectedSurface = $r('app.color.stream_menu_selected_surface');
+  static readonly OnAccent = $r('app.color.stream_menu_on_accent');
+  static readonly Success = $r('app.color.stream_menu_success');
+  static readonly SuccessSurface = $r('app.color.stream_menu_success_surface');
+  static readonly OnPastel = $r('app.color.stream_menu_on_pastel');
+}
+
 /** 覆盖层背景色 */
 export const OV_BG_TRACK = '#30FFFFFF';          // Slider 轨道/输入框背景
 export const OV_BG_CARD_LIGHT = '#25FFFFFF';     // 浅色卡片背景
@@ -78,7 +105,7 @@ export const OV_CARD_WIDTH = 280;
 /** 标准卡片圆角 */
 export const OV_CARD_RADIUS = 20;
 /** 标准毛玻璃模糊度 */
-export const OV_CARD_BLUR = 40;
+export const OV_CARD_BLUR = 20;
 /** 标准分割线高度 */
 export const OV_DIVIDER_HEIGHT = 1;
 /** 分割线标准宽度比例 */
