@@ -115,7 +115,7 @@ public:
      * Falls back to the application ring-buffer latency when OHAudio cannot
      * provide a presentation timestamp.
      */
-    double GetPresentationLatencyMs() const;
+    double GetPresentationLatencyMs();
     
     /**
      * 检查是否已初始化
@@ -138,6 +138,12 @@ private:
                                   OH_AudioInterrupt_Hint hint);
     static void OnError(OH_AudioRenderer* renderer, void* userData,
                          OH_AudioStream_Result error);
+    static void OnFastStatusChange(OH_AudioRenderer* renderer, void* userData,
+                                   OH_AudioStream_FastStatus status);
+
+    void InvalidatePresentationEstimate();
+    void RefreshRouteLatency();
+    void RefreshPresentationClock(int64_t nowNs);
 
     // 音频渲染器实例
     OH_AudioRenderer* renderer_ = nullptr;
@@ -184,6 +190,17 @@ private:
     std::atomic<bool> needRestart_{false};
     std::atomic<int> consecutiveErrors_{0};
     static constexpr int MAX_ERRORS_BEFORE_RESTART = 3;
+
+    // OHAudio presentation clock. System timestamp calls are deliberately
+    // throttled and the cached renderer depth is combined with the live
+    // application ring-buffer depth on every haptic frame.
+    static constexpr int64_t PRESENTATION_CLOCK_REFRESH_NS = 200000000;
+    std::atomic<int64_t> presentationClockRefreshNs_{0};
+    std::atomic<int64_t> previousPresentedFrames_{-1};
+    std::atomic<int64_t> previousPresentationTimestampNs_{0};
+    std::atomic<int> presentationClockStableSamples_{0};
+    std::atomic<int64_t> cachedRendererLatencyUs_{-1};
+    std::atomic<int32_t> routeLatencyMs_{-1};
     
     /**
      * 尝试重启音频渲染器（内部使用）

@@ -1036,7 +1036,10 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                 // buffer depth. Subtract a conservative actuator lead and let
                 // ArkTS schedule the sparse frame on the presentation timeline.
                 constexpr double kActuatorLeadMs = 8.0;
-                constexpr double kMaximumPresentationDelayMs = 50.0;
+                // Bluetooth and processed routes can legitimately exceed
+                // 50 ms. The renderer clock validates the route estimate
+                // before it reaches this bounded scheduling window.
+                constexpr double kMaximumPresentationDelayMs = 300.0;
                 const double presentationDelayMs = std::clamp(
                     AudioRendererInstance::GetPresentationLatencyMs() -
                         kActuatorLeadMs,

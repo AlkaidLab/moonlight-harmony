@@ -44,6 +44,7 @@ export class AudioVibrationService {
   private static readonly TRANSIENT_MINIMUM_INTERVAL_MS: number = 12;
   private static readonly CONTINUOUS_MINIMUM_INTERVAL_MS: number = 100;
   private static readonly CONTINUOUS_AMPLITUDE_HYSTERESIS: number = 8;
+  private static readonly MAXIMUM_PRESENTATION_DELAY_MS: number = 300;
   private static readonly DEFAULT_ONSET_SENSITIVITY: number = 1.0;
   private static readonly MUSIC_ONSET_SENSITIVITY: number = 2.5;
 
@@ -110,7 +111,8 @@ export class AudioVibrationService {
     }
 
     const epoch = this.renderEpoch;
-    const delayMs = Math.max(0, Math.min(50,
+    const delayMs = Math.max(0, Math.min(
+      AudioVibrationService.MAXIMUM_PRESENTATION_DELAY_MS,
       Math.round(frame.presentationDelayMs)));
     if (delayMs > 1) {
       setTimeout((): void => {
