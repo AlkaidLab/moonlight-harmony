@@ -921,9 +921,7 @@ export struct GameMenuDialog {
     .width(OV_CARD_WIDTH)
     .height(36)
     .padding({ left: 14, right: 14 })
-    .borderRadius(OV_CARD_RADIUS)
-    .backgroundColor(StreamMenuColors.Surface)
-    .border({ width: 1, color: StreamMenuColors.Border })
+    .cardStyle()
     .alignItems(VerticalAlign.Center)
     .onClick(() => {
       animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
@@ -1001,7 +999,7 @@ export struct GameMenuDialog {
         Text('编辑布局')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(StreamMenuColors.AccentPink)
+          .fontColor(StreamMenuColors.AccentPinkText)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(14)
           .backgroundColor(StreamMenuColors.PinkSurface)
@@ -1013,7 +1011,7 @@ export struct GameMenuDialog {
         Text('导出')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(StreamMenuColors.AccentBlue)
+          .fontColor(StreamMenuColors.AccentBlueText)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(14)
           .backgroundColor(StreamMenuColors.BlueSurface)
@@ -1025,7 +1023,7 @@ export struct GameMenuDialog {
         Text('导入')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(StreamMenuColors.AccentBlue)
+          .fontColor(StreamMenuColors.AccentBlueText)
           .padding({ left: 14, right: 14, top: 7, bottom: 7 })
           .borderRadius(14)
           .backgroundColor(StreamMenuColors.BlueSurface)
@@ -1052,7 +1050,7 @@ export struct GameMenuDialog {
         if (this.isPanZoomActive) {
           Text('重置')
             .fontSize(11)
-            .fontColor(StreamMenuColors.AccentBlue)
+            .fontColor(StreamMenuColors.AccentBlueText)
             .fontWeight(FontWeight.Medium)
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
             .borderRadius(10)
@@ -1154,7 +1152,7 @@ export struct GameMenuDialog {
             Blank()
             Text(`${Math.round(this.controllerOpacityLocal * 100)}%`)
               .fontSize(OV_FONT_MD)
-              .fontColor(StreamMenuColors.AccentBlue)
+              .fontColor(StreamMenuColors.AccentBlueText)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -1199,7 +1197,7 @@ export struct GameMenuDialog {
             Blank()
             Text(`${Math.round(this.controllerScaleLocal * 100)}%`)
               .fontSize(OV_FONT_MD)
-              .fontColor(StreamMenuColors.AccentBlue)
+              .fontColor(StreamMenuColors.AccentBlueText)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -1306,7 +1304,7 @@ export struct GameMenuDialog {
             Blank()
             Text(`${this.audioVibrationStrength}%`)
               .fontSize(OV_FONT_MD)
-              .fontColor(StreamMenuColors.AccentPink)
+              .fontColor(StreamMenuColors.AccentPinkText)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -1399,7 +1397,7 @@ export struct GameMenuDialog {
         Blank()
         Text(this.formatBitrate(this.currentBitrate))
           .fontSize(12)
-          .fontColor(StreamMenuColors.AccentPink)
+          .fontColor(StreamMenuColors.AccentPinkText)
           .fontWeight(FontWeight.Medium)
       }
       .width('100%')
@@ -1470,7 +1468,7 @@ export struct GameMenuDialog {
             Blank()
             Text(this.isAdjustingBitrate ? '调整中...' : this.formatBitrate(this.sliderValueToBitrate(this.bitrateSliderValue)))
               .fontSize(OV_FONT_MD)
-              .fontColor(this.isAdjustingBitrate ? StreamMenuColors.TextDim : StreamMenuColors.AccentPink)
+              .fontColor(this.isAdjustingBitrate ? StreamMenuColors.TextDim : StreamMenuColors.AccentPinkText)
               .fontWeight(FontWeight.Bold)
             Blank()
             Text('200').fontSize(OV_FONT_SM).fontColor(StreamMenuColors.TextDim)
@@ -1517,7 +1515,7 @@ export struct GameMenuDialog {
 
       Text(this.hasGyroscope ? '陀螺仪 → 右摇杆映射' : '⚠ 设备无陀螺仪')
         .fontSize(OV_FONT_SM)
-        .fontColor(this.hasGyroscope ? StreamMenuColors.TextFaint : StreamMenuColors.AccentPink)
+        .fontColor(this.hasGyroscope ? StreamMenuColors.TextFaint : StreamMenuColors.AccentPinkText)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: this.gyroEnabled ? 8 : 14 })
 
@@ -1530,7 +1528,7 @@ export struct GameMenuDialog {
             Blank()
             Text(`${this.gyroSensitivity.toFixed(1)}x`)
               .fontSize(OV_FONT_MD)
-              .fontColor(StreamMenuColors.AccentBlue)
+              .fontColor(StreamMenuColors.AccentBlueText)
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')

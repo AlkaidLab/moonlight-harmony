@@ -118,7 +118,7 @@
     },
     {
       "name": "stream_menu_surface",
-      "value": "#B31A1E24"
+      "value": "#A61A1E24"
     },
     {
       "name": "stream_menu_control",
@@ -150,11 +150,11 @@
     },
     {
       "name": "stream_menu_text_dim",
-      "value": "#C8FFFFFF"
+      "value": "#D0FFFFFF"
     },
     {
       "name": "stream_menu_text_faint",
-      "value": "#C0FFFFFF"
+      "value": "#C8FFFFFF"
     },
     {
       "name": "stream_menu_accent_blue",
@@ -162,6 +162,14 @@
     },
     {
       "name": "stream_menu_accent_pink",
+      "value": "#FFD0D9"
+    },
+    {
+      "name": "stream_menu_accent_blue_text",
+      "value": "#BCE5F0"
+    },
+    {
+      "name": "stream_menu_accent_pink_text",
       "value": "#FFD0D9"
     },
     {

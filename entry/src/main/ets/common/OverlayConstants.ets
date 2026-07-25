@@ -52,6 +52,8 @@ export class StreamMenuColors {
   static readonly TextFaint = $r('app.color.stream_menu_text_faint');
   static readonly AccentBlue = $r('app.color.stream_menu_accent_blue');
   static readonly AccentPink = $r('app.color.stream_menu_accent_pink');
+  static readonly AccentBlueText = $r('app.color.stream_menu_accent_blue_text');
+  static readonly AccentPinkText = $r('app.color.stream_menu_accent_pink_text');
   static readonly AccentGold = $r('app.color.stream_menu_accent_gold');
   static readonly BlueSurface = $r('app.color.stream_menu_blue_surface');
   static readonly BlueBorder = $r('app.color.stream_menu_blue_border');
