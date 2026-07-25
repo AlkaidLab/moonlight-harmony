@@ -10,20 +10,7 @@
 
 import { GamepadManager } from './input/GamepadManager';
 import { RUMBLE_MAX } from './input/GamepadTypes';
-
-export interface AudioHapticFrame {
-  flags: number;
-  timestampUs: number;
-  continuousAmplitude: number;
-  transientAmplitude: number;
-  transientDurationMs: number;
-  sharpness: number;
-  lowBandRatio: number;
-  stereoPan: number;
-  confidence: number;
-  activeScene: number;
-  presentationDelayMs: number;
-}
+import { AudioHapticFrame, AudioHapticFrameFlag } from './AudioHapticFrame';
 
 interface UsbMotorPair {
   low: number;
@@ -37,9 +24,6 @@ interface UsbMotorPair {
  * device capability fallback, user strength and device/USB routing.
  */
 export class AudioVibrationService {
-  private static readonly FLAG_CONTINUOUS_CHANGED: number = 1 << 0;
-  private static readonly FLAG_TRANSIENT: number = 1 << 1;
-  private static readonly FLAG_STOP: number = 1 << 2;
   private static readonly MINIMUM_INTENSITY: number = 4;
   private static readonly TRANSIENT_MINIMUM_INTERVAL_MS: number = 12;
   private static readonly CONTINUOUS_MINIMUM_INTERVAL_MS: number = 100;
@@ -100,9 +84,9 @@ export class AudioVibrationService {
   handleHapticFrame(frame: AudioHapticFrame): void {
     if (!this.enabled) return;
 
-    const hasStop = (frame.flags & AudioVibrationService.FLAG_STOP) !== 0;
+    const hasStop = (frame.flags & AudioHapticFrameFlag.STOP) !== 0;
     const hasTransient =
-      (frame.flags & AudioVibrationService.FLAG_TRANSIENT) !== 0;
+      (frame.flags & AudioHapticFrameFlag.TRANSIENT) !== 0;
     if (hasStop) {
       this.renderEpoch++;
       this.lastRenderedTimestampUs = -1;
@@ -136,10 +120,10 @@ export class AudioVibrationService {
     if (frame.timestampUs < this.lastRenderedTimestampUs) return;
 
     const hasTransient =
-      (frame.flags & AudioVibrationService.FLAG_TRANSIENT) !== 0;
+      (frame.flags & AudioHapticFrameFlag.TRANSIENT) !== 0;
     const continuousChanged =
-      (frame.flags & AudioVibrationService.FLAG_CONTINUOUS_CHANGED) !== 0;
-    const hasStop = (frame.flags & AudioVibrationService.FLAG_STOP) !== 0;
+      (frame.flags & AudioHapticFrameFlag.CONTINUOUS_CHANGED) !== 0;
+    const hasStop = (frame.flags & AudioHapticFrameFlag.STOP) !== 0;
 
     if (hasStop) {
       this.stopAll();
@@ -257,7 +241,7 @@ export class AudioVibrationService {
 
   private renderDevice(continuous: number, transient: number,
     transientDurationMs: number, sharpness: number, hasTransient: boolean,
-    activeScene: number, frameFlags: number): void {
+    activeScene: number, frameFlags: AudioHapticFrameFlag): void {
     GamepadManager.getInstance().submitAudioDeviceHaptics(
       continuous,
       transient,

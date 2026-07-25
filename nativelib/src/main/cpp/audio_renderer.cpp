@@ -25,6 +25,7 @@
 #include <qos/qos.h>
 #include <algorithm>
 #include <ctime>
+#include <memory>
 
 #define LOG_TAG "AudioRenderer"
 
@@ -940,10 +941,15 @@ void AudioRenderer::OnFastStatusChange(OH_AudioRenderer* renderer,
 // =============================================================================
 
 namespace {
-    // 使用原子指针保证 PlaySamples 等高频调用的线程安全
-    // Cleanup 通过 mutex 保证与 Init 的互斥
-    static std::atomic<AudioRenderer*> g_audioRenderer{nullptr};
+    // Atomic shared ownership keeps the renderer alive for the full duration
+    // of each wrapper call while Init and Cleanup replace the global instance.
+    static std::shared_ptr<AudioRenderer> g_audioRenderer;
     static std::mutex g_audioRendererMutex;
+
+    std::shared_ptr<AudioRenderer> AcquireAudioRenderer() {
+        return std::atomic_load_explicit(
+            &g_audioRenderer, std::memory_order_acquire);
+    }
 }
 
 namespace AudioRendererInstance {
@@ -973,13 +979,13 @@ bool IsAudioCompatMode() {
 
 int Init(int sampleRate, int channelCount, int samplesPerFrame) {
     std::lock_guard<std::mutex> lock(g_audioRendererMutex);
-    
-    AudioRenderer* old = g_audioRenderer.exchange(nullptr, std::memory_order_acq_rel);
-    if (old != nullptr) {
-        delete old;
-    }
-    
-    AudioRenderer* renderer = new AudioRenderer();
+
+    std::shared_ptr<AudioRenderer> old = std::atomic_exchange_explicit(
+        &g_audioRenderer, std::shared_ptr<AudioRenderer>{},
+        std::memory_order_acq_rel);
+    old.reset();
+
+    auto renderer = std::make_shared<AudioRenderer>();
     
     AudioRendererConfig config;
     config.sampleRate = sampleRate;
@@ -992,15 +998,14 @@ int Init(int sampleRate, int channelCount, int samplesPerFrame) {
     
     int ret = renderer->Init(config);
     if (ret == 0) {
-        g_audioRenderer.store(renderer, std::memory_order_release);
-    } else {
-        delete renderer;
+        std::atomic_store_explicit(
+            &g_audioRenderer, renderer, std::memory_order_release);
     }
     return ret;
 }
 
 int SetVolume(float volume) {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer == nullptr) {
         return -1;
     }
@@ -1008,7 +1013,7 @@ int SetVolume(float volume) {
 }
 
 int PlaySamples(const int16_t* pcmData, int sampleCount) {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer == nullptr) {
         return -1;
     }
@@ -1016,7 +1021,7 @@ int PlaySamples(const int16_t* pcmData, int sampleCount) {
 }
 
 int Start() {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer == nullptr) {
         return -1;
     }
@@ -1024,7 +1029,7 @@ int Start() {
 }
 
 int Stop() {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer == nullptr) {
         return -1;
     }
@@ -1033,15 +1038,14 @@ int Stop() {
 
 void Cleanup() {
     std::lock_guard<std::mutex> lock(g_audioRendererMutex);
-    
-    AudioRenderer* old = g_audioRenderer.exchange(nullptr, std::memory_order_acq_rel);
-    if (old != nullptr) {
-        delete old;
-    }
+
+    std::shared_ptr<AudioRenderer> old = std::atomic_exchange_explicit(
+        &g_audioRenderer, std::shared_ptr<AudioRenderer>{},
+        std::memory_order_acq_rel);
 }
 
 AudioRendererStats GetStats() {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer != nullptr) {
         return renderer->GetStats();
     }
@@ -1049,7 +1053,7 @@ AudioRendererStats GetStats() {
 }
 
 double GetBufferLatencyMs() {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer != nullptr) {
         return renderer->GetBufferLatencyMs();
     }
@@ -1057,7 +1061,7 @@ double GetBufferLatencyMs() {
 }
 
 double GetPresentationLatencyMs() {
-    AudioRenderer* renderer = g_audioRenderer.load(std::memory_order_acquire);
+    std::shared_ptr<AudioRenderer> renderer = AcquireAudioRenderer();
     if (renderer != nullptr) {
         return renderer->GetPresentationLatencyMs();
     }

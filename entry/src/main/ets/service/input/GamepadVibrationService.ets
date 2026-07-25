@@ -20,6 +20,7 @@
 import { vibrator } from '@kit.SensorServiceKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { UsbDriverService, AbstractController } from '../usbdriver/index';
+import { AudioHapticFrameFlag } from '../AudioHapticFrame';
 import { RUMBLE_MAX } from './GamepadTypes';
 import {
   GAME_VIBRATION_STRENGTH_DEFAULT,
@@ -42,8 +43,6 @@ export class GamepadVibrationService {
   private static readonly AUDIO_GAME_LEASE_MS = 1000;
   private static readonly AUDIO_GAME_FALLBACK_DURATION_MS = 500;
   private static readonly MUSIC_SCENE = 1;
-  private static readonly FRAME_RHYTHM_PREDICTED = 1 << 4;
-  private static readonly FRAME_MUSIC_RESTART = 1 << 5;
   private static readonly MUSIC_RESTART_MINIMUM_INTENSITY = 58;
   private static readonly MUSIC_RHYTHM_MINIMUM_INTENSITY = 70;
   private static readonly MUSIC_TRANSIENT_MINIMUM_INTENSITY = 72;
@@ -212,7 +211,7 @@ export class GamepadVibrationService {
    */
   submitAudioDeviceHaptics(continuous: number, transient: number,
     transientDurationMs: number, sharpness: number, hasTransient: boolean,
-    activeScene: number, frameFlags: number): void {
+    activeScene: number, frameFlags: AudioHapticFrameFlag): void {
     this.audioDeviceContinuous = this.clampIntensity(continuous);
     this.audioDeviceContinuousUntilMs =
       this.audioDeviceContinuous >= GamepadVibrationService.MINIMUM_DEVICE_INTENSITY
@@ -638,7 +637,7 @@ export class GamepadVibrationService {
    * 对齐 Android 渲染器的音乐瞬态策略。高清马达保留创作幅度并缩短事件；
    * 时长回退马达需要更高的幅度下限与稍长脉冲，才能稳定感知弱节拍。
    */
-  private applyMusicTransientPolicy(frameFlags: number): void {
+  private applyMusicTransientPolicy(frameFlags: AudioHapticFrameFlag): void {
     this.ensureHdHapticSupport();
     if (this.hdHapticSupported) {
       this.audioDeviceTransientDurationMs = Math.round(Math.max(
@@ -647,9 +646,9 @@ export class GamepadVibrationService {
     }
 
     const predicted =
-      (frameFlags & GamepadVibrationService.FRAME_RHYTHM_PREDICTED) !== 0;
+      (frameFlags & AudioHapticFrameFlag.RHYTHM_PREDICTED) !== 0;
     const restart =
-      (frameFlags & GamepadVibrationService.FRAME_MUSIC_RESTART) !== 0;
+      (frameFlags & AudioHapticFrameFlag.MUSIC_RESTART) !== 0;
     const minimumIntensity = restart
       ? GamepadVibrationService.MUSIC_RESTART_MINIMUM_INTENSITY
       : (predicted
