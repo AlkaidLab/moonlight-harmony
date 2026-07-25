@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.alkaidlab.sdream",
     "vendor": "Moonlight",
-    "versionCode": 1000784,
-    "versionName": "1.0.0.784",
+    "versionCode": 1000795,
+    "versionName": "1.0.0.795",
     "icon": "$media:layered_icon",
     "label": "$string:app_name",
     "bundleType": "app",
