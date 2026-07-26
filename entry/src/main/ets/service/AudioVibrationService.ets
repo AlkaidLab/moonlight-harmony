@@ -155,6 +155,11 @@ export class AudioVibrationService {
       return;
     }
 
+    if (continuous >= AudioVibrationService.MINIMUM_INTENSITY &&
+        (this.isDeviceSourceActive || this.isUsbSourceActive)) {
+      this.armContinuousOutputWatchdog();
+    }
+
     const now = Date.now();
     if (!hasTransient) {
       // Do not let a continuous refresh replace a beat that is still being
