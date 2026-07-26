@@ -63,7 +63,6 @@ export class StreamMenuColors {
   static readonly OnAccent = $r('app.color.stream_menu_on_accent');
   static readonly Success = $r('app.color.stream_menu_success');
   static readonly SuccessSurface = $r('app.color.stream_menu_success_surface');
-  static readonly OnPastel = $r('app.color.stream_menu_on_pastel');
 }
 
 /** 覆盖层背景色 */

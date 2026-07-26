@@ -65,6 +65,7 @@ interface MenuItem {
   label: string;
   bgColor: string;
   borderColor: string;
+  textColor: string;
 }
 
 /** 触摸模式选项 */
@@ -103,13 +104,13 @@ const CARD_USAGE_KEY = 'game_menu_card_usage';
 
 // 马卡龙色系菜单配置
 const MENU_ITEMS: MenuItem[] = [
-  { icon: '✦', label: 'HDR', bgColor: '#F7EBC7', borderColor: '#D0A850' },
-  { icon: '◎', label: 'USB驱动', bgColor: '#F7D1D1', borderColor: '#D87070' },
-  { icon: '⌨', label: '键盘', bgColor: '#C7F7E0', borderColor: '#50C080' },
-  { icon: '☝', label: '触控', bgColor: '#E0D4F7', borderColor: '#9080C0' },
-  { icon: '🎮', label: '手柄', bgColor: '#D4E8F7', borderColor: '#6098C0' },
-  { icon: '🖱', label: '鼠标', bgColor: '#F7E0C7', borderColor: '#C08050' },
-  { icon: '✕', label: '退出', bgColor: '#F7CFCF', borderColor: '#D06060' }
+  { icon: '✦', label: 'HDR', bgColor: '#F7EBC7', borderColor: '#D0A850', textColor: '#7B632F' },
+  { icon: '◎', label: 'USB驱动', bgColor: '#F7D1D1', borderColor: '#D87070', textColor: '#8A4848' },
+  { icon: '⌨', label: '键盘', bgColor: '#C7F7E0', borderColor: '#50C080', textColor: '#30734D' },
+  { icon: '☝', label: '触控', bgColor: '#E0D4F7', borderColor: '#9080C0', textColor: '#5F547F' },
+  { icon: '🎮', label: '手柄', bgColor: '#D4E8F7', borderColor: '#6098C0', textColor: '#406681' },
+  { icon: '🖱', label: '鼠标', bgColor: '#F7E0C7', borderColor: '#C08050', textColor: '#835736' },
+  { icon: '✕', label: '退出', bgColor: '#F7CFCF', borderColor: '#D06060', textColor: '#904242' }
 ];
 
 const MENU_OFFSETS: number[] = [25, 55, 70, 35, 45, 30, 50];
@@ -117,6 +118,7 @@ const MENU_OFFSETS: number[] = [25, 55, 70, 35, 45, 30, 50];
 // 激活色
 const ACTIVE_BG_COLOR = '#C7F7D4';
 const ACTIVE_BORDER_COLOR = '#50A860';
+const ACTIVE_TEXT_COLOR = '#367241';
 
 @CustomDialog
 export struct GameMenuDialog {
@@ -564,6 +566,13 @@ export struct GameMenuDialog {
       return ACTIVE_BORDER_COLOR;
     }
     return MENU_ITEMS[index].borderColor;
+  }
+
+  private getMenuTextColor(index: number): string {
+    if ((index === 1 && this.isUsbDriverMode) || (index === 5 && this.isMouseEmulationActive)) {
+      return ACTIVE_TEXT_COLOR;
+    }
+    return MENU_ITEMS[index].textColor;
   }
 
   private async loadGyroSettings(): Promise<void> {
@@ -1734,7 +1743,7 @@ export struct GameMenuDialog {
         Text(this.getMenuLabel(index))
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
-          .fontColor(StreamMenuColors.OnPastel)
+          .fontColor(this.getMenuTextColor(index))
       }
       .width(75)
       .height(36)
@@ -1758,7 +1767,6 @@ export struct GameMenuDialog {
     }
     .height(40)
     .padding(2)
-    .shadow({ radius: 6, color: StreamMenuColors.Shadow, offsetY: 2 })
     .scale({ x: this.scales[index], y: this.scales[index] })
     .translate({ x: this.positions[index] })
     .margin({ right: MENU_OFFSETS[index], bottom: 4 })

@@ -207,10 +207,6 @@
     {
       "name": "stream_menu_success_surface",
       "value": "#14126638"
-    },
-    {
-      "name": "stream_menu_on_pastel",
-      "value": "#E61A1E24"
     }
   ]
 }
