@@ -29,6 +29,8 @@ export class AudioVibrationService {
   private static readonly CONTINUOUS_MINIMUM_INTERVAL_MS: number = 100;
   private static readonly CONTINUOUS_AMPLITUDE_HYSTERESIS: number = 8;
   private static readonly MAXIMUM_PRESENTATION_DELAY_MS: number = 300;
+  // Safety bound for platforms or controllers that keep the last vibration until explicitly cleared.
+  private static readonly CONTINUOUS_OUTPUT_WATCHDOG_MS: number = 1200;
   private static readonly DEFAULT_ONSET_SENSITIVITY: number = 1.0;
   private static readonly MUSIC_ONSET_SENSITIVITY: number = 2.5;
 
@@ -48,6 +50,8 @@ export class AudioVibrationService {
   private lastContinuousSubmitTimeMs: number = 0;
   private renderEpoch: number = 0;
   private usbEffectEpoch: number = 0;
+  private continuousOutputWatchdogTimer: number = -1;
+  private continuousOutputWatchdogEpoch: number = 0;
 
   setSettings(enabled: boolean, strength: number, vibrationMode: string,
     sceneMode: string = '游戏/电影'): void {
@@ -211,6 +215,11 @@ export class AudioVibrationService {
     } else if (this.isUsbSourceActive) {
       this.stopUsbRumble();
     }
+
+    if (continuous >= AudioVibrationService.MINIMUM_INTENSITY &&
+        (this.isDeviceSourceActive || this.isUsbSourceActive)) {
+      this.armContinuousOutputWatchdog();
+    }
   }
 
   private toIntensity(amplitude: number): number {
@@ -342,7 +351,31 @@ export class AudioVibrationService {
     this.isUsbSourceActive = true;
   }
 
+  private armContinuousOutputWatchdog(): void {
+    const watchdogEpoch = ++this.continuousOutputWatchdogEpoch;
+    if (this.continuousOutputWatchdogTimer !== -1) {
+      clearTimeout(this.continuousOutputWatchdogTimer);
+    }
+    this.continuousOutputWatchdogTimer = setTimeout((): void => {
+      if (!this.enabled ||
+          watchdogEpoch !== this.continuousOutputWatchdogEpoch) {
+        return;
+      }
+      this.continuousOutputWatchdogTimer = -1;
+      this.stopAll();
+    }, AudioVibrationService.CONTINUOUS_OUTPUT_WATCHDOG_MS);
+  }
+
+  private cancelContinuousOutputWatchdog(): void {
+    this.continuousOutputWatchdogEpoch++;
+    if (this.continuousOutputWatchdogTimer !== -1) {
+      clearTimeout(this.continuousOutputWatchdogTimer);
+      this.continuousOutputWatchdogTimer = -1;
+    }
+  }
+
   private stopAll(): void {
+    this.cancelContinuousOutputWatchdog();
     this.usbEffectEpoch++;
     if (this.isDeviceSourceActive) this.stopDeviceVibration();
     if (this.isUsbSourceActive) this.stopUsbRumble();
