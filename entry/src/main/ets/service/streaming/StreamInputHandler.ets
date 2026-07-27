@@ -161,11 +161,16 @@ export class StreamInputHandler {
    *
    * @param viewWidth 视图宽度 (vp)
    * @param viewHeight 视图高度 (vp)
+   * @param windowId 主窗口 ID
+   * @param isFullscreen 是否处于全屏模式
    * @returns true 表示 C++ Monitor 已启动（不需要 keepalive），
-   *          false 表示 Monitor 不可用（调用方应启用 keepalive 动画来保持 ArkUI 帧率）
+   *          false 表示应启用 keepalive，由 ArkUI 处理鼠标事件
    */
-  startMouseInterceptor(viewWidth: number, viewHeight: number): boolean {
+  startMouseInterceptor(viewWidth: number, viewHeight: number,
+                        windowId: number, isFullscreen: boolean): boolean {
     const mouseInterceptor = MouseInterceptorService.getInstance();
+    mouseInterceptor.stop();
+    this.mouseInterceptorActive = false;
 
     // 保存 XComponent 实际尺寸，供 ArkUI 回退路径绝对模式使用
     this.viewWidthVp = viewWidth;
@@ -186,6 +191,21 @@ export class StreamInputHandler {
 
     // 读取游戏鼠标模式设置
     const relativeMode = this.viewModel?.inputSettings?.gameMouseMode ?? false;
+
+    // API 22+ 全屏窗口使用系统光标锁定。相对模式锁定后坐标保持不变，
+    // 必须由 ArkUI rawDelta 处理移动，不能再用 C++ Monitor 计算坐标差。
+    let cursorLocked = false;
+    if (isFullscreen && windowId >= 0 && mouseInterceptor.isCursorLockAvailable()) {
+      const lockResult = mouseInterceptor.lockCursor(windowId, !relativeMode);
+      cursorLocked = lockResult === 0;
+      if (!cursorLocked) {
+        console.info(`StreamInputHandler: 光标锁定不可用 (${lockResult})，保留原有鼠标处理`);
+      }
+    }
+    if (relativeMode && cursorLocked) {
+      console.info('StreamInputHandler: 游戏鼠标模式已锁定光标，使用 ArkUI rawDelta');
+      return false;
+    }
 
     // 初始使用屏幕尺寸（全屏时完全正确），窗口模式下异步获取实际窗口矩形更新
     mouseInterceptor.configure(0, 0, screenWidthPx, screenHeightPx,
@@ -255,7 +275,6 @@ export class StreamInputHandler {
    * 停止鼠标高速轮询
    */
   stopMouseInterceptor(): void {
-    if (!this.mouseInterceptorActive) return;
     MouseInterceptorService.getInstance().stop();
     this.mouseInterceptorActive = false;
   }
@@ -285,10 +304,9 @@ export class StreamInputHandler {
     if (event.action === MouseAction.Move) {
       const relativeMode = this.viewModel?.inputSettings?.gameMouseMode ?? false;
       if (relativeMode) {
-        // 相对模式（Monitor 不可用时回退）：使用 rawDelta 发送相对位移
-        // rawDelta 为 vp 单位，转 px 后 ×1.5 补偿 ArkUI 事件频率损失
-        const dx = vp2px(event.rawDeltaX ?? 0) * 1.5;
-        const dy = vp2px(event.rawDeltaY ?? 0) * 1.5;
+        // rawDelta 是鼠标硬件上报的原始位移，不是 vp/px，直接转发给远端。
+        const dx = event.rawDeltaX ?? 0;
+        const dy = event.rawDeltaY ?? 0;
         if (dx !== 0 || dy !== 0) {
           MoonBridge.sendMouseMove(Math.round(dx), Math.round(dy));
         }

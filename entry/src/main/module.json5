@@ -133,6 +133,9 @@
           "abilities": ["EntryAbility"],
           "when": "always"
         }
+      },
+      {
+        "name": "ohos.permission.LOCK_WINDOW_CURSOR"
       }
     ]
   }

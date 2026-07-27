@@ -52,6 +52,9 @@ interface MouseInterceptorNative {
                             screenWidth: number, screenHeight: number,
                             relativeMode: boolean): void;
   isMouseInterceptorActive(): boolean;
+  isCursorLockAvailable(): boolean;
+  lockCursor(windowId: number, followMovement: boolean): number;
+  unlockCursor(windowId: number): number;
 }
 
 /**
@@ -149,6 +152,7 @@ export class MouseInterceptorService {
   private static instance: MouseInterceptorService;
   private native: MouseInterceptorNative | null;
   private active: boolean = false;
+  private lockedWindowId: number = -1;
 
   private constructor() {
     this.native = (nativeLib as Record<string, Object>)['MouseInterceptor'] as MouseInterceptorNative;
@@ -207,10 +211,13 @@ export class MouseInterceptorService {
    * 停止鼠标拦截器
    */
   stop(): void {
-    if (!this.active || !this.native) return;
-    this.native.removeMouseInterceptor();
-    this.active = false;
-    console.info('MouseInterceptor: 鼠标拦截器已停止');
+    if (!this.native) return;
+    if (this.active) {
+      this.native.removeMouseInterceptor();
+      this.active = false;
+      console.info('MouseInterceptor: 鼠标拦截器已停止');
+    }
+    this.unlockCursor();
   }
 
   isActive(): boolean {
@@ -218,5 +225,35 @@ export class MouseInterceptorService {
       return this.native.isMouseInterceptorActive();
     }
     return false;
+  }
+
+  isCursorLockAvailable(): boolean {
+    return this.native?.isCursorLockAvailable() ?? false;
+  }
+
+  lockCursor(windowId: number, followMovement: boolean): number {
+    if (!this.native || windowId < 0) return 801;
+    if (this.lockedWindowId >= 0 && this.lockedWindowId !== windowId) {
+      this.unlockCursor();
+    }
+    const result = this.native.lockCursor(windowId, followMovement);
+    if (result === 0) {
+      this.lockedWindowId = windowId;
+      console.info(`MouseInterceptor: 光标锁定成功 (windowId=${windowId}, followMovement=${followMovement})`);
+    }
+    return result;
+  }
+
+  unlockCursor(): number {
+    if (!this.native || this.lockedWindowId < 0) return 0;
+    const windowId = this.lockedWindowId;
+    const result = this.native.unlockCursor(windowId);
+    if (result === 0) {
+      this.lockedWindowId = -1;
+      console.info(`MouseInterceptor: 光标已释放 (windowId=${windowId})`);
+    } else {
+      console.warn(`MouseInterceptor: 光标释放失败 (windowId=${windowId}, error=${result})`);
+    }
+    return result;
   }
 }
