@@ -59,6 +59,7 @@ export struct PerformanceOverlay {
   @State perfNetworkLatency: number = 0;
   @State perfHostLatency: number = 0;
   @State perfPacketLoss: number = 0;
+  @State perfHdrVivid: boolean = false;
   @State perfBatteryLevel: number = 100;
   @State perfIsCharging: boolean = false;
   @State perfUpscaleMode: number = 0;
@@ -222,6 +223,7 @@ export struct PerformanceOverlay {
       this.perfNetworkLatency = stats.networkLatency;
       this.perfHostLatency = stats.hostLatency;
       this.perfPacketLoss = stats.packetLoss;
+      this.perfHdrVivid = stats.hdrVivid;
 
       // 🎃 愚人节彩蛋：负延迟串流™
       if (isAprilFools()) {
@@ -551,7 +553,8 @@ export struct PerformanceOverlay {
     // 解码器行
     if (this.enabledItemsList.includes(PerformanceItem.DECODER)) {
       Row() {
-        Text(getDecoderString(this.viewModel.actualCodec || 'HEVC', this.viewModel.actualHdr))
+        Text(getDecoderString(this.viewModel.actualCodec || 'HEVC', this.viewModel.actualHdr,
+          this.viewModel.streamConfig?.hdrMode || 0, this.perfHdrVivid))
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
@@ -696,7 +699,8 @@ export struct PerformanceOverlay {
       
       // 解码器
       if (this.enabledItemsList.includes(PerformanceItem.DECODER)) {
-        Text(getDecoderString(this.viewModel.actualCodec || 'HEVC', this.viewModel.actualHdr))
+        Text(getDecoderString(this.viewModel.actualCodec || 'HEVC', this.viewModel.actualHdr,
+          this.viewModel.streamConfig?.hdrMode || 0, this.perfHdrVivid))
           .fontSize(11)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')

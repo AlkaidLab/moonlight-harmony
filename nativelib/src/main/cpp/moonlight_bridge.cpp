@@ -1768,6 +1768,7 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     setCounter("syncDrainFrames", stats.syncDrainFrames);
     setBoolean("syncDecode", stats.syncDecode);
     setBoolean("hostPacedPresentationActive", stats.hostPacedPresentationActive);
+    setBoolean("hdrVivid", stats.hdrVivid);
     setCounter("presentationPrepared", stats.presentation.preparedTargets);
     setCounter("presentationScheduled", stats.presentation.scheduledFrames);
     setCounter("presentationExpired", stats.presentation.expiredTargets);
