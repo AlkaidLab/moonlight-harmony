@@ -267,6 +267,38 @@ void TestDuplicateOutputIsDroppedOnce() {
     assert(scheduler.GetPendingTargetCount() == 0);
 }
 
+void TestRebufferClearsOldTargets() {
+    TwoStepPresentationScheduler scheduler;
+    scheduler.Configure(60.0);
+
+    // Two frames in flight on the current timeline.
+    assert(scheduler.PrepareFrame(0, kStartNs));
+    assert(scheduler.PrepareFrame(16667, kStartNs + 16 * kMs));
+    assert(scheduler.GetPendingTargetCount() == 2);
+
+    // Two severe late frames force a REBUFFER re-anchor. The first is dropped
+    // outright, the second re-anchors and must invalidate the stale targets.
+    assert(!scheduler.PrepareFrame(33333, kStartNs + 200 * kMs));
+    assert(scheduler.PrepareFrame(50000, kStartNs + 400 * kMs));
+    assert(scheduler.GetPendingTargetCount() == 1);
+}
+
+void TestDuplicatePtsLeavesNoZombieTarget() {
+    TwoStepPresentationScheduler scheduler;
+    scheduler.Configure(60.0);
+
+    assert(scheduler.PrepareFrame(1000, kStartNs));
+    // A repeated PTS re-anchors the timeline; the earlier target for the same
+    // PTS must not linger and inflate the pending count.
+    assert(scheduler.PrepareFrame(1000, kStartNs + 17 * kMs));
+    assert(scheduler.GetPendingTargetCount() == 1);
+
+    const PreparedPresentationPlan plan =
+        scheduler.PlanDecodedFrame(1000, kStartNs + 20 * kMs);
+    assert(plan.action == PreparedPresentationAction::SCHEDULE);
+    assert(scheduler.GetPendingTargetCount() == 0);
+}
+
 void TestDiagnosticsCountWithoutChangingTimelineReset() {
     TwoStepPresentationScheduler scheduler;
     scheduler.Configure(120.0);
@@ -331,6 +363,8 @@ int main() {
     TestPreparedTargetStorageIsBounded();
     TestNtscCadencePreservesPreparedTargets();
     TestDiscontinuityClearsOldTargets();
+    TestRebufferClearsOldTargets();
+    TestDuplicatePtsLeavesNoZombieTarget();
     TestDuplicateOutputIsDroppedOnce();
     TestDiagnosticsCountWithoutChangingTimelineReset();
     std::cout << "two-step presentation scheduler tests passed\n";

@@ -8,6 +8,20 @@ constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
 constexpr int64_t kNanosecondsPerMillisecond = 1000000LL;
 constexpr double kDefaultFps = 60.0;
 constexpr int64_t kMaxFutureIntervals = 3;
+
+// Every event below makes PtsPresentationScheduler re-anchor the timeline, so
+// targets prepared against the previous anchor no longer describe a valid
+// presentation instant even though their PTS still matches.
+bool IsReanchorEvent(PresentationEvent event) {
+    switch (event) {
+        case PresentationEvent::DISCONTINUITY:
+        case PresentationEvent::REBUFFER:
+        case PresentationEvent::DUPLICATE_PTS:
+            return true;
+        default:
+            return false;
+    }
+}
 } // namespace
 
 void TwoStepPresentationScheduler::Configure(double fps) {
@@ -78,7 +92,11 @@ PresentationTargetHandle TwoStepPresentationScheduler::PrepareFrame(
         return {};
     }
 
-    if (plan.event == PresentationEvent::DISCONTINUITY) {
+    // A re-anchored timeline invalidates every in-flight target: their PTS
+    // still matches, but the instant they encode belongs to the old anchor.
+    // Dropping them costs an immediate render for the frames already inside
+    // the decoder, which is the same degradation the re-anchor itself implies.
+    if (IsReanchorEvent(plan.event)) {
         ClearTargets();
         hasSubmittedPts_ = false;
     }
