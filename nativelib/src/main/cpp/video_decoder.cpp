@@ -479,6 +479,10 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     
     config_ = config;
     hdrVividProbeDecodeUnits_.store(0, std::memory_order_relaxed);
+    hdrVividProbeActive_.store(
+        config.codec == VideoCodecType::HEVC && config.enableHdr &&
+        config.hdrType == HdrType::HLG,
+        std::memory_order_relaxed);
     hdrVividDetected_.store(false, std::memory_order_relaxed);
     window_ = window;
     render_ = NativeRender::GetInstance();
@@ -1036,6 +1040,7 @@ void VideoDecoder::Cleanup() {
     lastAsyncOutputTimeMs_ = 0;
     consecutiveCriticalPipelineFrames_ = 0;
     hdrVividProbeDecodeUnits_.store(0, std::memory_order_relaxed);
+    hdrVividProbeActive_.store(false, std::memory_order_relaxed);
     hdrVividDetected_.store(false, std::memory_order_relaxed);
     
     OH_LOG_INFO(LOG_APP, "Video decoder cleaned up");
@@ -1138,12 +1143,13 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
     // 首次调用时设置线程优先级 + 绑定大核
     SetupDecodeThreadPriority();
 
-    if (config_.codec == VideoCodecType::HEVC && config_.enableHdr &&
-        config_.hdrType == HdrType::HLG &&
-        !hdrVividDetected_.load(std::memory_order_relaxed)) {
+    if (hdrVividProbeActive_.load(std::memory_order_relaxed)) {
         const uint32_t probeIndex = hdrVividProbeDecodeUnits_.fetch_add(
             1, std::memory_order_relaxed);
         if (probeIndex < kHdrVividProbeDecodeUnits) {
+            if (probeIndex + 1 == kHdrVividProbeDecodeUnits) {
+                hdrVividProbeActive_.store(false, std::memory_order_relaxed);
+            }
             HdrVividMetadataScanner scanner;
             for (int index = 0; index < segmentCount; ++index) {
                 if (scanner.Scan(segments[index].data,
@@ -1153,9 +1159,12 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
             }
             if (scanner.Finish()) {
                 hdrVividDetected_.store(true, std::memory_order_relaxed);
+                hdrVividProbeActive_.store(false, std::memory_order_relaxed);
                 OH_LOG_INFO(LOG_APP,
                             "HDR Vivid CUVA dynamic metadata detected in HEVC SEI");
             }
+        } else {
+            hdrVividProbeActive_.store(false, std::memory_order_relaxed);
         }
     }
     

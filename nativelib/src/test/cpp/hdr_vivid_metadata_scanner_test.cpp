@@ -1,12 +1,20 @@
 #include "hdr_vivid_metadata_scanner.h"
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <vector>
 
 namespace {
+
+void Expect(bool condition, const char* description) {
+    if (condition) {
+        return;
+    }
+    std::cerr << "FAILED: " << description << '\n';
+    std::exit(EXIT_FAILURE);
+}
 
 bool ScanSegments(const std::vector<std::vector<uint8_t>>& segments) {
     HdrVividMetadataScanner scanner;
@@ -25,7 +33,7 @@ void TestDetectsCuvaAcrossScatterSegments() {
         {0x01, 0x04, 0x05, 0x26},
         {0x00, 0x04, 0x00, 0x05, 0x80},
     };
-    assert(ScanSegments(segments));
+    Expect(ScanSegments(segments), "detect CUVA across scatter segments");
 }
 
 void TestDetectsCuvaSuffixSei() {
@@ -33,14 +41,14 @@ void TestDetectsCuvaSuffixSei() {
         0x00, 0x00, 0x00, 0x01, 0x50, 0x01,
         0x04, 0x05, 0x26, 0x00, 0x04, 0x00, 0x05, 0x80,
     }};
-    assert(ScanSegments(segments));
+    Expect(ScanSegments(segments), "detect CUVA suffix SEI");
 }
 
 void TestIgnoresHevcWithoutSei() {
     const std::vector<std::vector<uint8_t>> segments = {{
         0x00, 0x00, 0x01, 0x26, 0x01, 0xAA, 0xBB, 0xCC,
     }};
-    assert(!ScanSegments(segments));
+    Expect(!ScanSegments(segments), "ignore HEVC without SEI");
 }
 
 void TestIgnoresHdr10PlusT35() {
@@ -48,7 +56,7 @@ void TestIgnoresHdr10PlusT35() {
         0x00, 0x00, 0x01, 0x4E, 0x01,
         0x04, 0x05, 0xB5, 0x00, 0x3C, 0x00, 0x01, 0x80,
     }};
-    assert(!ScanSegments(segments));
+    Expect(!ScanSegments(segments), "ignore HDR10+ T.35 metadata");
 }
 
 void TestRemovesEmulationPreventionBytes() {
@@ -57,7 +65,7 @@ void TestRemovesEmulationPreventionBytes() {
         0x05, 0x03, 0x00, 0x00, 0x03, 0x01,
         0x04, 0x05, 0x26, 0x00, 0x04, 0x00, 0x05, 0x80,
     }};
-    assert(ScanSegments(segments));
+    Expect(ScanSegments(segments), "remove emulation prevention bytes");
 }
 
 } // namespace
