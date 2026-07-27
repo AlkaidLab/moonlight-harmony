@@ -49,10 +49,19 @@ export class StreamWindowManager {
   private windowSizeChangeHandler: ((size: window.Size) => void) | null = null;
   /** windowSizeChange 防抖定时器 */
   private windowSizeDebounceTimer: number = -1;
+  /** 主窗口 ID，供 Native WindowManager API 使用 */
+  private mainWindowId: number = -1;
+  /** 主窗口焦点变化回调 */
+  private onWindowFocusChanged: ((focused: boolean) => void) | null = null;
+  private windowEventHandler: ((event: window.WindowEventType) => void) | null = null;
 
   /** 查询当前是否全屏 */
   get isFullscreen(): boolean {
     return this._isFullscreen;
+  }
+
+  get windowId(): number {
+    return this.mainWindowId;
   }
   
   constructor(context: common.UIAbilityContext) {
@@ -64,6 +73,10 @@ export class StreamWindowManager {
    */
   setOnWindowSizeChanged(callback: (() => void) | null): void {
     this.onWindowSizeChanged = callback;
+  }
+
+  setOnWindowFocusChanged(callback: ((focused: boolean) => void) | null): void {
+    this.onWindowFocusChanged = callback;
   }
   
   /**
@@ -109,6 +122,8 @@ export class StreamWindowManager {
   async configureWindow(): Promise<void> {
     try {
       const win = await window.getLastWindow(this.context);
+      this.mainWindowId = win.getWindowProperties().id;
+      this.registerWindowEventListener(win);
       win.setWindowKeepScreenOn(true).catch(() => {
         // TODO: Implement error handling.
       });
@@ -133,6 +148,7 @@ export class StreamWindowManager {
     try {
       const win = await window.getLastWindow(this.context);
       this.unregisterWindowSizeListener(win);
+      this.unregisterWindowEventListener(win);
       win.setWindowKeepScreenOn(false);
       await this.exitImmersiveFullscreen(win);
 
@@ -146,6 +162,7 @@ export class StreamWindowManager {
       win.setWindowBrightness(-1);
 
       this._isFullscreen = false;
+      this.mainWindowId = -1;
       console.info('StreamWindowManager: 已恢复窗口设置');
     } catch (err) {
       console.error('恢复窗口设置失败:', err);
@@ -214,6 +231,29 @@ export class StreamWindowManager {
       clearTimeout(this.windowSizeDebounceTimer);
       this.windowSizeDebounceTimer = -1;
     }
+  }
+
+  private registerWindowEventListener(win: window.Window): void {
+    this.unregisterWindowEventListener(win);
+    this.windowEventHandler = (event: window.WindowEventType): void => {
+      if (event === window.WindowEventType.WINDOW_ACTIVE) {
+        this.onWindowFocusChanged?.(true);
+      } else if (event === window.WindowEventType.WINDOW_INACTIVE ||
+        event === window.WindowEventType.WINDOW_HIDDEN) {
+        this.onWindowFocusChanged?.(false);
+      }
+    };
+    try {
+      win.on('windowEvent', this.windowEventHandler);
+    } catch (_e) {}
+  }
+
+  private unregisterWindowEventListener(win: window.Window): void {
+    if (!this.windowEventHandler) return;
+    try {
+      win.off('windowEvent', this.windowEventHandler);
+    } catch (_e) {}
+    this.windowEventHandler = null;
   }
 
   /**

@@ -213,6 +213,7 @@ struct StreamPage {
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
   // 解决无触摸时 ArkUI .onMouse 降至 ~30Hz 的问题
   private mouseDisplaySync: displaySync.DisplaySync | null = null;
+  private mouseInputSuspended: boolean = false;
   
   // ── 解耦的处理器/管理器 ──
   private inputHandler: StreamInputHandler = new StreamInputHandler();
@@ -328,6 +329,15 @@ struct StreamPage {
     // 初始化窗口管理器
     this.windowManager = new StreamWindowManager(this.context);
     this.windowManager.setOnWindowSizeChanged(() => this.recalculateXComponentSize());
+    this.windowManager.setOnWindowFocusChanged((focused: boolean) => {
+      if (!this.viewModel.isConnected) return;
+      if (!focused) {
+        this.inputHandler.stopMouseInterceptor();
+        this.stopMouseKeepAlive();
+      } else if (!this.mouseInputSuspended) {
+        this.resumeMouseInterceptor();
+      }
+    });
 
     // 注册 Network Boost 网络场景监听（弱信号/拥塞 提示）
     this.netSceneListener = (scene: SystemNetScene): void => {
@@ -843,7 +853,7 @@ struct StreamPage {
   private buildGameMenuCallbacks(): GameMenuCallbacks {
     return {
       onDismiss: () => {
-        this.resumeMouseInterceptor();
+        this.handleGameMenuDismissed();
       },
       onDisconnect: () => {
         this.gameMenuDialogController?.close();
@@ -962,6 +972,13 @@ struct StreamPage {
     };
   }
 
+  private handleGameMenuDismissed(): void {
+    this.gameMenuDialogController = null;
+    if (!this.mouseInputSuspended) return;
+    this.mouseInputSuspended = false;
+    this.resumeMouseInterceptor();
+  }
+
   /**
    * 显示串流菜单
    */
@@ -969,6 +986,7 @@ struct StreamPage {
     if (!this.menuManager) return;
 
     // 暂停鼠标全速轮询（Monitor 暂停 + DisplaySync 停止）
+    this.mouseInputSuspended = true;
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
     
@@ -990,7 +1008,11 @@ struct StreamPage {
       }),
       alignment: DialogAlignment.CenterEnd,
       customStyle: true,
-      backgroundColor: Color.Transparent
+      backgroundColor: Color.Transparent,
+      onWillDismiss: (action: DismissDialogAction): void => {
+        action.dismiss();
+        this.handleGameMenuDismissed();
+      }
     });
     this.gameMenuDialogController.open();
   }
@@ -1117,10 +1139,13 @@ struct StreamPage {
    * 恢复鼠标全速轮询（对话框关闭后调用）
    */
   private resumeMouseInterceptor(): void {
-    if (!this.viewModel.isConnected) return;
+    if (!this.viewModel.isConnected || this.mouseInputSuspended) return;
+    this.stopMouseKeepAlive();
     const monitorOk = this.inputHandler.startMouseInterceptor(
       this.getXComponentWidthVp(),
-      this.getXComponentHeightVp()
+      this.getXComponentHeightVp(),
+      this.windowManager?.windowId ?? -1,
+      this.windowManager?.isFullscreen ?? false
     );
     if (!monitorOk) {
       this.startMouseKeepAlive();
@@ -1455,7 +1480,9 @@ struct StreamPage {
       // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底
       const monitorOk = this.inputHandler.startMouseInterceptor(
         this.getXComponentWidthVp(),
-        this.getXComponentHeightVp()
+        this.getXComponentHeightVp(),
+        this.windowManager?.windowId ?? -1,
+        this.windowManager?.isFullscreen ?? false
       );
       if (!monitorOk) {
         this.startMouseKeepAlive();

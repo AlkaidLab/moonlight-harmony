@@ -30,10 +30,12 @@
  */
 
 #include "mouse_interceptor.h"
+#include <dlfcn.h>
 #include <multimodalinput/oh_input_manager.h>
 #include <hilog/log.h>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 
 #include "moonlight-common-c/src/Limelight.h"
 
@@ -46,6 +48,72 @@
 // ==================== 配置状态 ====================
 
 static std::atomic<bool> g_active{false};
+
+// OH_WindowManager_LockCursor is API 22+. Resolve it at runtime so the
+// native library can still be loaded on devices matching compatibleSdk 12.
+using LockCursorFunction = int32_t (*)(int32_t, bool);
+using UnlockCursorFunction = int32_t (*)(int32_t);
+
+static constexpr int32_t WINDOW_MANAGER_OK = 0;
+static constexpr int32_t WINDOW_MANAGER_ERROR_NO_PERMISSION = 201;
+static constexpr int32_t WINDOW_MANAGER_ERROR_INVALID_PARAM = 401;
+static constexpr int32_t WINDOW_MANAGER_ERROR_DEVICE_NOT_SUPPORTED = 801;
+static constexpr int32_t WINDOW_MANAGER_ERROR_STATE_ABNORMAL = 1300002;
+
+static std::once_flag g_cursorApiLoadOnce;
+static void* g_windowManagerHandle = nullptr;
+static LockCursorFunction g_lockCursor = nullptr;
+static UnlockCursorFunction g_unlockCursor = nullptr;
+static std::atomic<bool> g_warnedCursorPermission{false};
+static std::atomic<bool> g_warnedCursorUnsupported{false};
+
+static void LoadCursorApi()
+{
+    g_windowManagerHandle = dlopen("libnative_window_manager.so", RTLD_NOW | RTLD_LOCAL);
+    if (!g_windowManagerHandle) {
+        const char* error = dlerror();
+        LOGI("光标锁定 API 不可用，将保留原有鼠标处理: %{public}s", error ? error : "unknown");
+        return;
+    }
+
+    g_lockCursor = reinterpret_cast<LockCursorFunction>(
+        dlsym(g_windowManagerHandle, "OH_WindowManager_LockCursor"));
+    g_unlockCursor = reinterpret_cast<UnlockCursorFunction>(
+        dlsym(g_windowManagerHandle, "OH_WindowManager_UnlockCursor"));
+    if (!g_lockCursor || !g_unlockCursor) {
+        LOGI("当前系统未导出光标锁定 API，将保留原有鼠标处理");
+        g_lockCursor = nullptr;
+        g_unlockCursor = nullptr;
+        dlclose(g_windowManagerHandle);
+        g_windowManagerHandle = nullptr;
+        return;
+    }
+
+    LOGI("光标锁定 API 已加载");
+}
+
+static bool IsCursorApiAvailable()
+{
+    std::call_once(g_cursorApiLoadOnce, LoadCursorApi);
+    return g_lockCursor != nullptr && g_unlockCursor != nullptr;
+}
+
+static void LogCursorApiError(const char* action, int32_t result)
+{
+    if (result == WINDOW_MANAGER_ERROR_DEVICE_NOT_SUPPORTED) {
+        if (!g_warnedCursorUnsupported.exchange(true)) {
+            LOGW("%{public}s光标失败: 设备不支持该能力 (%{public}d)", action, result);
+        }
+        return;
+    }
+    if (result == WINDOW_MANAGER_ERROR_NO_PERMISSION) {
+        if (!g_warnedCursorPermission.exchange(true)) {
+            LOGW("%{public}s光标失败: 缺少 LOCK_WINDOW_CURSOR 权限 (%{public}d)", action, result);
+        }
+        return;
+    }
+    LOGW("%{public}s光标失败: %{public}d", action, result);
+}
 
 // 鼠标模式：false=绝对模式（远程桌面），true=相对模式（游戏）
 static std::atomic<bool> g_relativeMode{false};
@@ -382,6 +450,84 @@ static napi_value IsMouseInterceptorActive(napi_env env, napi_callback_info info
     return result;
 }
 
+/**
+ * isCursorLockAvailable(): boolean
+ */
+static napi_value IsCursorLockAvailable(napi_env env, napi_callback_info info)
+{
+    napi_value result;
+    napi_get_boolean(env, IsCursorApiAvailable(), &result);
+    return result;
+}
+
+/**
+ * lockCursor(windowId, isCursorFollowMovement): number
+ */
+static napi_value LockCursor(napi_env env, napi_callback_info info)
+{
+    size_t argc = 2;
+    napi_value argv[2];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    int32_t result = WINDOW_MANAGER_ERROR_INVALID_PARAM;
+    if (argc >= 2 && IsCursorApiAvailable()) {
+        int32_t windowId = -1;
+        bool followMovement = true;
+        napi_get_value_int32(env, argv[0], &windowId);
+        napi_get_value_bool(env, argv[1], &followMovement);
+
+        if (windowId >= 0) {
+            result = g_lockCursor(windowId, followMovement);
+            if (result == WINDOW_MANAGER_OK) {
+                LOGI("光标已锁定: windowId=%{public}d mode=%{public}s",
+                     windowId, followMovement ? "confined" : "locked");
+            } else {
+                LogCursorApiError("锁定", result);
+            }
+        }
+    } else if (argc >= 2) {
+        result = WINDOW_MANAGER_ERROR_DEVICE_NOT_SUPPORTED;
+    }
+
+    napi_value nResult;
+    napi_create_int32(env, result, &nResult);
+    return nResult;
+}
+
+/**
+ * unlockCursor(windowId): number
+ */
+static napi_value UnlockCursor(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    int32_t result = WINDOW_MANAGER_ERROR_INVALID_PARAM;
+    if (argc >= 1 && IsCursorApiAvailable()) {
+        int32_t windowId = -1;
+        napi_get_value_int32(env, argv[0], &windowId);
+        if (windowId >= 0) {
+            result = g_unlockCursor(windowId);
+            if (result == WINDOW_MANAGER_OK) {
+                LOGI("光标已解锁: windowId=%{public}d", windowId);
+            } else if (result == WINDOW_MANAGER_ERROR_STATE_ABNORMAL) {
+                // Losing focus releases the cursor automatically. Cleanup after that is idempotent.
+                LOGI("光标已由系统释放: windowId=%{public}d", windowId);
+                result = WINDOW_MANAGER_OK;
+            } else {
+                LogCursorApiError("解锁", result);
+            }
+        }
+    } else if (argc >= 1) {
+        result = WINDOW_MANAGER_ERROR_DEVICE_NOT_SUPPORTED;
+    }
+
+    napi_value nResult;
+    napi_create_int32(env, result, &nResult);
+    return nResult;
+}
+
 // ==================== 模块初始化 ====================
 
 napi_value MouseInterceptor_Init(napi_env env, napi_value exports)
@@ -394,6 +540,9 @@ napi_value MouseInterceptor_Init(napi_env env, napi_value exports)
         {"removeMouseInterceptor", nullptr, RemoveMouseInterceptor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"configureMouseInterceptor", nullptr, ConfigureMouseInterceptor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isMouseInterceptorActive", nullptr, IsMouseInterceptorActive, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"isCursorLockAvailable", nullptr, IsCursorLockAvailable, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"lockCursor", nullptr, LockCursor, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"unlockCursor", nullptr, UnlockCursor, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
 
     napi_define_properties(env, interceptorObj, sizeof(methods) / sizeof(methods[0]), methods);
