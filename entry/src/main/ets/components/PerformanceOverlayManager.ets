@@ -246,7 +246,8 @@ export function formatDataRate(bps: number): string {
 /**
  * 获取解码器显示字符串
  */
-export function getDecoderString(codec: string, isHdr: boolean): string {
+export function getDecoderString(codec: string, isHdr: boolean,
+  hdrMode: number, hdrVivid: boolean): string {
   let result = codec.toUpperCase();
   if (result.includes('HEVC') || result.includes('H265')) {
     result = 'HEVC';
@@ -256,7 +257,13 @@ export function getDecoderString(codec: string, isHdr: boolean): string {
     result = 'AV1';
   }
   if (isHdr) {
-    result += ' HDR';
+    if (hdrVivid) {
+      result += ' HDR Vivid';
+    } else if (hdrMode === 2) {
+      result += ' HDR HLG';
+    } else {
+      result += ' HDR PQ';
+    }
   }
   return result;
 }

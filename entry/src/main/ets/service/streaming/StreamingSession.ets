@@ -66,6 +66,7 @@ export interface StreamStats {
   decodedFrames: number;
   codecOutputFrames: number;
   droppedFrames: number;
+  hdrVivid: boolean;       // 码流中检测到 CUVA HDR Vivid 动态元数据
   framesLost: number;
   totalFrames: number;
   globalAvgDecodeLatency: number;  // 全局平均解码延迟 ms
@@ -234,6 +235,7 @@ interface VideoStats {
   totalHostLatencyMs: number;
   framesWithHostLatency: number;
   globalAvgFps: number;
+  hdrVivid: boolean;
   // 网络丢帧统计
   framesLost: number;
   totalFrames: number;
@@ -439,6 +441,7 @@ export class StreamingSession {
     fps: 0, codecOutputFps: 0, renderedFps: 0, bitrate: 0, latency: 0,
     hostLatency: 0, networkLatency: 0, packetLoss: 0,
     decodedFrames: 0, codecOutputFrames: 0, droppedFrames: 0,
+    hdrVivid: false,
     framesLost: 0, totalFrames: 0,
     globalAvgDecodeLatency: 0, globalAvgHostLatency: 0, globalAvgFps: 0,
     droppedByL1: 0, droppedByL2: 0, droppedByL3: 0, droppedByL4: 0, droppedByL5: 0,
@@ -905,6 +908,7 @@ export class StreamingSession {
       this.stats.decodedFrames = vs.framesDecoded;
       this.stats.codecOutputFrames = vs.codecOutputFrames || 0;
       this.stats.droppedFrames = vs.framesDropped;
+      this.stats.hdrVivid = vs.hdrVivid || false;
       this.stats.fps = vs.fps || 0;
       this.stats.codecOutputFps = vs.codecOutputFps || 0;
       this.stats.renderedFps = vs.renderedFps || 0;
@@ -992,6 +996,7 @@ export class StreamingSession {
       decodedFrames: this.stats.decodedFrames,
       codecOutputFrames: this.stats.codecOutputFrames,
       droppedFrames: this.stats.droppedFrames,
+      hdrVivid: this.stats.hdrVivid,
       framesLost: this.stats.framesLost,
       totalFrames: this.stats.totalFrames,
       globalAvgDecodeLatency: this.stats.globalAvgDecodeLatency,

@@ -14,6 +14,7 @@
  */
 
 #include "video_decoder.h"
+#include "hdr_vivid_metadata_scanner.h"
 #include "native_render.h"
 #include "gl_post_processor.h"
 #include <algorithm>
@@ -369,6 +370,7 @@ static constexpr int kMaxTimeoutMs = 100;       // 最大等待超时 (ms) - 增
 // 统计配置
 static constexpr int64_t kStatsUpdateIntervalMs = 1000;  // 统计更新间隔
 static constexpr int64_t kSyncLogIntervalMs = 10000;
+static constexpr uint32_t kHdrVividProbeDecodeUnits = 300;
 
 static int64_t GetSteadyTimeMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -476,6 +478,8 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     }
     
     config_ = config;
+    hdrVividProbeDecodeUnits_.store(0, std::memory_order_relaxed);
+    hdrVividDetected_.store(false, std::memory_order_relaxed);
     window_ = window;
     render_ = NativeRender::GetInstance();
     
@@ -1031,6 +1035,8 @@ void VideoDecoder::Cleanup() {
     lastAsyncRenderTimeMs_ = 0;
     lastAsyncOutputTimeMs_ = 0;
     consecutiveCriticalPipelineFrames_ = 0;
+    hdrVividProbeDecodeUnits_.store(0, std::memory_order_relaxed);
+    hdrVividDetected_.store(false, std::memory_order_relaxed);
     
     OH_LOG_INFO(LOG_APP, "Video decoder cleaned up");
 }
@@ -1131,6 +1137,27 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
     
     // 首次调用时设置线程优先级 + 绑定大核
     SetupDecodeThreadPriority();
+
+    if (config_.codec == VideoCodecType::HEVC && config_.enableHdr &&
+        config_.hdrType == HdrType::HLG &&
+        !hdrVividDetected_.load(std::memory_order_relaxed)) {
+        const uint32_t probeIndex = hdrVividProbeDecodeUnits_.fetch_add(
+            1, std::memory_order_relaxed);
+        if (probeIndex < kHdrVividProbeDecodeUnits) {
+            HdrVividMetadataScanner scanner;
+            for (int index = 0; index < segmentCount; ++index) {
+                if (scanner.Scan(segments[index].data,
+                                 static_cast<size_t>(segments[index].length))) {
+                    break;
+                }
+            }
+            if (scanner.Finish()) {
+                hdrVividDetected_.store(true, std::memory_order_relaxed);
+                OH_LOG_INFO(LOG_APP,
+                            "HDR Vivid CUVA dynamic metadata detected in HEVC SEI");
+            }
+        }
+    }
     
     // === L4 网络抖动突发检测（仅异步模式） ===
     // 同步模式下 L1 drain-to-latest 已足够处理突发到达，L4 的 IDR 请求反而会加重负担
@@ -1454,6 +1481,7 @@ VideoDecoderStats VideoDecoder::GetStats() const {
     snapshot.syncDrainEvents = syncDrainEvents_.load(std::memory_order_relaxed);
     snapshot.syncDrainFrames = syncDrainFrames_.load(std::memory_order_relaxed);
     snapshot.syncDecode = config_.decoderMode == DecoderMode::SYNC;
+    snapshot.hdrVivid = hdrVividDetected_.load(std::memory_order_relaxed);
     if (render_ != nullptr) {
         snapshot.hostPacedPresentationActive =
             render_->IsHostPacedPresentationActive();

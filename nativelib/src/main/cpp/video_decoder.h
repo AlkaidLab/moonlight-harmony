@@ -183,6 +183,7 @@ struct VideoDecoderStats {
     uint64_t syncDrainFrames;             // sync drain-to-latest 累计跳过帧数
     bool syncDecode;                      // 实际解码模式
     bool hostPacedPresentationActive;     // 定时提交 API 实际可用且已启用
+    bool hdrVivid;                        // 码流中检测到 CUVA HDR Vivid 动态元数据
     TwoStepPresentationStats presentation;
 };
 
@@ -426,6 +427,10 @@ private:
     uint64_t syncDrainFramesSinceLog_{0};
     std::atomic<uint64_t> syncDrainEvents_{0};
     std::atomic<uint64_t> syncDrainFrames_{0};
+
+    // HLG 会话开始阶段扫描 CUVA T.35 SEI，命中后保持到会话结束。
+    std::atomic<uint32_t> hdrVividProbeDecodeUnits_{0};
+    std::atomic<bool> hdrVividDetected_{false};
     
     // 运行状态
     std::atomic<bool> running_{false};

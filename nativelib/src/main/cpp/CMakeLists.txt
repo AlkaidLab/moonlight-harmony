@@ -88,6 +88,7 @@ set(SOURCE_FILES
     audio_haptics_engine.cpp
     opus_libopus.cpp
     opus_encoder.cpp
+    hdr_vivid_metadata_scanner.cpp
     video_decoder.cpp
     audio_renderer.cpp
     mic_capturer.cpp
