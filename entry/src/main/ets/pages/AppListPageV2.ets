@@ -71,6 +71,7 @@ struct AppListPageV2 {
   private loadAttempt: number = 0; // 当前加载尝试次数
   private runningPollTimerId: number = -1; // 退游戏后运行状态轮询定时器
   private runningPollAttempt: number = 0;
+  private refreshInFlight: Promise<void> | null = null; // 进行中的刷新，用于合并重复请求
 
   // 空列表重试常量（匹配 Android EMPTY_LIST_THRESHOLD）
   private static readonly EMPTY_LIST_THRESHOLD = 3;
@@ -463,9 +464,42 @@ struct AppListPageV2 {
     }
   }
 
+  /**
+   * 刷新应用列表
+   *
+   * 同一时刻只允许一次实际请求：连点刷新按钮、或后台轮询与手动刷新撞车时，
+   * 后来者搭上进行中的那次，而不是并发打多份 getServerInfo / getAppList。
+   * 后来者若是手动刷新，仍会显示下拉指示条并等到请求结束。
+   */
   private async refreshApps(silent: boolean = false): Promise<void> {
-    this.isRefreshing = true;
-    
+    // 静默刷新不驱动 Refresh 组件：否则后台轮询每一轮都会让下拉指示条
+    // 展开又收起，列表被顶下去再弹回来
+    if (!silent) {
+      this.isRefreshing = true;
+    }
+
+    let pending: Promise<void>;
+    if (this.refreshInFlight) {
+      pending = this.refreshInFlight;
+    } else {
+      pending = this.doRefreshApps(silent);
+      this.refreshInFlight = pending;
+    }
+
+    try {
+      await pending;
+    } finally {
+      if (this.refreshInFlight === pending) {
+        this.refreshInFlight = null;
+      }
+      if (!silent) {
+        this.isRefreshing = false;
+      }
+    }
+  }
+
+  /** refreshApps 的实际实现，不要直接调用——走 refreshApps 才有防重入 */
+  private async doRefreshApps(silent: boolean): Promise<void> {
     try {
       const computer = this.computerManager.getComputer(this.computerId);
       if (computer && computer.pairState !== PairState.PAIRED) {
@@ -489,6 +523,16 @@ struct AppListPageV2 {
         
         const apps = await this.getAppListWithRetry('刷新');
 
+        // 静默刷新拿到空列表多半是服务端瞬时故障，保留现有列表，
+        // 否则后台轮询会把整页闪成"没有可用的应用"。
+        // 但运行状态要按刚拿到的 serverInfo 同步——否则退游戏后的收敛轮询
+        // 靠 hasRunningApp 判断，会一直等不到收敛。
+        if (apps.length === 0 && silent && this.viewModel.appCount > 0) {
+          console.warn('AppListPageV2: 静默刷新返回空列表，保留现有数据');
+          this.viewModel.syncRunningState(computer?.runningGameId || 0);
+          return;
+        }
+
         // 标记正在运行的应用
         this.markRunningApps(apps, computer?.runningGameId || 0);
 
@@ -509,8 +553,6 @@ struct AppListPageV2 {
       } else {
         console.warn('AppListPageV2: 刷新失败（静默）:', errMsg);
       }
-    } finally {
-      this.isRefreshing = false;
     }
   }
 
@@ -1007,7 +1049,9 @@ struct AppListPageV2 {
               onMoreAction: () => this.openAppMenu(app)
             })
           }
-        }, (app: ObservableApp) => `${app.id}_${app.isRunning}_${app.iconLoaded}`)
+          // key 只用 id：isRunning / iconLoaded 变化由 @ObjectLink 就地更新，
+          // 放进 key 会让每次状态变化都销毁重建列表项，表现为刷新时整列跳动
+        }, (app: ObservableApp) => `${app.id}`)
       }
       .width('100%')
       .height('100%')
@@ -1041,12 +1085,12 @@ struct AppListPageV2 {
                     this.updateBackgroundForApp(app);
                   }
                 })
-              }, (app: ObservableApp) => `${app.id}_${app.isRunning}_${app.iconLoaded}`)
+              }, (app: ObservableApp) => `${app.id}`)
             }
             .margin({ bottom: rowIndex < this.rowCount - 1 ? AppSpacing.Medium : 0 })
           }, (rowApps: ObservableApp[], rowIndex: number) => {
-            // 行的 key 需要包含该行所有应用的 ID 和运行状态
-            const appIds = rowApps.map(a => `${a.id}:${a.isRunning ? 1 : 0}`).join(',');
+            // 行 key 只反映"这一行有哪些应用"，不含 isRunning 等易变状态
+            const appIds = rowApps.map(a => a.id).join(',');
             return `row_${rowIndex}_apps_${appIds}`;
           })
         }

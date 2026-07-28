@@ -83,61 +83,93 @@ export class AppListViewModel {
   // 排序方式
   sortBy: 'name' | 'recent' = 'name';
 
-  // 图标加载取消标志
-  private iconLoadingCancelled: boolean = false;
-  
+  // 图标加载代际标记：每次 setApps / cancelIconLoading 自增，
+  // 旧的串行加载循环在 await 恢复后发现代际已变即自行退出（避免多个循环并发跑）
+  private iconLoadGeneration: number = 0;
+
   /**
    * 设置应用列表（带图标 URL）
+   *
+   * 增量合并：按 id 复用已有的 ObservableApp 实例，只更新变化的字段。
+   * 不能全量重建——那会把 localIconPath/iconLoaded 清空，导致每次刷新
+   * 整个列表先闪回占位符再逐个恢复图标（视觉上的"跳动"）。
+   *
    * @param entries 应用列表
    * @param nvHttp NvHttp 实例（用于生成图标 URL 和加载图标）
    */
   setApps(entries: AppEntry[], nvHttp?: NvHttp): void {
-    // 取消之前的图标加载任务
-    this.iconLoadingCancelled = true;
-
     // 查找正在运行的应用
     const runningApps = entries.filter(e => e.isRunning);
     console.info(`AppListViewModel: 加载 ${entries.length} 个应用, 正在运行: ${runningApps.map(a => `${a.name}(${a.id})`).join(', ') || '无'}`);
 
+    const existing: Map<number, ObservableApp> = new Map();
+    for (const app of this.apps) {
+      existing.set(app.id, app);
+    }
+
     this.apps = entries.map(entry => {
       const iconUrl = nvHttp ? nvHttp.getBoxArtUrl(entry.id) : '';
+      const reused = existing.get(entry.id);
+      if (reused) {
+        // 复用实例：@ObjectLink 会把变化推给组件，无需重建 UI 节点
+        reused.updateFrom(entry, iconUrl);
+        return reused;
+      }
       return new ObservableApp(entry, iconUrl);
     });
     this.updateFilteredApps();
     this.updateRunningApp();
 
-    // 异步加载所有图标
+    // 异步加载尚未拿到图标的应用
     if (nvHttp) {
-      this.iconLoadingCancelled = false;
-      this.loadAllIcons(nvHttp);
+      this.loadAllIcons(nvHttp, ++this.iconLoadGeneration);
     }
+  }
+
+  /**
+   * 按最新的 runningGameId 同步现有列表的运行状态
+   *
+   * 用于拿不到新 applist、但已知服务端运行状态的场合（如静默刷新返回空列表时
+   * 保留旧数据）：不同步的话 hasRunningApp 会一直停在旧值，退游戏后的收敛轮询
+   * 就永远等不到收敛。
+   */
+  syncRunningState(runningGameId: number): void {
+    for (const app of this.apps) {
+      app.isRunning = runningGameId > 0 && app.id === runningGameId;
+    }
+    this.updateRunningApp();
   }
 
   /**
    * 取消正在进行的图标加载
    */
   cancelIconLoading(): void {
-    this.iconLoadingCancelled = true;
+    this.iconLoadGeneration++;
     console.info(`AppListViewModel: 图标加载已取消`);
   }
 
   /**
    * 异步加载所有应用图标（串行加载，避免并发过多）
+   * 已加载成功的图标会被跳过，刷新时不会重新拉取。
    */
-  private async loadAllIcons(nvHttp: NvHttp): Promise<void> {
-    console.info(`AppListViewModel: 开始加载 ${this.apps.length} 个应用图标`);
+  private async loadAllIcons(nvHttp: NvHttp, generation: number): Promise<void> {
+    const pending = this.apps.filter(app => !app.iconLoaded);
+    if (pending.length === 0) {
+      return;
+    }
+    console.info(`AppListViewModel: 开始加载 ${pending.length} 个应用图标`);
 
     // 串行加载图标，避免并发过多导致卡顿
-    for (const app of this.apps) {
-      // 检查是否已取消
-      if (this.iconLoadingCancelled) {
+    for (const app of pending) {
+      // 检查是否已被更新的一轮加载取代
+      if (this.iconLoadGeneration !== generation) {
         console.info(`AppListViewModel: 图标加载被取消，停止加载`);
         return;
       }
 
       try {
         const localPath = await nvHttp.getAppAssetCached(app.id);
-        if (localPath && !this.iconLoadingCancelled) {
+        if (localPath && this.iconLoadGeneration === generation) {
           app.setLocalIconPath(localPath);
           console.info(`AppListViewModel: 图标加载成功 ${app.name}`);
         }
@@ -146,7 +178,7 @@ export class AppListViewModel {
       }
     }
 
-    if (!this.iconLoadingCancelled) {
+    if (this.iconLoadGeneration === generation) {
       console.info(`AppListViewModel: 所有图标加载完成`);
     }
   }
