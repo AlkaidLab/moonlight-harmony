@@ -22,7 +22,7 @@ const CARD_TITLE_HEIGHT = 40;
  */
 @Component
 export struct AppCard {
-  @ObjectLink app: ObservableApp;
+  @ObjectLink @Watch('onAppChanged') app: ObservableApp;
   onTap: () => void = () => {};
   onLongPress: () => void = () => {};
   onSelect: () => void = () => {}; // 选中回调（用于更新背景图）
@@ -30,6 +30,18 @@ export struct AppCard {
   @State private isPressed: boolean = false;
   @State private isFocused: boolean = false;
   @State private imageLoadFailed: boolean = false;
+  private lastIconPath: string = '';
+
+  /**
+   * 卡片实例在刷新时会被复用（ForEach key 只含 id），
+   * 图标路径换了就清掉上一次的加载失败标记，否则会一直显示占位图。
+   */
+  private onAppChanged(): void {
+    if (this.app.localIconPath !== this.lastIconPath) {
+      this.lastIconPath = this.app.localIconPath;
+      this.imageLoadFailed = false;
+    }
+  }
 
   build() {
     Column() {
