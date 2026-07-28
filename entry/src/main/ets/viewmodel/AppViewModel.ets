@@ -127,6 +127,20 @@ export class AppListViewModel {
   }
 
   /**
+   * 按最新的 runningGameId 同步现有列表的运行状态
+   *
+   * 用于拿不到新 applist、但已知服务端运行状态的场合（如静默刷新返回空列表时
+   * 保留旧数据）：不同步的话 hasRunningApp 会一直停在旧值，退游戏后的收敛轮询
+   * 就永远等不到收敛。
+   */
+  syncRunningState(runningGameId: number): void {
+    for (const app of this.apps) {
+      app.isRunning = runningGameId > 0 && app.id === runningGameId;
+    }
+    this.updateRunningApp();
+  }
+
+  /**
    * 取消正在进行的图标加载
    */
   cancelIconLoading(): void {

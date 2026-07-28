@@ -524,9 +524,12 @@ struct AppListPageV2 {
         const apps = await this.getAppListWithRetry('刷新');
 
         // 静默刷新拿到空列表多半是服务端瞬时故障，保留现有列表，
-        // 否则后台轮询会把整页闪成"没有可用的应用"
+        // 否则后台轮询会把整页闪成"没有可用的应用"。
+        // 但运行状态要按刚拿到的 serverInfo 同步——否则退游戏后的收敛轮询
+        // 靠 hasRunningApp 判断，会一直等不到收敛。
         if (apps.length === 0 && silent && this.viewModel.appCount > 0) {
           console.warn('AppListPageV2: 静默刷新返回空列表，保留现有数据');
+          this.viewModel.syncRunningState(computer?.runningGameId || 0);
           return;
         }
 
