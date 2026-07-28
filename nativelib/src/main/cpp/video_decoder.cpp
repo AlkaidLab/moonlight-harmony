@@ -480,7 +480,9 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     config_ = config;
     hdrVividProbeDecodeUnits_.store(0, std::memory_order_relaxed);
     hdrVividProbeActive_.store(
-        config.codec == VideoCodecType::HEVC && config.enableHdr &&
+        (config.codec == VideoCodecType::HEVC ||
+         config.codec == VideoCodecType::AV1) &&
+        config.enableHdr &&
         config.hdrType == HdrType::HLG,
         std::memory_order_relaxed);
     hdrVividDetected_.store(false, std::memory_order_relaxed);
@@ -1150,7 +1152,11 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
             if (probeIndex + 1 == kHdrVividProbeDecodeUnits) {
                 hdrVividProbeActive_.store(false, std::memory_order_relaxed);
             }
-            HdrVividMetadataScanner scanner;
+            const HdrVividBitstreamFormat bitstreamFormat =
+                config_.codec == VideoCodecType::AV1 ?
+                    HdrVividBitstreamFormat::AV1_LOW_OVERHEAD_OBU :
+                    HdrVividBitstreamFormat::HEVC_ANNEX_B;
+            HdrVividMetadataScanner scanner(bitstreamFormat);
             for (int index = 0; index < segmentCount; ++index) {
                 if (scanner.Scan(segments[index].data,
                                  static_cast<size_t>(segments[index].length))) {
@@ -1161,7 +1167,9 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
                 hdrVividDetected_.store(true, std::memory_order_relaxed);
                 hdrVividProbeActive_.store(false, std::memory_order_relaxed);
                 OH_LOG_INFO(LOG_APP,
-                            "HDR Vivid CUVA dynamic metadata detected in HEVC SEI");
+                            "HDR Vivid CUVA dynamic metadata detected in %{public}s",
+                            config_.codec == VideoCodecType::AV1 ?
+                                "AV1 Metadata OBU" : "HEVC SEI");
             }
         } else {
             hdrVividProbeActive_.store(false, std::memory_order_relaxed);
