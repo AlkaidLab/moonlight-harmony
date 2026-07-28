@@ -121,7 +121,8 @@ static DECODER_RENDERER_CALLBACKS g_videoCallbacksStruct = {
     .stop = BridgeDrStop,
     .cleanup = BridgeDrCleanup,
     .submitDecodeUnit = (int (*)(PDECODE_UNIT))BridgeDrSubmitDecodeUnit,
-    .capabilities = CAPABILITY_DIRECT_SUBMIT,  // 直接从网络线程提交，减少延迟
+    // 保留 HEVC SEI，确保 CUVA HDR Vivid 动态元数据同时到达硬件解码器和性能统计扫描器。
+    .capabilities = CAPABILITY_DIRECT_SUBMIT | CAPABILITY_PRESERVE_HEVC_SEI,
 };
 
 static AUDIO_RENDERER_CALLBACKS g_audioCallbacksStruct = {
@@ -515,7 +516,7 @@ static int StartConnectionWithPreparedInfo(SERVER_INFORMATION* serverInfo, STREA
                                            int32_t videoCapabilities) {
     g_streamConfig = *streamConfig;
     g_videoCapabilities = videoCapabilities;
-    g_videoCallbacksStruct.capabilities = videoCapabilities;
+    g_videoCallbacksStruct.capabilities = videoCapabilities | CAPABILITY_PRESERVE_HEVC_SEI;
 
     bool enableHdr = (streamConfig->supportedVideoFormats & 0xAA00) != 0;
     VideoDecoderInstance::SetHdrConfig(enableHdr, streamConfig->hdrMode,

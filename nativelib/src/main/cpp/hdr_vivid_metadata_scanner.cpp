@@ -17,6 +17,9 @@ namespace {
 constexpr uint8_t kHevcPrefixSeiNalType = 39;
 constexpr uint8_t kHevcSuffixSeiNalType = 40;
 constexpr uint32_t kRegisteredT35PayloadType = 4;
+constexpr uint8_t kAv1MetadataObuType = 5;
+constexpr uint64_t kAv1ItutT35MetadataType = 4;
+constexpr uint8_t kAv1MaxLeb128Bytes = 8;
 
 // CUVA 005.1 HDR Vivid identifier in user_data_registered_itu_t_t35.
 constexpr uint8_t kCuvaCountryCode = 0x26;
@@ -69,9 +72,54 @@ bool ReadSeiValue(RbspByteReader& reader, uint32_t& value) {
     return true;
 }
 
+bool ReadLeb128(const uint8_t* data, size_t size, size_t& offset, uint64_t& value) {
+    value = 0;
+    uint8_t shift = 0;
+    for (uint8_t count = 0; count < kAv1MaxLeb128Bytes && offset < size; ++count) {
+        const uint8_t current = data[offset++];
+        value |= static_cast<uint64_t>(current & 0x7F) << shift;
+        if ((current & 0x80) == 0) {
+            return true;
+        }
+        shift = static_cast<uint8_t>(shift + 7);
+    }
+    return false;
+}
+
+bool IsCuvaT35Identifier(const uint8_t* identifier, size_t size) {
+    if (identifier == nullptr || size < 5) {
+        return false;
+    }
+
+    const uint16_t terminalProviderCode =
+        static_cast<uint16_t>(identifier[1] << 8) | identifier[2];
+    const uint16_t providerOrientedCode =
+        static_cast<uint16_t>(identifier[3] << 8) | identifier[4];
+    return identifier[0] == kCuvaCountryCode &&
+           terminalProviderCode == kCuvaTerminalProviderCode &&
+           providerOrientedCode == kCuvaProviderOrientedCode;
+}
+
 } // namespace
 
+HdrVividMetadataScanner::HdrVividMetadataScanner(HdrVividBitstreamFormat format)
+    : format_(format) {}
+
 bool HdrVividMetadataScanner::Scan(const uint8_t* data, size_t size) {
+    if (format_ == HdrVividBitstreamFormat::AV1_LOW_OVERHEAD_OBU) {
+        return ScanAv1(data, size);
+    }
+    return ScanHevc(data, size);
+}
+
+bool HdrVividMetadataScanner::Finish() {
+    if (format_ == HdrVividBitstreamFormat::AV1_LOW_OVERHEAD_OBU) {
+        return FinishAv1();
+    }
+    return FinishHevc();
+}
+
+bool HdrVividMetadataScanner::ScanHevc(const uint8_t* data, size_t size) {
     if (detected_ || data == nullptr) {
         return detected_;
     }
@@ -113,7 +161,7 @@ bool HdrVividMetadataScanner::Scan(const uint8_t* data, size_t size) {
     return detected_;
 }
 
-bool HdrVividMetadataScanner::Finish() {
+bool HdrVividMetadataScanner::FinishHevc() {
     if (!detected_ && inNal_ && FinishNal()) {
         detected_ = true;
     }
@@ -185,15 +233,137 @@ bool HdrVividMetadataScanner::ContainsCuvaT35Payload(
         }
 
         if (isCuvaPayload) {
-            const uint16_t terminalProviderCode =
-                static_cast<uint16_t>(identifier[1] << 8) | identifier[2];
-            const uint16_t providerOrientedCode =
-                static_cast<uint16_t>(identifier[3] << 8) | identifier[4];
-            if (identifier[0] == kCuvaCountryCode &&
-                terminalProviderCode == kCuvaTerminalProviderCode &&
-                providerOrientedCode == kCuvaProviderOrientedCode) {
+            if (IsCuvaT35Identifier(identifier, sizeof(identifier))) {
                 return true;
             }
         }
     }
+}
+
+bool HdrVividMetadataScanner::ScanAv1(const uint8_t* data, size_t size) {
+    if (detected_ || data == nullptr ||
+        av1State_ == Av1ParseState::INVALID) {
+        return detected_;
+    }
+
+    for (size_t index = 0; index < size; ++index) {
+        const uint8_t current = data[index];
+        switch (av1State_) {
+            case Av1ParseState::OBU_HEADER:
+                // obu_forbidden_bit and obu_reserved_1bit must both be zero.
+                if ((current & 0x81) != 0) {
+                    av1State_ = Av1ParseState::INVALID;
+                    return false;
+                }
+                StartAv1Obu(current);
+                break;
+
+            case Av1ParseState::OBU_EXTENSION:
+                // extension_header_reserved_3bits must be zero.
+                if ((current & 0x07) != 0) {
+                    av1State_ = Av1ParseState::INVALID;
+                    return false;
+                }
+                av1State_ = av1HasSizeField_ ?
+                    Av1ParseState::OBU_SIZE : Av1ParseState::OBU_PAYLOAD;
+                break;
+
+            case Av1ParseState::OBU_SIZE:
+                if (av1LebBytes_ >= kAv1MaxLeb128Bytes) {
+                    av1State_ = Av1ParseState::INVALID;
+                    return false;
+                }
+
+                av1LebValue_ |=
+                    static_cast<uint64_t>(current & 0x7F) << av1LebShift_;
+                av1LebBytes_++;
+                if ((current & 0x80) != 0) {
+                    av1LebShift_ = static_cast<uint8_t>(av1LebShift_ + 7);
+                    break;
+                }
+
+                av1ObuSize_ = av1LebValue_;
+                av1PayloadBytesRead_ = 0;
+                av1State_ = Av1ParseState::OBU_PAYLOAD;
+                if (av1ObuSize_ == 0 && FinishAv1Obu()) {
+                    return true;
+                }
+                break;
+
+            case Av1ParseState::OBU_PAYLOAD:
+                if (av1CaptureMetadata_ &&
+                    av1MetadataPrefixSize_ < av1MetadataPrefix_.size()) {
+                    av1MetadataPrefix_[av1MetadataPrefixSize_++] = current;
+                }
+                av1PayloadBytesRead_++;
+
+                if (av1HasSizeField_ &&
+                    av1PayloadBytesRead_ == av1ObuSize_ &&
+                    FinishAv1Obu()) {
+                    return true;
+                }
+                break;
+
+            case Av1ParseState::INVALID:
+                return false;
+        }
+    }
+
+    return detected_;
+}
+
+bool HdrVividMetadataScanner::FinishAv1() {
+    if (detected_) {
+        return true;
+    }
+    if (av1State_ == Av1ParseState::OBU_PAYLOAD &&
+        !av1HasSizeField_) {
+        return FinishAv1Obu();
+    }
+
+    // Sized OBUs must end exactly at the decode-unit boundary. Header state
+    // means the final OBU was already completed while scanning.
+    return av1State_ == Av1ParseState::OBU_HEADER && detected_;
+}
+
+void HdrVividMetadataScanner::StartAv1Obu(uint8_t header) {
+    const uint8_t obuType = static_cast<uint8_t>((header >> 3) & 0x0F);
+    const bool extensionFlag = (header & 0x04) != 0;
+    av1HasSizeField_ = (header & 0x02) != 0;
+    av1CaptureMetadata_ = obuType == kAv1MetadataObuType;
+    av1MetadataPrefixSize_ = 0;
+    av1ObuSize_ = 0;
+    av1PayloadBytesRead_ = 0;
+    av1LebValue_ = 0;
+    av1LebShift_ = 0;
+    av1LebBytes_ = 0;
+    av1State_ = extensionFlag ?
+        Av1ParseState::OBU_EXTENSION :
+        (av1HasSizeField_ ?
+            Av1ParseState::OBU_SIZE : Av1ParseState::OBU_PAYLOAD);
+}
+
+bool HdrVividMetadataScanner::FinishAv1Obu() {
+    if (av1CaptureMetadata_ &&
+        ContainsCuvaAv1Metadata(
+            av1MetadataPrefix_.data(), av1MetadataPrefixSize_)) {
+        detected_ = true;
+    }
+
+    av1State_ = Av1ParseState::OBU_HEADER;
+    av1CaptureMetadata_ = false;
+    av1MetadataPrefixSize_ = 0;
+    return detected_;
+}
+
+bool HdrVividMetadataScanner::ContainsCuvaAv1Metadata(
+        const uint8_t* payload, size_t payloadSize) {
+    size_t offset = 0;
+    uint64_t metadataType = 0;
+    if (!ReadLeb128(payload, payloadSize, offset, metadataType) ||
+        metadataType != kAv1ItutT35MetadataType) {
+        return false;
+    }
+
+    return IsCuvaT35Identifier(payload + offset, payloadSize - offset);
 }
