@@ -59,6 +59,17 @@ void TestIgnoresHdr10PlusT35() {
     Expect(!ScanSegments(segments), "ignore HDR10+ T.35 metadata");
 }
 
+void TestDetectsCuvaAfterHdr10PlusInSameSeiNal() {
+    const std::vector<std::vector<uint8_t>> segments = {{
+        0x00, 0x00, 0x00, 0x01, 0x4E, 0x01,
+        0x04, 0x05, 0xB5, 0x00, 0x3C, 0x00, 0x01,
+        0x04, 0x06, 0x26, 0x00, 0x04, 0x00, 0x05, 0x01,
+        0x80,
+    }};
+    Expect(ScanSegments(segments),
+           "detect CUVA after HDR10+ in the same prefix SEI NAL");
+}
+
 void TestRemovesEmulationPreventionBytes() {
     const std::vector<std::vector<uint8_t>> segments = {{
         0x00, 0x00, 0x01, 0x4E, 0x01,
@@ -75,6 +86,7 @@ int main() {
     TestDetectsCuvaSuffixSei();
     TestIgnoresHevcWithoutSei();
     TestIgnoresHdr10PlusT35();
+    TestDetectsCuvaAfterHdr10PlusInSameSeiNal();
     TestRemovesEmulationPreventionBytes();
     std::cout << "HDR Vivid metadata scanner tests passed\n";
     return 0;
