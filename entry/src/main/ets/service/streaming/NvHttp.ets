@@ -21,6 +21,10 @@ import { DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT } from '../../common/NetworkConst
 import { parseAddressAndPort, formatAddressForUrl } from '../../utils/NetHelper';
 import { selectBestAddress, NvHttpHost } from '../../model/ComputerInfo';
 
+// HarmonyOS BrightnessInfo exposes peak/headroom but not the panel black level.
+// Match Sunshine's unknown-display fallback instead of inventing a raised black floor.
+export const DEFAULT_HDR_MIN_BRIGHTNESS_NITS: number = 0.001;
+
 /**
  * NvHTTP - 与 NVIDIA GameStream / Sunshine 服务器通信
  *
@@ -1111,7 +1115,7 @@ export class NvHttp {
     }
 
     // 客户端屏幕亮度范围（用于服务端 HDR tone mapping）
-    const minBrightness = config.minBrightness ?? 2;
+    const minBrightness = config.minBrightness ?? DEFAULT_HDR_MIN_BRIGHTNESS_NITS;
     const maxBrightness = config.maxBrightness ?? 500;
     const maxAvgBrightness = config.maxAverageBrightness ?? 200;
     params.push(`minBrightness=${minBrightness}`);
