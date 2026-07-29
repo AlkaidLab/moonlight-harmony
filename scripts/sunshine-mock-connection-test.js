@@ -951,7 +951,7 @@ async function testLaunchResumeQuitModel() {
       enableHdr: true,
       hdrMode: 2,
       displayGuid: 'DISPLAY\\GSM0001',
-      minBrightness: 1,
+      minBrightness: undefined,
       maxBrightness: 1000,
       maxAverageBrightness: 400,
       screenCombinationMode: 2
@@ -965,13 +965,8 @@ async function testLaunchResumeQuitModel() {
     assert.strictEqual(launchRequest.query.hdrMode, '2');
     assert.strictEqual(launchRequest.query.display_name, 'DISPLAY\\GSM0001');
     assert.strictEqual(launchRequest.query.customScreenMode, '2');
+    assert.strictEqual(launchRequest.query.minBrightness, '0.001');
     assert.strictEqual(launchRequest.query.maxBrightness, '1000');
-
-    const defaultBrightnessQuery = new URLSearchParams(client.buildLaunchQuery(1, {
-      ...config,
-      minBrightness: undefined
-    }));
-    assert.strictEqual(defaultBrightnessQuery.get('minBrightness'), '0.001');
 
     const resumeUrl = await client.resumeApp(config);
     assert.strictEqual(resumeUrl, 'rtsp://127.0.0.1:48010');
