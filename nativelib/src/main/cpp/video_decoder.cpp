@@ -692,11 +692,13 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
                     config_.fps, config_.decoderMode == DecoderMode::SYNC ? "SYNC" : "ASYNC");
     }
     
-    // 配置颜色范围: 0 = Limited, 1 = Full
+    // Configure decoder color metadata explicitly. These keys are exported
+    // const char* symbols (not preprocessor macros), so they must not be
+    // guarded with #ifdef.
+    //
+    // 颜色范围: 0 = Limited, 1 = Full
     int32_t colorRange = (config_.colorRange == ColorRange::FULL) ? 1 : 0;
-#ifdef OH_MD_KEY_RANGE_FLAG
-    OH_AVFormat_SetIntValue(format, OH_MD_KEY_RANGE_FLAG, colorRange);
-#endif
+    const bool colorRangeSet = OH_AVFormat_SetIntValue(format, OH_MD_KEY_RANGE_FLAG, colorRange);
     
     // 配置颜色空间标准 (OH_ColorPrimary)
     int32_t colorPrimary = kColorPrimaryBT709;
@@ -705,11 +707,7 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
         case ColorSpace::REC_709:  colorPrimary = kColorPrimaryBT709;  break;
         case ColorSpace::REC_2020: colorPrimary = kColorPrimaryBT2020; break;
     }
-#ifdef OH_MD_KEY_COLOR_PRIMARIES
-    OH_AVFormat_SetIntValue(format, OH_MD_KEY_COLOR_PRIMARIES, colorPrimary);
-#else
-    OH_LOG_WARN(LOG_APP, "{Init} OH_MD_KEY_COLOR_PRIMARIES not available");
-#endif
+    const bool colorPrimarySet = OH_AVFormat_SetIntValue(format, OH_MD_KEY_COLOR_PRIMARIES, colorPrimary);
     
     // 配置传输特性 (OH_TransferCharacteristic)
     int32_t transferChar = kTransferCharSDR;
@@ -720,11 +718,7 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
             default:                 transferChar = kTransferCharPQ;  break;
         }
     }
-#ifdef OH_MD_KEY_TRANSFER_CHARACTERISTICS
-    OH_AVFormat_SetIntValue(format, OH_MD_KEY_TRANSFER_CHARACTERISTICS, transferChar);
-#else
-    OH_LOG_WARN(LOG_APP, "{Init} OH_MD_KEY_TRANSFER_CHARACTERISTICS not available");
-#endif
+    const bool transferCharSet = OH_AVFormat_SetIntValue(format, OH_MD_KEY_TRANSFER_CHARACTERISTICS, transferChar);
     
     // 配置矩阵系数 (OH_MatrixCoefficient)
     int32_t matrixCoeff = kMatrixCoeffBT709;
@@ -733,21 +727,26 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
         case ColorSpace::REC_709:  matrixCoeff = kMatrixCoeffBT709;     break;
         case ColorSpace::REC_2020: matrixCoeff = kMatrixCoeffBT2020NCL; break;
     }
-#ifdef OH_MD_KEY_MATRIX_COEFFICIENTS
-    OH_AVFormat_SetIntValue(format, OH_MD_KEY_MATRIX_COEFFICIENTS, matrixCoeff);
-#else
-    OH_LOG_WARN(LOG_APP, "{Init} OH_MD_KEY_MATRIX_COEFFICIENTS not available");
-#endif
+    const bool matrixCoeffSet = OH_AVFormat_SetIntValue(format, OH_MD_KEY_MATRIX_COEFFICIENTS, matrixCoeff);
     
-    // 配置 HDR Vivid 模式（Sunshine 编码端在 HLG 模式下会携带 CUVA T.35 Vivid 动态元数据）
-    // 告诉解码器按 HDR Vivid 标准解析码流中的 CUVA SEI
+    OH_LOG_INFO(LOG_APP,
+                "{Init} Decoder color metadata: range=%{public}d (set=%{public}d), "
+                "primaries=%{public}d (set=%{public}d), transfer=%{public}d (set=%{public}d), "
+                "matrix=%{public}d (set=%{public}d)",
+                colorRange, colorRangeSet ? 1 : 0,
+                colorPrimary, colorPrimarySet ? 1 : 0,
+                transferChar, transferCharSet ? 1 : 0,
+                matrixCoeff, matrixCoeffSet ? 1 : 0);
+
+    if (!colorRangeSet || !colorPrimarySet || !transferCharSet || !matrixCoeffSet) {
+        OH_LOG_WARN(LOG_APP, "{Init} Failed to set one or more decoder color metadata fields");
+    }
+
+    // HDR Vivid is signalled by CUVA metadata preserved in the elementary
+    // stream. OH_MD_KEY_VIDEO_IS_HDR_VIVID describes a media-file track and is
+    // only supported by demuxers/muxers, so it is not a decoder Configure key.
     if (config_.enableHdr && config_.hdrType == HdrType::HLG) {
-#ifdef OH_MD_KEY_VIDEO_IS_HDR_VIVID
-        OH_AVFormat_SetIntValue(format, OH_MD_KEY_VIDEO_IS_HDR_VIVID, 1);
-        OH_LOG_INFO(LOG_APP, "{Init} HDR Vivid mode enabled for HLG stream");
-#else
-        OH_LOG_WARN(LOG_APP, "{Init} OH_MD_KEY_VIDEO_IS_HDR_VIVID not available");
-#endif
+        OH_LOG_INFO(LOG_APP, "{Init} HLG stream relies on in-band CUVA metadata for HDR Vivid");
     }
     
     OH_LOG_INFO(LOG_APP, "{Init} Configuring decoder: HDR=%{public}d, hdrType=%{public}d (0=SDR,1=HDR10,2=HLG), colorSpace=%{public}d, colorRange=%{public}d",
