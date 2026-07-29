@@ -23,6 +23,7 @@ const DEFAULT_HTTPS_PORT = 47984;
 const HOST = '127.0.0.1';
 const CLIENT_UNIQUE_ID = 'moonlight-harmony-test-client';
 const CLIENT_NAME = 'Moonlight-HarmonyOS-Test';
+const DEFAULT_HDR_MIN_BRIGHTNESS_NITS = 0.001;
 
 function xmlEscape(value) {
   return String(value)
@@ -675,7 +676,7 @@ class ConnectionModelClient {
       params.push('clientHdrCapDisplayData=0x0x0x0x0x0x0x0x0x0x0');
     }
 
-    params.push(`minBrightness=${config.minBrightness ?? 2}`);
+    params.push(`minBrightness=${config.minBrightness ?? DEFAULT_HDR_MIN_BRIGHTNESS_NITS}`);
     params.push(`maxBrightness=${config.maxBrightness ?? 500}`);
     params.push(`maxAverageBrightness=${config.maxAverageBrightness ?? 200}`);
 
@@ -965,6 +966,12 @@ async function testLaunchResumeQuitModel() {
     assert.strictEqual(launchRequest.query.display_name, 'DISPLAY\\GSM0001');
     assert.strictEqual(launchRequest.query.customScreenMode, '2');
     assert.strictEqual(launchRequest.query.maxBrightness, '1000');
+
+    const defaultBrightnessQuery = new URLSearchParams(client.buildLaunchQuery(1, {
+      ...config,
+      minBrightness: undefined
+    }));
+    assert.strictEqual(defaultBrightnessQuery.get('minBrightness'), '0.001');
 
     const resumeUrl = await client.resumeApp(config);
     assert.strictEqual(resumeUrl, 'rtsp://127.0.0.1:48010');

@@ -12,7 +12,7 @@ import { StreamConfig, HdrMode, getSurroundAudioInfo } from '../../model/StreamC
 import { InputEvent, InputType, ControllerButtonEvent, ControllerAxisEvent, ControllerButton } from '../../model/InputEvent';
 import { ComputerManager } from '../ComputerManager';
 import { ComputerInfo, selectBestAddress } from '../../model/ComputerInfo';
-import { NvHttp, LaunchConfig } from './NvHttp';
+import { NvHttp, LaunchConfig, DEFAULT_HDR_MIN_BRIGHTNESS_NITS } from './NvHttp';
 import { CryptoUtil } from '../../utils/CryptoUtil';
 import { parseAddressAndPort, parseRtspSessionHost } from '../../utils/NetHelper';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
@@ -345,7 +345,7 @@ export class StreamingSession {
    * @returns [minBrightness, maxBrightness, maxAverageBrightness] (nits)
    */
   private static getBrightnessRange(): number[] {
-    let minBrightness = 2;
+    const minBrightness = DEFAULT_HDR_MIN_BRIGHTNESS_NITS;
     let maxBrightness = 500;
     let maxAverageBrightness = 200;
 
@@ -367,8 +367,10 @@ export class StreamingSession {
   }
 
   private static applyBrightnessOverride(range: number[], peakBrightnessNits: number): number[] {
-    const rawMinBrightness = range.length > 0 ? range[0] : 1;
-    const minBrightness = Math.max(1, Math.round(rawMinBrightness));
+    const rawMinBrightness = range.length > 0 ? range[0] : DEFAULT_HDR_MIN_BRIGHTNESS_NITS;
+    const minBrightness = Number.isFinite(rawMinBrightness) && rawMinBrightness > 0
+      ? rawMinBrightness
+      : DEFAULT_HDR_MIN_BRIGHTNESS_NITS;
     const peakBrightness = Math.max(minBrightness + 1, Math.max(300, Math.min(4000, Math.round(peakBrightnessNits))));
     const maxAverageBrightness = Math.max(minBrightness, Math.max(100, Math.min(1000, Math.round(peakBrightness * 0.2))));
     return [minBrightness, peakBrightness, maxAverageBrightness];

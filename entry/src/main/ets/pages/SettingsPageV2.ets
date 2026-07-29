@@ -1145,7 +1145,7 @@ struct SettingsPageV2 {
               {
                 title: 'HDR 模式',
                 tooltip: this.hdrMode === 'HLG'
-                  ? 'HLG (Hybrid Log-Gamma)\n• 需要 Sunshine Foundation 版本\n• 无需色调映射，亮度更自然\n• 兼容 HDR Vivid 显示设备\n• 推荐搭配全范围色彩使用'
+                  ? 'HLG (Hybrid Log-Gamma)\n• 需要 Sunshine Foundation 版本\n• 无需色调映射，亮度更自然\n• 兼容 HDR Vivid 显示设备'
                   : 'HDR10 (PQ)\n• 兼容所有主流串流服务端\n• 使用 PQ 传输曲线，高亮细节更丰富\n• 部分设备可能出现偏暗',
                 type: 'segment',
                 value: this.hdrMode,
@@ -1275,7 +1275,10 @@ struct SettingsPageV2 {
               },
               {
                 title: '全范围颜色',
-                subtitle: '使用完整颜色范围 (0-255)',
+                subtitle: this.enableHdr
+                  ? 'HDR 模式下需与服务端编码范围一致'
+                  : '使用完整颜色范围 (0-255)',
+                tooltip: '仅在服务端与解码器均使用全范围时开启；范围不一致会导致黑位或高光异常',
                 type: 'toggle',
                 value: this.fullRange,
                 action: () => {
