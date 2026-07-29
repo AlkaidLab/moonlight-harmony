@@ -14,7 +14,7 @@ import { ComputerManager } from '../ComputerManager';
 import { ComputerInfo, selectBestAddress } from '../../model/ComputerInfo';
 import { NvHttp, LaunchConfig } from './NvHttp';
 import { CryptoUtil } from '../../utils/CryptoUtil';
-import { parseAddressAndPort } from '../../utils/NetHelper';
+import { parseAddressAndPort, parseRtspSessionHost } from '../../utils/NetHelper';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
 import { GamepadManager } from '../input/GamepadManager';
@@ -43,7 +43,8 @@ import {
   VK_MENU,
   VK_LWIN,
   KEY_ACTION_DOWN,
-  KEY_ACTION_UP
+  KEY_ACTION_UP,
+  STAGE_NAME_RESOLUTION
 } from './MoonBridge';
 import nativeLib from 'libmoonlight_nativelib.so';
 
@@ -387,6 +388,7 @@ export class StreamingSession {
   private userInitiatedStop: boolean = false;
   private isStartingConnection: boolean = false;
   private connectionStartPromise: Promise<number> | null = null;
+  private lastFailedStage: number = 0;
   private computer: ComputerInfo | null = null;
   /** 本次串流最终选中的连接地址（手动/锁定/轮询胜出地址），保证 HTTP 与原生串流阶段一致 */
   private connectionAddress: string = '';
@@ -1206,6 +1208,7 @@ export class StreamingSession {
       stageComplete: (stage: number): void => { console.info(`连接阶段完成: ${stage}`); },
       stageFailed: (stage: number, errorCode: number): void => {
         const name = STAGE_NAMES[stage] || `阶段 ${stage}`;
+        this.lastFailedStage = stage;
         console.error(`连接阶段失败: stage=${stage} (${name}), error=${errorCode}`);
       },
       connectionStarted: (): void => {
@@ -1437,11 +1440,13 @@ export class StreamingSession {
       `vsync=${this.config.enableVsync}, hostPaced=${this.config.enableHostPacedPresentation ?? false}, ` +
       `vrr=${this.config.enableVrr}`);
 
-    const callStart = async (): Promise<number> => {
+    const callStart = async (address: string): Promise<number> => {
       this.isStartingConnection = true;
+      this.lastFailedStage = 0;
       try {
+        console.info(`StreamingSession: native connection address=${address}`);
         const pendingStart: Promise<number> = this.nativeModule.startConnectionAsync(
-          this.connectionAddress,
+          address,
           this.serverAppVersion,
           this.serverGfeVersion,
           this.rtspSessionUrl,
@@ -1469,7 +1474,31 @@ export class StreamingSession {
       }
     };
 
-    let result = await callStart();
+    let activeConnectionAddress = this.connectionAddress;
+    let result = await callStart(activeConnectionAddress);
+
+    // getaddrinfo() may fail after /launch succeeds when the selected hostname
+    // is stale or temporarily unavailable. In that specific stage, retry with
+    // the concrete host Sunshine just advertised in sessionUrl0. Do not use
+    // this address unconditionally: behind IPv4 NAT, sessionUrl0 may contain a
+    // private host while the selected WAN address is the correct route.
+    const rtspSessionHost = parseRtspSessionHost(this.rtspSessionUrl);
+    if (result === -2 &&
+        this.lastFailedStage === STAGE_NAME_RESOLUTION &&
+        rtspSessionHost &&
+        rtspSessionHost !== activeConnectionAddress) {
+      if (this.userInitiatedStop) {
+        return;
+      }
+      console.warn(`StreamingSession: 名称解析失败，改用 sessionUrl0 主机 ${rtspSessionHost} 重试`);
+      this.nativeModule.stopConnection();
+      activeConnectionAddress = rtspSessionHost;
+      result = await callStart(activeConnectionAddress);
+      if (result === 0) {
+        console.info('StreamingSession: sessionUrl0 主机回退成功');
+      }
+    }
+
     // RTSP/ENet 瞬态错误自动重试 1 次：errno 4=EINTR、110=ETIMEDOUT、104=ECONNRESET、32=EPIPE
     // 这类错误通常是 ENet service 循环被打断或网络抖动，host 端不需要重新 launchApp，
     // 只需 stopConnection 释放 native 资源后等待短暂窗口再重试即可恢复。
@@ -1488,7 +1517,7 @@ export class StreamingSession {
       if (this.userInitiatedStop) {
         return;
       }
-      result = await callStart();
+      result = await callStart(activeConnectionAddress);
       if (result === 0) {
         console.info('StreamingSession: 重试成功');
       }

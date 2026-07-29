@@ -487,6 +487,22 @@ export function parseAddressAndPort(input: string): AddressPort {
 }
 
 /**
+ * Extract the host advertised by Sunshine in sessionUrl0.
+ *
+ * The native Moonlight core still resolves SERVER_INFORMATION.address for
+ * the RTSP socket. This host is therefore a fallback for cases where the
+ * selected hostname can no longer be resolved after /launch or /resume.
+ */
+export function parseRtspSessionHost(sessionUrl: string): string {
+  const match = /^(?:rtsp|rtspenc):\/\/([^/?#]+)/i.exec(sessionUrl.trim());
+  if (!match || match.length < 2) {
+    return '';
+  }
+
+  return parseAddressAndPort(match[1]).host;
+}
+
+/**
  * 格式化地址用于 URL：IPv6 地址需要加方括号
  *
  *   - "fe80::1"      → "[fe80::1]"

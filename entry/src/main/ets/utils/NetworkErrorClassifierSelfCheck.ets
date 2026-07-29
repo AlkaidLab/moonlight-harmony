@@ -22,6 +22,7 @@ import {
   isPrivateIPv4,
   isPublicAddress,
   parseAddressAndPort,
+  parseRtspSessionHost,
 } from './NetHelper';
 import { selectBestAddress } from '../model/ComputerInfo';
 
@@ -216,6 +217,9 @@ export class NetworkErrorClassifierSelfCheck {
       { name: 'formatAddressForUrl IPv4', actual: formatAddressForUrl('192.168.1.10'), expected: '192.168.1.10', reason: 'IPv4 不加方括号' },
       { name: 'formatAddressForUrl IPv6', actual: formatAddressForUrl('fe80::1'), expected: '[fe80::1]', reason: 'URL 中 IPv6 必须加方括号' },
       { name: 'formatAddressForUrl bracket IPv6', actual: formatAddressForUrl('[::1]'), expected: '[::1]', reason: '已有方括号不重复添加' },
+      { name: 'parseRtspSessionHost IPv4', actual: parseRtspSessionHost('rtsp://192.168.1.10:48010'), expected: '192.168.1.10', reason: '提取 Sunshine 返回的 IPv4 RTSP 主机' },
+      { name: 'parseRtspSessionHost IPv6', actual: parseRtspSessionHost('rtspenc://[240e:1234::10]:48010'), expected: '240e:1234::10', reason: '提取 Sunshine 返回的带方括号 IPv6 RTSP 主机' },
+      { name: 'parseRtspSessionHost rejects HTTP', actual: parseRtspSessionHost('https://sunshine.example.com:47984'), expected: '', reason: '只接受 RTSP 会话 URL' },
     ];
 
     for (const c of typeCases) {
