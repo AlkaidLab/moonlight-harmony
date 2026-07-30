@@ -25,8 +25,10 @@ export class DeviceVibrationCoordinator {
   private sourceVibratorId: number = 0;
 
   private touchHapticTimer: number = -1;
+  private touchHapticActive: boolean = false;
   private touchHapticEpoch: number = 0;
   private sourceEpoch: number = 0;
+  private vibrationQueue: Promise<void> = Promise.resolve();
   private sourceResumeCallback: (() => void) | null = null;
 
   static getInstance(): DeviceVibrationCoordinator {
@@ -46,39 +48,21 @@ export class DeviceVibrationCoordinator {
   }
 
   isTouchHapticActive(): boolean {
-    return this.touchHapticTimer !== -1;
+    return this.touchHapticActive;
   }
 
   playTouchHaptic(durationMs: number): void {
     const duration = Math.max(1, Math.min(1000, Math.round(durationMs)));
     const touchEpoch = ++this.touchHapticEpoch;
     this.sourceEpoch++;
+    this.touchHapticActive = true;
 
     if (this.touchHapticTimer !== -1) {
       clearTimeout(this.touchHapticTimer);
+      this.touchHapticTimer = -1;
     }
-    this.touchHapticTimer = setTimeout((): void => {
-      this.finishTouchHaptic(touchEpoch);
-    }, duration);
-
-    try {
-      // 同步停止可避免异步 stop 在新脉冲启动后才生效。
-      vibrator.stopVibrationSync();
-    } catch (_) { /* startVibration 仍可尝试替换当前效果 */ }
-
-    try {
-      vibrator.startVibration({
-        type: 'time',
-        duration: duration
-      }, this.createTouchVibrateAttribute()).catch((error: Error): void => {
-        if (touchEpoch !== this.touchHapticEpoch) return;
-        console.warn('[VIBRATION] 机身按键触感失败: ' + error.message);
-        this.finishTouchHaptic(touchEpoch);
-      });
-    } catch (error) {
-      console.warn('[VIBRATION] 机身按键触感异常:', error);
-      this.finishTouchHaptic(touchEpoch);
-    }
+    this.enqueueVibrationRequest((): Promise<void> =>
+      this.executeTouchHaptic(duration, touchEpoch));
   }
 
   startSourceVibration(effect: vibrator.VibrateEffect, usage: vibrator.Usage,
@@ -86,58 +70,127 @@ export class DeviceVibrationCoordinator {
     if (this.isTouchHapticActive()) return false;
 
     const sourceEpoch = ++this.sourceEpoch;
-    try {
-      vibrator.startVibration(
-        effect,
-        this.createSourceVibrateAttribute(usage)
-      ).catch((error: Error): void => {
-        if (sourceEpoch !== this.sourceEpoch || this.isTouchHapticActive()) return;
-        console.warn('[VIBRATION] 机身振动失败: ' + error.message);
-        if (onRejected !== undefined) onRejected();
-      });
-      return true;
-    } catch (error) {
-      console.warn('[VIBRATION] 机身振动异常:', error);
-      if (sourceEpoch === this.sourceEpoch && onRejected !== undefined) {
-        onRejected();
-      }
-      return false;
-    }
+    this.enqueueVibrationRequest((): Promise<void> =>
+      this.executeSourceVibration(effect, usage, sourceEpoch, onRejected));
+    return true;
   }
 
   stopSourceVibration(): void {
-    this.sourceEpoch++;
-    if (this.isTouchHapticActive()) return;
-    this.stopLocalVibration();
+    const sourceEpoch = ++this.sourceEpoch;
+    this.enqueueVibrationRequest((): Promise<void> =>
+      this.executeSourceStop(sourceEpoch));
   }
 
   stopAll(): void {
     this.sourceEpoch++;
     this.touchHapticEpoch++;
+    this.touchHapticActive = false;
     if (this.touchHapticTimer !== -1) {
       clearTimeout(this.touchHapticTimer);
       this.touchHapticTimer = -1;
     }
-    this.stopLocalVibration();
+    this.enqueueVibrationRequest((): Promise<void> => this.stopLocalVibration());
   }
 
   private finishTouchHaptic(touchEpoch: number): void {
-    if (touchEpoch !== this.touchHapticEpoch || this.touchHapticTimer === -1) return;
-    clearTimeout(this.touchHapticTimer);
+    if (touchEpoch !== this.touchHapticEpoch || !this.touchHapticActive) return;
+    if (this.touchHapticTimer !== -1) {
+      clearTimeout(this.touchHapticTimer);
+    }
     this.touchHapticTimer = -1;
+    this.touchHapticActive = false;
     this.sourceResumeCallback?.();
   }
 
-  private stopLocalVibration(): void {
+  private enqueueVibrationRequest(request: () => Promise<void>): void {
+    this.vibrationQueue = this.vibrationQueue
+      .then(request)
+      .catch((error: Error): void => {
+        console.warn('[VIBRATION] 机身振动队列异常: ' + error.message);
+      });
+  }
+
+  private executeTouchHaptic(duration: number, touchEpoch: number): Promise<void> {
+    if (touchEpoch !== this.touchHapticEpoch || !this.touchHapticActive) {
+      return Promise.resolve();
+    }
+
+    return this.stopLocalVibration().then((): Promise<void> => {
+      if (touchEpoch !== this.touchHapticEpoch || !this.touchHapticActive) {
+        return Promise.resolve();
+      }
+
+      try {
+        return vibrator.startVibration({
+          type: 'time',
+          duration: duration
+        }, this.createTouchVibrateAttribute()).then((): void => {
+          if (touchEpoch !== this.touchHapticEpoch || !this.touchHapticActive) return;
+          this.touchHapticTimer = setTimeout((): void => {
+            this.finishTouchHaptic(touchEpoch);
+          }, duration);
+        }).catch((error: Error): void => {
+          if (touchEpoch !== this.touchHapticEpoch || !this.touchHapticActive) return;
+          console.warn('[VIBRATION] 机身按键触感失败: ' + error.message);
+          this.finishTouchHaptic(touchEpoch);
+        });
+      } catch (error) {
+        console.warn('[VIBRATION] 机身按键触感异常:', error);
+        this.finishTouchHaptic(touchEpoch);
+        return Promise.resolve();
+      }
+    });
+  }
+
+  private executeSourceVibration(effect: vibrator.VibrateEffect, usage: vibrator.Usage,
+    sourceEpoch: number, onRejected?: () => void): Promise<void> {
+    if (sourceEpoch !== this.sourceEpoch || this.isTouchHapticActive()) {
+      return Promise.resolve();
+    }
+
+    try {
+      return vibrator.startVibration(
+        effect,
+        this.createSourceVibrateAttribute(usage)
+      ).then((): void => {
+        if (sourceEpoch !== this.sourceEpoch || this.isTouchHapticActive()) return;
+      }).catch((error: Error): void => {
+        if (sourceEpoch !== this.sourceEpoch || this.isTouchHapticActive()) return;
+        console.warn('[VIBRATION] 机身振动失败: ' + error.message);
+        if (onRejected !== undefined) onRejected();
+      });
+    } catch (error) {
+      console.warn('[VIBRATION] 机身振动异常:', error);
+      if (sourceEpoch === this.sourceEpoch &&
+          !this.isTouchHapticActive() &&
+          onRejected !== undefined) {
+        onRejected();
+      }
+      return Promise.resolve();
+    }
+  }
+
+  private executeSourceStop(sourceEpoch: number): Promise<void> {
+    if (sourceEpoch !== this.sourceEpoch || this.isTouchHapticActive()) {
+      return Promise.resolve();
+    }
+    return this.stopLocalVibration().then((): void => {
+      if (sourceEpoch !== this.sourceEpoch || this.isTouchHapticActive()) return;
+    });
+  }
+
+  private stopLocalVibration(): Promise<void> {
     try {
       vibrator.stopVibrationSync();
+      return Promise.resolve();
     } catch (_) {
       try {
-        vibrator.stopVibration().catch((error: Error): void => {
+        return vibrator.stopVibration().catch((error: Error): void => {
           console.warn('[VIBRATION] 停止机身振动失败: ' + error.message);
         });
       } catch (error) {
         console.warn('[VIBRATION] 停止机身振动异常:', error);
+        return Promise.resolve();
       }
     }
   }
