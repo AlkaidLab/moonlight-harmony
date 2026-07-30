@@ -14,7 +14,7 @@
  */
 import { InputEvent, InputType, ControllerButton, ControllerButtonEvent, ControllerAxis, ControllerAxisEvent } from '../../model/InputEvent';
 import { AnalogStick, AnalogStickConfig } from './AnalogStick';
-import { vibrator } from '@kit.SensorServiceKit';
+import { DeviceVibrationCoordinator } from '../../service/input/DeviceVibrationCoordinator';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { display } from '@kit.ArkUI';
 
@@ -616,17 +616,7 @@ export struct VirtualController {
   }
   
   private triggerVibration(): void {
-    try {
-      vibrator.startVibration({
-        type: 'time',
-        duration: 30
-      }, {
-        id: 0,
-        usage: 'touch'
-      });
-    } catch (e) {
-      // 忽略震动错误
-    }
+    DeviceVibrationCoordinator.getInstance().playTouchHaptic(30);
   }
 
 }

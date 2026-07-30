@@ -18,10 +18,10 @@
  */
 
 import { vibrator } from '@kit.SensorServiceKit';
-import { deviceInfo } from '@kit.BasicServicesKit';
 import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { AudioHapticFrameFlag } from '../AudioHapticFrame';
 import { RUMBLE_MAX } from './GamepadTypes';
+import { DeviceVibrationCoordinator } from './DeviceVibrationCoordinator';
 import {
   GAME_VIBRATION_STRENGTH_DEFAULT,
   GAME_VIBRATION_STRENGTH_ORIGINAL,
@@ -47,6 +47,7 @@ export class GamepadVibrationService {
   private static readonly MUSIC_RHYTHM_MINIMUM_INTENSITY = 70;
   private static readonly MUSIC_TRANSIENT_MINIMUM_INTENSITY = 72;
   private usbDriverService: UsbDriverService;
+  private deviceVibrationCoordinator: DeviceVibrationCoordinator;
   
   // 设置
   private vibrationFeedbackEnabled = true;
@@ -56,10 +57,6 @@ export class GamepadVibrationService {
   // 槽位→设备键的查找函数（由 GamepadManager 提供）
   private deviceKeyToSlotLookup: Map<string, number>;
   
-  // 高清振动支持缓存
-  private hdHapticSupported: boolean | null = null;
-  private localVibratorDeviceId: number | null = null;
-  private localVibratorId: number = 0;
   // 上次震动参数缓存（用于检测变化）
   private lastLowFreq: number = 0;
   private lastHighFreq: number = 0;
@@ -89,6 +86,10 @@ export class GamepadVibrationService {
   constructor(usbDriverService: UsbDriverService, deviceKeyToSlot: Map<string, number>) {
     this.usbDriverService = usbDriverService;
     this.deviceKeyToSlotLookup = deviceKeyToSlot;
+    this.deviceVibrationCoordinator = DeviceVibrationCoordinator.getInstance();
+    this.deviceVibrationCoordinator.setSourceResumeCallback((): void => {
+      this.renderMixedDevice(false);
+    });
   }
 
   // ==================== 设置 ====================
@@ -262,9 +263,8 @@ export class GamepadVibrationService {
     this.lastLowFreq = 0;
     this.lastHighFreq = 0;
 
-    if (this.isVibrating) {
-      this.stopVibrationImmediate();
-    }
+    this.deviceVibrationCoordinator.stopAll();
+    this.isVibrating = false;
 
     try {
       const controllers = this.usbDriverService.getControllers();
@@ -450,8 +450,10 @@ export class GamepadVibrationService {
         gameIntensity, this.audioDeviceTransient, 100)
       : 0;
 
-    this.ensureHdHapticSupport();
-    const minimumTransientIntensity = this.hdHapticSupported
+    if (this.deviceVibrationCoordinator.isTouchHapticActive()) return;
+
+    const hdHapticSupported = this.deviceVibrationCoordinator.isHdHapticSupported();
+    const minimumTransientIntensity = hdHapticSupported
       ? 1
       : GamepadVibrationService.MINIMUM_DEVICE_INTENSITY;
     if (mixedContinuous < GamepadVibrationService.MINIMUM_DEVICE_INTENSITY &&
@@ -462,7 +464,7 @@ export class GamepadVibrationService {
     }
 
     try {
-      if (this.hdHapticSupported) {
+      if (hdHapticSupported) {
         this.triggerMixedPattern(
           lowIntensity,
           highIntensity,
@@ -488,15 +490,7 @@ export class GamepadVibrationService {
    */
   private stopVibrationImmediate(): void {
     this.deviceRenderEpoch++;
-    try {
-      // 优先使用同步停止 API (API 12+)
-      vibrator.stopVibrationSync();
-    } catch (_) {
-      // 回退到异步停止
-      try {
-        vibrator.stopVibration();
-      } catch (_) { /* ignore */ }
-    }
+    this.deviceVibrationCoordinator.stopSourceVibration();
     this.isVibrating = false;
   }
 
@@ -549,10 +543,10 @@ export class GamepadVibrationService {
       }
     }
 
-    vibrator.startVibration({
+    this.deviceVibrationCoordinator.startSourceVibration({
       type: 'pattern',
       pattern: builder.build()
-    }, this.createVibrateAttribute(gameActive)).catch((_: Error): void => {
+    }, gameActive ? 'physicalFeedback' : 'media', (): void => {
       this.triggerMixedTimeFallback(
         mixedContinuous, mixedTransient, hasAudioTransient, renderEpoch);
     });
@@ -607,24 +601,10 @@ export class GamepadVibrationService {
     }
 
     const gameActive = this.gameDeviceLow > 0 || this.gameDeviceHigh > 0;
-    vibrator.startVibration({
+    this.deviceVibrationCoordinator.startSourceVibration({
       type: 'time',
       duration: duration
-    }, this.createVibrateAttribute(gameActive)).catch((err: Error): void => {
-      console.warn(`[VIBRATION] 时长震动失败: ${err.message}`);
-    });
-  }
-
-  private createVibrateAttribute(gameActive: boolean): vibrator.VibrateAttribute {
-    const attribute: vibrator.VibrateAttribute = {
-      id: this.localVibratorId,
-      usage: gameActive ? 'physicalFeedback' : 'media'
-    };
-    if (deviceInfo.sdkApiVersion >= 19 &&
-        this.localVibratorDeviceId !== null) {
-      attribute.deviceId = this.localVibratorDeviceId;
-    }
-    return attribute;
+    }, gameActive ? 'physicalFeedback' : 'media');
   }
 
   private getAudioContinuousLeaseMs(scene: number): number {
@@ -638,8 +618,7 @@ export class GamepadVibrationService {
    * 时长回退马达需要更高的幅度下限与稍长脉冲，才能稳定感知弱节拍。
    */
   private applyMusicTransientPolicy(frameFlags: AudioHapticFrameFlag): void {
-    this.ensureHdHapticSupport();
-    if (this.hdHapticSupported) {
+    if (this.deviceVibrationCoordinator.isHdHapticSupported()) {
       this.audioDeviceTransientDurationMs = Math.round(Math.max(
         28, Math.min(34, this.audioDeviceTransientDurationMs * 0.58)));
       return;
@@ -670,30 +649,4 @@ export class GamepadVibrationService {
         this.audioDeviceTransientDurationMs * durationScale)));
   }
 
-  private ensureHdHapticSupport(): void {
-    if (this.hdHapticSupported !== null) return;
-    if (deviceInfo.sdkApiVersion < 18) {
-      this.hdHapticSupported = false;
-      return;
-    }
-    try {
-      this.hdHapticSupported = vibrator.isHdHapticSupported();
-      if (deviceInfo.sdkApiVersion >= 19) {
-        const localVibrators = vibrator.getVibratorInfoSync()
-          .filter((info: vibrator.VibratorInfo): boolean =>
-            info.isLocalVibrator);
-        const localVibrator = localVibrators
-          .find((info: vibrator.VibratorInfo): boolean =>
-            info.isHdHapticSupported) ?? localVibrators[0];
-        if (localVibrator !== undefined) {
-          this.localVibratorDeviceId = localVibrator.deviceId;
-          this.localVibratorId = localVibrator.vibratorId;
-          this.hdHapticSupported = localVibrator.isHdHapticSupported;
-        }
-      }
-      console.info(`[VIBRATION] 高清振动支持: ${this.hdHapticSupported}`);
-    } catch (_) {
-      this.hdHapticSupported = false;
-    }
-  }
 }

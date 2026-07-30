@@ -14,7 +14,7 @@
  * 编辑模式相关的颜色常量、预设色板、辅助接口和振动反馈函数。
  */
 
-import { vibrator } from '@kit.SensorServiceKit';
+import { DeviceVibrationCoordinator } from '../service/input/DeviceVibrationCoordinator';
 
 // =============================================================================
 // 接口
@@ -81,9 +81,7 @@ export function doKeyHaptic(level: string): void {
     case 'heavy': duration = 80; break;
     default: return;
   }
-  try {
-    vibrator.startVibration({ type: 'time', duration }, { id: 0, usage: 'touch' });
-  } catch (_e) { /* ignore */ }
+  DeviceVibrationCoordinator.getInstance().playTouchHaptic(duration);
 }
 
 // =============================================================================
