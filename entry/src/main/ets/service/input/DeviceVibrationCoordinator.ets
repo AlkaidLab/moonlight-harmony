@@ -18,6 +18,7 @@ import { deviceInfo } from '@kit.BasicServicesKit';
  * 来源状态，脉冲结束后通过回调恢复最新的混合输出。
  */
 export class DeviceVibrationCoordinator {
+  private static readonly NATIVE_OPERATION_TIMEOUT_MS: number = 2000;
   private static instance: DeviceVibrationCoordinator;
 
   private hdHapticSupported: boolean | null = null;
@@ -121,10 +122,13 @@ export class DeviceVibrationCoordinator {
       }
 
       try {
-        return vibrator.startVibration({
-          type: 'time',
-          duration: duration
-        }, this.createTouchVibrateAttribute()).then((): void => {
+        return this.withNativeTimeout(
+          vibrator.startVibration({
+            type: 'time',
+            duration: duration
+          }, this.createTouchVibrateAttribute()),
+          '机身按键触感启动'
+        ).then((): void => {
           if (touchEpoch !== this.touchHapticEpoch || !this.touchHapticActive) return;
           this.touchHapticTimer = setTimeout((): void => {
             this.finishTouchHaptic(touchEpoch);
@@ -149,9 +153,12 @@ export class DeviceVibrationCoordinator {
     }
 
     try {
-      return vibrator.startVibration(
-        effect,
-        this.createSourceVibrateAttribute(usage)
+      return this.withNativeTimeout(
+        vibrator.startVibration(
+          effect,
+          this.createSourceVibrateAttribute(usage)
+        ),
+        '机身来源振动启动'
       ).then((): void => {
         if (sourceEpoch !== this.sourceEpoch || this.isTouchHapticActive()) return;
       }).catch((error: Error): void => {
@@ -185,7 +192,10 @@ export class DeviceVibrationCoordinator {
       return Promise.resolve();
     } catch (_) {
       try {
-        return vibrator.stopVibration().catch((error: Error): void => {
+        return this.withNativeTimeout(
+          vibrator.stopVibration(),
+          '机身振动停止'
+        ).catch((error: Error): void => {
           console.warn('[VIBRATION] 停止机身振动失败: ' + error.message);
         });
       } catch (error) {
@@ -193,6 +203,30 @@ export class DeviceVibrationCoordinator {
         return Promise.resolve();
       }
     }
+  }
+
+  private withNativeTimeout(operation: Promise<void>, operationName: string): Promise<void> {
+    return new Promise<void>((resolve, reject): void => {
+      let settled: boolean = false;
+      const timeoutId: number = setTimeout((): void => {
+        if (settled) return;
+        settled = true;
+        console.warn('[VIBRATION] ' + operationName + '超时，继续处理后续请求');
+        resolve();
+      }, DeviceVibrationCoordinator.NATIVE_OPERATION_TIMEOUT_MS);
+
+      operation.then((): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve();
+      }).catch((error: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(error);
+      });
+    });
   }
 
   private createTouchVibrateAttribute(): vibrator.VibrateAttribute {
