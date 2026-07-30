@@ -18,7 +18,7 @@
  * - 自定义格式化显示
  */
 import { AppColors, AppSizes } from '../common/Theme';
-import { vibrator } from '@kit.SensorServiceKit';
+import { DeviceVibrationCoordinator } from '../service/input/DeviceVibrationCoordinator';
 
 /**
  * 对数滑块转换工具类
@@ -142,17 +142,7 @@ export struct SettingSlider {
    * 使用 20ms 短促振动以获得清晰的"咔嗒"手感
    */
   private triggerSnapHaptic(): void {
-    try {
-      vibrator.startVibration({
-        type: 'time',
-        duration: 20
-      }, {
-        id: 0,
-        usage: 'touch'
-      })
-    } catch (_e) {
-      // 忽略振动失败
-    }
+    DeviceVibrationCoordinator.getInstance().playTouchHaptic(20);
   }
 
   /**

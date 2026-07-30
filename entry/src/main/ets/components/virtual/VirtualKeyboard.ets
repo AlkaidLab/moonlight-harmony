@@ -26,7 +26,7 @@
 import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
-import { vibrator } from '@kit.SensorServiceKit';
+import { DeviceVibrationCoordinator } from '../../service/input/DeviceVibrationCoordinator';
 import { display } from '@kit.ArkUI';
 
 // =============================================================================
@@ -611,9 +611,7 @@ export struct VirtualKeyboard {
     if (touchType === TouchType.Down) {
       this.onVirtualKeyEvent(key.vk, true);
       // 触感反馈
-      try {
-        vibrator.startVibration({ type: 'time', duration: 20 }, { id: 0, usage: 'touch' });
-      } catch (_e) {}
+      DeviceVibrationCoordinator.getInstance().playTouchHaptic(20);
     } else if (touchType === TouchType.Up || touchType === TouchType.Cancel) {
       this.onVirtualKeyEvent(key.vk, false);
 
