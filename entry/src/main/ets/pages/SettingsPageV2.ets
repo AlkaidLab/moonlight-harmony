@@ -216,6 +216,7 @@ struct SettingsPageV2 {
   // 输入 - 鼠标/触控
   @State showLocalCursor: boolean = false;   // 显示本地指针（双光标模式）
   @State touchscreenTrackpad: boolean = false;
+  @State enableThreeFingerIme: boolean = true;
   @State lowLatencyTouch: boolean = false;
   @State enableDoubleClickDrag: boolean = false;
   @State doubleTapTimeThreshold: number = 125;
@@ -568,6 +569,7 @@ struct SettingsPageV2 {
       // 输入 - 鼠标/触控
       this.showLocalCursor = await this.loadBoolean(SettingsKeys.SHOW_LOCAL_CURSOR, false);
       this.touchscreenTrackpad = await this.loadBoolean(SettingsKeys.TOUCHSCREEN_TRACKPAD, false);
+      this.enableThreeFingerIme = await this.loadBoolean(SettingsKeys.ENABLE_THREE_FINGER_IME, true);
       this.lowLatencyTouch = await this.loadBoolean(SettingsKeys.LOW_LATENCY_TOUCH, false);
       this.enableDoubleClickDrag = await this.loadBoolean(SettingsKeys.ENABLE_DOUBLE_CLICK_DRAG, false);
       this.doubleTapTimeThreshold = await PreferencesUtil.get<number>(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125);
@@ -1751,6 +1753,16 @@ struct SettingsPageV2 {
                   this.saveSetting(SettingsKeys.TOUCHSCREEN_TRACKPAD, this.touchscreenTrackpad);
                   // 清除菜单中选择的触摸模式，使设置页的选项在下次串流时生效
                   this.saveSetting(SettingsKeys.LAST_TOUCH_MODE, '');
+                }
+              },
+              {
+                title: '三指唤出输入法',
+                subtitle: '三指同时触摸时打开系统输入法，关闭后触摸将发送到主机',
+                type: 'toggle',
+                value: this.enableThreeFingerIme,
+                action: () => {
+                  this.enableThreeFingerIme = !this.enableThreeFingerIme;
+                  this.saveSetting(SettingsKeys.ENABLE_THREE_FINGER_IME, this.enableThreeFingerIme);
                 }
               },
               {

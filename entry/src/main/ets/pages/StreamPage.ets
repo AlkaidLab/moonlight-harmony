@@ -1948,11 +1948,14 @@ struct StreamPage {
   /**
    * 处理本地系统触摸手势。
    *
-   * 三指同时触摸用于唤出 HarmonyOS IME，优先于远端触摸输入和双指缩放。
+   * 启用三指输入法手势后，三指同时触摸用于唤出 HarmonyOS IME，
+   * 优先于远端触摸输入和双指缩放。
    * 触发后持续吞掉本组三指，避免远端收到半截多指触摸或鼠标拖拽。
    */
   private handleSystemTouchGesture(event: TouchEvent): boolean {
-    const result = this.threeFingerImeGestureHandler.handleTouchEvent(event, this.viewModel.isConnected);
+    const enableThreeFingerIme = this.viewModel.inputSettings?.enableThreeFingerIme ?? true;
+    const result = this.threeFingerImeGestureHandler.handleTouchEvent(
+      event, enableThreeFingerIme && this.viewModel.isConnected);
     if (result === ThreeFingerImeGestureResult.TRIGGERED) {
       this.touchInputHandler.cancelActiveInput();
       this.panZoomHandler.cancelActiveGesture();
