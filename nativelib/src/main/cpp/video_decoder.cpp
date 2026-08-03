@@ -482,8 +482,7 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     hdrVividProbeActive_.store(
         (config.codec == VideoCodecType::HEVC ||
          config.codec == VideoCodecType::AV1) &&
-        config.enableHdr &&
-        config.hdrType == HdrType::HLG,
+        config.enableHdr,
         std::memory_order_relaxed);
     hdrVividDetected_.store(false, std::memory_order_relaxed);
     window_ = window;
@@ -745,12 +744,13 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
     // HDR Vivid is signalled by CUVA metadata preserved in the elementary
     // stream. OH_MD_KEY_VIDEO_IS_HDR_VIVID describes a media-file track and is
     // only supported by demuxers/muxers, so it is not a decoder Configure key.
-    if (config_.enableHdr && config_.hdrType == HdrType::HLG) {
-        OH_LOG_INFO(LOG_APP, "{Init} HLG stream relies on in-band CUVA metadata for HDR Vivid");
+    if (config_.enableHdr) {
+        OH_LOG_INFO(LOG_APP,
+                    "{Init} CUVA metadata remains in-band; no client-side HDR Vivid override");
     }
     
     OH_LOG_INFO(LOG_APP, "{Init} Configuring decoder: HDR=%{public}d, hdrType=%{public}d (0=SDR,1=HDR10,2=HLG), colorSpace=%{public}d, colorRange=%{public}d",
-                config_.enableHdr ? 1 : 0, static_cast<int>(config_.hdrType), 
+                config_.enableHdr ? 1 : 0, static_cast<int>(config_.hdrType),
                 static_cast<int>(config_.colorSpace), static_cast<int>(config_.colorRange));
     
     ret = OH_VideoDecoder_Configure(decoder_, format);
@@ -780,26 +780,19 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
             // OH_COLORSPACE_BT2020_PQ_LIMIT = 10 (COLORPRIMARIES_BT2020 | TRANSFUNC_PQ | RANGE_LIMITED)
             
             OH_NativeBuffer_ColorSpace windowColorSpace;
-            OH_NativeBuffer_MetadataType metadataType;
             bool isFullRange = (config_.colorRange == ColorRange::FULL);
             
             switch (config_.hdrType) {
-                case HdrType::HLG:       // HLG with HDR Vivid
+                case HdrType::HLG:
                     windowColorSpace = isFullRange ? OH_COLORSPACE_BT2020_HLG_FULL : OH_COLORSPACE_BT2020_HLG_LIMIT;
-                    // 使用 OH_VIDEO_HDR_VIVID 而非 OH_VIDEO_HDR_HLG
-                    // Sunshine 编码端会在 HLG 码流中携带 CUVA T.35 Vivid 动态元数据
-                    // OH_VIDEO_HDR_VIVID 告知显示管线按 Vivid 标准处理色调映射
-                    metadataType = OH_VIDEO_HDR_VIVID;
                     break;
                 case HdrType::HDR10:      // PQ
                 default:
                     windowColorSpace = isFullRange ? OH_COLORSPACE_BT2020_PQ_FULL : OH_COLORSPACE_BT2020_PQ_LIMIT;
-                    metadataType = OH_VIDEO_HDR_HDR10;
                     break;
             }
-            
-            OH_LOG_INFO(LOG_APP, "{Init} HDR NativeWindow: colorspace=%{public}d, metadata=%{public}d, fullRange=%{public}d",
-                        static_cast<int>(windowColorSpace), static_cast<int>(metadataType), isFullRange ? 1 : 0);
+            OH_LOG_INFO(LOG_APP, "{Init} HDR NativeWindow: colorspace=%{public}d, fullRange=%{public}d",
+                        static_cast<int>(windowColorSpace), isFullRange ? 1 : 0);
             
 #ifdef __OHOS__
             // 1. 设置 Color Gamut（颜色域）
@@ -810,27 +803,23 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
                 OH_LOG_WARN(LOG_APP, "{Init} Failed to set color gamut: %{public}d", gamutRet);
             }
             
-            // 2. 设置 HDR 元数据类型
-            int32_t metaRet = OH_NativeWindow_SetMetadataValue(window_, OH_HDR_METADATA_TYPE,
-                sizeof(metadataType), reinterpret_cast<uint8_t*>(&metadataType));
-            if (metaRet != 0) {
-                OH_LOG_WARN(LOG_APP, "{Init} Failed to set HDR metadata: %{public}d", metaRet);
-            }
-            
-            // 3. 设置 colorspace
+            // 不在 Window 上预设 OH_HDR_METADATA_TYPE，保留解码器从码流
+            // CUVA 动态元数据判定输出 Buffer HDR 类型的能力。
+
+            // 2. 设置 colorspace
             int32_t csRet = OH_NativeWindow_SetColorSpace(window_, windowColorSpace);
             if (csRet != 0) {
                 OH_LOG_WARN(LOG_APP, "{Init} Failed to set colorspace: %{public}d", csRet);
             }
             
-            // 4. 设置 HDR 白点亮度
+            // 3. 设置 HDR 白点亮度
             float hdrWhitePointBrightness = 1.0f;
             int32_t hdrBrightRet = OH_NativeWindow_NativeWindowHandleOpt(window_, SET_HDR_WHITE_POINT_BRIGHTNESS, hdrWhitePointBrightness);
             if (hdrBrightRet != 0) {
                 OH_LOG_WARN(LOG_APP, "{Init} Failed to set HDR white point: %{public}d", hdrBrightRet);
             }
             
-            // 5. 设置 HDR 静态元数据（SMPTE 2086 + CTA 861.3）
+            // 4. 设置 HDR 静态元数据（SMPTE 2086 + CTA 861.3）
             // Sunshine 会通过控制流传递主机显示器/内容元数据；缺失时才使用 BT.2020 默认值。
             OH_NativeBuffer_StaticMetadata staticMetadata;
             bool hasHostHdrStaticMetadata = false;
@@ -2657,7 +2646,7 @@ void SetHdrConfig(bool enableHdr, int hdrType, int colorSpace, int colorRange) {
     
     OH_LOG_INFO(LOG_APP, "SetHdrConfig: HDR=%{public}d, type=%{public}d, cs=%{public}d, cr=%{public}d",
                 enableHdr ? 1 : 0, hdrType, colorSpace, colorRange);
-    
+
     g_enableHdr = enableHdr;
     switch (hdrType) {
         case 1:  g_hdrType = HdrType::HDR10; break;

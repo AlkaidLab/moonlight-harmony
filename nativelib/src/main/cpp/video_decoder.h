@@ -428,7 +428,7 @@ private:
     std::atomic<uint64_t> syncDrainEvents_{0};
     std::atomic<uint64_t> syncDrainFrames_{0};
 
-    // HLG 会话开始阶段扫描 CUVA T.35 SEI；命中结果保持到会话结束。
+    // 会话开始阶段扫描 CUVA T.35 元数据，仅用于状态观测。
     std::atomic<uint32_t> hdrVividProbeDecodeUnits_{0};
     std::atomic<bool> hdrVividProbeActive_{false};
     std::atomic<bool> hdrVividDetected_{false};
