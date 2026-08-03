@@ -302,6 +302,10 @@ private:
     static void OnOutputFormatChanged(OH_AVCodec* codec, OH_AVFormat* format, void* userData);
     static void OnInputBufferAvailable(OH_AVCodec* codec, uint32_t index, OH_AVBuffer* data, void* userData);
     static void OnOutputBufferAvailable(OH_AVCodec* codec, uint32_t index, OH_AVBuffer* data, void* userData);
+
+    void ApplyOutputHdrMetadata(OH_AVFormat* format);
+    void SetNativeWindowHdrMetadataType(OH_NativeBuffer_MetadataType metadataType,
+                                        const char* source);
     
     // 获取 MIME 类型
     const char* GetMimeType(VideoCodecType codec) const;
@@ -349,6 +353,9 @@ private:
     
     // 渲染窗口
     OHNativeWindow* window_ = nullptr;
+    std::mutex windowMetadataMutex_;
+    bool hasAppliedHdrMetadataType_ = false;
+    OH_NativeBuffer_MetadataType appliedHdrMetadataType_ = OH_VIDEO_HDR_HDR10;
 
     // NativeRender's singleton lifetime covers the decoder session. Cache it so
     // output callbacks do not contend on the singleton mutex for every frame.
@@ -428,7 +435,7 @@ private:
     std::atomic<uint64_t> syncDrainEvents_{0};
     std::atomic<uint64_t> syncDrainFrames_{0};
 
-    // HLG 会话开始阶段扫描 CUVA T.35 SEI；命中结果保持到会话结束。
+    // 会话开始阶段扫描 CUVA T.35 元数据，仅用于状态观测。
     std::atomic<uint32_t> hdrVividProbeDecodeUnits_{0};
     std::atomic<bool> hdrVividProbeActive_{false};
     std::atomic<bool> hdrVividDetected_{false};
