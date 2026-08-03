@@ -1557,8 +1557,15 @@ void VideoDecoder::SetNativeWindowHdrMetadataType(
         OH_NativeBuffer_MetadataType metadataType, const char* source) {
 #ifdef __OHOS__
     std::lock_guard<std::mutex> lock(windowMetadataMutex_);
-    if (window_ == nullptr ||
-        (hasAppliedHdrMetadataType_ && appliedHdrMetadataType_ == metadataType)) {
+    if (window_ == nullptr) {
+        return;
+    }
+    if (hasAppliedHdrMetadataType_ &&
+        appliedHdrMetadataType_ == OH_VIDEO_HDR_VIVID &&
+        metadataType != OH_VIDEO_HDR_VIVID) {
+        return;
+    }
+    if (hasAppliedHdrMetadataType_ && appliedHdrMetadataType_ == metadataType) {
         return;
     }
 
@@ -1585,12 +1592,6 @@ void VideoDecoder::SetNativeWindowHdrMetadataType(
 void VideoDecoder::ApplyOutputHdrMetadata(OH_AVFormat* format) {
     if (!config_.enableHdr || format == nullptr) {
         return;
-    }
-
-    int32_t vividFlag = 0;
-    if (OH_AVFormat_GetIntValue(format, OH_MD_KEY_VIDEO_IS_HDR_VIVID, &vividFlag) &&
-        vividFlag != 0) {
-        hdrVividDetected_.store(true, std::memory_order_relaxed);
     }
 
     int32_t transferChar = config_.hdrType == HdrType::HLG ?
