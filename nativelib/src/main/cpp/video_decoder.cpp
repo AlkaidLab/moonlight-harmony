@@ -485,7 +485,11 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
         config.enableHdr,
         std::memory_order_relaxed);
     hdrVividDetected_.store(false, std::memory_order_relaxed);
-    window_ = window;
+    {
+        std::lock_guard<std::mutex> lock(windowMetadataMutex_);
+        window_ = window;
+        hasAppliedHdrMetadataType_ = false;
+    }
     render_ = NativeRender::GetInstance();
     
     OH_LOG_INFO(LOG_APP, "{Init} Initializing video decoder: %{public}dx%{public}d@%.2f, codec=%{public}d, window=%{public}p",
@@ -802,9 +806,12 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
             if (gamutRet != 0) {
                 OH_LOG_WARN(LOG_APP, "{Init} Failed to set color gamut: %{public}d", gamutRet);
             }
-            
-            // 不在 Window 上预设 OH_HDR_METADATA_TYPE，保留解码器从码流
-            // CUVA 动态元数据判定输出 Buffer HDR 类型的能力。
+
+            // 先写入基础 HDR 类型，覆盖同一 Surface 上一会话可能遗留的 Vivid。
+            // 如果后续从输出格式或 CUVA 码流检测到 Vivid，再切换类型。
+            const OH_NativeBuffer_MetadataType baseMetadataType =
+                config_.hdrType == HdrType::HLG ? OH_VIDEO_HDR_HLG : OH_VIDEO_HDR_HDR10;
+            SetNativeWindowHdrMetadataType(baseMetadataType, "session baseline");
 
             // 2. 设置 colorspace
             int32_t csRet = OH_NativeWindow_SetColorSpace(window_, windowColorSpace);
@@ -1018,7 +1025,11 @@ void VideoDecoder::Cleanup() {
         timestampWriteIndex_ = 0;
     }
     
-    window_ = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(windowMetadataMutex_);
+        window_ = nullptr;
+        hasAppliedHdrMetadataType_ = false;
+    }
     configured_ = false;
     firstFrameReceived_ = false;
     lastInstantDecodeTimeMs_ = 0;
@@ -1154,6 +1165,7 @@ int VideoDecoder::SubmitDecodeUnitScatter(const BufferSegment* segments, int seg
             if (scanner.Finish()) {
                 hdrVividDetected_.store(true, std::memory_order_relaxed);
                 hdrVividProbeActive_.store(false, std::memory_order_relaxed);
+                SetNativeWindowHdrMetadataType(OH_VIDEO_HDR_VIVID, "CUVA bitstream");
                 OH_LOG_INFO(LOG_APP,
                             "HDR Vivid CUVA dynamic metadata detected in %{public}s",
                             config_.codec == VideoCodecType::AV1 ?
@@ -1541,6 +1553,61 @@ void VideoDecoder::RecordDroppedFrames(DropReason reason, uint64_t count) {
 // AVCodec 回调实现
 // =============================================================================
 
+void VideoDecoder::SetNativeWindowHdrMetadataType(
+        OH_NativeBuffer_MetadataType metadataType, const char* source) {
+#ifdef __OHOS__
+    std::lock_guard<std::mutex> lock(windowMetadataMutex_);
+    if (window_ == nullptr ||
+        (hasAppliedHdrMetadataType_ && appliedHdrMetadataType_ == metadataType)) {
+        return;
+    }
+
+    OH_NativeBuffer_MetadataType value = metadataType;
+    const int32_t ret = OH_NativeWindow_SetMetadataValue(
+        window_, OH_HDR_METADATA_TYPE, sizeof(value), reinterpret_cast<uint8_t*>(&value));
+    if (ret != 0) {
+        OH_LOG_WARN(LOG_APP,
+                    "Failed to set HDR metadata type=%{public}d from %{public}s: %{public}d",
+                    static_cast<int>(metadataType), source, ret);
+        return;
+    }
+
+    appliedHdrMetadataType_ = metadataType;
+    hasAppliedHdrMetadataType_ = true;
+    OH_LOG_INFO(LOG_APP, "HDR metadata type=%{public}d applied from %{public}s",
+                static_cast<int>(metadataType), source);
+#else
+    (void)metadataType;
+    (void)source;
+#endif
+}
+
+void VideoDecoder::ApplyOutputHdrMetadata(OH_AVFormat* format) {
+    if (!config_.enableHdr || format == nullptr) {
+        return;
+    }
+
+    int32_t vividFlag = 0;
+    if (OH_AVFormat_GetIntValue(format, OH_MD_KEY_VIDEO_IS_HDR_VIVID, &vividFlag) &&
+        vividFlag != 0) {
+        hdrVividDetected_.store(true, std::memory_order_relaxed);
+    }
+
+    int32_t transferChar = config_.hdrType == HdrType::HLG ?
+        kTransferCharHLG : kTransferCharPQ;
+    OH_AVFormat_GetIntValue(format, OH_MD_KEY_TRANSFER_CHARACTERISTICS, &transferChar);
+
+    OH_NativeBuffer_MetadataType metadataType;
+    if (hdrVividDetected_.load(std::memory_order_relaxed)) {
+        metadataType = OH_VIDEO_HDR_VIVID;
+    } else if (transferChar == kTransferCharHLG) {
+        metadataType = OH_VIDEO_HDR_HLG;
+    } else {
+        metadataType = OH_VIDEO_HDR_HDR10;
+    }
+    SetNativeWindowHdrMetadataType(metadataType, "decoder output format");
+}
+
 void VideoDecoder::OnError(OH_AVCodec* codec, int32_t errorCode, void* userData) {
     OH_LOG_ERROR(LOG_APP, "Decoder error: %{public}d", errorCode);
 }
@@ -1557,6 +1624,11 @@ void VideoDecoder::OnOutputFormatChanged(OH_AVCodec* codec, OH_AVFormat* format,
         OH_AVFormat_GetIntValue(format, OH_MD_KEY_HEIGHT, &height);
     }
     OH_LOG_INFO(LOG_APP, "Output format changed: %{public}dx%{public}d", width, height);
+
+    auto* self = static_cast<VideoDecoder*>(userData);
+    if (self != nullptr) {
+        self->ApplyOutputHdrMetadata(format);
+    }
 }
 
 void VideoDecoder::OnInputBufferAvailable(OH_AVCodec* codec, uint32_t index, 
@@ -2176,6 +2248,7 @@ int VideoDecoder::SyncProcessOutput(int64_t timeoutUs) {
             OH_AVFormat_GetIntValue(format, OH_MD_KEY_VIDEO_PIC_WIDTH, &width);
             OH_AVFormat_GetIntValue(format, OH_MD_KEY_VIDEO_PIC_HEIGHT, &height);
             OH_LOG_INFO(LOG_APP, "Sync: output format changed to %{public}dx%{public}d", width, height);
+            ApplyOutputHdrMetadata(format);
             OH_AVFormat_Destroy(format);
         }
         return 0;  // 流变化不算帧输出，继续处理
