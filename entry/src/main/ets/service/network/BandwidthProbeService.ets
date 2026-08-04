@@ -13,6 +13,8 @@ import { SettingsService, BandwidthProbeSettings } from '../SettingsService';
 import { ConnectionPath, ConnectionPathInfo, ConnectionPathService } from './ConnectionPathService';
 import { StringUtil } from '../../utils/StringUtil';
 
+export const METERED_BANDWIDTH_PROBE_MAX_BYTES: number = 320 * 1024;
+
 class BandwidthProbeCacheEntry {
   measuredKbps: number;
   safeBitrateKbps: number;
@@ -169,7 +171,7 @@ export class BandwidthProbeService {
     let bestDuration = 0;
     let bestBytes = 0;
     let bestKbps = 0;
-    let requestedSamples = 0;
+    let requestedBytes = 0;
     let warmupCompleted = false;
 
     for (let i = 0; i < BandwidthProbeService.SAMPLE_SIZES.length; i++) {
@@ -177,7 +179,7 @@ export class BandwidthProbeService {
       if (bytes < capabilities.minBytes || bytes > capabilities.maxBytes) {
         continue;
       }
-      if (metered && requestedSamples >= 2) {
+      if (metered && requestedBytes + bytes > METERED_BANDWIDTH_PROBE_MAX_BYTES) {
         break;
       }
       const remainingBudgetMs = BandwidthProbeService.TOTAL_BUDGET_MS - (Date.now() - startedAt);
@@ -187,8 +189,8 @@ export class BandwidthProbeService {
 
       const sampleStartedAt = Date.now();
       const timeoutMs = Math.max(1, Math.min(NvHttp.NETWORK_PROBE_TIMEOUT, remainingBudgetMs));
+      requestedBytes += bytes;
       const data = await session.download(bytes, nonce, timeoutMs);
-      requestedSamples++;
       const durationMs = Math.max(1, Date.now() - sampleStartedAt);
       if (operationId !== this.operationId) {
         return null;

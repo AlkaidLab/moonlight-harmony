@@ -41,6 +41,7 @@ import { DevKeyVerifier } from '../utils/DevKeyVerifier';
 import { DeveloperUnlockResult, DeveloperUnlockService, DeveloperUnlockStatus } from '../service/DeveloperUnlockService';
 import { GitHubDeviceCode } from '../utils/GitHubStarVerifier';
 import { ToastQueue } from '../utils/ToastQueue';
+import { METERED_BANDWIDTH_PROBE_MAX_BYTES } from '../service/network/BandwidthProbeService';
 
 /**
  * 选择器选项接口
@@ -1089,7 +1090,8 @@ struct SettingsPageV2 {
               },
               {
                 title: '允许计费网络测速',
-                subtitle: '允许在蜂窝或计费网络传输少量探测数据',
+                subtitle: '允许在蜂窝或计费网络传输最多 ' +
+                  (METERED_BANDWIDTH_PROBE_MAX_BYTES / 1024).toString() + ' KiB 探测数据',
                 type: 'toggle',
                 value: this.meteredBandwidthProbeEnabled,
                 visible: this.bandwidthProbeEnabled,
