@@ -25,6 +25,7 @@ import {
   parseRtspSessionHost,
 } from './NetHelper';
 import { selectBestAddress } from '../model/ComputerInfo';
+import { ConnectionPath, ConnectionPathService } from '../service/network/ConnectionPathService';
 
 const TAG = 'NetworkSelfCheck';
 const DOMAIN = 0x0000;
@@ -128,6 +129,7 @@ export class NetworkErrorClassifierSelfCheck {
     let failed = 0;
     failed += NetworkErrorClassifierSelfCheck.runTransientErrorCases();
     failed += NetworkErrorClassifierSelfCheck.runNetHelperCases();
+    failed += NetworkErrorClassifierSelfCheck.runConnectionPathCases();
     failed += NetworkErrorClassifierSelfCheck.runWakeOnLanCases();
     failed += NetworkErrorClassifierSelfCheck.runAddressSelectionCases();
 
@@ -258,6 +260,54 @@ export class NetworkErrorClassifierSelfCheck {
       failed += NetworkErrorClassifierSelfCheck.expectEqual('WakeOnLan.isValidMacAddress', c.name, c.actual, c.expected, c.reason);
     }
     NetworkErrorClassifierSelfCheck.logGroupResult('WakeOnLan', failed);
+    return failed;
+  }
+
+  private static runConnectionPathCases(): number {
+    let failed = 0;
+    const cases: StringCase[] = [
+      {
+        name: 'VPN takes precedence over private target',
+        actual: ConnectionPathService.classify(['192.168.50.10'], true),
+        expected: ConnectionPath.VPN,
+        reason: '组网 VPN 常使用私网地址，不能误判为物理 LAN'
+      },
+      {
+        name: 'private target is LAN',
+        actual: ConnectionPathService.classify(['10.0.0.8'], false),
+        expected: ConnectionPath.LAN,
+        reason: '无 VPN 时 RFC1918 地址使用局域网档位'
+      },
+      {
+        name: 'public target is WAN',
+        actual: ConnectionPathService.classify(['203.0.113.8'], false),
+        expected: ConnectionPath.WAN,
+        reason: '公网目标使用远程档位'
+      },
+      {
+        name: 'mixed DNS targets are UNKNOWN',
+        actual: ConnectionPathService.classify(['192.168.1.8', '203.0.113.8'], false),
+        expected: ConnectionPath.UNKNOWN,
+        reason: '无法确认实际选中地址时不能冒进使用 LAN 高码率档位'
+      },
+      {
+        name: 'private target over cellular is UNKNOWN',
+        actual: ConnectionPathService.classify(['10.0.0.8'], false, true),
+        expected: ConnectionPath.UNKNOWN,
+        reason: '蜂窝网络中的私网地址不能证明与 Sunshine 位于同一物理 LAN'
+      },
+      {
+        name: 'unresolved target is UNKNOWN',
+        actual: ConnectionPathService.classify([], false),
+        expected: ConnectionPath.UNKNOWN,
+        reason: '无法解析时交由调用方保守回退到 WAN 配置'
+      }
+    ];
+    for (const c of cases) {
+      failed += NetworkErrorClassifierSelfCheck.expectEqual(
+        'ConnectionPathService', c.name, c.actual, c.expected, c.reason);
+    }
+    NetworkErrorClassifierSelfCheck.logGroupResult('ConnectionPathService', failed);
     return failed;
   }
 

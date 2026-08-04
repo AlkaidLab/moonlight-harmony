@@ -24,6 +24,7 @@ import { AudioHapticFrame } from '../AudioHapticFrame';
 import { AudioVibrationService } from '../AudioVibrationService';
 import { AdaptiveBitrateService } from './AdaptiveBitrateService';
 import { NetworkBoostService } from '../network/NetworkBoostService';
+import { BandwidthProbeService } from '../network/BandwidthProbeService';
 import { MoonBridge as ClipboardNativeBridge } from '../jni/ClipboardBridge';
 import {
   MoonBridge,
@@ -384,6 +385,7 @@ export class StreamingSession {
   private computerId: string = '';
   private appId: number = 0;
   private config: StreamConfig | null = null;
+  private userBitrateLimitKbps: number = 0;
   private surfaceId: string = '';
   private isRunning: boolean = false;
   /** 用户主动发起的停止（菜单断开/退出游戏），抑制 connectionTerminated 回调弹窗 */
@@ -394,6 +396,7 @@ export class StreamingSession {
   private computer: ComputerInfo | null = null;
   /** 本次串流最终选中的连接地址（手动/锁定/轮询胜出地址），保证 HTTP 与原生串流阶段一致 */
   private connectionAddress: string = '';
+  private selectedAddress: string = '';
   private nvHttp: NvHttp | null = null;
   private riKey: ArrayBuffer | null = null;
   private riKeyId: number = 0;
@@ -550,6 +553,7 @@ export class StreamingSession {
     this.computerId = computerId;
     this.appId = appId;
     this.config = config;
+    this.userBitrateLimitKbps = config.bitrate;
     this.surfaceId = surfaceId;
     this.displayGuid = displayGuid || '';
     this.useVdd = useVdd || false;
@@ -564,7 +568,9 @@ export class StreamingSession {
     }
 
     try {
+      BandwidthProbeService.getInstance().cancel();
       await this.resolveComputer(computerId, context);
+      await this.applyInitialBitratePolicy();
       this.generateInputKey();
       // 并行执行：网络请求（fetchServerInfo）与本地 native 初始化没有依赖，
       // 可重叠执行节省 50-300ms。两者都会更新 stageProgressCallback 文本，
@@ -721,6 +727,7 @@ export class StreamingSession {
     await this.abrService.checkCapabilities();
     await this.abrService.start(
       this.config.bitrate,
+      this.userBitrateLimitKbps,
       mode,
       () => this.getStats(),
       async (bitrate: number, _reason: string): Promise<boolean> => {
@@ -1063,10 +1070,28 @@ export class StreamingSession {
     const selectedAddress = selectBestAddress(this.computer);
     if (!selectedAddress) throw new Error(`没有可用的连接地址: ${this.computer.name}`);
 
+    this.selectedAddress = selectedAddress;
     // NvHttp 允许地址中携带自定义 HTTP 端口；原生 LiStartConnection 需要纯 host。
     this.connectionAddress = parseAddressAndPort(selectedAddress).host;
     console.info(`串流连接地址: selected=${selectedAddress}, nativeHost=${this.connectionAddress}`);
     this.nvHttp = NvHttp.fromAddress(selectedAddress, this.computer, context);
+  }
+
+  private async applyInitialBitratePolicy(): Promise<void> {
+    if (!this.config || !this.selectedAddress) {
+      return;
+    }
+    try {
+      const decision = await BandwidthProbeService.getInstance().resolveInitialBitrate(
+        this.computerId, this.selectedAddress, this.config.bitrate);
+      this.config.bitrate = decision.bitrateKbps;
+      console.info('StreamingSession: 初始码率路径=' + decision.path + ', userLimit=' +
+        decision.userLimitKbps.toString() + 'kbps, effective=' + decision.bitrateKbps.toString() +
+        'kbps, probeApplied=' + decision.probeApplied.toString() + ', measured=' +
+        Math.round(decision.measuredKbps).toString() + 'kbps');
+    } catch (err) {
+      console.warn('StreamingSession: 初始码率策略回退到原配置: ' + String(err));
+    }
   }
 
   private async fetchServerInfo(): Promise<void> {

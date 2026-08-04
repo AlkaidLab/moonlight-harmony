@@ -13,7 +13,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { HttpClient } from '../../utils/HttpClient';
+import { BinaryHttpSession, HttpClient } from '../../utils/HttpClient';
 import { XmlUtil } from '../../utils/XmlUtil';
 import { StringUtil } from '../../utils/StringUtil';
 import { CryptoUtil } from '../../utils/CryptoUtil';
@@ -135,6 +135,61 @@ interface NvHttpPathRequestOptions {
   connectTimeout?: number;
 }
 
+interface NetworkProbeCapabilitiesResponse {
+  version: number;
+  features: string[];
+  bandwidthProbe?: NetworkProbeCapabilities;
+}
+
+export interface NetworkProbeCapabilities {
+  version: number;
+  endpoint: string;
+  minBytes: number;
+  maxBytes: number;
+  cooldownMs: number;
+}
+
+/** 独占的 Sunshine 带宽探测传输；close() 只取消本轮探测。 */
+export class NetworkProbeSession {
+  private httpSession: BinaryHttpSession | null;
+  private urlPrefix: string;
+
+  constructor(urlPrefix: string, certFilePath: string, keyFilePath: string) {
+    this.urlPrefix = urlPrefix;
+    this.httpSession = new BinaryHttpSession({
+      skipServerValidation: true,
+      clientCertPath: certFilePath,
+      clientKeyPath: keyFilePath
+    });
+  }
+
+  async download(bytes: number, nonce: string, timeoutMs: number): Promise<ArrayBuffer> {
+    const httpSession = this.httpSession;
+    if (!httpSession) {
+      throw NvHttp.makeCanceledError();
+    }
+    const headers: Record<string, string> = {
+      'Accept': 'application/octet-stream',
+      'Accept-Encoding': 'identity',
+      'Cache-Control': 'no-store'
+    };
+    const url = this.urlPrefix + '&bytes=' + bytes.toString() + '&nonce=' + encodeURIComponent(nonce);
+    return await httpSession.get(url, {
+      headers: headers,
+      connectTimeout: Math.min(NvHttp.LONG_CONNECTION_TIMEOUT, timeoutMs),
+      transferTimeout: timeoutMs
+    });
+  }
+
+  close(): void {
+    const httpSession = this.httpSession;
+    this.httpSession = null;
+    if (httpSession) {
+      httpSession.close();
+    }
+  }
+}
+
 export class NvHttp {
   private address: string;
   private serverCert: string | null;
@@ -157,6 +212,7 @@ export class NvHttp {
   static readonly CLIPBOARD_BLOB_CONNECT_TIMEOUT = 10000;
   static readonly CLIPBOARD_BLOB_MAX_ATTEMPTS = 2;
   static readonly CLIPBOARD_BLOB_RETRY_DELAY_MS = 1200;
+  static readonly NETWORK_PROBE_TIMEOUT = 1500;
 
   // getServerInfoRobust 默认参数（启动链路使用）
   static readonly DEFAULT_ROBUST_MAX_ATTEMPTS = 3;
@@ -544,6 +600,52 @@ export class NvHttp {
         );
       });
     });
+  }
+
+  /**
+   * 查询 Sunshine 启动前网络探测能力。旧服务端或任何探测专属错误均视为不支持。
+   */
+  async getNetworkProbeCapabilities(): Promise<NetworkProbeCapabilities | null> {
+    if (!this.hasCertificateFiles()) {
+      return null;
+    }
+    try {
+      const response = await this.doHttpsRequestWithFrpRetry('api/network/capabilities', {
+        connectTimeout: NvHttp.LONG_CONNECTION_TIMEOUT,
+        transferTimeout: NvHttp.READ_TIMEOUT
+      });
+      const parsed: NetworkProbeCapabilitiesResponse = JSON.parse(response);
+      if (parsed.version < 1 || !parsed.features ||
+        parsed.features.indexOf('bandwidth-probe-v1') < 0 || !parsed.bandwidthProbe) {
+        return null;
+      }
+      const probe = parsed.bandwidthProbe;
+      if (probe.version !== 1 || !probe.endpoint || !probe.endpoint.startsWith('/') ||
+        probe.endpoint.includes('://') || probe.endpoint.includes('?') || probe.endpoint.includes('#') ||
+        probe.minBytes < 1 || probe.maxBytes < probe.minBytes || probe.cooldownMs < 0) {
+        console.warn('NvHttp: Sunshine 返回了无效的 bandwidth probe capability');
+        return null;
+      }
+      return probe;
+    } catch (err) {
+      console.info('NvHttp: Sunshine 不支持启动前带宽探测: ' + String(err));
+      return null;
+    }
+  }
+
+  /** 创建与共享请求池隔离的渐进探测会话。 */
+  async createNetworkProbeSession(capabilities: NetworkProbeCapabilities): Promise<NetworkProbeSession> {
+    if (!this.hasCertificateFiles()) {
+      throw new Error('客户端证书缺失，无法执行带宽探测');
+    }
+    if (!capabilities.endpoint.startsWith('/') || capabilities.endpoint.includes('://') ||
+      capabilities.endpoint.includes('?') || capabilities.endpoint.includes('#')) {
+      throw new Error('Sunshine 带宽探测 endpoint 无效');
+    }
+    const baseUrl = await this.getHttpsBaseUrl(NvHttp.LONG_CONNECTION_TIMEOUT);
+    const path = capabilities.endpoint.substring(1);
+    const urlPrefix = this.buildUrl(baseUrl, path);
+    return new NetworkProbeSession(urlPrefix, this.certFilePath, this.keyFilePath);
   }
 
   private async doBinaryHttpsPostWithFrpRetry(

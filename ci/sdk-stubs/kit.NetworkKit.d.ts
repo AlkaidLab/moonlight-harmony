@@ -52,6 +52,20 @@ declare module '@kit.NetworkKit' {
     function createHttp(): HttpRequest;
   }
   namespace connection {
+    enum NetBearType {
+      BEARER_CELLULAR = 0,
+      BEARER_WIFI = 1,
+      BEARER_BLUETOOTH = 2,
+      BEARER_ETHERNET = 3,
+      BEARER_VPN = 4
+    }
+    enum NetCap {
+      NET_CAPABILITY_MMS = 0,
+      NET_CAPABILITY_NOT_METERED = 11,
+      NET_CAPABILITY_INTERNET = 12,
+      NET_CAPABILITY_NOT_VPN = 15,
+      NET_CAPABILITY_VALIDATED = 16
+    }
     interface NetAddress {
       address: string;
       family?: number;
@@ -59,6 +73,25 @@ declare module '@kit.NetworkKit' {
     }
     interface NetHandle {
       netId: number;
+      getAddressesByName(host: string): Promise<Array<NetAddress>>;
+    }
+    interface NetCapabilities {
+      linkUpBandwidthKbps?: number;
+      linkDownBandwidthKbps?: number;
+      networkCap?: Array<NetCap>;
+      bearerTypes: Array<NetBearType>;
+    }
+    interface LinkAddress {
+      address: NetAddress;
+      prefixLength: number;
+    }
+    interface ConnectionProperties {
+      interfaceName: string;
+      domains: string;
+      linkAddresses: Array<LinkAddress>;
+      dnses: Array<NetAddress>;
+      routes: Array<Object>;
+      mtu: number;
     }
     interface NetConnection {
       on(type: string, callback: Function): void;
@@ -69,6 +102,8 @@ declare module '@kit.NetworkKit' {
     function createNetConnection(): NetConnection;
     function getAddressesByName(host: string): Promise<Array<NetAddress>>;
     function getDefaultNet(): Promise<NetHandle>;
+    function getNetCapabilities(netHandle: NetHandle): Promise<NetCapabilities>;
+    function getConnectionProperties(netHandle: NetHandle): Promise<ConnectionProperties>;
     function hasDefaultNet(): Promise<boolean>;
     function getDefaultNetSync(): NetHandle;
     function hasDefaultNetSync(): boolean;

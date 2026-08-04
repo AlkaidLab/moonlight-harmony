@@ -17,12 +17,13 @@ import { AppListItem } from '../components/AppListItem';
 import { AppListViewModel, ObservableApp } from '../viewmodel/AppViewModel';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { common } from '@kit.AbilityKit';
-import { PairState } from '../model/ComputerInfo';
+import { PairState, selectBestAddress } from '../model/ComputerInfo';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { ToastQueue } from '../utils/ToastQueue';
 import { UiSettings, SettingsService } from '../service/SettingsService';
 import { StreamingSession } from '../service/streaming/StreamingSession';
+import { BandwidthProbeService } from '../service/network/BandwidthProbeService';
 
 interface AppListPageParams {
   computerId: string;
@@ -65,6 +66,7 @@ struct AppListPageV2 {
   private computerId: string = '';
   private computerManager: ComputerManager = ComputerManager.getInstance();
   private nvHttp: NvHttp | null = null;
+  private bandwidthProbeTimer: number = -1;
   private searchDebounceTimer: number = -1; // 搜索防抖定时器
   private iconPollIntervalId: number = -1; // 图标轮询定时器ID
   private retryTimerId: number = -1; // 自动重试定时器
@@ -188,6 +190,7 @@ struct AppListPageV2 {
 
   aboutToDisappear(): void {
     this.viewModel.cancelIconLoading();
+    this.cancelBandwidthProbe();
     // 清理图标轮询定时器
     if (this.iconPollIntervalId !== -1) {
       clearInterval(this.iconPollIntervalId);
@@ -301,6 +304,7 @@ struct AppListPageV2 {
       this.calculateOptimalRowCount();
       this.loadDisplays();
       this.waitForFirstAppIcon();
+      this.scheduleBandwidthProbe();
       // 成功 → 重置计数
       this.loadAttempt = 0;
     } catch (err) {
@@ -1203,6 +1207,7 @@ struct AppListPageV2 {
   }
 
   private doLaunchApp(app: ObservableApp): void {
+    this.cancelBandwidthProbe();
     const displayGuid = this.getSelectedDisplayGuid();
     // 把当前 app 的本地海报路径传给 StreamPage，作为 ConnectingOverlay 的背景，
     // 让等待 launchApp / 首帧的几秒钟不再是纯黑屏。
@@ -1220,6 +1225,35 @@ struct AppListPageV2 {
         posterPath: posterPath
       }
     });
+  }
+
+  private scheduleBandwidthProbe(): void {
+    if (this.bandwidthProbeTimer !== -1) {
+      clearTimeout(this.bandwidthProbeTimer);
+    }
+    this.bandwidthProbeTimer = setTimeout(() => {
+      this.bandwidthProbeTimer = -1;
+      const computer = this.computerManager.getComputer(this.computerId);
+      const nvHttp = this.nvHttp;
+      if (!computer || !nvHttp) {
+        return;
+      }
+      const endpoint = selectBestAddress(computer);
+      if (!endpoint) {
+        return;
+      }
+      BandwidthProbeService.getInstance().preheat(this.computerId, endpoint, nvHttp).catch((err: Error) => {
+        console.info('AppListPage: 带宽预探测已跳过: ' + err.message);
+      });
+    }, 300);
+  }
+
+  private cancelBandwidthProbe(): void {
+    if (this.bandwidthProbeTimer !== -1) {
+      clearTimeout(this.bandwidthProbeTimer);
+      this.bandwidthProbeTimer = -1;
+    }
+    BandwidthProbeService.getInstance().cancel();
   }
 
   private openAppMenu(app: ObservableApp): void {

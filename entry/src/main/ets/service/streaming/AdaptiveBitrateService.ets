@@ -43,6 +43,7 @@ export class AdaptiveBitrateService {
   private minBitrate: number = 3000;  // Kbps
   private maxBitrate: number = 100000;  // Kbps
   private initialBitrate: number = 0;
+  private userMaxBitrate: number = 100000;
   private currentBitrate: number = 0;
 
   // 本地 fallback 控制器状态
@@ -96,6 +97,7 @@ export class AdaptiveBitrateService {
    */
   async start(
     initialBitrate: number,
+    maximumBitrate: number,
     mode: string,
     getStats: () => StreamStats,
     onBitrateChange: (bitrate: number, reason: string) => Promise<boolean>
@@ -103,6 +105,7 @@ export class AdaptiveBitrateService {
     if (this.enabled) return;
 
     this.initialBitrate = initialBitrate;
+    this.userMaxBitrate = Math.max(initialBitrate, maximumBitrate);
     this.currentBitrate = initialBitrate;
     this.mode = mode;
     this.getStatsFn = getStats;
@@ -125,7 +128,8 @@ export class AdaptiveBitrateService {
       this.tick();
     }, 1000);
 
-    console.info(`${TAG} 已启动: bitrate=${initialBitrate}kbps, mode=${mode}, server=${this.serverSupported}`);
+    console.info(TAG + ' 已启动: bitrate=' + initialBitrate.toString() + 'kbps, max=' +
+      this.userMaxBitrate.toString() + 'kbps, mode=' + mode + ', server=' + this.serverSupported.toString());
   }
 
   /**
@@ -210,6 +214,8 @@ export class AdaptiveBitrateService {
         this.maxBitrate = Math.min(150000, this.initialBitrate * 2);
         break;
     }
+    this.maxBitrate = Math.min(this.maxBitrate, this.userMaxBitrate);
+    this.minBitrate = Math.min(this.minBitrate, this.maxBitrate);
   }
 
   private resetState(): void {

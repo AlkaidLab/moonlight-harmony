@@ -10,7 +10,7 @@
 
 import { rcp } from '@kit.RemoteCommunicationKit';
 import { StringUtil } from './StringUtil';
-import { RcpSessionPool } from './RcpSessionPool';
+import { RcpSessionPool, SessionAcquireOptions } from './RcpSessionPool';
 
 /**
  * HTTP 客户端配置
@@ -41,6 +41,57 @@ export interface HttpResponse {
 }
 
 /**
+ * 独占的二进制 HTTP 会话，适用于需要精确取消边界的短生命周期任务。
+ */
+export class BinaryHttpSession {
+  private session: rcp.Session | null;
+
+  constructor(options: SessionAcquireOptions) {
+    this.session = RcpSessionPool.createIsolated(options);
+  }
+
+  async get(url: string, config?: HttpClientConfig): Promise<ArrayBuffer> {
+    const session = this.session;
+    if (!session) {
+      throw new Error('HTTP session 已关闭');
+    }
+
+    const connectTimeout = config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT;
+    const transferTimeout = config?.transferTimeout ?? HttpClient.DEFAULT_TRANSFER_TIMEOUT;
+    const request = new rcp.Request(
+      url,
+      'GET',
+      HttpClient.normalizeHeaders(config?.headers),
+      undefined,
+      undefined,
+      undefined,
+      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
+    );
+    const response = await session.fetch(request);
+    if (response.statusCode !== 200) {
+      throw new Error('HTTP ' + response.statusCode.toString());
+    }
+    if (!response.body) {
+      throw new Error('响应体为空');
+    }
+    return response.body;
+  }
+
+  close(): void {
+    const session = this.session;
+    this.session = null;
+    if (!session) {
+      return;
+    }
+    try {
+      session.close();
+    } catch (_err) {
+      // 关闭用于取消请求；无需覆盖原始探测结果。
+    }
+  }
+}
+
+/**
  * HTTP 客户端工具类
  *
  * 统一处理 HTTP/HTTPS 请求，基于 RCK (RemoteCommunicationKit)。
@@ -66,7 +117,7 @@ export class HttpClient {
    * 构造请求级 Configuration（覆盖 session 默认 timeout）
    * 这样同一个 session 可服务多个不同超时的请求
    */
-  private static buildRequestConfig(connectMs: number, transferMs: number): rcp.Configuration {
+  static createRequestConfig(connectMs: number, transferMs: number): rcp.Configuration {
     return {
       transfer: {
         timeout: {
@@ -77,7 +128,7 @@ export class HttpClient {
     };
   }
 
-  private static buildHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
+  static normalizeHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
     if (!headers) {
       return undefined
     }
@@ -126,11 +177,11 @@ export class HttpClient {
     const request = new rcp.Request(
       url,
       'GET',
-      HttpClient.buildHeaders(config?.headers),
+      HttpClient.normalizeHeaders(config?.headers),
       undefined,
       undefined,
       undefined,
-      HttpClient.buildRequestConfig(connectTimeout, transferTimeout)
+      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
     );
 
     try {
@@ -233,11 +284,11 @@ export class HttpClient {
     const request = new rcp.Request(
       url,
       method,
-      HttpClient.buildHeaders(config?.headers),
+      HttpClient.normalizeHeaders(config?.headers),
       body,
       undefined,
       undefined,
-      HttpClient.buildRequestConfig(connectTimeout, transferTimeout)
+      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
     );
 
     try {
@@ -292,11 +343,11 @@ export class HttpClient {
     const request = new rcp.Request(
       url,
       'GET',
-      HttpClient.buildHeaders(config?.headers),
+      HttpClient.normalizeHeaders(config?.headers),
       undefined,
       undefined,
       undefined,
-      HttpClient.buildRequestConfig(connectTimeout, transferTimeout)
+      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
     );
 
     try {
@@ -337,6 +388,7 @@ export class HttpClient {
       skipServerValidation: true,
       clientCertPath: certPath,
       clientKeyPath: keyPath,
+      headers: config?.headers,
       connectTimeout: config?.connectTimeout ?? HttpClient.DEFAULT_CONNECT_TIMEOUT,
       transferTimeout: config?.transferTimeout ?? HttpClient.DEFAULT_TRANSFER_TIMEOUT
     });
@@ -357,11 +409,11 @@ export class HttpClient {
     const request = new rcp.Request(
       url,
       'POST',
-      HttpClient.buildHeaders(config?.headers),
+      HttpClient.normalizeHeaders(config?.headers),
       body,
       undefined,
       undefined,
-      HttpClient.buildRequestConfig(connectTimeout, transferTimeout)
+      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
     );
 
     try {
@@ -398,11 +450,11 @@ export class HttpClient {
     const request = new rcp.Request(
       url,
       'POST',
-      HttpClient.buildHeaders(config?.headers),
+      HttpClient.normalizeHeaders(config?.headers),
       requestBody,
       undefined,
       undefined,
-      HttpClient.buildRequestConfig(connectTimeout, transferTimeout)
+      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
     );
 
     try {
