@@ -953,7 +953,7 @@ export class NvHttp {
       // 使用客户端证书
       const response = await this.doRequest(url, { useClientCert: true });
       const result = XmlUtil.getValue(response, 'bitrate');
-      return result !== '0';
+      return result === '1';
     } catch (err) {
       return false;
     }
@@ -1493,6 +1493,8 @@ export interface NetworkFeedback {
 
 export interface AbrAction {
   newBitrate?: number;
+  bitrateApplied?: boolean;
+  bitrateApplyError?: string;
   reason?: string;
 }
 

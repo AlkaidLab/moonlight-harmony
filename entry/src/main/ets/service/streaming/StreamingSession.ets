@@ -731,6 +731,11 @@ export class StreamingSession {
       () => this.getStats(),
       async (bitrate: number, _reason: string): Promise<boolean> => {
         return this.setBitrate(bitrate);
+      },
+      (bitrate: number): void => {
+        if (this.config) {
+          this.config.bitrate = bitrate;
+        }
       }
     );
   }

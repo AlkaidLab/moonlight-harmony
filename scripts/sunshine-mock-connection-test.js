@@ -409,7 +409,8 @@ class FoundationSunshineMock {
     startHttps = true,
     probeKbps = 20000,
     capabilityDelayMs = 0,
-    bandwidthProbeSupported = true
+    bandwidthProbeSupported = true,
+    bitrateResponse = 'success'
   } = {}) {
     this.httpPort = httpPort;
     this.httpsPort = httpsPort;
@@ -421,6 +422,7 @@ class FoundationSunshineMock {
     this.probeKbps = probeKbps;
     this.capabilityDelayMs = capabilityDelayMs;
     this.bandwidthProbeSupported = bandwidthProbeSupported;
+    this.bitrateResponse = bitrateResponse;
     this.probeMinBytes = 65536;
     this.probeMaxBytes = 4194304;
     this.probeRequestedBytes = 0;
@@ -558,6 +560,19 @@ class FoundationSunshineMock {
 
     if (url.pathname === '/cancel') {
       this.writeXml(res, xmlRoot(tag('cancel', '1')));
+      return;
+    }
+
+    if (url.pathname === '/bitrate') {
+      if (!isHttps) {
+        this.writeXml(res, pairXml({ bitrate: '0' }, 401, 'HTTPS required'), 401);
+        return;
+      }
+      if (this.bitrateResponse === 'missing') {
+        this.writeXml(res, xmlRoot(tag('status', 'accepted')));
+      } else {
+        this.writeXml(res, xmlRoot(tag('bitrate', this.bitrateResponse === 'success' ? '1' : '0')));
+      }
       return;
     }
 
@@ -838,9 +853,42 @@ class ConnectionModelClient {
     return getValue(response, 'cancel') !== '0';
   }
 
+  async setBitrate(bitrateKbps) {
+    const baseUrl = await this.httpsBaseUrl();
+    const response = await requestText(this.buildUrl(baseUrl, 'bitrate', `bitrate=${bitrateKbps}`));
+    return getValue(response, 'bitrate') === '1';
+  }
+
   async unpair() {
     const response = await requestText(this.buildUrl(this.httpBaseUrl(), 'unpair'));
     return getValue(response, 'unpair') !== '0';
+  }
+}
+
+async function applyServerAbrActionModel(currentBitrate, action, setBitrate, onBitrateAccepted) {
+  if (!action || action.bitrateApplied === false || !action.newBitrate ||
+    action.newBitrate === currentBitrate) {
+    return currentBitrate;
+  }
+  if (action.bitrateApplied === true) {
+    onBitrateAccepted(action.newBitrate);
+    return action.newBitrate;
+  }
+  return await setBitrate(action.newBitrate) ? action.newBitrate : currentBitrate;
+}
+
+class SingleFlightTickModel {
+  constructor() {
+    this.active = null;
+  }
+
+  schedule(task) {
+    if (this.active) return this.active;
+    const active = task().finally(() => {
+      if (this.active === active) this.active = null;
+    });
+    this.active = active;
+    return active;
   }
 }
 
@@ -1271,6 +1319,91 @@ async function testUnpairAndPairingPortModel() {
   }
 }
 
+async function testDynamicBitrateResponseValidation() {
+  const mock = await new FoundationSunshineMock().start();
+  try {
+    const client = new ConnectionModelClient({
+      httpPort: mock.httpPort,
+      httpsPort: mock.httpsPort
+    });
+
+    assert.strictEqual(await client.setBitrate(25000), true);
+    const request = mock.requests.find((item) => item.path === '/bitrate');
+    assert.strictEqual(request.isHttps, true);
+    assert.strictEqual(request.query.bitrate, '25000');
+    assert.strictEqual(request.query.clientname, CLIENT_NAME);
+
+    mock.bitrateResponse = 'missing';
+    assert.strictEqual(await client.setBitrate(20000), false);
+    mock.bitrateResponse = 'failure';
+    assert.strictEqual(await client.setBitrate(15000), false);
+  } finally {
+    await mock.stop();
+  }
+}
+
+async function testServerAbrAvoidsDuplicateBitrateRequest() {
+  const appliedBitrates = [];
+  const acceptedBitrates = [];
+  const setBitrate = async (bitrate) => {
+    appliedBitrates.push(bitrate);
+    return true;
+  };
+  const onBitrateAccepted = (bitrate) => acceptedBitrates.push(bitrate);
+
+  let current = await applyServerAbrActionModel(30000, {
+    newBitrate: 24000,
+    bitrateApplied: true,
+    reason: 'congestion'
+  }, setBitrate, onBitrateAccepted);
+  assert.strictEqual(current, 24000);
+  assert.deepStrictEqual(appliedBitrates, []);
+  assert.deepStrictEqual(acceptedBitrates, [24000]);
+
+  current = await applyServerAbrActionModel(current, {
+    newBitrate: 20000,
+    reason: 'legacy server'
+  }, setBitrate, onBitrateAccepted);
+  assert.strictEqual(current, 20000);
+  assert.deepStrictEqual(appliedBitrates, [20000]);
+  assert.deepStrictEqual(acceptedBitrates, [24000]);
+
+  current = await applyServerAbrActionModel(current, {
+    newBitrate: 16000,
+    bitrateApplied: false,
+    bitrateApplyError: 'session unavailable'
+  }, setBitrate, onBitrateAccepted);
+  assert.strictEqual(current, 20000);
+  assert.deepStrictEqual(appliedBitrates, [20000]);
+  assert.deepStrictEqual(acceptedBitrates, [24000]);
+}
+
+async function testAbrTickSingleFlight() {
+  const model = new SingleFlightTickModel();
+  let releaseFirst;
+  let executions = 0;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const first = model.schedule(async () => {
+    executions++;
+    await firstGate;
+  });
+  const overlapping = model.schedule(async () => {
+    executions++;
+  });
+
+  assert.strictEqual(overlapping, first);
+  assert.strictEqual(executions, 1);
+  releaseFirst();
+  await first;
+
+  await model.schedule(async () => {
+    executions++;
+  });
+  assert.strictEqual(executions, 2);
+}
+
 async function testBandwidthProbeProtocol() {
   const mock = await new FoundationSunshineMock().start();
   try {
@@ -1417,6 +1550,9 @@ async function main() {
     ['HTTPS port reuse model', testHttpsPortReuseModel],
     ['launch/resume/quit model', testLaunchResumeQuitModel],
     ['unpair and pairing port model', testUnpairAndPairingPortModel],
+    ['dynamic bitrate response validation', testDynamicBitrateResponseValidation],
+    ['server ABR avoids duplicate bitrate request', testServerAbrAvoidsDuplicateBitrateRequest],
+    ['ABR tick single flight', testAbrTickSingleFlight],
     ['bandwidth probe protocol', testBandwidthProbeProtocol],
     ['bandwidth probe coalescing and cache', testBandwidthProbeCoalescingAndCache],
     ['bandwidth probe metered budget and consent', testBandwidthProbeMeteredBudgetAndConsent],
