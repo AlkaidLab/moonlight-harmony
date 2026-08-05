@@ -568,7 +568,6 @@ export class StreamingSession {
     }
 
     try {
-      BandwidthProbeService.getInstance().cancel();
       await this.resolveComputer(computerId, context);
       await this.applyInitialBitratePolicy();
       this.generateInputKey();
@@ -1078,12 +1077,12 @@ export class StreamingSession {
   }
 
   private async applyInitialBitratePolicy(): Promise<void> {
-    if (!this.config || !this.selectedAddress) {
+    if (!this.config || !this.selectedAddress || !this.nvHttp) {
       return;
     }
     try {
       const decision = await BandwidthProbeService.getInstance().resolveInitialBitrate(
-        this.computerId, this.selectedAddress, this.config.bitrate);
+        this.computerId, this.selectedAddress, this.config.bitrate, this.nvHttp);
       this.config.bitrate = decision.bitrateKbps;
       console.info('StreamingSession: 初始码率路径=' + decision.path + ', userLimit=' +
         decision.userLimitKbps.toString() + 'kbps, effective=' + decision.bitrateKbps.toString() +

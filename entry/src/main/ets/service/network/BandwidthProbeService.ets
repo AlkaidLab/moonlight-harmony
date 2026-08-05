@@ -50,11 +50,14 @@ export class BandwidthProbeService {
   private static instance: BandwidthProbeService | null = null;
   private static readonly CACHE_TTL_MS = 15 * 60 * 1000;
   private static readonly TOTAL_BUDGET_MS = 800;
+  private static readonly LAUNCH_WAIT_MS = 800;
   private static readonly SAMPLE_STOP_MS = 250;
   private static readonly SAFE_FACTOR = 0.70;
   private static readonly SAMPLE_SIZES: number[] = [65536, 262144, 1048576, 4194304];
 
   private cache: Map<string, BandwidthProbeCacheEntry> = new Map();
+  private activeProbeKey: string = '';
+  private activeProbe: Promise<void> | null = null;
   private activeSession: NetworkProbeSession | null = null;
   private operationId: number = 0;
 
@@ -76,13 +79,28 @@ export class BandwidthProbeService {
     if (!this.canProbe(pathInfo, settings)) {
       return;
     }
+    await this.ensureFreshEstimate(hostId, pathInfo, nvHttp);
+  }
+
+  private ensureFreshEstimate(hostId: string, pathInfo: ConnectionPathInfo, nvHttp: NvHttp): Promise<void> {
     const cacheKey = pathInfo.cacheKey(hostId);
     if (this.getFreshCache(cacheKey)) {
-      return;
+      return Promise.resolve();
+    }
+    if (this.activeProbe && this.activeProbeKey === cacheKey) {
+      return this.activeProbe;
     }
 
     this.cancel();
     const operationId = this.operationId;
+    const probe = this.executeProbe(cacheKey, pathInfo, nvHttp, operationId);
+    this.activeProbeKey = cacheKey;
+    this.activeProbe = probe;
+    return probe;
+  }
+
+  private async executeProbe(cacheKey: string, pathInfo: ConnectionPathInfo,
+    nvHttp: NvHttp, operationId: number): Promise<void> {
     let probeSession: NetworkProbeSession | null = null;
     try {
       const capabilities = await nvHttp.getNetworkProbeCapabilities();
@@ -95,7 +113,8 @@ export class BandwidthProbeService {
         return;
       }
       this.activeSession = probeSession;
-      const result = await this.runProgressiveProbe(probeSession, capabilities, pathInfo.isMetered, operationId);
+      const isTrafficConstrained = pathInfo.isMetered || pathInfo.isCellular;
+      const result = await this.runProgressiveProbe(probeSession, capabilities, isTrafficConstrained, operationId);
       if (result && operationId === this.operationId) {
         this.cache.set(cacheKey, result);
         console.info('BandwidthProbeService: path=' + pathInfo.path + ', measured=' +
@@ -112,11 +131,17 @@ export class BandwidthProbeService {
       if (this.activeSession === probeSession) {
         this.activeSession = null;
       }
+      if (operationId === this.operationId) {
+        this.activeProbeKey = '';
+        this.activeProbe = null;
+      }
     }
   }
 
   cancel(): void {
     this.operationId++;
+    this.activeProbeKey = '';
+    this.activeProbe = null;
     const activeSession = this.activeSession;
     this.activeSession = null;
     if (activeSession) {
@@ -124,7 +149,8 @@ export class BandwidthProbeService {
     }
   }
 
-  async resolveInitialBitrate(hostId: string, endpoint: string, configuredBitrateKbps: number): Promise<InitialBitrateDecision> {
+  async resolveInitialBitrate(hostId: string, endpoint: string, configuredBitrateKbps: number,
+    nvHttp: NvHttp): Promise<InitialBitrateDecision> {
     const settings = await SettingsService.getInstance().getBandwidthProbeSettings();
     const pathInfo = await ConnectionPathService.inspect(endpoint);
     let effective = configuredBitrateKbps;
@@ -132,7 +158,12 @@ export class BandwidthProbeService {
     let probeApplied = false;
 
     if (settings.probeEnabled) {
-      const cached = this.getFreshCache(pathInfo.cacheKey(hostId));
+      const cacheKey = pathInfo.cacheKey(hostId);
+      if (!this.getFreshCache(cacheKey) && this.canProbe(pathInfo, settings)) {
+        const probe = this.ensureFreshEstimate(hostId, pathInfo, nvHttp);
+        await this.waitForLaunchProbe(cacheKey, probe);
+      }
+      const cached = this.getFreshCache(cacheKey);
       if (cached) {
         measured = cached.measuredKbps;
         if (cached.highConfidence && cached.safeBitrateKbps >= 2000 && cached.safeBitrateKbps < effective) {
@@ -142,6 +173,36 @@ export class BandwidthProbeService {
       }
     }
     return new InitialBitrateDecision(effective, configuredBitrateKbps, pathInfo.path, measured, probeApplied);
+  }
+
+  private waitForLaunchProbe(cacheKey: string, probe: Promise<void>): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let completed = false;
+      const timerId = setTimeout(() => {
+        if (completed) {
+          return;
+        }
+        completed = true;
+        if (this.activeProbe === probe && this.activeProbeKey === cacheKey) {
+          this.cancel();
+        }
+        resolve();
+      }, BandwidthProbeService.LAUNCH_WAIT_MS);
+
+      probe.then(() => {
+        if (!completed) {
+          completed = true;
+          clearTimeout(timerId);
+          resolve();
+        }
+      }).catch(() => {
+        if (!completed) {
+          completed = true;
+          clearTimeout(timerId);
+          resolve();
+        }
+      });
+    });
   }
 
   private canProbe(pathInfo: ConnectionPathInfo, settings: BandwidthProbeSettings): boolean {

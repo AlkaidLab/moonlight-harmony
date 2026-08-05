@@ -67,6 +67,7 @@ struct AppListPageV2 {
   private computerManager: ComputerManager = ComputerManager.getInstance();
   private nvHttp: NvHttp | null = null;
   private bandwidthProbeTimer: number = -1;
+  private preserveBandwidthProbeForLaunch: boolean = false;
   private searchDebounceTimer: number = -1; // 搜索防抖定时器
   private iconPollIntervalId: number = -1; // 图标轮询定时器ID
   private retryTimerId: number = -1; // 自动重试定时器
@@ -147,6 +148,7 @@ struct AppListPageV2 {
   }
 
   aboutToAppear(): void {
+    this.preserveBandwidthProbeForLaunch = false;
     this.updateLayoutConfig();
     
     const params = router.getParams() as AppListPageParams;
@@ -190,7 +192,10 @@ struct AppListPageV2 {
 
   aboutToDisappear(): void {
     this.viewModel.cancelIconLoading();
-    this.cancelBandwidthProbe();
+    this.clearBandwidthProbeTimer();
+    if (!this.preserveBandwidthProbeForLaunch) {
+      BandwidthProbeService.getInstance().cancel();
+    }
     // 清理图标轮询定时器
     if (this.iconPollIntervalId !== -1) {
       clearInterval(this.iconPollIntervalId);
@@ -1207,7 +1212,7 @@ struct AppListPageV2 {
   }
 
   private doLaunchApp(app: ObservableApp): void {
-    this.cancelBandwidthProbe();
+    this.preserveBandwidthProbeForLaunch = true;
     const displayGuid = this.getSelectedDisplayGuid();
     // 把当前 app 的本地海报路径传给 StreamPage，作为 ConnectingOverlay 的背景，
     // 让等待 launchApp / 首帧的几秒钟不再是纯黑屏。
@@ -1249,11 +1254,15 @@ struct AppListPageV2 {
   }
 
   private cancelBandwidthProbe(): void {
+    this.clearBandwidthProbeTimer();
+    BandwidthProbeService.getInstance().cancel();
+  }
+
+  private clearBandwidthProbeTimer(): void {
     if (this.bandwidthProbeTimer !== -1) {
       clearTimeout(this.bandwidthProbeTimer);
       this.bandwidthProbeTimer = -1;
     }
-    BandwidthProbeService.getInstance().cancel();
   }
 
   private openAppMenu(app: ObservableApp): void {
