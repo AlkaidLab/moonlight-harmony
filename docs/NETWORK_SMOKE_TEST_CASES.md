@@ -13,6 +13,7 @@
 | NS-A05 | WOL MAC 校验契约 | 启动 App，查看 `WakeOnLan self-check passed` | 冒号/连字符 MAC 识别，非法 MAC 拒绝 |
 | NS-A06 | 地址选择契约 | 启动 App，查看 `selectBestAddress self-check passed` | preferred、active、manual、LAN、WAN 优先级符合预期 |
 | NS-A07 | Foundation Sunshine mock 连接模型 | 执行 `npm run test:sunshine-mock` | mock serverinfo、applist、pair、unpair、端口 fallback、retry/error、ComputerManager 合并、轮询竞速、HTTPS 端口复用、launch/resume/quit 用例全部 `PASS` |
+| NS-A08 | Sunshine 启动前带宽探测 | 执行 `npm run test:sunshine-mock` | capabilities、二进制响应、同路径任务合并、缓存命中、800 ms 启动超时、蜂窝/计费授权和 320 KiB 预算用例全部 `PASS` |
 
 推荐构建命令：
 
@@ -43,6 +44,7 @@ npm run test:sunshine-mock
 - `NvHttp.fromComputerWithAddress` 仅在 HTTP 端口匹配时复用缓存 HTTPS 端口，避免 LAN/FRP 切换时复用 stale 端口。
 - `PairingManager` 与 `NvHttp` 一致使用地址中的显式端口优先。
 - HTTPS-only 的 `applist`、`launch`、`resume`、`cancel` 和 HTTP `unpair` 请求路径。
+- `/api/network/capabilities` 与 `/api/network/probe` 契约，以及启动前探测的任务合并、缓存、超时回退和计费流量预算。
 
 ## 手动冒烟
 

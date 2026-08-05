@@ -24,6 +24,10 @@ const HOST = '127.0.0.1';
 const CLIENT_UNIQUE_ID = 'moonlight-harmony-test-client';
 const CLIENT_NAME = 'Moonlight-HarmonyOS-Test';
 const DEFAULT_HDR_MIN_BRIGHTNESS_NITS = 0.001;
+const BANDWIDTH_PROBE_SAMPLE_SIZES = [65536, 262144, 1048576, 4194304];
+const BANDWIDTH_PROBE_TOTAL_BUDGET_MS = 800;
+const BANDWIDTH_PROBE_LAUNCH_WAIT_MS = 800;
+const METERED_BANDWIDTH_PROBE_MAX_BYTES = 320 * 1024;
 
 function xmlEscape(value) {
   return String(value)
@@ -318,6 +322,27 @@ function requestText(url) {
   });
 }
 
+function requestBuffer(url, timeoutMs, signal) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, { timeout: timeoutMs, signal }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const body = Buffer.concat(chunks);
+        if (res.statusCode >= 400) {
+          reject(new Error(`HTTP ${res.statusCode}: ${body.toString('utf8')}`));
+          return;
+        }
+        resolve(body);
+      });
+    });
+    req.on('timeout', () => {
+      req.destroy(new Error('Connection timeout'));
+    });
+    req.on('error', reject);
+  });
+}
+
 function serverInfoXml({ httpsPort, httpPort, paired, mac, failAttrs = {} }) {
   const body = [
     tag('hostname', failAttrs.hostname || 'Foundation Sunshine Mock'),
@@ -377,7 +402,14 @@ function pairXml(fields, statusCode = 200, statusMessage = '') {
 }
 
 class FoundationSunshineMock {
-  constructor({ httpPort = 0, httpsPort = 0, startHttp = true, startHttps = true } = {}) {
+  constructor({
+    httpPort = 0,
+    httpsPort = 0,
+    startHttp = true,
+    startHttps = true,
+    probeKbps = 20000,
+    capabilityDelayMs = 0
+  } = {}) {
     this.httpPort = httpPort;
     this.httpsPort = httpsPort;
     this.startHttp = startHttp;
@@ -385,6 +417,11 @@ class FoundationSunshineMock {
     this.sessions = new Map();
     this.requests = [];
     this.failNextServerInfo = false;
+    this.probeKbps = probeKbps;
+    this.capabilityDelayMs = capabilityDelayMs;
+    this.probeMinBytes = 65536;
+    this.probeMaxBytes = 4194304;
+    this.probeRequestedBytes = 0;
     this.httpServer = null;
     this.httpsServer = null;
   }
@@ -451,6 +488,48 @@ class FoundationSunshineMock {
         return;
       }
       this.writeXml(res, appListXml());
+      return;
+    }
+
+    if (url.pathname === '/api/network/capabilities') {
+      if (!isHttps) {
+        this.writeJson(res, { error: 'HTTPS required' }, 401);
+        return;
+      }
+      const capabilities = {
+        version: 1,
+        features: ['bandwidth-probe-v1'],
+        bandwidthProbe: {
+          version: 1,
+          endpoint: '/api/network/probe',
+          minBytes: this.probeMinBytes,
+          maxBytes: this.probeMaxBytes,
+          cooldownMs: 5000
+        }
+      };
+      setTimeout(() => {
+        if (!res.destroyed) this.writeJson(res, capabilities);
+      }, this.capabilityDelayMs);
+      return;
+    }
+
+    if (url.pathname === '/api/network/probe') {
+      if (!isHttps) {
+        this.writeJson(res, { error: 'HTTPS required' }, 401);
+        return;
+      }
+      const bytes = Number(url.searchParams.get('bytes'));
+      const nonce = url.searchParams.get('nonce') || '';
+      if (!Number.isSafeInteger(bytes) || bytes < this.probeMinBytes || bytes > this.probeMaxBytes ||
+        !/^[A-Za-z0-9._-]{1,64}$/.test(nonce)) {
+        this.writeJson(res, { error: 'invalid_request' }, 400);
+        return;
+      }
+      this.probeRequestedBytes += bytes;
+      const durationMs = Math.max(1, Math.round(bytes * 8 / this.probeKbps));
+      setTimeout(() => {
+        if (!res.destroyed) this.writeBinary(res, bytes, nonce);
+      }, durationMs);
       return;
     }
 
@@ -560,6 +639,27 @@ class FoundationSunshineMock {
     res.writeHead(status, { 'Content-Type': 'application/xml; charset=utf-8' });
     res.end(body);
   }
+
+  writeJson(res, body, status = 200) {
+    const text = JSON.stringify(body);
+    res.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(text),
+      'Cache-Control': 'no-store'
+    });
+    res.end(text);
+  }
+
+  writeBinary(res, bytes, nonce) {
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': bytes,
+      'Cache-Control': 'no-store, no-transform',
+      'X-Bandwidth-Probe-Version': '1',
+      'X-Bandwidth-Probe-Nonce': nonce
+    });
+    res.end(Buffer.alloc(bytes, 0xA5));
+  }
 }
 
 class ConnectionModelClient {
@@ -617,6 +717,27 @@ class ConnectionModelClient {
   async getAppList() {
     const baseUrl = await this.httpsBaseUrl();
     return parseAppList(await requestText(this.buildUrl(baseUrl, 'applist')));
+  }
+
+  async getNetworkProbeCapabilities(signal) {
+    const baseUrl = await this.httpsBaseUrl();
+    const body = await requestBuffer(this.buildUrl(baseUrl, 'api/network/capabilities'), 7000, signal);
+    const parsed = JSON.parse(body.toString('utf8'));
+    const probe = parsed.bandwidthProbe;
+    if (parsed.version < 1 || !parsed.features || !parsed.features.includes('bandwidth-probe-v1') ||
+      !probe || probe.version !== 1 || !probe.endpoint.startsWith('/') || probe.endpoint.includes('://') ||
+      probe.endpoint.includes('?') || probe.endpoint.includes('#') || probe.minBytes < 1 ||
+      probe.maxBytes < probe.minBytes || probe.cooldownMs < 0) {
+      return null;
+    }
+    return probe;
+  }
+
+  async downloadNetworkProbe(capabilities, bytes, nonce, timeoutMs, signal) {
+    const baseUrl = await this.httpsBaseUrl();
+    const path = capabilities.endpoint.substring(1);
+    const query = `bytes=${bytes}&nonce=${encodeURIComponent(nonce)}`;
+    return requestBuffer(this.buildUrl(baseUrl, path, query), timeoutMs, signal);
   }
 
   async pairSmoke(pin = '1234') {
@@ -714,6 +835,139 @@ class ConnectionModelClient {
   async unpair() {
     const response = await requestText(this.buildUrl(this.httpBaseUrl(), 'unpair'));
     return getValue(response, 'unpair') !== '0';
+  }
+}
+
+class BandwidthProbePolicyModel {
+  constructor() {
+    this.cache = new Map();
+    this.active = null;
+  }
+
+  preheat(cacheKey, client, options = {}) {
+    if (!options.probeEnabled || !this.canProbe(options)) return Promise.resolve();
+    return this.ensureFreshEstimate(cacheKey, client, options);
+  }
+
+  async resolveInitialBitrate(cacheKey, configuredBitrateKbps, client, options = {}) {
+    if (options.probeEnabled && this.canProbe(options)) {
+      if (!this.cache.has(cacheKey)) {
+        const probe = this.ensureFreshEstimate(cacheKey, client, options);
+        await this.waitForLaunchProbe(cacheKey, probe);
+      }
+    }
+
+    const cached = this.cache.get(cacheKey);
+    if (options.probeEnabled && cached && cached.highConfidence &&
+      cached.safeBitrateKbps >= 2000 && cached.safeBitrateKbps < configuredBitrateKbps) {
+      return { bitrateKbps: cached.safeBitrateKbps, probeApplied: true };
+    }
+    return { bitrateKbps: configuredBitrateKbps, probeApplied: false };
+  }
+
+  canProbe(options) {
+    return !(options.isMetered || options.isCellular) || options.meteredProbeEnabled;
+  }
+
+  ensureFreshEstimate(cacheKey, client, options) {
+    if (this.cache.has(cacheKey)) return Promise.resolve();
+    if (this.active && this.active.key === cacheKey) return this.active.promise;
+    if (this.active) this.cancel();
+
+    const operation = {
+      key: cacheKey,
+      controller: new AbortController(),
+      promise: null
+    };
+    operation.promise = this.executeProbe(operation, client, options).finally(() => {
+      if (this.active === operation) this.active = null;
+    });
+    this.active = operation;
+    return operation.promise;
+  }
+
+  cancel() {
+    const active = this.active;
+    this.active = null;
+    if (active) active.controller.abort();
+  }
+
+  async executeProbe(operation, client, options) {
+    try {
+      const capabilities = await client.getNetworkProbeCapabilities(operation.controller.signal);
+      if (!capabilities || operation.controller.signal.aborted) return;
+
+      const startedAt = Date.now();
+      const nonce = 'moonlight-harmony-smoke-probe';
+      const constrained = options.isMetered || options.isCellular;
+      let requestedBytes = 0;
+      let warmupCompleted = false;
+      let bestBytes = 0;
+      let bestDuration = 0;
+      let bestKbps = 0;
+
+      for (const bytes of BANDWIDTH_PROBE_SAMPLE_SIZES) {
+        if (bytes < capabilities.minBytes || bytes > capabilities.maxBytes) continue;
+        if (constrained && requestedBytes + bytes > METERED_BANDWIDTH_PROBE_MAX_BYTES) break;
+        const remainingMs = BANDWIDTH_PROBE_TOTAL_BUDGET_MS - (Date.now() - startedAt);
+        if (operation.controller.signal.aborted || remainingMs <= 0) break;
+
+        requestedBytes += bytes;
+        const sampleStartedAt = Date.now();
+        const data = await client.downloadNetworkProbe(
+          capabilities, bytes, nonce, Math.max(1, Math.min(1500, remainingMs)), operation.controller.signal);
+        const durationMs = Math.max(1, Date.now() - sampleStartedAt);
+        assert.strictEqual(data.length, bytes);
+
+        if (warmupCompleted) {
+          const measuredKbps = bytes * 8 / durationMs;
+          if (durationMs >= bestDuration) {
+            bestBytes = bytes;
+            bestDuration = durationMs;
+            bestKbps = measuredKbps;
+          }
+          if (durationMs >= 250) break;
+        } else {
+          warmupCompleted = true;
+        }
+      }
+
+      if (bestBytes > 0 && !operation.controller.signal.aborted) {
+        this.cache.set(operation.key, {
+          measuredKbps: bestKbps,
+          safeBitrateKbps: Math.max(1, Math.floor(bestKbps * 0.70)),
+          highConfidence: bestBytes >= 131072 && bestDuration >= 50
+        });
+      }
+    } catch (err) {
+      if (!operation.controller.signal.aborted) throw err;
+    }
+  }
+
+  waitForLaunchProbe(cacheKey, probe) {
+    return new Promise((resolve) => {
+      let completed = false;
+      const timerId = setTimeout(() => {
+        if (completed) return;
+        completed = true;
+        if (this.active && this.active.key === cacheKey && this.active.promise === probe) this.cancel();
+        resolve();
+      }, BANDWIDTH_PROBE_LAUNCH_WAIT_MS);
+
+      probe.then(() => {
+        if (!completed) {
+          completed = true;
+          clearTimeout(timerId);
+          resolve();
+        }
+      }).catch(() => {
+        if (!completed) {
+          completed = true;
+          clearTimeout(timerId);
+          resolve();
+        }
+      });
+    });
   }
 }
 
@@ -1009,6 +1263,115 @@ async function testUnpairAndPairingPortModel() {
   }
 }
 
+async function testBandwidthProbeProtocol() {
+  const mock = await new FoundationSunshineMock().start();
+  try {
+    const client = new ConnectionModelClient({
+      httpPort: mock.httpPort,
+      httpsPort: mock.httpsPort
+    });
+    const capabilities = await client.getNetworkProbeCapabilities();
+    assert.strictEqual(capabilities.endpoint, '/api/network/probe');
+    assert.strictEqual(capabilities.minBytes, 65536);
+    assert.strictEqual(capabilities.maxBytes, 4194304);
+
+    const body = await client.downloadNetworkProbe(capabilities, 65536, 'protocol-smoke', 1000);
+    assert.strictEqual(body.length, 65536);
+    assert.strictEqual(body[0], 0xA5);
+    assert.strictEqual(mock.requests.some((r) => r.path === '/api/network/capabilities' && r.isHttps), true);
+
+    const secureBase = await client.httpsBaseUrl();
+    await assert.rejects(
+      requestBuffer(client.buildUrl(secureBase, 'api/network/probe', 'bytes=1&nonce=bad'), 1000),
+      /HTTP 400/
+    );
+  } finally {
+    await mock.stop();
+  }
+}
+
+async function testBandwidthProbeCoalescingAndCache() {
+  const mock = await new FoundationSunshineMock({ probeKbps: 20000 }).start();
+  try {
+    const client = new ConnectionModelClient({
+      httpPort: mock.httpPort,
+      httpsPort: mock.httpsPort
+    });
+    const policy = new BandwidthProbePolicyModel();
+    const options = { probeEnabled: true, meteredProbeEnabled: false, isMetered: false, isCellular: false };
+    const preheat = policy.preheat('host|wifi-a', client, options);
+    await delay(10);
+    const decision = await policy.resolveInitialBitrate('host|wifi-a', 100000, client, options);
+    await preheat;
+
+    assert.strictEqual(decision.probeApplied, true);
+    assert.ok(decision.bitrateKbps >= 12000 && decision.bitrateKbps <= 16000);
+    assert.strictEqual(mock.requests.filter((r) => r.path === '/api/network/capabilities').length, 1);
+    assert.deepStrictEqual(
+      mock.requests.filter((r) => r.path === '/api/network/probe').map((r) => Number(r.query.bytes)),
+      [65536, 262144, 1048576]
+    );
+
+    const requestCount = mock.requests.length;
+    const cachedDecision = await policy.resolveInitialBitrate('host|wifi-a', 100000, client, options);
+    assert.strictEqual(cachedDecision.bitrateKbps, decision.bitrateKbps);
+    assert.strictEqual(mock.requests.length, requestCount);
+  } finally {
+    await mock.stop();
+  }
+}
+
+async function testBandwidthProbeMeteredBudgetAndConsent() {
+  const mock = await new FoundationSunshineMock({ probeKbps: 20000 }).start();
+  try {
+    const client = new ConnectionModelClient({
+      httpPort: mock.httpPort,
+      httpsPort: mock.httpsPort
+    });
+    const policy = new BandwidthProbePolicyModel();
+    const allowed = { probeEnabled: true, meteredProbeEnabled: true, isMetered: false, isCellular: true };
+    const decision = await policy.resolveInitialBitrate('host|cellular-a', 100000, client, allowed);
+    assert.strictEqual(decision.probeApplied, true);
+    assert.strictEqual(mock.probeRequestedBytes, METERED_BANDWIDTH_PROBE_MAX_BYTES);
+    assert.deepStrictEqual(
+      mock.requests.filter((r) => r.path === '/api/network/probe').map((r) => Number(r.query.bytes)),
+      [65536, 262144]
+    );
+
+    const requestCount = mock.requests.length;
+    const denied = { probeEnabled: true, meteredProbeEnabled: false, isMetered: true, isCellular: false };
+    const fallback = await policy.resolveInitialBitrate('host|metered-b', 100000, client, denied);
+    assert.strictEqual(fallback.bitrateKbps, 100000);
+    assert.strictEqual(fallback.probeApplied, false);
+    assert.strictEqual(mock.requests.length, requestCount);
+  } finally {
+    await mock.stop();
+  }
+}
+
+async function testBandwidthProbeLaunchTimeout() {
+  const mock = await new FoundationSunshineMock({ capabilityDelayMs: 1500 }).start();
+  try {
+    const client = new ConnectionModelClient({
+      httpPort: mock.httpPort,
+      httpsPort: mock.httpsPort
+    });
+    const policy = new BandwidthProbePolicyModel();
+    const options = { probeEnabled: true, meteredProbeEnabled: false, isMetered: false, isCellular: false };
+    const startedAt = Date.now();
+    const decision = await policy.resolveInitialBitrate('host|slow-capabilities', 100000, client, options);
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.strictEqual(decision.bitrateKbps, 100000);
+    assert.strictEqual(decision.probeApplied, false);
+    assert.ok(elapsedMs >= 650 && elapsedMs < 1100, `launch wait was ${elapsedMs} ms`);
+    assert.strictEqual(mock.requests.filter((r) => r.path === '/api/network/capabilities').length, 1);
+    assert.strictEqual(mock.requests.filter((r) => r.path === '/api/network/probe').length, 0);
+  } finally {
+    await mock.stop();
+  }
+}
+
 async function main() {
   const tests = [
     ['serverinfo and applist fixtures', testServerInfoAndAppList],
@@ -1021,7 +1384,11 @@ async function main() {
     ['poll race prefers LAN', testPollRacePrefersLan],
     ['HTTPS port reuse model', testHttpsPortReuseModel],
     ['launch/resume/quit model', testLaunchResumeQuitModel],
-    ['unpair and pairing port model', testUnpairAndPairingPortModel]
+    ['unpair and pairing port model', testUnpairAndPairingPortModel],
+    ['bandwidth probe protocol', testBandwidthProbeProtocol],
+    ['bandwidth probe coalescing and cache', testBandwidthProbeCoalescingAndCache],
+    ['bandwidth probe metered budget and consent', testBandwidthProbeMeteredBudgetAndConsent],
+    ['bandwidth probe launch timeout', testBandwidthProbeLaunchTimeout]
   ];
 
   for (const [name, fn] of tests) {
