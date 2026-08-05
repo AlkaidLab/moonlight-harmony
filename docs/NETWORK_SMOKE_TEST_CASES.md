@@ -65,7 +65,7 @@ npm run test:sunshine-mock
 
 ## 回归重点
 
-修改以下模块后至少跑 `NS-A01` 到 `NS-A07`，并按改动范围选择手动用例：
+修改以下模块后至少跑 `NS-A01` 到 `NS-A08`，并按改动范围选择手动用例：
 
 - `entry/src/main/ets/utils/NetHelper.ets`
 - `entry/src/main/ets/model/ComputerInfo.ets`
