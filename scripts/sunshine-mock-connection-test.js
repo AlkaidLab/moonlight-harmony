@@ -408,7 +408,8 @@ class FoundationSunshineMock {
     startHttp = true,
     startHttps = true,
     probeKbps = 20000,
-    capabilityDelayMs = 0
+    capabilityDelayMs = 0,
+    bandwidthProbeSupported = true
   } = {}) {
     this.httpPort = httpPort;
     this.httpsPort = httpsPort;
@@ -419,6 +420,7 @@ class FoundationSunshineMock {
     this.failNextServerInfo = false;
     this.probeKbps = probeKbps;
     this.capabilityDelayMs = capabilityDelayMs;
+    this.bandwidthProbeSupported = bandwidthProbeSupported;
     this.probeMinBytes = 65536;
     this.probeMaxBytes = 4194304;
     this.probeRequestedBytes = 0;
@@ -491,7 +493,7 @@ class FoundationSunshineMock {
       return;
     }
 
-    if (url.pathname === '/api/network/capabilities') {
+    if (url.pathname === '/api/network/capabilities' && this.bandwidthProbeSupported) {
       if (!isHttps) {
         this.writeJson(res, { error: 'HTTPS required' }, 401);
         return;
@@ -513,7 +515,7 @@ class FoundationSunshineMock {
       return;
     }
 
-    if (url.pathname === '/api/network/probe') {
+    if (url.pathname === '/api/network/probe' && this.bandwidthProbeSupported) {
       if (!isHttps) {
         this.writeJson(res, { error: 'HTTPS required' }, 401);
         return;
@@ -720,17 +722,21 @@ class ConnectionModelClient {
   }
 
   async getNetworkProbeCapabilities(signal) {
-    const baseUrl = await this.httpsBaseUrl();
-    const body = await requestBuffer(this.buildUrl(baseUrl, 'api/network/capabilities'), 7000, signal);
-    const parsed = JSON.parse(body.toString('utf8'));
-    const probe = parsed.bandwidthProbe;
-    if (parsed.version < 1 || !parsed.features || !parsed.features.includes('bandwidth-probe-v1') ||
-      !probe || probe.version !== 1 || !probe.endpoint.startsWith('/') || probe.endpoint.includes('://') ||
-      probe.endpoint.includes('?') || probe.endpoint.includes('#') || probe.minBytes < 1 ||
-      probe.maxBytes < probe.minBytes || probe.cooldownMs < 0) {
+    try {
+      const baseUrl = await this.httpsBaseUrl();
+      const body = await requestBuffer(this.buildUrl(baseUrl, 'api/network/capabilities'), 7000, signal);
+      const parsed = JSON.parse(body.toString('utf8'));
+      const probe = parsed.bandwidthProbe;
+      if (parsed.version < 1 || !parsed.features || !parsed.features.includes('bandwidth-probe-v1') ||
+        !probe || probe.version !== 1 || !probe.endpoint.startsWith('/') || probe.endpoint.includes('://') ||
+        probe.endpoint.includes('?') || probe.endpoint.includes('#') || probe.minBytes < 1 ||
+        probe.maxBytes < probe.minBytes || probe.cooldownMs < 0) {
+        return null;
+      }
+      return probe;
+    } catch (err) {
       return null;
     }
-    return probe;
   }
 
   async downloadNetworkProbe(capabilities, bytes, nonce, timeoutMs, signal) {
@@ -1372,6 +1378,26 @@ async function testBandwidthProbeLaunchTimeout() {
   }
 }
 
+async function testBandwidthProbeUnsupportedSunshineFallback() {
+  const mock = await new FoundationSunshineMock({ bandwidthProbeSupported: false }).start();
+  try {
+    const client = new ConnectionModelClient({
+      httpPort: mock.httpPort,
+      httpsPort: mock.httpsPort
+    });
+    const policy = new BandwidthProbePolicyModel();
+    const options = { probeEnabled: true, meteredProbeEnabled: false, isMetered: false, isCellular: false };
+    const decision = await policy.resolveInitialBitrate('host|legacy-sunshine', 100000, client, options);
+
+    assert.strictEqual(decision.bitrateKbps, 100000);
+    assert.strictEqual(decision.probeApplied, false);
+    assert.strictEqual(mock.requests.filter((r) => r.path === '/api/network/capabilities').length, 1);
+    assert.strictEqual(mock.requests.filter((r) => r.path === '/api/network/probe').length, 0);
+  } finally {
+    await mock.stop();
+  }
+}
+
 async function main() {
   const tests = [
     ['serverinfo and applist fixtures', testServerInfoAndAppList],
@@ -1388,7 +1414,8 @@ async function main() {
     ['bandwidth probe protocol', testBandwidthProbeProtocol],
     ['bandwidth probe coalescing and cache', testBandwidthProbeCoalescingAndCache],
     ['bandwidth probe metered budget and consent', testBandwidthProbeMeteredBudgetAndConsent],
-    ['bandwidth probe launch timeout', testBandwidthProbeLaunchTimeout]
+    ['bandwidth probe launch timeout', testBandwidthProbeLaunchTimeout],
+    ['bandwidth probe unsupported Sunshine fallback', testBandwidthProbeUnsupportedSunshineFallback]
   ];
 
   for (const [name, fn] of tests) {
