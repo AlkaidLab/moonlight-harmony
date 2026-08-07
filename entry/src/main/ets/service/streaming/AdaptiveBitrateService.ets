@@ -43,6 +43,7 @@ export class AdaptiveBitrateService {
   private minBitrate: number = 3000;  // Kbps
   private maxBitrate: number = 100000;  // Kbps
   private initialBitrate: number = 0;
+  private userMaxBitrate: number = 100000;
   private currentBitrate: number = 0;
 
   // 本地 fallback 控制器状态
@@ -63,9 +64,11 @@ export class AdaptiveBitrateService {
 
   // 回调
   private onBitrateChange: ((bitrate: number, reason: string) => Promise<boolean>) | null = null;
+  private onBitrateAccepted: ((bitrate: number) => void) | null = null;
 
   // 定时器
   private tickInterval: number = -1;
+  private tickPromise: Promise<void> | null = null;
   private getStatsFn: (() => StreamStats) | null = null;
 
   // 服务端启用重试（每 RETRY_INTERVAL 秒一次，最多 MAX_RETRIES 次）
@@ -96,17 +99,21 @@ export class AdaptiveBitrateService {
    */
   async start(
     initialBitrate: number,
+    maximumBitrate: number,
     mode: string,
     getStats: () => StreamStats,
-    onBitrateChange: (bitrate: number, reason: string) => Promise<boolean>
+    onBitrateChange: (bitrate: number, reason: string) => Promise<boolean>,
+    onBitrateAccepted: (bitrate: number) => void
   ): Promise<void> {
     if (this.enabled) return;
 
     this.initialBitrate = initialBitrate;
+    this.userMaxBitrate = Math.max(initialBitrate, maximumBitrate);
     this.currentBitrate = initialBitrate;
     this.mode = mode;
     this.getStatsFn = getStats;
     this.onBitrateChange = onBitrateChange;
+    this.onBitrateAccepted = onBitrateAccepted;
     this.resetState();
 
     // 设置模式参数
@@ -120,12 +127,13 @@ export class AdaptiveBitrateService {
     this.enabled = true;
     this.subscribeNetworkBoostSignals();
 
-    // 启动每秒 tick（延迟 3 秒开始，让连接稳定）
+    // 每秒调度一次；上一轮未完成时跳过，避免网络慢时请求重叠。
     this.tickInterval = setInterval(() => {
-      this.tick();
+      this.scheduleTick();
     }, 1000);
 
-    console.info(`${TAG} 已启动: bitrate=${initialBitrate}kbps, mode=${mode}, server=${this.serverSupported}`);
+    console.info(TAG + ' 已启动: bitrate=' + initialBitrate.toString() + 'kbps, max=' +
+      this.userMaxBitrate.toString() + 'kbps, mode=' + mode + ', server=' + this.serverSupported.toString());
   }
 
   /**
@@ -134,9 +142,23 @@ export class AdaptiveBitrateService {
   async stop(): Promise<void> {
     if (!this.enabled) return;
 
+    this.enabled = false;
+
     if (this.tickInterval >= 0) {
       clearInterval(this.tickInterval);
       this.tickInterval = -1;
+    }
+
+    const pendingTick = this.tickPromise;
+    if (pendingTick) {
+      try {
+        await pendingTick;
+      } catch (err) {
+        console.warn(TAG + ' 等待在途调节结束失败: ' + String(err));
+      }
+      if (this.tickPromise === pendingTick) {
+        this.tickPromise = null;
+      }
     }
 
     this.unsubscribeNetworkBoostSignals();
@@ -156,7 +178,6 @@ export class AdaptiveBitrateService {
       await this.onBitrateChange(this.initialBitrate, 'restore');
     }
 
-    this.enabled = false;
     this.resetState();
     console.info(`${TAG} 已停止，恢复码率: ${this.initialBitrate}kbps`);
   }
@@ -210,6 +231,8 @@ export class AdaptiveBitrateService {
         this.maxBitrate = Math.min(150000, this.initialBitrate * 2);
         break;
     }
+    this.maxBitrate = Math.min(this.maxBitrate, this.userMaxBitrate);
+    this.minBitrate = Math.min(this.minBitrate, this.maxBitrate);
   }
 
   private resetState(): void {
@@ -289,6 +312,26 @@ export class AdaptiveBitrateService {
     return ok;
   }
 
+  private scheduleTick(): void {
+    if (this.tickPromise) {
+      return;
+    }
+    const promise: Promise<void> = this.tick();
+    this.tickPromise = promise;
+    promise.then((): void => {
+      this.finishTick(promise);
+    }).catch((err: Error): void => {
+      console.warn(TAG + ' 调节周期失败: ' + err.message);
+      this.finishTick(promise);
+    });
+  }
+
+  private finishTick(promise: Promise<void>): void {
+    if (this.tickPromise === promise) {
+      this.tickPromise = null;
+    }
+  }
+
   private async tick(): Promise<void> {
     if (!this.enabled || !this.getStatsFn || !this.onBitrateChange) return;
 
@@ -307,6 +350,8 @@ export class AdaptiveBitrateService {
         }
       }
     }
+
+    if (!this.enabled) return;
 
     const stats = this.getStatsFn();
 
@@ -349,8 +394,24 @@ export class AdaptiveBitrateService {
     }
 
     const action = await this.nvHttp.reportNetworkFeedback(feedback);
+    if (!this.enabled) return;
+    if (action?.bitrateApplied === false) {
+      console.warn(TAG + ' [server] 码率变更被 Sunshine 拒绝: ' +
+        (action.bitrateApplyError ?? action.reason ?? 'unknown'));
+      return;
+    }
     if (action?.newBitrate && action.newBitrate !== this.currentBitrate) {
       const clamped = clamp(action.newBitrate, this.minBitrate, this.maxBitrate);
+      if (action.bitrateApplied === true && clamped === action.newBitrate) {
+        console.info(`${TAG} [server] ${this.currentBitrate}→${clamped}kbps 已由 Sunshine 接受 (${action.reason})`);
+        this.currentBitrate = clamped;
+        if (this.onBitrateAccepted) {
+          this.onBitrateAccepted(clamped);
+        }
+        return;
+      }
+
+      // 旧版 Sunshine 不返回 bitrateApplied，仍由客户端通过 /bitrate 应用。
       const success = await this.onBitrateChange!(clamped, action.reason ?? 'server');
       if (success) {
         console.info(`${TAG} [server] ${this.currentBitrate}→${clamped}kbps (${action.reason})`);

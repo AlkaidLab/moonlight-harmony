@@ -40,6 +40,8 @@ export class SettingsKeys {
   static readonly FPS: string = 'settings_fps';
   static readonly CUSTOM_FPS: string = 'settings_custom_fps';
   static readonly BITRATE: string = 'settings_bitrate';
+  static readonly BANDWIDTH_PROBE_ENABLED: string = 'settings_bandwidth_probe_enabled';
+  static readonly METERED_BANDWIDTH_PROBE_ENABLED: string = 'settings_metered_bandwidth_probe_enabled';
   static readonly HOST_SCALE: string = 'settings_host_scale';
   static readonly ENABLE_HDR: string = 'settings_enable_hdr';
   static readonly HDR_MODE: string = 'settings_hdr_mode';  // 'HDR10' or 'HLG'
@@ -250,6 +252,11 @@ export interface HostSettings {
   enableSops: boolean;
   screenCombinationMode: string;
   lockScreenAfterDisconnect: boolean;
+}
+
+export interface BandwidthProbeSettings {
+  probeEnabled: boolean;
+  meteredProbeEnabled: boolean;
 }
 
 /**
@@ -922,6 +929,13 @@ export class SettingsService {
    */
   async shouldResumeStream(): Promise<boolean> {
     return await this.getBoolean(SettingsKeys.RESUME_STREAM, false);
+  }
+
+  async getBandwidthProbeSettings(): Promise<BandwidthProbeSettings> {
+    return {
+      probeEnabled: await this.getBoolean(SettingsKeys.BANDWIDTH_PROBE_ENABLED, false),
+      meteredProbeEnabled: await this.getBoolean(SettingsKeys.METERED_BANDWIDTH_PROBE_ENABLED, false)
+    };
   }
 
 }

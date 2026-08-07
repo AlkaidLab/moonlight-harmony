@@ -64,6 +64,30 @@ export class RcpSessionPool {
 
   private static readonly entries: Map<string, SessionPoolEntry> = new Map();
 
+  private static createSession(options: SessionAcquireOptions): rcp.Session {
+    const securityConfig: rcp.SecurityConfiguration = {
+      remoteValidation: options.skipServerValidation ? 'skip' : 'system'
+    };
+    if (options.clientCertPath && options.clientKeyPath) {
+      securityConfig.certificate = {
+        type: 'PEM',
+        filePath: options.clientCertPath,
+        key: options.clientKeyPath
+      };
+    }
+
+    const sessionConfig: rcp.SessionConfiguration = {
+      requestConfiguration: {
+        security: securityConfig
+      },
+      connectionConfiguration: {
+        maxConnectionsPerHost: RcpSessionPool.MAX_CONN_PER_HOST,
+        maxTotalConnections: RcpSessionPool.MAX_TOTAL_CONN
+      }
+    };
+    return rcp.createSession(sessionConfig);
+  }
+
   /**
    * 取/建一个 Session（按 cacheKey 缓存）
    */
@@ -99,35 +123,18 @@ export class RcpSessionPool {
       }
     }
 
-    const securityConfig: rcp.SecurityConfiguration = {
-      remoteValidation: options.skipServerValidation ? 'skip' : 'system'
-    };
-    if (options.clientCertPath && options.clientKeyPath) {
-      securityConfig.certificate = {
-        type: 'PEM',
-        filePath: options.clientCertPath,
-        key: options.clientKeyPath
-      };
-    }
-
-    // session 配置：
-    // - security 必须在 session 创建时绑定（含客户端证书）
-    // - timeout 不绑定，留给 Request.configuration 覆盖（共享 session 的关键）
-    // - connectionConfiguration 显式指定（按我们实际并发量定制，比默认 6/64 更紧凑）
-    const sessionConfig: rcp.SessionConfiguration = {
-      requestConfiguration: {
-        security: securityConfig
-      },
-      connectionConfiguration: {
-        maxConnectionsPerHost: RcpSessionPool.MAX_CONN_PER_HOST,
-        maxTotalConnections: RcpSessionPool.MAX_TOTAL_CONN
-      }
-    };
-
-    const session = rcp.createSession(sessionConfig);
+    const session = RcpSessionPool.createSession(options);
     RcpSessionPool.entries.set(cacheKey, { session, lastUsedAt: Date.now() });
     console.info(`RcpSessionPool: 新建 session ${cacheKey} (size=${RcpSessionPool.entries.size})`);
     return session;
+  }
+
+  /**
+   * 创建不加入共享池的 Session。
+   * 调用方可通过 close() 只取消自己的请求，不影响共享 Session 上的并发流量。
+   */
+  static createIsolated(options: SessionAcquireOptions): rcp.Session {
+    return RcpSessionPool.createSession(options);
   }
 
   /**

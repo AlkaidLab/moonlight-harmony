@@ -41,6 +41,7 @@ import { DevKeyVerifier } from '../utils/DevKeyVerifier';
 import { DeveloperUnlockResult, DeveloperUnlockService, DeveloperUnlockStatus } from '../service/DeveloperUnlockService';
 import { GitHubDeviceCode } from '../utils/GitHubStarVerifier';
 import { ToastQueue } from '../utils/ToastQueue';
+import { METERED_BANDWIDTH_PROBE_MAX_BYTES } from '../service/network/BandwidthProbeService';
 
 /**
  * 选择器选项接口
@@ -154,6 +155,8 @@ struct SettingsPageV2 {
   @State fps: string = '60 FPS';
   @State customFps: number = 0;  // 自定义帧率值 (0 表示使用预设)
   @State bitrate: number = 20;
+  @State bandwidthProbeEnabled: boolean = false;
+  @State meteredBandwidthProbeEnabled: boolean = false;
   @State adaptiveBitrate: boolean = false;
   @State hostScale: number = 100;
   @State enableHdr: boolean = false;
@@ -502,6 +505,9 @@ struct SettingsPageV2 {
       this.fps = await PreferencesUtil.get<string>(SettingsKeys.FPS, '60 FPS');
       this.customFps = await PreferencesUtil.get<number>(SettingsKeys.CUSTOM_FPS, 0);
       this.bitrate = await PreferencesUtil.get<number>(SettingsKeys.BITRATE, 0);
+      this.bandwidthProbeEnabled = await this.loadBoolean(SettingsKeys.BANDWIDTH_PROBE_ENABLED, false);
+      this.meteredBandwidthProbeEnabled = await this.loadBoolean(
+        SettingsKeys.METERED_BANDWIDTH_PROBE_ENABLED, false);
       this.adaptiveBitrate = await this.loadBoolean(SettingsKeys.ADAPTIVE_BITRATE, false);
       this.hostScale = await PreferencesUtil.get<number>(SettingsKeys.HOST_SCALE, 100);
       this.enableHdr = await this.loadBoolean(SettingsKeys.ENABLE_HDR, false);
@@ -1052,10 +1058,10 @@ struct SettingsPageV2 {
                 action: () => this.showFpsPicker()
               },
               {
-                title: '码率',
+                title: '码率上限',
                 subtitle: this.bitrate === 0 
                   ? `自动 (推荐: ${this.getRecommendedBitrateForCurrentSettings()} Mbps)` 
-                  : '视频传输比特率',
+                  : this.bandwidthProbeEnabled ? '自动初始码率不会超过此值' : '视频传输比特率',
                 type: 'slider',
                 value: this.bitrate,
                 min: 1,  // 对数滑块最小值为1（0单独处理为"自动"）
@@ -1073,7 +1079,30 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '智能码率',
+                title: '自动初始码率',
+                subtitle: this.bandwidthProbeEnabled ? '开流前预估可用带宽' : '直接使用码率上限',
+                type: 'toggle',
+                value: this.bandwidthProbeEnabled,
+                action: () => {
+                  this.bandwidthProbeEnabled = !this.bandwidthProbeEnabled;
+                  this.saveSetting(SettingsKeys.BANDWIDTH_PROBE_ENABLED, this.bandwidthProbeEnabled);
+                }
+              },
+              {
+                title: '允许计费网络测速',
+                subtitle: '允许在蜂窝或计费网络传输最多 ' +
+                  (METERED_BANDWIDTH_PROBE_MAX_BYTES / 1024).toString() + ' KiB 探测数据',
+                type: 'toggle',
+                value: this.meteredBandwidthProbeEnabled,
+                visible: this.bandwidthProbeEnabled,
+                action: () => {
+                  this.meteredBandwidthProbeEnabled = !this.meteredBandwidthProbeEnabled;
+                  this.saveSetting(SettingsKeys.METERED_BANDWIDTH_PROBE_ENABLED,
+                    this.meteredBandwidthProbeEnabled);
+                }
+              },
+              {
+                title: '串流中动态调节',
                 subtitle: this.adaptiveBitrate ? '根据网络状况自动调节码率' : '手动码率模式',
                 tooltip: '实时上报丢包率、延迟、帧率等网络指标，由本地 PID 控制器自动调节码率；连接基地阳光的米塔智能体时，服务端 LLM 可综合游戏类型和画面复杂度给出更精准的码率推荐',
                 type: 'toggle',
