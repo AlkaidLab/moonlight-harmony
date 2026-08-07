@@ -60,6 +60,19 @@ interface CachedServerInfo {
   timestamp: number;
 }
 
+/** ETS AAAA 查询缓存项。undefined 表示本次查询没有可用的全局 IPv6。 */
+interface CachedAaaaResult {
+  ipv6Address?: string;
+  expiresAt: number;
+}
+
+/**
+ * DNS 缓存仅用于绕过部分鸿蒙版本对 AAAA-only 域名的不稳定解析。
+ * 正结果定期刷新以适配 DDNS，负结果短暂缓存以避免 5 秒轮询持续打 DNS。
+ */
+const DNS_POSITIVE_CACHE_TTL_MS = 5 * 60_000;
+const DNS_NEGATIVE_CACHE_TTL_MS = 60_000;
+
 /** 全 0 MAC：远程响应或 HTTP 未配对响应中的占位值，不能用它覆盖已发现的真实 MAC */
 const ZERO_MAC = '00:00:00:00:00:00';
 
@@ -96,6 +109,12 @@ export class ComputerManager {
    * 由轮询 / 刷新链路写入；StreamingSession.fetchServerInfo 命中即复用，省一次 HTTPS。
    */
   private serverInfoCache: Map<string, CachedServerInfo> = new Map();
+  /** hostname -> ETS AAAA 查询结果；网络切换时整体失效 */
+  private aaaaCache: Map<string, CachedAaaaResult> = new Map();
+  /** hostname -> 正在执行的查询；合并 mDNS、轮询和手动刷新产生的并发请求 */
+  private aaaaLookupFlights: Map<string, Promise<string | undefined>> = new Map();
+  /** 防止网络切换前启动的查询把旧网络结果写回新网络缓存 */
+  private dnsCacheEpoch: number = 0;
 
   // ═══════════════════════════════════════════════════════════
   // 初始化 & 单例
@@ -506,7 +525,8 @@ export class ComputerManager {
       if (isLiteralIp) {
         throw firstErr as Error;
       }
-      const ipv6 = await this.resolveAaaaLiteral(parsed.host);
+      // 用户主动重试时绕过短期负缓存，但仍复用已有正缓存并写回最新查询结果。
+      const ipv6 = await this.resolveAaaaLiteral(parsed.host, true);
       if (!ipv6) {
         // AAAA 解析也无果，把原错误抛出（含网络/超时信息）
         throw firstErr as Error;
@@ -539,7 +559,48 @@ export class ComputerManager {
    *   - addComputer 域名直连失败时的回退
    *   - lookupAndSetIpv6 持久化 IPv6 字面量到 computer.ipv6Address
    */
-  private async resolveAaaaLiteral(host: string): Promise<string | undefined> {
+  private async resolveAaaaLiteral(
+    host: string,
+    bypassNegativeCache: boolean = false
+  ): Promise<string | undefined> {
+    const normalizedHost = host.trim();
+    const cacheKey = normalizedHost.toLowerCase();
+    if (!cacheKey) return undefined;
+
+    const cached = this.aaaaCache.get(cacheKey);
+    if (cached) {
+      if (cached.expiresAt > Date.now()) {
+        if (!bypassNegativeCache || cached.ipv6Address) {
+          return cached.ipv6Address;
+        }
+      } else {
+        this.aaaaCache.delete(cacheKey);
+      }
+    }
+
+    const activeLookup = this.aaaaLookupFlights.get(cacheKey);
+    if (activeLookup) {
+      return await activeLookup;
+    }
+
+    const lookupEpoch = this.dnsCacheEpoch;
+    const lookup = this.queryAndCacheAaaaLiteral(normalizedHost, cacheKey, lookupEpoch);
+    this.aaaaLookupFlights.set(cacheKey, lookup);
+    try {
+      return await lookup;
+    } finally {
+      if (this.aaaaLookupFlights.get(cacheKey) === lookup) {
+        this.aaaaLookupFlights.delete(cacheKey);
+      }
+    }
+  }
+
+  private async queryAndCacheAaaaLiteral(
+    host: string,
+    cacheKey: string,
+    lookupEpoch: number
+  ): Promise<string | undefined> {
+    let ipv6Address: string | undefined;
     try {
       const addresses = await connection.getAddressesByName(host);
       const ipv6List: string[] = [];
@@ -548,11 +609,28 @@ export class ComputerManager {
           ipv6List.push(addr.address);
         }
       }
-      return getBestIpv6Address(ipv6List);
+      ipv6Address = getBestIpv6Address(ipv6List);
     } catch (err) {
       console.info(`ComputerManager: resolveAaaaLiteral('${host}') 失败: ${err}`);
+    }
+
+    // 网络已经切换：丢弃旧网络结果，调用方也不能把它写入 ComputerInfo。
+    if (lookupEpoch !== this.dnsCacheEpoch) {
       return undefined;
     }
+
+    const ttl = ipv6Address ? DNS_POSITIVE_CACHE_TTL_MS : DNS_NEGATIVE_CACHE_TTL_MS;
+    this.aaaaCache.set(cacheKey, {
+      ipv6Address: ipv6Address,
+      expiresAt: Date.now() + ttl
+    });
+    return ipv6Address;
+  }
+
+  private invalidateDnsCache(): void {
+    this.dnsCacheEpoch++;
+    this.aaaaCache.clear();
+    this.aaaaLookupFlights.clear();
   }
 
   /**
@@ -751,6 +829,7 @@ export class ComputerManager {
       // 网络可用（WiFi 连接、蜂窝恢复等）→ 重置所有 PC 状态并立即重新轮询
       this.netConnection.on('netAvailable', () => {
         console.info('ComputerManager: 网络变为可用，重置并重新轮询');
+        this.invalidateDnsCache();
         this.computers.forEach(c => { c.state = ComputerState.UNKNOWN; });
         this.offlineCount.clear(); // 网络恢复，清空失败计数
 
@@ -765,6 +844,7 @@ export class ComputerManager {
       // 网络丢失 → 标记所有 PC 为离线
       this.netConnection.on('netLost', () => {
         console.info('ComputerManager: 网络丢失，标记所有 PC 为离线');
+        this.invalidateDnsCache();
         this.computers.forEach(c => { c.state = ComputerState.OFFLINE; });
         // 已强制 OFFLINE，计数不再被读取；同时避免网络恢复后“旧数”干扰阈值判定
         this.offlineCount.clear();
@@ -990,15 +1070,15 @@ export class ComputerManager {
     // 缓存最新 ServerInfo，让"进入串流"链路省一次 HTTPS round-trip
     this.cacheServerInfo(target.uuid, info);
 
-    // 如果仍缺少 IPv6 全局地址，异步补充（不阻塞轮询流程）
+    // 异步刷新 DNS 派生的 IPv6 地址（缓存命中不触发真实 DNS，不阻塞轮询流程）
+    // 轮询链路即使已有 IPv6 也会进入这里，由 TTL 控制真实 DNS 频率，
+    // 以便 DDNS 的 AAAA 变化后能够更新持久化的 IPv6；添加/mDNS 路径只负责首次补充。
     // 候选源（按外网可达性排序）：
     //   - manualAddress：用户输入的 DDNS / 公网域名，外网最可能解析到 AAAA
     //   - info.hostname：服务器自报主机名，通常仅 LAN 可解析
     //   - hostname.local：mDNS fallback
     // 不限制 isIPv6Address(manualAddress)，DDNS 域名 ≠ IPv6 字面量但解析后是 IPv6
-    if (!target.ipv6Address) {
-      this.lookupAndSetIpv6(target, info.hostname, target.manualAddress);
-    }
+    this.lookupAndSetIpv6(target, info.hostname, target.manualAddress);
 
     console.info(`ComputerManager: ${target.name} 在线 (${result.address}), game=${info.currentGame}, paired=${target.pairState}`);
     this.saveComputers();
@@ -1032,19 +1112,32 @@ export class ComputerManager {
     if (manualAddress && !isIPv6Address(manualAddress) && !isIPv4Address(manualAddress)) {
       lookupSources.push(manualAddress);
     }
-    if (hostname) {
-      lookupSources.push(hostname, `${hostname}.local`);
+    // Sunshine 自报 hostname/.local 通常只在 LAN 有意义，禁止从公网轮询链路泄漏查询。
+    // 手动输入的 DDNS 始终保留，因为它代表用户明确配置的公网身份。
+    // 只看本次成功连接的地址；localAddress 在公网连接时仍可能是 Sunshine 自报的内网地址。
+    const activeAddress = computer.address;
+    const normalizedHostname = hostname?.trim().replace(/\.$/, '');
+    if (normalizedHostname && isLanAddress(activeAddress)) {
+      lookupSources.push(normalizedHostname);
+      if (!normalizedHostname.toLowerCase().endsWith('.local')) {
+        lookupSources.push(`${normalizedHostname}.local`);
+      }
     }
     if (lookupSources.length === 0) return;
 
+    const uniqueLookupSources = Array.from(new Set<string>(lookupSources));
+
     // 顺序尝试，第一个拿到 IPv6 全局地址即停止
     const lookupChain = async (): Promise<void> => {
-      for (const host of lookupSources) {
+      for (const host of uniqueLookupSources) {
         const ipv6 = await this.resolveAaaaLiteral(host);
         if (ipv6) {
-          computer.ipv6Address = ipv6;
-          console.info(`ComputerManager: 为 ${computer.name} 补充 IPv6 地址: ${ipv6} (源: ${host})`);
-          this.saveComputers();
+          if (computer.ipv6Address !== ipv6) {
+            computer.ipv6Address = ipv6;
+            console.info(`ComputerManager: 为 ${computer.name} 更新 IPv6 地址: ${ipv6} (源: ${host})`);
+            this.saveComputers();
+            this.notifyListChanged();
+          }
           return;
         }
       }
