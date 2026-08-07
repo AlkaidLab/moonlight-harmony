@@ -559,7 +559,8 @@ export class ComputerManager {
    *   - lookupAndSetIpv6 持久化 IPv6 字面量到 computer.ipv6Address
    */
   private async resolveAaaaLiteral(host: string): Promise<string | undefined> {
-    const cacheKey = host.trim().toLowerCase();
+    const normalizedHost = host.trim();
+    const cacheKey = normalizedHost.toLowerCase();
     if (!cacheKey) return undefined;
 
     const cached = this.aaaaCache.get(cacheKey);
@@ -576,7 +577,7 @@ export class ComputerManager {
     }
 
     const lookupEpoch = this.dnsCacheEpoch;
-    const lookup = this.queryAndCacheAaaaLiteral(host, cacheKey, lookupEpoch);
+    const lookup = this.queryAndCacheAaaaLiteral(normalizedHost, cacheKey, lookupEpoch);
     this.aaaaLookupFlights.set(cacheKey, lookup);
     try {
       return await lookup;
@@ -1105,8 +1106,12 @@ export class ComputerManager {
     // Sunshine 自报 hostname/.local 通常只在 LAN 有意义，禁止从公网轮询链路泄漏查询。
     // 手动输入的 DDNS 始终保留，因为它代表用户明确配置的公网身份。
     const activeAddress = computer.address || computer.localAddress;
-    if (hostname && isLanAddress(activeAddress)) {
-      lookupSources.push(hostname, `${hostname}.local`);
+    const normalizedHostname = hostname?.trim().replace(/\.$/, '');
+    if (normalizedHostname && isLanAddress(activeAddress)) {
+      lookupSources.push(normalizedHostname);
+      if (!normalizedHostname.toLowerCase().endsWith('.local')) {
+        lookupSources.push(`${normalizedHostname}.local`);
+      }
     }
     if (lookupSources.length === 0) return;
 
@@ -1121,6 +1126,7 @@ export class ComputerManager {
             computer.ipv6Address = ipv6;
             console.info(`ComputerManager: 为 ${computer.name} 更新 IPv6 地址: ${ipv6} (源: ${host})`);
             this.saveComputers();
+            this.notifyListChanged();
           }
           return;
         }
