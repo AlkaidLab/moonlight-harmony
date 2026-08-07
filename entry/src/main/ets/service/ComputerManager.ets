@@ -525,7 +525,8 @@ export class ComputerManager {
       if (isLiteralIp) {
         throw firstErr as Error;
       }
-      const ipv6 = await this.resolveAaaaLiteral(parsed.host);
+      // 用户主动重试时绕过短期负缓存，但仍复用已有正缓存并写回最新查询结果。
+      const ipv6 = await this.resolveAaaaLiteral(parsed.host, true);
       if (!ipv6) {
         // AAAA 解析也无果，把原错误抛出（含网络/超时信息）
         throw firstErr as Error;
@@ -558,7 +559,10 @@ export class ComputerManager {
    *   - addComputer 域名直连失败时的回退
    *   - lookupAndSetIpv6 持久化 IPv6 字面量到 computer.ipv6Address
    */
-  private async resolveAaaaLiteral(host: string): Promise<string | undefined> {
+  private async resolveAaaaLiteral(
+    host: string,
+    bypassNegativeCache: boolean = false
+  ): Promise<string | undefined> {
     const normalizedHost = host.trim();
     const cacheKey = normalizedHost.toLowerCase();
     if (!cacheKey) return undefined;
@@ -566,9 +570,12 @@ export class ComputerManager {
     const cached = this.aaaaCache.get(cacheKey);
     if (cached) {
       if (cached.expiresAt > Date.now()) {
-        return cached.ipv6Address;
+        if (!bypassNegativeCache || cached.ipv6Address) {
+          return cached.ipv6Address;
+        }
+      } else {
+        this.aaaaCache.delete(cacheKey);
       }
-      this.aaaaCache.delete(cacheKey);
     }
 
     const activeLookup = this.aaaaLookupFlights.get(cacheKey);
@@ -1064,6 +1071,8 @@ export class ComputerManager {
     this.cacheServerInfo(target.uuid, info);
 
     // 异步刷新 DNS 派生的 IPv6 地址（缓存命中不触发真实 DNS，不阻塞轮询流程）
+    // 轮询链路即使已有 IPv6 也会进入这里，由 TTL 控制真实 DNS 频率，
+    // 以便 DDNS 的 AAAA 变化后能够更新持久化的 IPv6；添加/mDNS 路径只负责首次补充。
     // 候选源（按外网可达性排序）：
     //   - manualAddress：用户输入的 DDNS / 公网域名，外网最可能解析到 AAAA
     //   - info.hostname：服务器自报主机名，通常仅 LAN 可解析
@@ -1105,7 +1114,8 @@ export class ComputerManager {
     }
     // Sunshine 自报 hostname/.local 通常只在 LAN 有意义，禁止从公网轮询链路泄漏查询。
     // 手动输入的 DDNS 始终保留，因为它代表用户明确配置的公网身份。
-    const activeAddress = computer.address || computer.localAddress;
+    // 只看本次成功连接的地址；localAddress 在公网连接时仍可能是 Sunshine 自报的内网地址。
+    const activeAddress = computer.address;
     const normalizedHostname = hostname?.trim().replace(/\.$/, '');
     if (normalizedHostname && isLanAddress(activeAddress)) {
       lookupSources.push(normalizedHostname);
