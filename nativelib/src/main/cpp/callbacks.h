@@ -22,6 +22,8 @@
 #include <js_native_api.h>
 #include <js_native_api_types.h>
 
+#include "moonlight-common-c/src/Limelight.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -81,6 +83,7 @@ typedef struct {
     napi_threadsafe_function tsfn_connectionStarted;
     napi_threadsafe_function tsfn_connectionTerminated;
     napi_threadsafe_function tsfn_rumble;
+    napi_threadsafe_function tsfn_ds5HapticsIrV2;
     napi_threadsafe_function tsfn_connectionStatusUpdate;
     napi_threadsafe_function tsfn_setHdrMode;
     napi_threadsafe_function tsfn_rumbleTriggers;
@@ -130,6 +133,7 @@ void BridgeClSetMotionEventState(unsigned short controllerNumber, unsigned char 
 void BridgeClSetControllerLED(unsigned short controllerNumber, unsigned char r, unsigned char g, unsigned char b);
 void BridgeClResolutionChanged(unsigned int width, unsigned int height);
 void BridgeClClipboardData(const char* data, int length);
+void BridgeClDs5HapticsIrV2(const LI_DS5_HAPTICS_IR_FRAME_V2* frame);
 void BridgeClLogMessage(const char* format, ...);
 
 #ifdef __cplusplus

@@ -45,7 +45,8 @@ import {
   VK_LWIN,
   KEY_ACTION_DOWN,
   KEY_ACTION_UP,
-  STAGE_NAME_RESOLUTION
+  STAGE_NAME_RESOLUTION,
+  Ds5HapticsIrV2Frame
 } from './MoonBridge';
 import nativeLib from 'libmoonlight_nativelib.so';
 
@@ -214,6 +215,7 @@ interface StreamCallbacks {
   connectionStatusUpdate?: (connectionStatus: number) => void;
   setHdrMode?: (enabled: boolean) => void;
   rumble?: (controllerNumber: number, lowFreqMotor: number, highFreqMotor: number) => void;
+  ds5HapticsIrV2?: (frame: Ds5HapticsIrV2Frame) => void;
   rumbleTriggers?: (controllerNumber: number, leftTrigger: number, rightTrigger: number) => void;
   setMotionEventState?: (controllerNumber: number, motionType: number, reportRateHz: number) => void;
   setControllerLED?: (controllerNumber: number, r: number, g: number, b: number) => void;
@@ -1281,6 +1283,9 @@ export class StreamingSession {
       },
       rumble: (cn: number, low: number, high: number): void => {
         GamepadManager.getInstance().handleRumble(cn, low, high);
+      },
+      ds5HapticsIrV2: (frame: Ds5HapticsIrV2Frame): void => {
+        GamepadManager.getInstance().handleDs5HapticsIrV2(frame);
       },
       rumbleTriggers: (cn: number, lt: number, rt: number): void => {
         GamepadManager.getInstance().handleRumbleTriggers(cn, lt, rt);

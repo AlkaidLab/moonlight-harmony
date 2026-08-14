@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1800"
+     height="1160"
+     viewBox="0 0 1800 1160"
+     role="img"
+     aria-labelledby="diagram-title diagram-description">
+  <title id="diagram-title">DS5 触觉 IR v2 接入架构</title>
+  <desc id="diagram-description">
+    左侧为 Sunshine 和 Moonlight common-c，中间为 HarmonyOS 客户端，右侧为 DualSense。
+    绿色链路是当前可用的 IR 到普通震动回退，橙色链路是需要原始蓝牙 HID 输出能力的未来 PCM HD 触觉链路；现有混音器管理 game 与 audio，IR 需要独立来源槽位。
+  </desc>
+
+  <style>
+    text {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+      fill: #172033;
+    }
+    .title { font-size: 30px; font-weight: 500; letter-spacing: 0; }
+    .subtitle { font-size: 15px; fill: #536174; }
+    .group-title { font-size: 20px; font-weight: 500; }
+    .group-caption { font-size: 13px; fill: #536174; }
+    .box-title { font-size: 16px; font-weight: 500; }
+    .box-text { font-size: 13px; fill: #536174; }
+    .small { font-size: 12px; fill: #536174; }
+    .micro { font-size: 11px; fill: #536174; }
+    .chip-label { font-size: 13px; font-weight: 500; }
+    .chip-note { font-size: 11px; fill: #536174; }
+    .panel-title { font-size: 15px; font-weight: 500; }
+    .panel-note { font-size: 12px; fill: #536174; }
+    .label { font-size: 12px; font-weight: 500; }
+    .muted { fill: #718096; }
+    .group { fill: #ffffff; stroke: #c7d1df; stroke-width: 2; }
+    .box { fill: #fbfcfe; stroke: #c7d1df; stroke-width: 1.5; }
+    .current-panel { fill: #eefaf6; stroke: #159a77; stroke-width: 1.8; }
+    .future-panel { fill: #fff6e6; stroke: #c87900; stroke-width: 1.8; }
+    .blocked-box { fill: #fff2f2; stroke: #c83d4a; stroke-width: 1.6; stroke-dasharray: 6 4; }
+    .note-box { fill: #f1f5f9; stroke: #c7d1df; stroke-width: 1.2; }
+    .sa-box { fill: #fff8ec; stroke: #d08a1b; stroke-width: 1.4; }
+    .arrow { fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    .arrow-green { stroke: #159a77; }
+    .arrow-amber { stroke: #c87900; stroke-dasharray: 8 6; }
+    .arrow-red { stroke: #c83d4a; stroke-dasharray: 8 6; }
+    .arrow-blue { stroke: #2f6bff; }
+    .arrow-gray { stroke: #718096; stroke-dasharray: 5 5; }
+    .divider { stroke: #d6dee9; stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .accent-host { fill: #2f6bff; }
+    .accent-app { fill: #159a77; }
+    .accent-device { fill: #6b7280; }
+    .accent-future { fill: #c87900; }
+    .accent-blocked { fill: #c83d4a; }
+    .white { fill: #ffffff; }
+  </style>
+
+  <defs>
+    <marker id="arrow-green-head" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#159a77"/>
+    </marker>
+    <marker id="arrow-amber-head" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#c87900"/>
+    </marker>
+    <marker id="arrow-red-head" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#c83d4a"/>
+    </marker>
+    <marker id="arrow-blue-head" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#2f6bff"/>
+    </marker>
+    <marker id="arrow-gray-head" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#718096"/>
+    </marker>
+  </defs>
+
+  <rect width="1800" height="1160" fill="#f5f7fa"/>
+
+  <!-- Header -->
+  <text x="55" y="63" class="title">DS5 触觉 IR v2 接入架构</text>
+  <text x="55" y="91" class="subtitle">输入链路已经可用；普通震动目前回退到设备；HD 触觉需要系统级 Bluetooth HID 输出能力。</text>
+
+  <g transform="translate(1202 43)">
+    <rect x="0" y="0" width="14" height="14" rx="3" fill="#159a77"/>
+    <text x="22" y="12" class="small">当前可用</text>
+    <rect x="105" y="0" width="14" height="14" rx="3" fill="#c87900"/>
+    <text x="127" y="12" class="small">设计目标</text>
+    <rect x="222" y="0" width="14" height="14" rx="3" fill="#c83d4a"/>
+    <text x="244" y="12" class="small">平台阻塞</text>
+    <rect x="337" y="0" width="14" height="14" rx="3" fill="#2f6bff"/>
+    <text x="359" y="12" class="small">输入方向</text>
+  </g>
+
+  <!-- Main columns -->
+  <rect x="55" y="145" width="430" height="710" rx="10" class="group"/>
+  <rect x="55" y="145" width="430" height="8" rx="4" class="accent-host"/>
+  <text x="82" y="185" class="group-title">主机侧 / Sunshine</text>
+  <text x="82" y="207" class="group-caption">协议生成与客户端能力协商</text>
+
+  <rect x="525" y="145" width="670" height="710" rx="10" class="group"/>
+  <rect x="525" y="145" width="670" height="8" rx="4" class="accent-app"/>
+  <text x="552" y="185" class="group-title">HarmonyOS 客户端</text>
+  <text x="552" y="207" class="group-caption">能力门控、触觉路由和输出后端</text>
+
+  <rect x="1235" y="145" width="510" height="710" rx="10" class="group"/>
+  <rect x="1235" y="145" width="510" height="8" rx="4" class="accent-device"/>
+  <text x="1262" y="185" class="group-title">DualSense / DS5</text>
+  <text x="1262" y="207" class="group-caption">蓝牙 HID 输入与触觉执行器</text>
+
+  <!-- Cross-column flow lines, placed behind the modules -->
+  <path d="M460 416 C505 416, 520 517, 570 517" class="arrow arrow-green" marker-end="url(#arrow-green-head)"/>
+  <path d="M460 466 C500 466, 520 442, 570 442" class="arrow arrow-green" marker-end="url(#arrow-green-head)"/>
+  <path d="M460 523 C505 523, 520 710, 565 710" class="arrow arrow-amber" marker-end="url(#arrow-amber-head)"/>
+  <path d="M550 250 C515 250, 500 280, 460 280" class="arrow arrow-gray" marker-end="url(#arrow-gray-head)"/>
+  <path d="M1170 712 C1240 712, 1260 411, 1510 411" class="arrow arrow-red" marker-end="url(#arrow-red-head)"/>
+  <path d="M830 559 C1015 559, 1115 642, 1265 642" class="arrow arrow-green" marker-end="url(#arrow-green-head)"/>
+  <text x="468" y="265" class="micro">featureFlags</text>
+
+  <!-- Host internals -->
+  <rect x="80" y="230" width="380" height="100" rx="7" class="box"/>
+  <circle cx="104" cy="260" r="9" class="accent-host"/>
+  <text x="125" y="266" class="box-title">Sunshine / moonlight-common-c</text>
+  <text x="100" y="292" class="box-text">接收客户端能力声明并选择触觉模式</text>
+  <text x="100" y="313" class="box-text">向串流控制通道发送标准或 DS5 扩展事件</text>
+
+  <rect x="80" y="350" width="380" height="220" rx="7" class="box"/>
+  <text x="100" y="378" class="box-title">能力与数据类型</text>
+  <rect x="100" y="395" width="340" height="42" rx="5" fill="#eaf8f3" stroke="#9bd8c5"/>
+  <text x="116" y="413" class="chip-label">rumble</text>
+  <text x="116" y="429" class="chip-note">标准双马达数值</text>
+  <rect x="100" y="445" width="340" height="42" rx="5" fill="#eaf8f3" stroke="#9bd8c5"/>
+  <text x="116" y="463" class="chip-label">ds5HapticsIrV2</text>
+  <text x="116" y="479" class="chip-note">设备无关的模拟触觉特征</text>
+  <rect x="100" y="495" width="340" height="56" rx="5" fill="#fff6e6" stroke="#e4bc75"/>
+  <text x="116" y="515" class="chip-label">ds5HapticsPcm</text>
+  <text x="116" y="532" class="chip-note">原始 DS5 PCM；仅在物理输出可用时声明</text>
+
+  <rect x="80" y="600" width="380" height="130" rx="7" class="note-box"/>
+  <text x="100" y="627" class="box-title">主机侧注意事项</text>
+  <text x="100" y="653" class="box-text">• PCM 与 IR v2 是互斥模式</text>
+  <text x="100" y="675" class="box-text">• 客户端能力声明不能只代表“能接收数据”</text>
+  <text x="100" y="697" class="box-text">• 必须绑定实际可用的执行器后端</text>
+
+  <!-- Harmony bridge -->
+  <rect x="550" y="230" width="620" height="82" rx="7" class="box"/>
+  <circle cx="576" cy="260" r="9" class="accent-app"/>
+  <text x="597" y="266" class="box-title">Native bridge / Capability Gate</text>
+  <text x="570" y="290" class="box-text">根据“输出后端是否真实可用”决定是否声明 PCM</text>
+  <text x="570" y="307" class="box-text">没有 raw HID 时：保留 IR / rumble，明确走回退路径</text>
+
+  <!-- Current path -->
+  <rect x="550" y="340" width="620" height="245" rx="7" class="current-panel"/>
+  <text x="570" y="370" class="panel-title">A. 当前可落地：IR / rumble → 统一执行器</text>
+  <text x="570" y="391" class="panel-note">IR 折算后进入 game 槽位；需与 standard / audio 分源混音</text>
+
+  <rect x="570" y="410" width="170" height="64" rx="6" class="box"/>
+  <text x="585" y="437" class="box-title">IR v2 frame</text>
+  <text x="585" y="458" class="small">特征帧 / 边界标志</text>
+  <path d="M740 442 L770 442" class="arrow arrow-green" marker-end="url(#arrow-green-head)"/>
+
+  <rect x="770" y="410" width="170" height="64" rx="6" class="box"/>
+  <text x="785" y="437" class="box-title">IR 校准折叠</text>
+  <text x="785" y="458" class="small">左右触觉 → 双马达</text>
+  <path d="M940 442 L970 442" class="arrow arrow-green" marker-end="url(#arrow-green-head)"/>
+
+  <rect x="970" y="410" width="175" height="64" rx="6" class="box"/>
+  <text x="985" y="437" class="box-title">IR → game slot</text>
+  <text x="985" y="458" class="small">当前复用（会覆盖）</text>
+
+  <rect x="570" y="490" width="575" height="52" rx="6" fill="#ffffff" stroke="#9bd8c5"/>
+  <text x="590" y="513" class="box-title">Haptics Source Mixer</text>
+  <text x="590" y="531" class="small">AudioVibrationService → audio source</text>
+  <text x="845" y="513" class="small">现有：game + audio headroom</text>
+  <text x="845" y="531" class="small">目标：standard + IR + audio</text>
+  <path d="M1055 474 C1055 482, 1025 486, 1010 490" class="arrow arrow-green" marker-end="url(#arrow-green-head)"/>
+
+  <rect x="570" y="551" width="260" height="27" rx="5" fill="#eaf8f3" stroke="#9bd8c5"/>
+  <text x="584" y="569" class="small">USB DS5 output · 0x02 / USB bulkTransfer</text>
+  <rect x="850" y="551" width="295" height="27" rx="5" fill="#f1f5f9" stroke="#c7d1df"/>
+  <text x="864" y="569" class="small">客户端设备 vibrator（非 DS5）</text>
+  <path d="M760 542 C760 545, 710 548, 700 551" class="arrow arrow-green" marker-end="url(#arrow-green-head)"/>
+  <path d="M930 542 C930 545, 960 548, 980 551" class="arrow arrow-gray" marker-end="url(#arrow-gray-head)"/>
+
+  <!-- Future path -->
+  <rect x="550" y="600" width="620" height="230" rx="7" class="future-panel"/>
+  <text x="570" y="630" class="panel-title">B. 未来目标：PCM → 蓝牙 DS5 HD 触觉</text>
+  <text x="570" y="651" class="panel-note">只有下游 raw HID / 厂商服务通过能力探测后才启用</text>
+
+  <rect x="565" y="672" width="132" height="76" rx="6" class="box"/>
+  <text x="578" y="698" class="box-title">PCM callback</text>
+  <text x="578" y="718" class="small">3 kHz stereo 目标格式</text>
+  <text x="578" y="735" class="small">有界输入</text>
+  <path d="M697 710 L713 710" class="arrow arrow-amber" marker-end="url(#arrow-amber-head)"/>
+
+  <rect x="713" y="672" width="132" height="76" rx="6" class="box"/>
+  <text x="727" y="698" class="box-title">PCM ring</text>
+  <text x="727" y="718" class="small">丢帧 / 停止清理</text>
+  <text x="727" y="735" class="small">重连可恢复</text>
+  <path d="M845 710 L861 710" class="arrow arrow-amber" marker-end="url(#arrow-amber-head)"/>
+
+  <rect x="861" y="672" width="132" height="76" rx="6" class="sa-box"/>
+  <text x="873" y="698" class="box-title">SAxense-derived</text>
+  <text x="873" y="718" class="small">packetizer + CRC</text>
+  <text x="873" y="735" class="small">仅复用协议层</text>
+  <path d="M993 710 L1009 710" class="arrow arrow-amber" marker-end="url(#arrow-amber-head)"/>
+
+  <rect x="1009" y="672" width="140" height="76" rx="6" class="blocked-box"/>
+  <text x="1021" y="698" class="box-title">HID output</text>
+  <text x="1021" y="718" class="small">raw fd / 厂商服务</text>
+  <text x="1021" y="735" class="small">当前不可得</text>
+
+  <rect x="570" y="762" width="570" height="58" rx="6" fill="#fff2f2" stroke="#e7a0a5"/>
+  <text x="590" y="785" class="label" fill="#9c2d39">平台阻塞点：</text>
+  <text x="672" y="785" class="small">GCK 只提供输入；公开 Bluetooth HID Host 没有写 output report 的 API。</text>
+  <text x="590" y="807" class="small">普通 Bluetooth socket 也不能接管系统已管理的 HID control / interrupt channel。</text>
+
+  <!-- DualSense internals -->
+  <rect x="1265" y="230" width="450" height="100" rx="7" class="box"/>
+  <circle cx="1290" cy="260" r="9" class="accent-device"/>
+  <text x="1311" y="266" class="box-title">DualSense / DualSense Edge</text>
+  <text x="1285" y="292" class="box-text">同一物理设备有输入通道和输出通道</text>
+  <text x="1285" y="313" class="box-text">蓝牙连接由系统 HID Host 管理</text>
+
+  <rect x="1265" y="350" width="205" height="125" rx="7" fill="#eef4ff" stroke="#a9bff5"/>
+  <text x="1284" y="380" class="box-title">BT HID input</text>
+  <text x="1284" y="404" class="box-text">按键 / 轴 / IMU</text>
+  <text x="1284" y="426" class="box-text">系统 → GCK → App</text>
+  <text x="1284" y="454" class="label" fill="#2756bd">当前可用</text>
+
+  <rect x="1510" y="350" width="205" height="125" rx="7" class="blocked-box"/>
+  <text x="1529" y="380" class="box-title">BT HID output</text>
+  <text x="1529" y="404" class="box-text">HD output report 0x32</text>
+  <text x="1529" y="426" class="box-text">App → 系统 HID</text>
+  <text x="1529" y="454" class="label" fill="#9c2d39">当前平台阻塞</text>
+
+  <path d="M1612 475 L1612 525" class="arrow arrow-red" marker-end="url(#arrow-red-head)"/>
+  <rect x="1265" y="525" width="450" height="80" rx="7" class="box"/>
+  <text x="1285" y="556" class="box-title">触觉执行器</text>
+  <text x="1285" y="580" class="box-text">双马达 · 自适应扳机 · HD 音频触觉</text>
+  <text x="1285" y="598" class="small">只有 output report 到达控制器，才会驱动执行器</text>
+
+  <rect x="1265" y="620" width="205" height="45" rx="6" fill="#eaf8f3" stroke="#9bd8c5"/>
+  <text x="1282" y="648" class="small">USB HID output · 当前可用</text>
+  <path d="M1367 620 L1367 605" class="arrow arrow-green" marker-end="url(#arrow-green-head)"/>
+
+  <rect x="1265" y="680" width="450" height="130" rx="7" class="sa-box"/>
+  <text x="1285" y="706" class="box-title">SAxense 协议参考（MPL-2.0）</text>
+  <text x="1285" y="730" class="box-text">• report ID 0x32，141 字节，序号与 CRC32</text>
+  <text x="1285" y="751" class="box-text">• 0x11 配置包 + 0x12 PCM 包</text>
+  <text x="1285" y="772" class="box-text">• 3 kHz 双声道，64 字节 PCM chunk</text>
+  <text x="1285" y="794" class="small">不包含配对、发现、重连；只移植 packetizer</text>
+
+  <!-- Bottom input lane -->
+  <rect x="55" y="895" width="1690" height="215" rx="10" class="group"/>
+  <rect x="55" y="895" width="1690" height="8" rx="4" class="accent-host"/>
+  <text x="82" y="932" class="group-title">反向输入链路（当前可用）</text>
+  <text x="82" y="954" class="group-caption">DS5 蓝牙输入由系统和 GCK 管理，应用只消费规范化事件；方向从右向左。</text>
+
+  <path d="M1495 1021 L1450 1021" class="arrow arrow-blue" marker-end="url(#arrow-blue-head)"/>
+  <path d="M1225 1021 L1180 1021" class="arrow arrow-blue" marker-end="url(#arrow-blue-head)"/>
+  <path d="M955 1021 L910 1021" class="arrow arrow-blue" marker-end="url(#arrow-blue-head)"/>
+  <path d="M685 1021 L640 1021" class="arrow arrow-blue" marker-end="url(#arrow-blue-head)"/>
+  <path d="M415 1021 L370 1021" class="arrow arrow-blue" marker-end="url(#arrow-blue-head)"/>
+
+  <rect x="1495" y="975" width="215" height="92" rx="7" fill="#eef4ff" stroke="#a9bff5"/>
+  <text x="1513" y="1004" class="box-title">DS5 BT input</text>
+  <text x="1513" y="1027" class="small">按钮 / 摇杆 / IMU</text>
+  <text x="1513" y="1049" class="small">物理地址用于去重</text>
+
+  <rect x="1225" y="975" width="215" height="92" rx="7" class="box"/>
+  <text x="1243" y="1004" class="box-title">Game Controller Kit</text>
+  <text x="1243" y="1027" class="small">设备监控与输入事件</text>
+  <text x="1243" y="1049" class="small">无 output report API</text>
+
+  <rect x="955" y="975" width="215" height="92" rx="7" class="box"/>
+  <text x="973" y="1004" class="box-title">GameControllerService</text>
+  <text x="973" y="1027" class="small">统一蓝牙 / USB 输入</text>
+  <text x="973" y="1049" class="small">回调给 ArkTS</text>
+
+  <rect x="685" y="975" width="215" height="92" rx="7" class="box"/>
+  <text x="703" y="1004" class="box-title">GamepadManager</text>
+  <text x="703" y="1027" class="small">槽位、映射、去重</text>
+  <text x="703" y="1049" class="small">生成 Moonlight 输入</text>
+
+  <rect x="415" y="975" width="215" height="92" rx="7" class="box"/>
+  <text x="433" y="1004" class="box-title">Moonlight input packet</text>
+  <text x="433" y="1027" class="small">控制流 / 按键 / 轴</text>
+  <text x="433" y="1049" class="small">发送到主机</text>
+
+  <rect x="145" y="975" width="225" height="92" rx="7" class="box"/>
+  <text x="163" y="1004" class="box-title">Sunshine 游戏输入</text>
+  <text x="163" y="1027" class="small">远端游戏消费</text>
+  <text x="163" y="1049" class="small">← 与上方触觉流相反</text>
+
+  <!-- Cross-reference labels -->
+  <rect x="55" y="1130" width="1690" height="1" fill="#d6dee9"/>
+  <text x="55" y="1150" class="micro">实现落点：moonlight_bridge.cpp · callbacks.cpp · GamepadVibrationService.ets · DualSenseController.ets</text>
+  <text x="1745" y="1150" text-anchor="end" class="micro">设计版本 2026-08</text>
+</svg>

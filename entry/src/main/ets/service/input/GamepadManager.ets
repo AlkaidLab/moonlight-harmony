@@ -18,7 +18,7 @@ import {
 import { SettingsService, SettingsKeys } from '../SettingsService';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
-import { MoonBridge } from '../streaming/MoonBridge';
+import { MoonBridge, Ds5HapticsIrV2Frame } from '../streaming/MoonBridge';
 import { MouseEmulationService, MouseEmulationCallback } from './MouseEmulationService';
 import { GamepadVibrationService } from './GamepadVibrationService';
 import { AudioHapticFrameFlag } from '../AudioHapticFrame';
@@ -1067,6 +1067,8 @@ export class GamepadManager implements UsbDriverListener {
     
     console.info(`GamepadManager: 移除手柄 ${name} (ID: ${deviceId}, Slot: ${slot}, 连接类型: ${connectionType})`);
 
+    // 清理该槽位的普通、IR 和音频振动来源，避免重连后复用旧输出。
+    this.vibrationService.clearControllerSource(slot);
     this.notifyGamepadDisconnectedByKey(deviceKey ?? `controller_${deviceId}`, slot);
   }
   
@@ -1815,6 +1817,8 @@ export class GamepadManager implements UsbDriverListener {
    * 获取 controllerId 对应的槽位
    */
   getControllerSlot(controllerId: number): number {
+    const gcSlot = this.gcDeviceIdToSlot.get(controllerId.toString());
+    if (gcSlot !== undefined) return gcSlot;
     const deviceKey = this.controllerIdToDeviceKey.get(controllerId);
     if (deviceKey) {
       const slot = this.deviceKeyToSlot.get(deviceKey);
@@ -2272,8 +2276,10 @@ export class GamepadManager implements UsbDriverListener {
 
     // 混合模式：GCK 管理设备生命周期，这里只清理震动路由记录
     if (this.useGameControllerKit) {
+      const slot = this.getControllerSlot(controllerId);
       this.usbDeviceKeyToId.delete(deviceKey);
       this.controllerIdToDeviceKey.delete(controllerId);
+      this.vibrationService.clearControllerSource(slot);
       console.info(`[GAMEPAD-USB] 混合模式: 清理震动路由记录`);
       return;
     }
@@ -2300,6 +2306,7 @@ export class GamepadManager implements UsbDriverListener {
       this.controllerIdToDeviceKey.delete(controllerId);
       this.releaseSlotForDevice(deviceKey);
       this.dpadAxisActive.delete(controllerId);
+      this.vibrationService.clearControllerSource(slot);
       this.notifyGamepadDisconnectedByKey(deviceKey, slot);
     }, GamepadManager.DEVICE_REMOVAL_DEBOUNCE_MS);
     this.pendingUsbRemovalTimers.set(deviceKey, timerId);
@@ -2321,6 +2328,7 @@ export class GamepadManager implements UsbDriverListener {
       // 仅记录 USB 设备 key → 用于震动路由
       this.usbDeviceKeyToId.set(deviceKey, controllerId);
       this.controllerIdToDeviceKey.set(controllerId, deviceKey);
+      this.vibrationService.rerenderAllSources();
       console.info(`[GAMEPAD-USB] 混合模式: 记录 USB 设备用于震动: ${name} (ID=${controllerId})`);
       return;
     }
@@ -2357,6 +2365,7 @@ export class GamepadManager implements UsbDriverListener {
     
     // 注册设备
     this.registerUsbDevice(controllerId, deviceKey, name, vendorId, productId);
+    this.vibrationService.rerenderAllSources();
     const ddkTag = controller.isDdkPolling() ? ' [DDK]' : '';
     
     if (silentReconnect) {
@@ -2435,6 +2444,16 @@ export class GamepadManager implements UsbDriverListener {
   /** 处理震动反馈 */
   handleRumble(controllerNumber: number, lowFreqMotor: number, highFreqMotor: number): void {
     this.vibrationService.handleRumble(controllerNumber, lowFreqMotor, highFreqMotor);
+  }
+
+  /**
+   * 处理设备无关的 DualSense IR v2 authored haptics。
+   *
+   * IR 与普通 rumble 使用独立来源状态，不能通过 handleRumble 转发，
+   * 否则一帧 IR 会覆盖同一槽位仍在持续的普通振动。
+   */
+  handleDs5HapticsIrV2(frame: Ds5HapticsIrV2Frame): void {
+    this.vibrationService.handleDs5HapticsIrV2(frame);
   }
 
   /** 处理扳机震动 */
