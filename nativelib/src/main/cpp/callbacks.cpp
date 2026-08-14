@@ -490,47 +490,56 @@ static void CallJs_Ds5HapticsIrV2(napi_env env,
                                   void* context,
                                   void* data) {
     (void)data;
-    Ds5HapticsIrFrameData callbackData{};
-    bool hasFrame = false;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        if (!g_ds5IrShuttingDown && !g_ds5IrQueue.empty()) {
-            callbackData.frame = g_ds5IrQueue.front();
-            g_ds5IrQueue.pop_front();
-            hasFrame = true;
+    for (size_t processed = 0; processed < DS5_IR_QUEUE_CAPACITY; ++processed) {
+        Ds5HapticsIrFrameData callbackData{};
+        bool hasFrame = false;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            // This pump callback is no longer pending once it starts running.
+            // Reset before checking state so an empty callback cannot strand
+            // future frames behind a stale queued flag.
             g_ds5IrPumpQueued = false;
+            if (!g_ds5IrShuttingDown && !g_ds5IrQueue.empty()) {
+                callbackData.frame = g_ds5IrQueue.front();
+                g_ds5IrQueue.pop_front();
+                hasFrame = true;
+            }
         }
-    }
 
-    if (hasFrame && env != nullptr && js_callback != nullptr) {
-        napi_value frameObject;
-        napi_create_object(env, &frameObject);
-        SetObjectUint32(env, frameObject, "flags",
-                        static_cast<uint32_t>(callbackData.frame.flags));
-        SetObjectUint32(env, frameObject, "controllerNumber",
-                        static_cast<uint32_t>(callbackData.frame.controllerNumber));
-        SetObjectUint32(env, frameObject, "sourceSequenceNumber",
-                        callbackData.frame.sourceSequenceNumber);
-        SetObjectDouble(env, frameObject, "timestampUs",
-                        static_cast<double>(callbackData.frame.timestampUs));
-        SetObjectUint32(env, frameObject, "sourceFrameCount",
-                        callbackData.frame.sourceFrameCount);
-        SetObjectDouble(env, frameObject, "laneCorrelation",
-                        static_cast<double>(callbackData.frame.laneCorrelation));
-
-        napi_value lanes;
-        napi_create_array_with_length(env, 2, &lanes);
-        for (uint32_t index = 0; index < 2; ++index) {
-            napi_value laneObject;
-            napi_create_object(env, &laneObject);
-            SetDs5HapticsIrLane(env, laneObject, callbackData.frame.lanes[index]);
-            napi_set_element(env, lanes, index, laneObject);
+        if (!hasFrame) {
+            break;
         }
-        napi_set_named_property(env, frameObject, "lanes", lanes);
 
-        napi_value undefined;
-        napi_get_undefined(env, &undefined);
-        napi_call_function(env, undefined, js_callback, 1, &frameObject, nullptr);
+        if (env != nullptr && js_callback != nullptr) {
+            napi_value frameObject;
+            napi_create_object(env, &frameObject);
+            SetObjectUint32(env, frameObject, "flags",
+                            static_cast<uint32_t>(callbackData.frame.flags));
+            SetObjectUint32(env, frameObject, "controllerNumber",
+                            static_cast<uint32_t>(callbackData.frame.controllerNumber));
+            SetObjectUint32(env, frameObject, "sourceSequenceNumber",
+                            callbackData.frame.sourceSequenceNumber);
+            SetObjectDouble(env, frameObject, "timestampUs",
+                            static_cast<double>(callbackData.frame.timestampUs));
+            SetObjectUint32(env, frameObject, "sourceFrameCount",
+                            callbackData.frame.sourceFrameCount);
+            SetObjectDouble(env, frameObject, "laneCorrelation",
+                            static_cast<double>(callbackData.frame.laneCorrelation));
+
+            napi_value lanes;
+            napi_create_array_with_length(env, 2, &lanes);
+            for (uint32_t index = 0; index < 2; ++index) {
+                napi_value laneObject;
+                napi_create_object(env, &laneObject);
+                SetDs5HapticsIrLane(env, laneObject, callbackData.frame.lanes[index]);
+                napi_set_element(env, lanes, index, laneObject);
+            }
+            napi_set_named_property(env, frameObject, "lanes", lanes);
+
+            napi_value undefined;
+            napi_get_undefined(env, &undefined);
+            napi_call_function(env, undefined, js_callback, 1, &frameObject, nullptr);
+        }
     }
 
     QueueDs5IrPump();
