@@ -1360,6 +1360,7 @@ export class GamepadManager implements UsbDriverListener {
       
       // 释放槽位：此时 deviceId 映射已移除，使用断开前保存的 slot 显式释放。
       this.releaseKnownSlot(deviceId, slot, this.gcDeviceIdToSlot, 'GAMEPAD-GC');
+      this.vibrationService.clearControllerSource(slot);
       // 通知监听器
       this.notifyGamepadDisconnectedByKey(`gc_${deviceId}`, slot);
 

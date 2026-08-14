@@ -1285,6 +1285,9 @@ export class StreamingSession {
         GamepadManager.getInstance().handleRumble(cn, low, high);
       },
       ds5HapticsIrV2: (frame: Ds5HapticsIrV2Frame): void => {
+        // IR callbacks use a separate TSFN and may arrive after termination;
+        // never let stale work restart a stopped session's vibration source.
+        if (!this.isRunning) return;
         GamepadManager.getInstance().handleDs5HapticsIrV2(frame);
       },
       rumbleTriggers: (cn: number, lt: number, rt: number): void => {
