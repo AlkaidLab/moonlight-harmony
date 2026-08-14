@@ -150,6 +150,11 @@ static CONNECTION_LISTENER_CALLBACKS g_connCallbacksStruct = {
     .setAdaptiveTriggers = nullptr,
     .resolutionChanged = (void (*)(uint32_t, uint32_t))BridgeClResolutionChanged,
     .clipboardData = BridgeClClipboardData,
+    // HarmonyOS accepts the device-independent IR stream and renders it in the
+    // source-aware ArkTS mixer. It intentionally does not advertise the
+    // Windows-only PCM endpoint, so Sunshine selects simulated DualSense mode.
+    .ds5HapticsPcm = nullptr,
+    .ds5HapticsIrV2 = BridgeClDs5HapticsIrV2,
 };
 
 // =============================================================================

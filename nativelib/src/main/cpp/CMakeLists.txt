@@ -111,6 +111,8 @@ set(MOONLIGHT_COMMON_SOURCES
     ${MOONLIGHT_COMMON_PATH}/src/Connection.c
     ${MOONLIGHT_COMMON_PATH}/src/ControlStream.c
     ${MOONLIGHT_COMMON_PATH}/src/CursorStream.c
+    ${MOONLIGHT_COMMON_PATH}/src/Ds5HapticsStream.c
+    ${MOONLIGHT_COMMON_PATH}/src/Ds5HapticsIrStream.c
     ${MOONLIGHT_COMMON_PATH}/src/VideoStream.c
     ${MOONLIGHT_COMMON_PATH}/src/AudioStream.c
     ${MOONLIGHT_COMMON_PATH}/src/InputStream.c

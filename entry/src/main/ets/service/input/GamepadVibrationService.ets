@@ -22,6 +22,7 @@ import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { AudioHapticFrameFlag } from '../AudioHapticFrame';
 import { RUMBLE_MAX } from './GamepadTypes';
 import { DeviceVibrationCoordinator } from './DeviceVibrationCoordinator';
+import { Ds5HapticsIrV2Frame, Ds5HapticsIrLaneV2 } from '../streaming/MoonBridge';
 import {
   GAME_VIBRATION_STRENGTH_DEFAULT,
   GAME_VIBRATION_STRENGTH_ORIGINAL,
@@ -31,6 +32,12 @@ import {
 interface MotorPair {
   low: number;
   high: number;
+}
+
+interface IrStreamState {
+  hasSequence: boolean;
+  lastSequence: number;
+  watchdogTimer: number;
 }
 
 // ==================== 震动服务 ====================
@@ -46,6 +53,14 @@ export class GamepadVibrationService {
   private static readonly MUSIC_RESTART_MINIMUM_INTENSITY = 58;
   private static readonly MUSIC_RHYTHM_MINIMUM_INTENSITY = 70;
   private static readonly MUSIC_TRANSIENT_MINIMUM_INTENSITY = 72;
+  private static readonly IR_WATCHDOG_MS = 350;
+  /** Device vibrator APIs are relatively expensive; coalesce authored IR frames. */
+  private static readonly DEVICE_RENDER_INTERVAL_MS = 40;
+  private static readonly IR_FLAG_DISCONTINUITY = 0x01;
+  private static readonly IR_FLAG_STREAM_END = 0x04;
+  private static readonly IR_FLAG_SILENT = 0x08;
+  /** IR authored output takes the game slot while active; ordinary state resumes afterwards. */
+  private static readonly IR_PRIORITY_OVER_GAME = true;
   private usbDriverService: UsbDriverService;
   private deviceVibrationCoordinator: DeviceVibrationCoordinator;
   
@@ -72,9 +87,13 @@ export class GamepadVibrationService {
   // 游戏与音频分别保存状态，只有本服务可以写最终执行器。
   // 两路幅度使用有界 headroom 混合，避免简单相加削顶。
   private gameUsbRumble = new Map<number, MotorPair>();
+  private irUsbRumble = new Map<number, MotorPair>();
   private audioUsbRumble = new Map<number, MotorPair>();
   private gameDeviceLow: number = 0;
   private gameDeviceHigh: number = 0;
+  private gameDeviceControllerNumber: number = 0;
+  private irDeviceRumble = new Map<number, MotorPair>();
+  private irStreamStates = new Map<number, IrStreamState>();
   private audioDeviceContinuous: number = 0;
   private audioDeviceContinuousUntilMs: number = 0;
   private audioDeviceTransient: number = 0;
@@ -82,6 +101,9 @@ export class GamepadVibrationService {
   private audioDeviceSharpness: number = 0.5;
   private audioDeviceScene: number = 0;
   private deviceRenderEpoch: number = 0;
+  private lastDeviceRenderAtMs: number = 0;
+  private pendingDeviceRenderTimer: number = -1;
+  private pendingDeviceRenderTransient = false;
 
   constructor(usbDriverService: UsbDriverService, deviceKeyToSlot: Map<string, number>) {
     this.usbDriverService = usbDriverService;
@@ -110,6 +132,10 @@ export class GamepadVibrationService {
     if ((wasEnabled && !enabled) || (previousStrength > 0 && this.gameVibrationStrength === 0)) {
       this.stopGameSource();
     }
+    if (!enabled || this.gameVibrationStrength <= 0) {
+      this.stopIrSource();
+    }
+    this.rerenderAllSources();
   }
 
   // ==================== 公开 API ====================
@@ -142,41 +168,79 @@ export class GamepadVibrationService {
     const controllers = this.usbDriverService.getControllers();
     const hasUsbController = controllers.length > 0;
 
-    switch (this.vibrationMode) {
-      case '仅手柄':
-        if (hasUsbController) {
-          this.submitGameUsbRumble(
-            controllers, controllerNumber, lowFreqMotor, highFreqMotor);
-        }
-        break;
-
-      case '仅设备':
-        this.submitGameDeviceRumble(lowFreqMotor, highFreqMotor);
-        break;
-
-      case '同时':
-        if (hasUsbController) {
-          this.submitGameUsbRumble(
-            controllers, controllerNumber, lowFreqMotor, highFreqMotor);
-        }
-        this.submitGameDeviceRumble(lowFreqMotor, highFreqMotor);
-        break;
-
-      case '自动':
-      default:
-        if (hasUsbController) {
-          this.submitGameUsbRumble(
-            controllers, controllerNumber, lowFreqMotor, highFreqMotor);
-        } else {
-          this.submitGameDeviceRumble(lowFreqMotor, highFreqMotor);
-        }
-        break;
-    }
+    // Keep both game destinations current. The output policy is applied by
+    // renderMixedUsb/renderMixedDevice, which makes mode changes and USB
+    // detach/reconnect deterministic instead of relying on stale per-mode
+    // caches.
+    this.submitGameUsbRumble(
+      controllers, controllerNumber, lowFreqMotor, highFreqMotor);
+    this.submitGameDeviceRumble(lowFreqMotor, highFreqMotor);
 
     // USB 停止确认: 100ms 后重发 stop(0,0)，防止首次 USB 传输被覆盖或丢失
     if (lowFreqMotor === 0 && highFreqMotor === 0 && hasUsbController) {
       this.scheduleUsbStopConfirm(controllerNumber);
     }
+  }
+
+  /**
+   * 处理设备无关的 DualSense IR v2 authored haptics。
+   *
+   * 该路径保留 IR 的序列和生命周期，不把帧伪装成普通 rumble。这样
+   * SILENT/STREAM_END 只会清理 IR 来源，普通游戏振动和音频来源仍由
+   * mixer 持有并继续输出。
+   */
+  handleDs5HapticsIrV2(frame: Ds5HapticsIrV2Frame): void {
+    if (!this.vibrationFeedbackEnabled || this.gameVibrationStrength <= 0) {
+      return;
+    }
+
+    if (!this.isValidControllerNumber(frame.controllerNumber)) {
+      console.warn('[Vibration] ignoring DS5 IR frame with invalid controller number');
+      return;
+    }
+    const controllerNumber = Math.floor(frame.controllerNumber);
+    const state = this.getOrCreateIrStreamState(controllerNumber);
+    const flags = this.clampFlags(frame.flags);
+    const discontinuity =
+      (flags & GamepadVibrationService.IR_FLAG_DISCONTINUITY) !== 0;
+    const streamEnd =
+      (flags & GamepadVibrationService.IR_FLAG_STREAM_END) !== 0;
+    const silent = (flags & GamepadVibrationService.IR_FLAG_SILENT) !== 0;
+
+    if (discontinuity) {
+      // A discontinuity starts a new sequence domain. The current frame is
+      // still accepted so a host can recover without sending a separate packet.
+      state.hasSequence = false;
+    }
+    if (state.hasSequence &&
+        !this.isIrSequenceNewer(frame.sourceSequenceNumber, state.lastSequence)) {
+      return;
+    }
+    state.hasSequence = true;
+    state.lastSequence = frame.sourceSequenceNumber;
+
+    if (streamEnd || silent) {
+      this.clearIrSource(controllerNumber, streamEnd);
+      if (streamEnd) this.irStreamStates.delete(controllerNumber);
+      return;
+    }
+
+    const motors = this.renderIrFrame(frame);
+    if (motors.low === 0 && motors.high === 0) {
+      // A valid silent analysis frame is still a lifecycle update, but it must
+      // not leave a zero-valued entry that keeps the IR source "active".
+      this.clearIrSource(controllerNumber, false);
+      return;
+    }
+    this.irUsbRumble.set(controllerNumber, motors);
+    this.irDeviceRumble.set(controllerNumber, motors);
+    this.armIrWatchdog(controllerNumber);
+
+    const controllers = this.usbDriverService.getControllers();
+    if (controllers.length > 0) {
+      this.renderMixedUsb(controllers, controllerNumber);
+    }
+    this.renderMixedDevice(false);
   }
 
   /**
@@ -253,10 +317,16 @@ export class GamepadVibrationService {
    */
   stopAll(): void {
     this.clearGameTimers();
+    this.clearAllIrTimers();
+    this.clearPendingDeviceRender();
     this.gameUsbRumble.clear();
+    this.irUsbRumble.clear();
     this.audioUsbRumble.clear();
     this.gameDeviceLow = 0;
     this.gameDeviceHigh = 0;
+    this.gameDeviceControllerNumber = 0;
+    this.irDeviceRumble.clear();
+    this.irStreamStates.clear();
     this.audioDeviceContinuous = 0;
     this.audioDeviceContinuousUntilMs = 0;
     this.audioDeviceTransient = 0;
@@ -278,6 +348,52 @@ export class GamepadVibrationService {
     } catch (_) { /* ignore */ }
   }
 
+  /** 清理单个槽位的所有振动来源（USB 设备真正断开时调用）。 */
+  clearControllerSource(controllerNumber: number): void {
+    if (!this.isValidControllerNumber(controllerNumber)) return;
+    const slot = Math.floor(controllerNumber);
+    this.gameUsbRumble.delete(slot);
+    this.irUsbRumble.delete(slot);
+    this.audioUsbRumble.delete(slot);
+    this.irDeviceRumble.delete(slot);
+    if (this.gameDeviceControllerNumber === slot) {
+      this.gameDeviceLow = 0;
+      this.gameDeviceHigh = 0;
+      this.gameDeviceControllerNumber = 0;
+      this.lastLowFreq = 0;
+      this.lastHighFreq = 0;
+    }
+    this.clearIrTimer(slot);
+    this.irStreamStates.delete(slot);
+
+    const controllers = this.usbDriverService.getControllers();
+    if (controllers.length > 0) {
+      this.renderMixedUsb(controllers, slot);
+    }
+    this.renderMixedDevice(false);
+  }
+
+  /** 只清理 IR 来源；普通游戏和音频来源继续保留。 */
+  private stopIrSource(): void {
+    const affectedSlots = new Set<number>();
+    this.irUsbRumble.forEach((_: MotorPair, slot: number): void => {
+      affectedSlots.add(slot);
+    });
+    this.irDeviceRumble.forEach((_: MotorPair, slot: number): void => {
+      affectedSlots.add(slot);
+    });
+    this.clearAllIrTimers();
+    this.irUsbRumble.clear();
+    this.irDeviceRumble.clear();
+    this.irStreamStates.clear();
+
+    const controllers = this.usbDriverService.getControllers();
+    affectedSlots.forEach((slot: number): void => {
+      this.renderMixedUsb(controllers, slot);
+    });
+    this.renderMixedDevice(false);
+  }
+
   /** 只清理游戏来源；音频来源仍可继续输出。 */
   private stopGameSource(): void {
     this.clearGameTimers();
@@ -288,6 +404,7 @@ export class GamepadVibrationService {
     this.gameUsbRumble.clear();
     this.gameDeviceLow = 0;
     this.gameDeviceHigh = 0;
+    this.gameDeviceControllerNumber = 0;
     this.lastLowFreq = 0;
     this.lastHighFreq = 0;
 
@@ -310,6 +427,74 @@ export class GamepadVibrationService {
       clearTimeout(this.stopConfirmTimer);
       this.stopConfirmTimer = -1;
     }
+  }
+
+  private clearPendingDeviceRender(): void {
+    if (this.pendingDeviceRenderTimer !== -1) {
+      clearTimeout(this.pendingDeviceRenderTimer);
+      this.pendingDeviceRenderTimer = -1;
+    }
+    this.pendingDeviceRenderTransient = false;
+  }
+
+  private clearIrTimer(controllerNumber: number): void {
+    const state = this.irStreamStates.get(controllerNumber);
+    if (!state) return;
+    if (state.watchdogTimer !== -1) {
+      clearTimeout(state.watchdogTimer);
+      state.watchdogTimer = -1;
+    }
+  }
+
+  private clearAllIrTimers(): void {
+    this.irStreamStates.forEach((state: IrStreamState): void => {
+      if (state.watchdogTimer !== -1) {
+        clearTimeout(state.watchdogTimer);
+        state.watchdogTimer = -1;
+      }
+    });
+  }
+
+  private getOrCreateIrStreamState(controllerNumber: number): IrStreamState {
+    const existing = this.irStreamStates.get(controllerNumber);
+    if (existing) return existing;
+    const state: IrStreamState = {
+      hasSequence: false,
+      lastSequence: 0,
+      watchdogTimer: -1
+    };
+    this.irStreamStates.set(controllerNumber, state);
+    return state;
+  }
+
+  private armIrWatchdog(controllerNumber: number): void {
+    const state = this.getOrCreateIrStreamState(controllerNumber);
+    this.clearIrTimer(controllerNumber);
+    let timerId: number = -1;
+    timerId = setTimeout((): void => {
+      const current = this.irStreamStates.get(controllerNumber);
+      if (!current || current.watchdogTimer !== timerId) return;
+      current.watchdogTimer = -1;
+      console.warn('[Vibration] DS5 IR watchdog: stream stalled, clearing IR source');
+      this.clearIrSource(controllerNumber, true);
+    }, GamepadVibrationService.IR_WATCHDOG_MS);
+    state.watchdogTimer = timerId;
+  }
+
+  private clearIrSource(controllerNumber: number, resetSequence: boolean): void {
+    this.irUsbRumble.delete(controllerNumber);
+    this.irDeviceRumble.delete(controllerNumber);
+    this.clearIrTimer(controllerNumber);
+    if (resetSequence) {
+      const state = this.irStreamStates.get(controllerNumber);
+      if (state) state.hasSequence = false;
+    }
+
+    const controllers = this.usbDriverService.getControllers();
+    if (controllers.length > 0) {
+      this.renderMixedUsb(controllers, controllerNumber);
+    }
+    this.renderMixedDevice(false);
   }
 
   // ==================== 内部实现 ====================
@@ -340,8 +525,8 @@ export class GamepadVibrationService {
     highFreqMotor: number
   ): void {
     this.gameUsbRumble.set(controllerNumber, {
-      low: this.applyGameVibrationStrength(lowFreqMotor),
-      high: this.applyGameVibrationStrength(highFreqMotor)
+      low: this.clampRumbleValue(lowFreqMotor),
+      high: this.clampRumbleValue(highFreqMotor)
     });
     this.renderMixedUsb(controllers, controllerNumber);
   }
@@ -351,13 +536,32 @@ export class GamepadVibrationService {
     const controller = this.findControllerBySlot(controllers, controllerNumber);
     if (!controller) return;
 
-    const game = this.gameUsbRumble.get(controllerNumber) ??
-      { low: 0, high: 0 };
-    const audio = this.audioUsbRumble.get(controllerNumber) ??
-      { low: 0, high: 0 };
+    if (!this.shouldRenderUsbOutput()) {
+      controller.rumble(0, 0);
+      return;
+    }
+
+    const emptyPair: MotorPair = { low: 0, high: 0 };
+    const game = this.gameUsbRumble.get(controllerNumber) ?? emptyPair;
+    const ir = this.irUsbRumble.get(controllerNumber) ?? emptyPair;
+    const audio = this.audioUsbRumble.get(controllerNumber) ?? emptyPair;
+    const scaledGameLow = this.applyGameVibrationStrength(game.low);
+    const scaledGameHigh = this.applyGameVibrationStrength(game.high);
+    const scaledIrLow = this.applyGameVibrationStrength(ir.low);
+    const scaledIrHigh = this.applyGameVibrationStrength(ir.high);
+    let gameLow = scaledGameLow;
+    let gameHigh = scaledGameHigh;
+    if (GamepadVibrationService.IR_PRIORITY_OVER_GAME &&
+        (scaledIrLow > 0 || scaledIrHigh > 0)) {
+      gameLow = scaledIrLow;
+      gameHigh = scaledIrHigh;
+    } else if (!GamepadVibrationService.IR_PRIORITY_OVER_GAME) {
+      gameLow = this.mixWithHeadroom(scaledGameLow, scaledIrLow, RUMBLE_MAX);
+      gameHigh = this.mixWithHeadroom(scaledGameHigh, scaledIrHigh, RUMBLE_MAX);
+    }
     controller.rumble(
-      this.mixWithHeadroom(game.low, audio.low, RUMBLE_MAX),
-      this.mixWithHeadroom(game.high, audio.high, RUMBLE_MAX)
+      this.mixWithHeadroom(gameLow, audio.low, RUMBLE_MAX),
+      this.mixWithHeadroom(gameHigh, audio.high, RUMBLE_MAX)
     );
   }
 
@@ -380,6 +584,80 @@ export class GamepadVibrationService {
     return Math.max(0, Math.min(100, Math.round(value)));
   }
 
+  private isValidControllerNumber(value: number): boolean {
+    if (!Number.isFinite(value)) return false;
+    const normalized = Math.floor(value);
+    return normalized >= 0 && normalized <= 3;
+  }
+
+  private clampFlags(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.floor(value) & 0xFF;
+  }
+
+  private isSequenceNewer(next: number, previous: number): boolean {
+    const difference = next - previous;
+    return (difference > 0 && difference < 2147483648) ||
+      difference < -2147483648;
+  }
+
+  private isIrSequenceNewer(next: number, previous: number): boolean {
+    return this.isSequenceNewer(next, previous);
+  }
+
+  private shouldRenderUsbOutput(): boolean {
+    if (this.usbDriverService.getControllers().length === 0) return false;
+    switch (this.vibrationMode) {
+      case '仅设备':
+        return false;
+      case '仅手柄':
+      case '同时':
+        return true;
+      case '自动':
+      default:
+        return true;
+    }
+  }
+
+  private shouldRenderDeviceOutput(): boolean {
+    switch (this.vibrationMode) {
+      case '仅手柄':
+        return false;
+      case '仅设备':
+      case '同时':
+        return true;
+      case '自动':
+      default:
+        return this.usbDriverService.getControllers().length === 0;
+    }
+  }
+
+  /** 设置或设备插拔后，重新把所有保留来源提交给当前执行器。 */
+  rerenderAllSources(): void {
+    const controllers = this.usbDriverService.getControllers();
+    const slots = new Set<number>();
+    this.gameUsbRumble.forEach((_: MotorPair, slot: number): void => {
+      slots.add(slot);
+    });
+    this.irUsbRumble.forEach((_: MotorPair, slot: number): void => {
+      slots.add(slot);
+    });
+    this.audioUsbRumble.forEach((_: MotorPair, slot: number): void => {
+      slots.add(slot);
+    });
+
+    if (!this.shouldRenderUsbOutput()) {
+      for (const controller of controllers) {
+        controller.rumble(0, 0);
+      }
+    } else {
+      slots.forEach((slot: number): void => {
+        this.renderMixedUsb(controllers, slot);
+      });
+    }
+    this.renderMixedDevice(false);
+  }
+
   /**
    * 有界概率和：a + b - a*b/max。
    * 该公式保留任一路单独输出，并避免两路叠加发生硬削顶。
@@ -400,6 +678,46 @@ export class GamepadVibrationService {
     }, 100);
   }
 
+  /** 将两条 IR 分析 lane 按客户端校准折叠为标准双马达幅度。 */
+  private renderIrFrame(frame: Ds5HapticsIrV2Frame): MotorPair {
+    if (frame.lanes.length < 2) {
+      return { low: 0, high: 0 };
+    }
+
+    let low = 0;
+    let high = 0;
+    for (let index = 0; index < 2; index++) {
+      const lane: Ds5HapticsIrLaneV2 = frame.lanes[index];
+      const rms = this.clampUnit(lane.rmsAmplitude);
+      const lowBand = this.clampUnit(lane.lowBandRatio);
+      const transient = this.clampUnit(lane.transientStrength);
+      low += rms * (0.35 + 0.65 * lowBand);
+      high += rms * (1.0 - lowBand) * 0.65 + transient * 0.35;
+    }
+
+    // 与 native calibration 保持一致：平方根压扩保留较弱的 authored 细节。
+    low = Math.sqrt(Math.max(0, Math.min(1, low * 0.5)));
+    high = Math.sqrt(Math.max(0, Math.min(1, high * 0.5)));
+    return {
+      low: this.clampRumbleValue(low * RUMBLE_MAX),
+      high: this.clampRumbleValue(high * RUMBLE_MAX)
+    };
+  }
+
+  private clampUnit(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, value));
+  }
+
+  private getMixedIrDeviceRumble(): MotorPair {
+    const mixed: MotorPair = { low: 0, high: 0 };
+    this.irDeviceRumble.forEach((pair: MotorPair): void => {
+      mixed.low = this.mixWithHeadroom(mixed.low, pair.low, RUMBLE_MAX);
+      mixed.high = this.mixWithHeadroom(mixed.high, pair.high, RUMBLE_MAX);
+    });
+    return mixed;
+  }
+
   /** 更新游戏来源的设备振动，并交给统一输出器混合。 */
   private submitGameDeviceRumble(lowFreqMotor: number, highFreqMotor: number): void {
     if (!this.vibrationFeedbackEnabled || this.gameVibrationStrength <= 0) return;
@@ -407,6 +725,7 @@ export class GamepadVibrationService {
     if (lowFreqMotor === 0 && highFreqMotor === 0) {
       this.gameDeviceLow = 0;
       this.gameDeviceHigh = 0;
+      this.gameDeviceControllerNumber = 0;
       this.lastLowFreq = 0;
       this.lastHighFreq = 0;
       this.renderMixedDevice(false);
@@ -427,17 +746,57 @@ export class GamepadVibrationService {
     this.lastHighFreq = highFreqMotor;
     this.gameDeviceLow = lowFreqMotor;
     this.gameDeviceHigh = highFreqMotor;
+    this.gameDeviceControllerNumber = this.lastRumbleControllerNumber;
     this.renderMixedDevice(false);
   }
 
   private renderMixedDevice(hasAudioTransient: boolean): void {
+    if (!this.shouldRenderDeviceOutput()) {
+      this.clearPendingDeviceRender();
+      if (this.isVibrating) this.stopVibrationImmediate();
+      return;
+    }
+
+    const nowMs = Date.now();
+    const irActive = this.irDeviceRumble.size > 0;
+    if (hasAudioTransient || !irActive) {
+      this.clearPendingDeviceRender();
+    }
+    if (irActive && !hasAudioTransient && this.lastDeviceRenderAtMs > 0) {
+      const elapsedMs = nowMs - this.lastDeviceRenderAtMs;
+      if (elapsedMs < GamepadVibrationService.DEVICE_RENDER_INTERVAL_MS) {
+        this.pendingDeviceRenderTransient =
+          this.pendingDeviceRenderTransient || hasAudioTransient;
+        if (this.pendingDeviceRenderTimer === -1) {
+          const delayMs = GamepadVibrationService.DEVICE_RENDER_INTERVAL_MS - elapsedMs;
+          this.pendingDeviceRenderTimer = setTimeout((): void => {
+            this.pendingDeviceRenderTimer = -1;
+            const pendingTransient = this.pendingDeviceRenderTransient;
+            this.pendingDeviceRenderTransient = false;
+            this.renderMixedDevice(pendingTransient);
+          }, delayMs);
+        }
+        return;
+      }
+    }
+    this.lastDeviceRenderAtMs = nowMs;
     const renderEpoch = ++this.deviceRenderEpoch;
+
     const userStrength = Math.min(this.gameVibrationStrength, GAME_VIBRATION_STRENGTH_ORIGINAL) /
       GAME_VIBRATION_STRENGTH_ORIGINAL;
-    const lowIntensity = this.clampIntensity(
+    const gameLowIntensity = this.clampIntensity(
       this.gameDeviceLow / RUMBLE_MAX * userStrength * 100);
-    const highIntensity = this.clampIntensity(
+    const gameHighIntensity = this.clampIntensity(
       this.gameDeviceHigh / RUMBLE_MAX * userStrength * 100);
+    const irDevice = this.getMixedIrDeviceRumble();
+    const irLowIntensity = this.clampIntensity(
+      irDevice.low / RUMBLE_MAX * userStrength * 100);
+    const irHighIntensity = this.clampIntensity(
+      irDevice.high / RUMBLE_MAX * userStrength * 100);
+    // IR and ordinary game rumble are merged before reducing the two motors to
+    // the single scalar intensity accepted by the device vibrator.
+    const lowIntensity = this.mixWithHeadroom(gameLowIntensity, irLowIntensity, 100);
+    const highIntensity = this.mixWithHeadroom(gameHighIntensity, irHighIntensity, 100);
     const gameIntensity = Math.max(lowIntensity, highIntensity);
     const audioContinuous =
       Date.now() <= this.audioDeviceContinuousUntilMs
@@ -592,7 +951,7 @@ export class GamepadVibrationService {
         18, Math.min(100, this.audioDeviceTransientDurationMs));
       duration = Math.max(
         15, Math.round(authored * (0.65 + selected / 285)));
-    } else if (this.gameDeviceLow > 0 || this.gameDeviceHigh > 0) {
+    } else if (this.isGameOrIrDeviceActive()) {
       duration = GamepadVibrationService.GAME_DEVICE_LEASE_MS;
     } else {
       duration = this.audioDeviceScene === GamepadVibrationService.MUSIC_SCENE
@@ -600,7 +959,7 @@ export class GamepadVibrationService {
         : GamepadVibrationService.AUDIO_GAME_FALLBACK_DURATION_MS;
     }
 
-    const gameActive = this.gameDeviceLow > 0 || this.gameDeviceHigh > 0;
+    const gameActive = this.isGameOrIrDeviceActive();
     this.deviceVibrationCoordinator.startSourceVibration({
       type: 'time',
       duration: duration
@@ -611,6 +970,15 @@ export class GamepadVibrationService {
     return scene === GamepadVibrationService.MUSIC_SCENE
       ? GamepadVibrationService.AUDIO_MUSIC_LEASE_MS
       : GamepadVibrationService.AUDIO_GAME_LEASE_MS;
+  }
+
+  private isGameOrIrDeviceActive(): boolean {
+    if (this.gameDeviceLow > 0 || this.gameDeviceHigh > 0) return true;
+    let active = false;
+    this.irDeviceRumble.forEach((pair: MotorPair): void => {
+      if (pair.low > 0 || pair.high > 0) active = true;
+    });
+    return active;
   }
 
   /**

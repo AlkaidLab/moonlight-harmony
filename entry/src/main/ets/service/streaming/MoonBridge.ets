@@ -143,6 +143,32 @@ export interface NativeMicStats {
   dropped: number;
 }
 
+/**
+ * Sunshine device-independent DualSense IR v2 lane features.
+ *
+ * The native bridge forwards the authored analysis frame without converting it
+ * into ordinary rumble. Keeping the lane values here lets the client apply its
+ * own calibration and source-aware mixer policy.
+ */
+export interface Ds5HapticsIrLaneV2 {
+  rmsAmplitude: number;
+  peakAmplitude: number;
+  transientStrength: number;
+  lowBandRatio: number;
+  zeroCrossingRateHz: number;
+}
+
+/** Device-independent authored DualSense haptics frame (IR protocol v2). */
+export interface Ds5HapticsIrV2Frame {
+  flags: number;
+  controllerNumber: number;
+  sourceSequenceNumber: number;
+  timestampUs: number;
+  sourceFrameCount: number;
+  lanes: Ds5HapticsIrLaneV2[];
+  laneCorrelation: number;
+}
+
 // 音频配置
 export const AUDIO_CONFIGURATION_STEREO = 0;
 export const AUDIO_CONFIGURATION_51_SURROUND = 1;
@@ -233,6 +259,8 @@ export interface ConnectionListenerCallbacks {
   connectionTerminated?: (errorCode: number) => void;
   /** 震动反馈 */
   rumble?: (controllerNumber: number, lowFreqMotor: number, highFreqMotor: number) => void;
+  /** Device-independent DualSense IR v2 authored haptics. */
+  ds5HapticsIrV2?: (frame: Ds5HapticsIrV2Frame) => void;
   /** 连接状态更新 */
   connectionStatusUpdate?: (connectionStatus: number) => void;
   /** 分辨率变更 */

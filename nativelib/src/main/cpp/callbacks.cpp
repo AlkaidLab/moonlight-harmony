@@ -33,6 +33,7 @@
 extern void MicCapturerUpdatePacketLossPercent(int percent);
 #include <cstdarg>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <qos/qos.h>
 #include <sched.h>
@@ -77,7 +78,8 @@ static napi_status CreateThreadsafeFunction(
     napi_value callback,
     const char* name,
     napi_threadsafe_function_call_js call_js,
-    napi_threadsafe_function* result
+    napi_threadsafe_function* result,
+    size_t maxQueueSize = 0
 ) {
     napi_value resourceName;
     napi_create_string_utf8(env, name, NAPI_AUTO_LENGTH, &resourceName);
@@ -87,7 +89,7 @@ static napi_status CreateThreadsafeFunction(
         callback,
         nullptr,
         resourceName,
-        0,  // max_queue_size (0 = unlimited)
+        maxQueueSize,
         1,  // initial_thread_count
         nullptr,
         nullptr,
@@ -158,6 +160,26 @@ struct AudioHapticCallbackData {
     double presentationDelayMs = 0.0;
     std::chrono::steady_clock::time_point enqueuedAt{};
 };
+
+// IR frames are high-rate and replaceable. Keep the queue bounded while
+// retaining lifecycle boundaries so a stalled ArkTS thread cannot accumulate
+// stale haptics or lose stream termination semantics.
+struct Ds5HapticsIrFrameData {
+    LI_DS5_HAPTICS_IR_FRAME_V2 frame{};
+};
+
+static constexpr size_t DS5_IR_QUEUE_CAPACITY = 4;
+static std::deque<LI_DS5_HAPTICS_IR_FRAME_V2> g_ds5IrQueue;
+static bool g_ds5IrPumpQueued = false;
+static bool g_ds5IrShuttingDown = false;
+
+static bool IsDs5IrBoundary(const LI_DS5_HAPTICS_IR_FRAME_V2& frame) {
+    return (frame.flags & (LI_DS5_HAPTICS_IR_FLAG_DISCONTINUITY |
+                           LI_DS5_HAPTICS_IR_FLAG_STREAM_END |
+                           LI_DS5_HAPTICS_IR_FLAG_SILENT)) != 0U;
+}
+
+static void QueueDs5IrPump();
 
 static void CallJs_StageStarting(napi_env env, napi_value js_callback, void* context, void* data) {
     CallbackData* cbData = (CallbackData*)data;
@@ -448,6 +470,141 @@ static void SetObjectDouble(napi_env env,
     napi_set_named_property(env, object, name, property);
 }
 
+static void SetDs5HapticsIrLane(napi_env env,
+                                napi_value laneObject,
+                                const LI_DS5_HAPTICS_IR_LANE_V2& lane) {
+    SetObjectDouble(env, laneObject, "rmsAmplitude",
+                    static_cast<double>(lane.rmsAmplitude));
+    SetObjectDouble(env, laneObject, "peakAmplitude",
+                    static_cast<double>(lane.peakAmplitude));
+    SetObjectDouble(env, laneObject, "transientStrength",
+                    static_cast<double>(lane.transientStrength));
+    SetObjectDouble(env, laneObject, "lowBandRatio",
+                    static_cast<double>(lane.lowBandRatio));
+    SetObjectDouble(env, laneObject, "zeroCrossingRateHz",
+                    static_cast<double>(lane.zeroCrossingRateHz));
+}
+
+static void CallJs_Ds5HapticsIrV2(napi_env env,
+                                  napi_value js_callback,
+                                  void* context,
+                                  void* data) {
+    (void)data;
+    for (size_t processed = 0; processed < DS5_IR_QUEUE_CAPACITY; ++processed) {
+        Ds5HapticsIrFrameData callbackData{};
+        bool hasFrame = false;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            // This pump callback is no longer pending once it starts running.
+            // Reset before checking state so an empty callback cannot strand
+            // future frames behind a stale queued flag.
+            g_ds5IrPumpQueued = false;
+            if (!g_ds5IrShuttingDown && !g_ds5IrQueue.empty()) {
+                callbackData.frame = g_ds5IrQueue.front();
+                g_ds5IrQueue.pop_front();
+                hasFrame = true;
+            }
+        }
+
+        if (!hasFrame) {
+            break;
+        }
+
+        if (env != nullptr && js_callback != nullptr) {
+            napi_value frameObject;
+            napi_create_object(env, &frameObject);
+            SetObjectUint32(env, frameObject, "flags",
+                            static_cast<uint32_t>(callbackData.frame.flags));
+            SetObjectUint32(env, frameObject, "controllerNumber",
+                            static_cast<uint32_t>(callbackData.frame.controllerNumber));
+            SetObjectUint32(env, frameObject, "sourceSequenceNumber",
+                            callbackData.frame.sourceSequenceNumber);
+            SetObjectDouble(env, frameObject, "timestampUs",
+                            static_cast<double>(callbackData.frame.timestampUs));
+            SetObjectUint32(env, frameObject, "sourceFrameCount",
+                            callbackData.frame.sourceFrameCount);
+            SetObjectDouble(env, frameObject, "laneCorrelation",
+                            static_cast<double>(callbackData.frame.laneCorrelation));
+
+            napi_value lanes;
+            napi_create_array_with_length(env, 2, &lanes);
+            for (uint32_t index = 0; index < 2; ++index) {
+                napi_value laneObject;
+                napi_create_object(env, &laneObject);
+                SetDs5HapticsIrLane(env, laneObject, callbackData.frame.lanes[index]);
+                napi_set_element(env, lanes, index, laneObject);
+            }
+            napi_set_named_property(env, frameObject, "lanes", lanes);
+
+            napi_value undefined;
+            napi_get_undefined(env, &undefined);
+            napi_call_function(env, undefined, js_callback, 1, &frameObject, nullptr);
+        }
+    }
+
+    QueueDs5IrPump();
+}
+
+static void QueueDs5IrPump() {
+    napi_threadsafe_function irTsfn = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_ds5IrShuttingDown || g_ds5IrPumpQueued || g_ds5IrQueue.empty()) {
+            return;
+        }
+        irTsfn = g_connCallbacks.tsfn_ds5HapticsIrV2;
+        if (irTsfn == nullptr ||
+            napi_acquire_threadsafe_function(irTsfn) != napi_ok) {
+            return;
+        }
+        g_ds5IrPumpQueued = true;
+    }
+
+    const napi_status status = napi_call_threadsafe_function(
+        irTsfn, nullptr, napi_tsfn_nonblocking);
+    napi_release_threadsafe_function(irTsfn, napi_tsfn_release);
+    if (status != napi_ok) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_ds5IrPumpQueued = false;
+    }
+}
+
+static void EnqueueDs5IrFrame(const LI_DS5_HAPTICS_IR_FRAME_V2& frame) {
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_ds5IrShuttingDown || g_connCallbacks.tsfn_ds5HapticsIrV2 == nullptr) {
+            return;
+        }
+
+        if (g_ds5IrQueue.size() < DS5_IR_QUEUE_CAPACITY) {
+            g_ds5IrQueue.push_back(frame);
+        } else if (!IsDs5IrBoundary(frame)) {
+            // Normal analysis frames are replaceable; preserve queued lifecycle
+            // boundaries and keep only the newest ordinary frame.
+            for (auto it = g_ds5IrQueue.rbegin(); it != g_ds5IrQueue.rend(); ++it) {
+                if (!IsDs5IrBoundary(*it)) {
+                    *it = frame;
+                    break;
+                }
+            }
+        } else {
+            // Make room for a boundary by evicting the oldest replaceable frame.
+            auto it = std::find_if(g_ds5IrQueue.begin(), g_ds5IrQueue.end(),
+                                   [](const LI_DS5_HAPTICS_IR_FRAME_V2& queued) {
+                                       return !IsDs5IrBoundary(queued);
+                                   });
+            if (it != g_ds5IrQueue.end()) {
+                g_ds5IrQueue.erase(it);
+            } else {
+                // Boundary bursts are rare; retain the newest lifecycle state.
+                g_ds5IrQueue.pop_front();
+            }
+            g_ds5IrQueue.push_back(frame);
+        }
+    }
+    QueueDs5IrPump();
+}
+
 static void CallJs_AudioHapticFrame(napi_env env,
                                     napi_value js_callback,
                                     void* context,
@@ -497,6 +654,9 @@ static void CallJs_AudioHapticFrame(napi_env env,
 void Callbacks_Init(napi_env env, napi_value callbacks) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_env = env;
+    g_ds5IrQueue.clear();
+    g_ds5IrPumpQueued = false;
+    g_ds5IrShuttingDown = false;
     
     napi_value callback;
     
@@ -558,6 +718,12 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     if (napi_get_named_property(env, callbacks, "rumble", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "rumble", CallJs_Rumble, &g_connCallbacks.tsfn_rumble);
     }
+    if (napi_get_named_property(env, callbacks, "ds5HapticsIrV2", &callback) == napi_ok) {
+        CreateThreadsafeFunction(env, callback, "ds5HapticsIrV2",
+                                 CallJs_Ds5HapticsIrV2,
+                                 &g_connCallbacks.tsfn_ds5HapticsIrV2,
+                                 1);
+    }
     if (napi_get_named_property(env, callbacks, "connectionStatusUpdate", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "connectionStatusUpdate", CallJs_ConnectionStatusUpdate, &g_connCallbacks.tsfn_connectionStatusUpdate);
     }
@@ -585,6 +751,9 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
 
 void Callbacks_Cleanup(void) {
     std::lock_guard<std::mutex> lock(g_mutex);
+    g_ds5IrShuttingDown = true;
+    g_ds5IrQueue.clear();
+    g_ds5IrPumpQueued = false;
     
     // 释放线程安全函数
     if (g_videoCallbacks.tsfn_setup) napi_release_threadsafe_function(g_videoCallbacks.tsfn_setup, napi_tsfn_release);
@@ -609,6 +778,7 @@ void Callbacks_Cleanup(void) {
     if (g_connCallbacks.tsfn_connectionStarted) napi_release_threadsafe_function(g_connCallbacks.tsfn_connectionStarted, napi_tsfn_release);
     if (g_connCallbacks.tsfn_connectionTerminated) napi_release_threadsafe_function(g_connCallbacks.tsfn_connectionTerminated, napi_tsfn_release);
     if (g_connCallbacks.tsfn_rumble) napi_release_threadsafe_function(g_connCallbacks.tsfn_rumble, napi_tsfn_release);
+    if (g_connCallbacks.tsfn_ds5HapticsIrV2) napi_release_threadsafe_function(g_connCallbacks.tsfn_ds5HapticsIrV2, napi_tsfn_release);
     if (g_connCallbacks.tsfn_connectionStatusUpdate) napi_release_threadsafe_function(g_connCallbacks.tsfn_connectionStatusUpdate, napi_tsfn_release);
     if (g_connCallbacks.tsfn_setHdrMode) napi_release_threadsafe_function(g_connCallbacks.tsfn_setHdrMode, napi_tsfn_release);
     if (g_connCallbacks.tsfn_setMotionEventState) napi_release_threadsafe_function(g_connCallbacks.tsfn_setMotionEventState, napi_tsfn_release);
@@ -1147,6 +1317,24 @@ void BridgeClRumble(unsigned short controllerNumber, unsigned short lowFreqMotor
         napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_rumble, data, napi_tsfn_nonblocking);
         if (st != napi_ok) delete data;
     }
+}
+
+void BridgeClDs5HapticsIrV2(const LI_DS5_HAPTICS_IR_FRAME_V2* frame) {
+    if (frame == nullptr) {
+        return;
+    }
+
+    if ((frame->flags & (LI_DS5_HAPTICS_IR_FLAG_DISCONTINUITY |
+                         LI_DS5_HAPTICS_IR_FLAG_STREAM_END)) != 0U) {
+        OH_LOG_INFO(LOG_APP,
+                    "DS5 IR stream boundary: controller=%{public}u flags=0x%{public}x",
+                    frame->controllerNumber, frame->flags);
+    }
+
+    // The IR stream is a separate source from ordinary rumble. Preserve the
+    // normalized lanes and lifecycle flags for ArkTS, where source-aware
+    // mixing and actuator selection are performed.
+    EnqueueDs5IrFrame(*frame);
 }
 
 void BridgeClConnectionStatusUpdate(int connectionStatus) {
