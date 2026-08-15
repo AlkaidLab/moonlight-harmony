@@ -38,6 +38,8 @@ interface IrStreamState {
   hasSequence: boolean;
   lastSequence: number;
   watchdogTimer: number;
+  gateOpen: boolean;
+  quietFrameCount: number;
 }
 
 // ==================== 震动服务 ====================
@@ -54,6 +56,13 @@ export class GamepadVibrationService {
   private static readonly MUSIC_RHYTHM_MINIMUM_INTENSITY = 70;
   private static readonly MUSIC_TRANSIENT_MINIMUM_INTENSITY = 72;
   private static readonly IR_WATCHDOG_MS = 350;
+  // The host's SILENT flag currently represents digital silence. Apply a
+  // client-side gate so authored-channel noise does not become a persistent
+  // low rumble. Separate thresholds avoid chattering around the boundary.
+  private static readonly IR_GATE_OPEN_AMPLITUDE = 0.008;
+  private static readonly IR_GATE_CLOSE_AMPLITUDE = 0.004;
+  private static readonly IR_GATE_CLOSE_FRAMES = 4;
+  private static readonly IR_OUTPUT_FLOOR = 0.004;
   /** Device vibrator APIs are relatively expensive; coalesce authored IR frames. */
   private static readonly DEVICE_RENDER_INTERVAL_MS = 40;
   private static readonly IR_FLAG_DISCONTINUITY = 0x01;
@@ -211,6 +220,8 @@ export class GamepadVibrationService {
       // A discontinuity starts a new sequence domain. The current frame is
       // still accepted so a host can recover without sending a separate packet.
       state.hasSequence = false;
+      state.gateOpen = false;
+      state.quietFrameCount = 0;
     }
     if (state.hasSequence &&
         !this.isIrSequenceNewer(frame.sourceSequenceNumber, state.lastSequence)) {
@@ -220,8 +231,17 @@ export class GamepadVibrationService {
     state.lastSequence = frame.sourceSequenceNumber;
 
     if (streamEnd || silent) {
+      if (silent) {
+        state.gateOpen = false;
+        state.quietFrameCount = 0;
+      }
       this.clearIrSource(controllerNumber, streamEnd);
       if (streamEnd) this.irStreamStates.delete(controllerNumber);
+      return;
+    }
+
+    if (!this.updateIrNoiseGate(state, frame)) {
+      this.clearIrSource(controllerNumber, false);
       return;
     }
 
@@ -461,7 +481,9 @@ export class GamepadVibrationService {
     const state: IrStreamState = {
       hasSequence: false,
       lastSequence: 0,
-      watchdogTimer: -1
+      watchdogTimer: -1,
+      gateOpen: false,
+      quietFrameCount: 0
     };
     this.irStreamStates.set(controllerNumber, state);
     return state;
@@ -482,19 +504,25 @@ export class GamepadVibrationService {
   }
 
   private clearIrSource(controllerNumber: number, resetSequence: boolean): void {
-    this.irUsbRumble.delete(controllerNumber);
-    this.irDeviceRumble.delete(controllerNumber);
+    const hadUsbOutput = this.irUsbRumble.delete(controllerNumber);
+    const hadDeviceOutput = this.irDeviceRumble.delete(controllerNumber);
     this.clearIrTimer(controllerNumber);
     if (resetSequence) {
       const state = this.irStreamStates.get(controllerNumber);
-      if (state) state.hasSequence = false;
+      if (state) {
+        state.hasSequence = false;
+        state.gateOpen = false;
+        state.quietFrameCount = 0;
+      }
     }
 
     const controllers = this.usbDriverService.getControllers();
-    if (controllers.length > 0) {
+    if (hadUsbOutput && controllers.length > 0) {
       this.renderMixedUsb(controllers, controllerNumber);
     }
-    this.renderMixedDevice(false);
+    if (hadDeviceOutput) {
+      this.renderMixedDevice(false);
+    }
   }
 
   // ==================== 内部实现 ====================
@@ -549,19 +577,24 @@ export class GamepadVibrationService {
     const scaledGameHigh = this.applyGameVibrationStrength(game.high);
     const scaledIrLow = this.applyGameVibrationStrength(ir.low);
     const scaledIrHigh = this.applyGameVibrationStrength(ir.high);
+    const irActive = scaledIrLow > 0 || scaledIrHigh > 0;
     let gameLow = scaledGameLow;
     let gameHigh = scaledGameHigh;
     if (GamepadVibrationService.IR_PRIORITY_OVER_GAME &&
-        (scaledIrLow > 0 || scaledIrHigh > 0)) {
+        irActive) {
       gameLow = scaledIrLow;
       gameHigh = scaledIrHigh;
     } else if (!GamepadVibrationService.IR_PRIORITY_OVER_GAME) {
       gameLow = this.mixWithHeadroom(scaledGameLow, scaledIrLow, RUMBLE_MAX);
       gameHigh = this.mixWithHeadroom(scaledGameHigh, scaledIrHigh, RUMBLE_MAX);
     }
+    // Authored Channel 3/4 haptics already describe the intended effect.
+    // Mixing the legacy main-audio analyser while IR is active duplicates
+    // energy and commonly produces an unexplained continuous background buzz.
+    const effectiveAudio = irActive ? emptyPair : audio;
     controller.rumble(
-      this.mixWithHeadroom(gameLow, audio.low, RUMBLE_MAX),
-      this.mixWithHeadroom(gameHigh, audio.high, RUMBLE_MAX)
+      this.mixWithHeadroom(gameLow, effectiveAudio.low, RUMBLE_MAX),
+      this.mixWithHeadroom(gameHigh, effectiveAudio.high, RUMBLE_MAX)
     );
   }
 
@@ -678,6 +711,55 @@ export class GamepadVibrationService {
     }, 100);
   }
 
+  private getIrActivity(frame: Ds5HapticsIrV2Frame): number {
+    let activity = 0;
+    for (let index = 0; index < Math.min(2, frame.lanes.length); index++) {
+      const lane = frame.lanes[index];
+      activity = Math.max(
+        activity,
+        this.clampUnit(lane.rmsAmplitude),
+        this.clampUnit(lane.peakAmplitude) * 0.5,
+        this.clampUnit(lane.transientStrength) * 0.5
+      );
+    }
+    return activity;
+  }
+
+  private updateIrNoiseGate(state: IrStreamState,
+    frame: Ds5HapticsIrV2Frame): boolean {
+    const activity = this.getIrActivity(frame);
+    if (!state.gateOpen) {
+      if (activity < GamepadVibrationService.IR_GATE_OPEN_AMPLITUDE) {
+        return false;
+      }
+      state.gateOpen = true;
+      state.quietFrameCount = 0;
+      return true;
+    }
+
+    if (activity >= GamepadVibrationService.IR_GATE_CLOSE_AMPLITUDE) {
+      state.quietFrameCount = 0;
+      return true;
+    }
+
+    state.quietFrameCount++;
+    if (state.quietFrameCount < GamepadVibrationService.IR_GATE_CLOSE_FRAMES) {
+      return true;
+    }
+    state.gateOpen = false;
+    state.quietFrameCount = 0;
+    return false;
+  }
+
+  private shapeIrAmplitude(value: number): number {
+    const normalized = Math.max(0, Math.min(1,
+      (value - GamepadVibrationService.IR_OUTPUT_FLOOR) /
+      (1 - GamepadVibrationService.IR_OUTPUT_FLOOR)));
+    // A mild perceptual curve retains authored detail without sqrt() turning
+    // sub-percent noise into a clearly perceptible motor command.
+    return Math.pow(normalized, 0.8);
+  }
+
   /** 将两条 IR 分析 lane 按客户端校准折叠为标准双马达幅度。 */
   private renderIrFrame(frame: Ds5HapticsIrV2Frame): MotorPair {
     if (frame.lanes.length < 2) {
@@ -695,9 +777,8 @@ export class GamepadVibrationService {
       high += rms * (1.0 - lowBand) * 0.65 + transient * 0.35;
     }
 
-    // 与 native calibration 保持一致：平方根压扩保留较弱的 authored 细节。
-    low = Math.sqrt(Math.max(0, Math.min(1, low * 0.5)));
-    high = Math.sqrt(Math.max(0, Math.min(1, high * 0.5)));
+    low = this.shapeIrAmplitude(Math.max(0, Math.min(1, low * 0.5)));
+    high = this.shapeIrAmplitude(Math.max(0, Math.min(1, high * 0.5)));
     return {
       low: this.clampRumbleValue(low * RUMBLE_MAX),
       high: this.clampRumbleValue(high * RUMBLE_MAX)
@@ -759,14 +840,15 @@ export class GamepadVibrationService {
 
     const nowMs = Date.now();
     const irActive = this.irDeviceRumble.size > 0;
-    if (hasAudioTransient || !irActive) {
+    const effectiveAudioTransient = hasAudioTransient && !irActive;
+    if (effectiveAudioTransient || !irActive) {
       this.clearPendingDeviceRender();
     }
-    if (irActive && !hasAudioTransient && this.lastDeviceRenderAtMs > 0) {
+    if (irActive && !effectiveAudioTransient && this.lastDeviceRenderAtMs > 0) {
       const elapsedMs = nowMs - this.lastDeviceRenderAtMs;
       if (elapsedMs < GamepadVibrationService.DEVICE_RENDER_INTERVAL_MS) {
         this.pendingDeviceRenderTransient =
-          this.pendingDeviceRenderTransient || hasAudioTransient;
+          this.pendingDeviceRenderTransient || effectiveAudioTransient;
         if (this.pendingDeviceRenderTimer === -1) {
           const delayMs = GamepadVibrationService.DEVICE_RENDER_INTERVAL_MS - elapsedMs;
           this.pendingDeviceRenderTimer = setTimeout((): void => {
@@ -799,12 +881,12 @@ export class GamepadVibrationService {
     const highIntensity = this.mixWithHeadroom(gameHighIntensity, irHighIntensity, 100);
     const gameIntensity = Math.max(lowIntensity, highIntensity);
     const audioContinuous =
-      Date.now() <= this.audioDeviceContinuousUntilMs
+      !irActive && Date.now() <= this.audioDeviceContinuousUntilMs
         ? this.audioDeviceContinuous
         : 0;
     const mixedContinuous = this.mixWithHeadroom(
       gameIntensity, audioContinuous, 100);
-    const mixedTransient = hasAudioTransient
+    const mixedTransient = effectiveAudioTransient
       ? this.mixWithHeadroom(
         gameIntensity, this.audioDeviceTransient, 100)
       : 0;
@@ -816,7 +898,7 @@ export class GamepadVibrationService {
       ? 1
       : GamepadVibrationService.MINIMUM_DEVICE_INTENSITY;
     if (mixedContinuous < GamepadVibrationService.MINIMUM_DEVICE_INTENSITY &&
-        (!hasAudioTransient ||
+        (!effectiveAudioTransient ||
          mixedTransient < minimumTransientIntensity)) {
       if (this.isVibrating) this.stopVibrationImmediate();
       return;
@@ -829,18 +911,18 @@ export class GamepadVibrationService {
           highIntensity,
           mixedContinuous,
           mixedTransient,
-          hasAudioTransient,
+          effectiveAudioTransient,
           renderEpoch
         );
       } else {
         this.triggerMixedTimeFallback(
-          mixedContinuous, mixedTransient, hasAudioTransient, renderEpoch);
+          mixedContinuous, mixedTransient, effectiveAudioTransient, renderEpoch);
       }
       this.isVibrating = true;
     } catch (err) {
       console.warn(`[VIBRATION] 设备震动异常: ${err}`);
       this.triggerMixedTimeFallback(
-        mixedContinuous, mixedTransient, hasAudioTransient, renderEpoch);
+        mixedContinuous, mixedTransient, effectiveAudioTransient, renderEpoch);
     }
   }
 
