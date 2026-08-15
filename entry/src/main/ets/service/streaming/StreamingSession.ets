@@ -912,6 +912,19 @@ export class StreamingSession {
     );
   }
 
+  /**
+   * 物理 USB 附加驱动可能晚于 GCK 输入设备到达。
+   * 对已声明的槽位重发 arrival，使主机重新读取新增的 IMU 能力。
+   */
+  refreshPhysicalControllerCapabilities(
+    controllerIndex: number,
+    controllerType: number = CONTROLLER_TYPE_XBOX
+  ): void {
+    if (!this.isRunning || !this.physicalControllerArrived.has(controllerIndex)) return;
+    this.physicalControllerArrived.delete(controllerIndex);
+    this.ensurePhysicalControllerArrival(controllerIndex, controllerType);
+  }
+
   // ---------------------------------------------------------------------------
   // 性能统计
   // ---------------------------------------------------------------------------

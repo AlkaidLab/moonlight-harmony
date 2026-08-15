@@ -476,6 +476,10 @@ struct StreamPage {
       },
       onGamepadInput: (deviceId: number, state: GamepadState) => {
         this.handleGamepadInput(deviceId, state);
+      },
+      onGamepadCapabilitiesChanged: (deviceId: number, controllerType: number) => {
+        this.controllerTypes.set(deviceId, controllerType);
+        this.viewModel.refreshGamepadCapabilities(deviceId, controllerType);
       }
     });
 

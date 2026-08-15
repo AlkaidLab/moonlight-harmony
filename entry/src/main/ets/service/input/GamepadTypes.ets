@@ -54,6 +54,7 @@ export interface GamepadInputListener {
   onGamepadConnected: (deviceId: number, name: string, controllerType: number) => void;
   onGamepadDisconnected: (deviceId: number) => void;
   onGamepadInput: (deviceId: number, state: GamepadState) => void;
+  onGamepadCapabilitiesChanged?: (deviceId: number, controllerType: number) => void;
 }
 
 // ==================== 常量定义 ====================
