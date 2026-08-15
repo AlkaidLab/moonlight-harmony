@@ -45,6 +45,7 @@ export abstract class AbstractController {
   protected busNum: number = 0;
   protected devAddress: number = 0;
   protected serial: string = '';
+  protected physicalDeviceName: string = '';
   
   // 配置选项
   protected ddkActive: boolean = false;  // DDK 高速轮询是否启用
@@ -82,10 +83,27 @@ export abstract class AbstractController {
   /**
    * 设置设备物理位置信息（用于唯一标识）
    */
-  setDeviceLocation(busNum: number, devAddress: number, serial: string): void {
+  setDeviceLocation(busNum: number, devAddress: number, serial: string, physicalDeviceName: string = ''): void {
     this.busNum = busNum;
     this.devAddress = devAddress;
     this.serial = serial;
+    this.physicalDeviceName = physicalDeviceName;
+  }
+
+  /**
+   * 返回可用于与其他输入 API 关联同一物理 USB 设备的稳定标识。
+   * 不包含运行时 controllerId，避免不同输入栈的独立 ID 被错误关联。
+   */
+  getPhysicalDeviceIdentifiers(): string[] {
+    const identifiers = [
+      this.serial,
+      this.physicalDeviceName,
+      `${this.busNum}:${this.devAddress}`,
+      `${this.busNum}/${this.devAddress}`,
+      `${this.busNum}-${this.devAddress}`,
+      `/dev/bus/usb/${this.busNum.toString().padStart(3, '0')}/${this.devAddress.toString().padStart(3, '0')}`
+    ];
+    return identifiers.filter((identifier: string) => identifier.length > 0);
   }
   
   /**
