@@ -9,7 +9,10 @@
  */
 
 import { inputDevice } from '@kit.InputKit';
-import { UsbDriverService, UsbDriverListener, AbstractController, ButtonFlags, KnownUsbGamepadInfo } from '../usbdriver/index';
+import {
+  UsbDriverService, UsbDriverListener, AbstractController, ButtonFlags,
+  ControllerCapabilities, KnownUsbGamepadInfo
+} from '../usbdriver/index';
 import {
   gameControllerService, 
   AxisType, 
@@ -91,6 +94,8 @@ export class GamepadManager implements UsbDriverListener {
   
   // 传感器数据发送回调（由 StreamingSession 设置）
   private sensorDataCallback: ((controllerNumber: number, motionType: number, x: number, y: number, z: number) => void) | null = null;
+  /** 主机当前请求的物理手柄传感器，key 为 "controllerNumber:motionType"。 */
+  private requestedPhysicalMotion = new Set<string>();
 
   // 触摸板鼠标模拟
   private touchpadMouseEnabled: boolean = false;
@@ -2046,8 +2051,10 @@ export class GamepadManager implements UsbDriverListener {
     y: number,
     z: number
   ): void {
+    if (!this.gamepadMotionSensorsEnabled) return;
+
     const slot = this.getControllerSlot(controllerId);
-    if (this.sensorDataCallback) {
+    if (this.requestedPhysicalMotion.has(`${slot}:${motionType}`) && this.sensorDataCallback) {
       this.sensorDataCallback(slot, motionType, x, y, z);
     }
   }
@@ -2196,8 +2203,32 @@ export class GamepadManager implements UsbDriverListener {
       return;
     }
 
-    // DS4 等自带 IMU 的手柄已在驱动层（如 Dualshock4Controller）主动推送运动数据，
-    // 无需在此处查询；Xbox/Switch 等无 IMU 手柄则依赖下方设备传感器回退。
+    const requestedCapability = motionType === LI_MOTION_TYPE_ACCEL
+      ? ControllerCapabilities.ACCEL
+      : motionType === LI_MOTION_TYPE_GYRO
+        ? ControllerCapabilities.GYRO
+        : 0;
+    if (requestedCapability === 0) {
+      console.warn(`[GAMEPAD] 未知传感器类型: ${motionType}`);
+      return;
+    }
+
+    const requestKey = `${controllerNumber}:${motionType}`;
+    const physicalCapabilities = this.getPhysicalSensorCapabilities(controllerNumber);
+    if ((physicalCapabilities & requestedCapability) !== 0) {
+      if (reportRateHz > 0) {
+        this.requestedPhysicalMotion.add(requestKey);
+      } else {
+        this.requestedPhysicalMotion.delete(requestKey);
+      }
+      // 真实手柄 IMU 优先，避免与设备传感器回退同时向同一槽位发送。
+      this.deviceSensorService.setMotionEventState(motionType, 0);
+      this.usingDeviceSensorFallback = false;
+      console.info(`[GAMEPAD] 物理手柄传感器: ${reportRateHz > 0 ? '启用' : '禁用'}`);
+      return;
+    }
+
+    this.requestedPhysicalMotion.delete(requestKey);
 
     // 回退到设备传感器
     if (!this.sensorFallbackEnabled) {
@@ -2235,17 +2266,15 @@ export class GamepadManager implements UsbDriverListener {
    * 检查是否需要在控制器到达事件中报告传感器能力
    * @returns 传感器能力标志位 (LI_CCAP_ACCEL | LI_CCAP_GYRO)
    */
-  getSensorCapabilities(): number {
+  getSensorCapabilities(controllerNumber: number = 0): number {
     if (!this.gamepadMotionSensorsEnabled) {
       return 0;
     }
 
-    let capabilities = 0;
-
-    // USB 手柄传感器能力由驱动层（如 DS4）自行上报，此处仅处理设备传感器回退
+    let capabilities = this.getPhysicalSensorCapabilities(controllerNumber);
 
     // 检查设备传感器回退
-    if (this.sensorFallbackEnabled) {
+    if (this.sensorFallbackEnabled && controllerNumber === 0) {
       if (this.deviceSensorService.hasAccelerometer()) {
         capabilities |= 0x10;  // LI_CCAP_ACCEL
       }
@@ -2257,11 +2286,23 @@ export class GamepadManager implements UsbDriverListener {
     return capabilities;
   }
 
+  /** 获取指定串流槽位上由 USB 驱动提供的运动传感器能力。 */
+  private getPhysicalSensorCapabilities(controllerNumber: number): number {
+    let capabilities = 0;
+    for (const controller of this.usbDriverService.getControllers()) {
+      if (this.getControllerSlot(controller.getControllerId()) !== controllerNumber) continue;
+      capabilities |= controller.getCapabilities() &
+        (ControllerCapabilities.ACCEL | ControllerCapabilities.GYRO);
+    }
+    return capabilities;
+  }
+
   /**
    * 停止所有传感器（串流断开时调用）
    */
   stopAllSensors(): void {
     this.deviceSensorService.disableAll();
+    this.requestedPhysicalMotion.clear();
     this.usingDeviceSensorFallback = false;
     this.sensorDataCallback = null;
     console.info('[GAMEPAD] 所有传感器已停止');

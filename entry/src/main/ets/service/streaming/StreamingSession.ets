@@ -1633,7 +1633,7 @@ export class StreamingSession {
     if (this.physicalControllerArrived.has(controllerIndex)) return;
 
     let capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
-    capabilities |= GamepadManager.getInstance().getSensorCapabilities();
+    capabilities |= GamepadManager.getInstance().getSensorCapabilities(controllerIndex);
 
     let reportedType = controllerType;
     if ((capabilities & (LI_CCAP_ACCEL | LI_CCAP_GYRO)) && controllerType !== CONTROLLER_TYPE_PS) {

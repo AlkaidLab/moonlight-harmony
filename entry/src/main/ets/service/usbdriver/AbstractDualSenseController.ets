@@ -276,18 +276,7 @@ export abstract class AbstractDualSenseController extends AbstractController {
               console.info(`${TAG} 输入状态: buttons=0x${this.buttonFlags.toString(16)}, LX=${this.leftStickX.toFixed(2)}, LY=${this.leftStickY.toFixed(2)}`);
             }
             
-            // 报告 IMU 数据
-            if (this.capabilities & ControllerCapabilities.GYRO) {
-              this.notifyControllerMotion(MotionType.GYRO, this.gyroX, this.gyroY, this.gyroZ);
-            }
-            if (this.capabilities & ControllerCapabilities.ACCEL) {
-              this.notifyControllerMotion(MotionType.ACCEL, this.accelX, this.accelY, this.accelZ);
-            }
-            
-            // 报告触摸板数据
-            if (this.capabilities & ControllerCapabilities.TOUCHPAD) {
-              this.notifyTouchpadInput(this.touchpadActive, this.touchpadX, this.touchpadY);
-            }
+            this.reportExtendedInput();
           }
         } else if (readCount % 100 === 0) {
           console.warn(`${TAG} 读取空数据，已尝试 ${readCount} 次`);
@@ -443,10 +432,7 @@ export abstract class AbstractDualSenseController extends AbstractController {
         if (this.stopped) return;
         if (this.handleRead(data)) {
           this.reportInput();
-          // DDK 路径也报告触摸板数据
-          if (this.capabilities & ControllerCapabilities.TOUCHPAD) {
-            this.notifyTouchpadInput(this.touchpadActive, this.touchpadX, this.touchpadY);
-          }
+          this.reportExtendedInput();
         }
       },
       (errorCode: number) => {
@@ -496,6 +482,22 @@ export abstract class AbstractDualSenseController extends AbstractController {
     this.notifyDeviceAdded();
     console.info(`${TAG} 控制器已启动 (DDK 高速轮询)`);
     return true;
+  }
+
+  /**
+   * 上报主报告中的扩展输入。
+   * 普通 usbManager 轮询和 DDK 轮询必须经过同一条路径，避免高性能路径漏报 IMU。
+   */
+  private reportExtendedInput(): void {
+    if (this.capabilities & ControllerCapabilities.GYRO) {
+      this.notifyControllerMotion(MotionType.GYRO, this.gyroX, this.gyroY, this.gyroZ);
+    }
+    if (this.capabilities & ControllerCapabilities.ACCEL) {
+      this.notifyControllerMotion(MotionType.ACCEL, this.accelX, this.accelY, this.accelZ);
+    }
+    if (this.capabilities & ControllerCapabilities.TOUCHPAD) {
+      this.notifyTouchpadInput(this.touchpadActive, this.touchpadX, this.touchpadY);
+    }
   }
   
   /**

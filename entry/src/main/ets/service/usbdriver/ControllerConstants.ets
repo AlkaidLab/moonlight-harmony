@@ -62,8 +62,9 @@ export class ControllerCapabilities {
 
 // 运动数据类型
 export class MotionType {
-  static readonly GYRO: number = 1;
-  static readonly ACCEL: number = 2;
+  // Keep these values in sync with moonlight-common-c's LI_MOTION_TYPE_* ABI.
+  static readonly ACCEL: number = 0x01;
+  static readonly GYRO: number = 0x02;
 }
 
 // D-Pad 方向值（用于 DualShock 风格的 D-Pad）
