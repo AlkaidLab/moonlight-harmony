@@ -241,7 +241,11 @@ export class GamepadVibrationService {
     }
 
     if (!this.updateIrNoiseGate(state, frame)) {
+      // The frame advanced the sequence domain. clearIrSource cancels the
+      // watchdog, so re-arm it: a stalled gated stream must still reset the
+      // sequence domain or a restarted producer would be rejected forever.
       this.clearIrSource(controllerNumber, false);
+      this.armIrWatchdog(controllerNumber);
       return;
     }
 
@@ -250,6 +254,7 @@ export class GamepadVibrationService {
       // A valid silent analysis frame is still a lifecycle update, but it must
       // not leave a zero-valued entry that keeps the IR source "active".
       this.clearIrSource(controllerNumber, false);
+      this.armIrWatchdog(controllerNumber);
       return;
     }
     this.irUsbRumble.set(controllerNumber, motors);
