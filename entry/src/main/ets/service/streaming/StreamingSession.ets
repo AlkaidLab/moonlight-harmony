@@ -12,7 +12,13 @@ import { StreamConfig, HdrMode, getSurroundAudioInfo } from '../../model/StreamC
 import { InputEvent, InputType, ControllerButtonEvent, ControllerAxisEvent, ControllerButton } from '../../model/InputEvent';
 import { ComputerManager } from '../ComputerManager';
 import { ComputerInfo, selectBestAddress } from '../../model/ComputerInfo';
-import { NvHttp, LaunchConfig, DEFAULT_HDR_MIN_BRIGHTNESS_NITS } from './NvHttp';
+import {
+  NvHttp,
+  LaunchConfig,
+  DEFAULT_HDR_MIN_BRIGHTNESS_NITS,
+  DEFAULT_HDR_MAX_BRIGHTNESS_NITS,
+  DEFAULT_HDR_MAX_FULL_FRAME_BRIGHTNESS_NITS
+} from './NvHttp';
 import { CryptoUtil } from '../../utils/CryptoUtil';
 import { parseAddressAndPort, parseRtspSessionHost } from '../../utils/NetHelper';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
@@ -351,44 +357,19 @@ export class StreamingSession {
    */
   private static getBrightnessRange(): number[] {
     const minBrightness = DEFAULT_HDR_MIN_BRIGHTNESS_NITS;
-    // Keep the invalid-report fallback aligned with Foundation Sunshine's
-    // client_display_capabilities_t safe defaults.
-    const fallbackMaxBrightness = 1000;
-    const fallbackMaxAverageBrightness = 1000;
-    const minimumReliableSdrNits = 50;
-    const minimumReliablePeakNits = 100;
-    let maxBrightness = fallbackMaxBrightness;
-    let maxAverageBrightness = fallbackMaxAverageBrightness;
+    const maxBrightness = DEFAULT_HDR_MAX_BRIGHTNESS_NITS;
+    const maxAverageBrightness = DEFAULT_HDR_MAX_FULL_FRAME_BRIGHTNESS_NITS;
 
     try {
       const brightnessInfo = display.getBrightnessInfo(0);
       console.info(`[Brightness] sdrNits=${brightnessInfo.sdrNits}, ` +
         `currentHeadroom=${brightnessInfo.currentHeadroom}, maxHeadroom=${brightnessInfo.maxHeadroom}`);
-
-      const sdrNits = brightnessInfo.sdrNits;
-      const maxHeadroom = brightnessInfo.maxHeadroom;
-      const measuredMaxBrightness = sdrNits * maxHeadroom;
-      const hasReliableMeasurement = Number.isFinite(sdrNits) &&
-        Number.isFinite(maxHeadroom) &&
-        Number.isFinite(measuredMaxBrightness) &&
-        sdrNits >= minimumReliableSdrNits &&
-        maxHeadroom > 0 &&
-        measuredMaxBrightness >= minimumReliablePeakNits &&
-        measuredMaxBrightness >= sdrNits;
-
-      if (hasReliableMeasurement) {
-        maxBrightness = measuredMaxBrightness;
-        maxAverageBrightness = sdrNits;
-      } else {
-        console.warn(`[Brightness] measurement is too low or inconsistent, ` +
-          `using defaults: sdrNits=${sdrNits}, maxHeadroom=${maxHeadroom}, ` +
-          `peak=${measuredMaxBrightness}`);
-      }
     } catch (err) {
       console.warn(`[Brightness] getBrightnessInfo 不可用，使用默认值: ${err}`);
     }
 
-    console.info(`[Brightness] min=${minBrightness}, max=${maxBrightness}, avg=${maxAverageBrightness} nits`);
+    console.info(`[Brightness] using static HDR capability profile: ` +
+      `min=${minBrightness}, max=${maxBrightness}, avg=${maxAverageBrightness} nits`);
     return [minBrightness, maxBrightness, maxAverageBrightness];
   }
 
