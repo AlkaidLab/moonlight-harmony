@@ -1445,7 +1445,7 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
             "plcFrames=%{public}llu "
             "hapticMaxUs=%{public}lld hapticOver2ms=%{public}llu "
             "hapticQueueDrops=%{public}llu "
-            "audioUnderruns=%{public}u audioDropped=%{public}llu audioBufferedMs=%.2f",
+            "audioUnderruns=%{public}u audioDropped=%{public}llu audioBufferedMs=%{public}.2f",
             (unsigned long long)s_arvFrameSeq, kFramesPerLog,
             s_arvSampleCount, s_arvMaxAbs, meanAbs, satPct,
             s_arvHapticFrames, s_arvHapticAmplitudeMax,
