@@ -54,7 +54,8 @@ export interface GamepadInputListener {
   onGamepadConnected: (deviceId: number, name: string, controllerType: number) => void;
   onGamepadDisconnected: (deviceId: number) => void;
   onGamepadInput: (deviceId: number, state: GamepadState) => void;
-  onGamepadCapabilitiesChanged?: (deviceId: number, controllerType: number) => void;
+  /** 已连接手柄的能力变化（第一个参数为串流槽位 ID）。 */
+  onGamepadCapabilitiesChanged?: (slotId: number, controllerType: number) => void;
 }
 
 // ==================== 常量定义 ====================

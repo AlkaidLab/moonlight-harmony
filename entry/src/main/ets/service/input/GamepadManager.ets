@@ -80,6 +80,7 @@ export class GamepadManager implements UsbDriverListener {
   private gcPhysicalAddressToDeviceId = new Map<string, string>();  // 物理地址→主设备ID，用于去重同一物理手柄的多个HID接口
   private gcDeviceInfoCache = new Map<string, GameControllerDeviceInfo>();  // 设备信息缓存，用于后备去重
   private usbControllerIdToGcDeviceId = new Map<number, string>();  // USB controllerId→同一物理设备的 GCK deviceId
+  private usbControllerIdToSlot = new Map<number, number>();  // USB controllerId→串流槽位，供高频 IMU 路由
   
   // 槽位管理（统一 GC Kit、InputKit 和 USB 驱动的槽位分配）
   private deviceKeyToSlot = new Map<string, number>();
@@ -436,6 +437,7 @@ export class GamepadManager implements UsbDriverListener {
       this.gcPhysicalAddressToDeviceId.clear();
       this.gcDeviceInfoCache.clear();
       this.usbControllerIdToGcDeviceId.clear();
+      this.usbControllerIdToSlot.clear();
       
       console.info('[GAMEPAD] Game Controller Kit 已停止');
     } catch (err) {
@@ -1245,7 +1247,7 @@ export class GamepadManager implements UsbDriverListener {
       }
 
       // 去重检查 1：同一物理地址的设备只注册一次
-      const physAddr = info?.physicalAddress || '';
+      const physAddr = this.normalizePhysicalDeviceIdentifier(info?.physicalAddress || '');
       if (physAddr && physAddr.length > 0) {
         const existingDeviceId = this.gcPhysicalAddressToDeviceId.get(physAddr);
         if (existingDeviceId && existingDeviceId !== deviceId) {
@@ -1278,7 +1280,7 @@ export class GamepadManager implements UsbDriverListener {
           const existInfo = this.getGCDeviceInfoCached(existId);
           if (existInfo && existInfo.name === info?.name && existInfo.product === info?.product) {
             // 如果两个设备都有非空物理地址且不同，则视为独立设备，不去重
-            const existPhysAddr = existInfo.physicalAddress || '';
+            const existPhysAddr = this.normalizePhysicalDeviceIdentifier(existInfo.physicalAddress || '');
             if (physAddr.length > 0 && existPhysAddr.length > 0 && physAddr !== existPhysAddr) {
               continue;  // 不同物理地址 = 不同物理设备
             }
@@ -1369,7 +1371,9 @@ export class GamepadManager implements UsbDriverListener {
         // 主接口断开时，将物理地址索引提升到仍占用该槽位的接口。
         this.gcDeviceIdToSlot.forEach((survivorSlot: number, survivorId: string) => {
           if (survivorSlot !== slot) return;
-          const survivorAddress = this.gcDeviceInfoCache.get(survivorId)?.physicalAddress || '';
+          const survivorAddress = this.normalizePhysicalDeviceIdentifier(
+            this.gcDeviceInfoCache.get(survivorId)?.physicalAddress || ''
+          );
           if (survivorAddress.length > 0) {
             this.gcPhysicalAddressToDeviceId.set(survivorAddress, survivorId);
           }
@@ -1862,6 +1866,7 @@ export class GamepadManager implements UsbDriverListener {
    */
   private refreshUsbControllerMappings(): void {
     this.usbControllerIdToGcDeviceId.clear();
+    this.usbControllerIdToSlot.clear();
     if (!this.useGameControllerKit) return;
 
     for (const controller of this.usbDriverService.getControllers()) {
@@ -1887,6 +1892,7 @@ export class GamepadManager implements UsbDriverListener {
         const representative = representativeBySlot.get(slot);
         if (representative !== undefined) {
           this.usbControllerIdToGcDeviceId.set(controller.getControllerId(), representative);
+          this.usbControllerIdToSlot.set(controller.getControllerId(), slot);
         }
       } else if (matchingSlots.size > 1) {
         console.warn(`[GAMEPAD-USB] 物理设备映射不唯一，忽略附加输入: ID=${controller.getControllerId()}`);
@@ -1896,6 +1902,8 @@ export class GamepadManager implements UsbDriverListener {
 
   /** 获取 USB 控制器实际对应的串流槽位；无法可靠关联时返回 undefined。 */
   private getUsbControllerSlot(controller: AbstractController): number | undefined {
+    const cachedSlot = this.usbControllerIdToSlot.get(controller.getControllerId());
+    if (cachedSlot !== undefined) return cachedSlot;
     if (!this.useGameControllerKit) {
       return this.deviceKeyToSlot.get(controller.getDeviceKey());
     }
@@ -1987,6 +1995,7 @@ export class GamepadManager implements UsbDriverListener {
     this.gcPhysicalAddressToDeviceId.clear();
     this.gcDeviceInfoCache.clear();
     this.usbControllerIdToGcDeviceId.clear();
+    this.usbControllerIdToSlot.clear();
     this.controllerIdToDeviceKey.clear();
     this.usbDeviceKeyToId.clear();
     
@@ -2043,6 +2052,7 @@ export class GamepadManager implements UsbDriverListener {
       this.gcPhysicalAddressToDeviceId.clear();
       this.gcDeviceInfoCache.clear();
       this.usbControllerIdToGcDeviceId.clear();
+      this.usbControllerIdToSlot.clear();
       this.gcDpadAxisActive.clear();
     }
     
@@ -2061,6 +2071,7 @@ export class GamepadManager implements UsbDriverListener {
     this.deviceInfoMap.clear();
     this.dpadAxisActive.clear();
     this.usbDeviceKeyToId.clear();
+    this.usbControllerIdToSlot.clear();
     this.deviceKeyToSlot.clear();
     this.controllerIdToDeviceKey.clear();
     this.slotOccupied = [false, false, false, false];
@@ -2125,11 +2136,7 @@ export class GamepadManager implements UsbDriverListener {
   ): void {
     if (!this.gamepadMotionSensorsEnabled) return;
 
-    const controller = this.usbDriverService.getControllers()
-      .find((candidate: AbstractController) => candidate.getControllerId() === controllerId);
-    if (!controller) return;
-
-    const slot = this.getUsbControllerSlot(controller);
+    const slot = this.usbControllerIdToSlot.get(controllerId);
     if (slot === undefined) return;
     if (this.requestedPhysicalMotion.has(`${slot}:${motionType}`) && this.sensorDataCallback) {
       this.sensorDataCallback(slot, motionType, x, y, z);
@@ -2401,6 +2408,7 @@ export class GamepadManager implements UsbDriverListener {
       this.usbDeviceKeyToId.delete(deviceKey);
       this.controllerIdToDeviceKey.delete(controllerId);
       this.usbControllerIdToGcDeviceId.delete(controllerId);
+      this.usbControllerIdToSlot.delete(controllerId);
       if (slot !== undefined) {
         this.vibrationService.clearControllerSource(slot);
       }
@@ -2428,6 +2436,7 @@ export class GamepadManager implements UsbDriverListener {
       this.deviceInfoMap.delete(controllerId);
       this.usbDeviceKeyToId.delete(deviceKey);
       this.controllerIdToDeviceKey.delete(controllerId);
+      this.usbControllerIdToSlot.delete(controllerId);
       this.releaseSlotForDevice(deviceKey);
       this.dpadAxisActive.delete(controllerId);
       this.vibrationService.clearControllerSource(slot);
@@ -2519,6 +2528,7 @@ export class GamepadManager implements UsbDriverListener {
       this.deviceStates.delete(existingControllerId);
       this.deviceInfoMap.delete(existingControllerId);
       this.controllerIdToDeviceKey.delete(existingControllerId);
+      this.usbControllerIdToSlot.delete(existingControllerId);
     }
   }
   
@@ -2558,6 +2568,8 @@ export class GamepadManager implements UsbDriverListener {
     this.deviceStates.set(controllerId, this.createEmptyState());
     this.usbDeviceKeyToId.set(deviceKey, controllerId);
     this.controllerIdToDeviceKey.set(controllerId, deviceKey);
+    const slot = this.deviceKeyToSlot.get(deviceKey);
+    if (slot !== undefined) this.usbControllerIdToSlot.set(controllerId, slot);
     
     this.deviceInfoMap.set(controllerId, {
       id: controllerId,
