@@ -1759,6 +1759,7 @@ export class StreamingSession {
 
   private async cleanup(): Promise<void> {
     console.info('清理串流资源');
+    this.isRunning = false;
     // LiStopConnection() suppresses connectionTerminated for an explicit stop,
     // so clear controller output here as well as in the termination callback.
     GamepadManager.getInstance().stopAllVibration();

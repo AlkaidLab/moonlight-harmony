@@ -105,6 +105,7 @@ export class GamepadVibrationService {
   private gameUsbRumble = new Map<number, MotorPair>();
   private irUsbRumble = new Map<number, MotorPair>();
   private audioUsbRumble = new Map<number, MotorPair>();
+  private usbOutputClearedDeviceKeys: Set<string> = new Set();
   private gameDeviceLow: number = 0;
   private gameDeviceHigh: number = 0;
   private gameDeviceControllerNumber: number = 0;
@@ -303,6 +304,7 @@ export class GamepadVibrationService {
       (DS_EFFECT_RIGHT_TRIGGER | DS_EFFECT_LEFT_TRIGGER);
     if (eventFlags === 0) return;
 
+    this.usbOutputClearedDeviceKeys.delete(controller.getDeviceKey());
     controller.setAdaptiveTriggers(
       eventFlags,
       this.clampProtocolByte(frame.leftEffectType),
@@ -326,6 +328,7 @@ export class GamepadVibrationService {
       return;
     }
 
+    this.usbOutputClearedDeviceKeys.delete(controller.getDeviceKey());
     controller.rumbleTriggers(
       this.applyGameVibrationStrength(leftTrigger),
       this.applyGameVibrationStrength(rightTrigger)
@@ -413,6 +416,7 @@ export class GamepadVibrationService {
 
     try {
       const controllers = this.usbDriverService.getControllers();
+      this.usbOutputClearedDeviceKeys.clear();
       for (const controller of controllers) {
         this.clearAllTriggerEffects(controller);
         controller.rumble(0, 0);
@@ -624,10 +628,11 @@ export class GamepadVibrationService {
     if (!controller) return;
 
     if (!this.shouldRenderUsbOutput()) {
-      this.clearAllTriggerEffects(controller);
-      controller.rumble(0, 0);
+      this.clearUsbOutputOnce(controller);
       return;
     }
+
+    this.usbOutputClearedDeviceKeys.delete(controller.getDeviceKey());
 
     const emptyPair: MotorPair = { low: 0, high: 0 };
     const game = this.gameUsbRumble.get(controllerNumber) ?? emptyPair;
@@ -680,6 +685,16 @@ export class GamepadVibrationService {
   /** Clear both the raw adaptive effect and the legacy trigger-rumble state. */
   private clearAllTriggerEffects(controller: AbstractController): void {
     controller.clearTriggerEffects();
+  }
+
+  private clearUsbOutputOnce(controller: AbstractController): void {
+    const deviceKey = controller.getDeviceKey();
+    if (this.usbOutputClearedDeviceKeys.has(deviceKey)) {
+      return;
+    }
+    this.clearAllTriggerEffects(controller);
+    controller.rumble(0, 0);
+    this.usbOutputClearedDeviceKeys.add(deviceKey);
   }
 
   private clampIntensity(value: number): number {
@@ -751,8 +766,7 @@ export class GamepadVibrationService {
 
     if (!this.shouldRenderUsbOutput()) {
       for (const controller of controllers) {
-        this.clearAllTriggerEffects(controller);
-        controller.rumble(0, 0);
+        this.clearUsbOutputOnce(controller);
       }
     } else {
       slots.forEach((slot: number): void => {

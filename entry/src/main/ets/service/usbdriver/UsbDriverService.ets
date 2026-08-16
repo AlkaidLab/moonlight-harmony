@@ -94,6 +94,7 @@ export class UsbDriverService implements UsbDriverListener {
   private resetTimerId: number | null = null;
   // stop() keeps DualSense transports alive while the final Off report drains.
   private pendingControllerStops: Promise<void> | null = null;
+  private pendingResetWait: Promise<void> | null = null;
   // Device keys awaiting kernel HID rebind after a controller release.
   private pendingResetDeviceKeys: Set<string> = new Set();
   
@@ -242,6 +243,10 @@ export class UsbDriverService implements UsbDriverListener {
       return;
     }
 
+    if (this.pendingResetDeviceKeys.size === 0) {
+      this.cancelResetTimer();
+    }
+
     // 启动定期重新扫描定时器
     this.startRescanTimer(requestGeneration);
   }
@@ -332,11 +337,6 @@ export class UsbDriverService implements UsbDriverListener {
       const subscriber: commonEventManager.CommonEventSubscriber =
         await commonEventManager.createSubscriber(subscribeInfo);
       if (!this.isStartRequestCurrent(requestGeneration)) {
-        try {
-          commonEventManager.unsubscribe(subscriber);
-        } catch (err) {
-          console.warn(`${TAG} 取消过期 USB 订阅失败:`, err);
-        }
         return;
       }
       this.usbSubscriber = subscriber;
@@ -430,6 +430,7 @@ export class UsbDriverService implements UsbDriverListener {
   stop(): void {
     this.startRequested = false;
     this.lifecycleGeneration++;
+    this.cancelResetTimer();
 
     if (!this.started) {
       this.schedulePendingReset();
@@ -482,10 +483,25 @@ export class UsbDriverService implements UsbDriverListener {
   }
 
   private schedulePendingReset(): void {
-    if (this.resetTimerId !== null) {
-      clearTimeout(this.resetTimerId);
-      this.resetTimerId = null;
+    const pendingStops: Promise<void> | null = this.pendingControllerStops;
+    if (pendingStops !== null) {
+      if (this.pendingResetWait === pendingStops) {
+        return;
+      }
+      this.pendingResetWait = pendingStops;
+      pendingStops.then((): void => {
+        if (this.pendingControllerStops === pendingStops) {
+          this.pendingControllerStops = null;
+        }
+        if (this.pendingResetWait === pendingStops) {
+          this.pendingResetWait = null;
+        }
+        this.schedulePendingReset();
+      });
+      return;
     }
+
+    this.cancelResetTimer();
     if (this.ddkEnabled || this.pendingResetDeviceKeys.size === 0) {
       return;
     }
@@ -498,6 +514,13 @@ export class UsbDriverService implements UsbDriverListener {
         this.pendingResetDeviceKeys.delete(deviceKey);
       });
     }, UsbDriverService.USB_RESET_DELAY_MS);
+  }
+
+  private cancelResetTimer(): void {
+    if (this.resetTimerId !== null) {
+      clearTimeout(this.resetTimerId);
+      this.resetTimerId = null;
+    }
   }
   
   /**
@@ -518,11 +541,13 @@ export class UsbDriverService implements UsbDriverListener {
     
     try {
       const devices: usbManager.USBDevice[] = usbManager.getDevices();
+      const presentKeys: Set<string> = new Set();
       let resetCount = 0;
       
       for (let i = 0; i < devices.length; i++) {
         const device = devices[i];
         const key = `${device.vendorId}:${device.productId}:${device.busNum}:${device.devAddress}`;
+        presentKeys.add(key);
         
         if (!releasedKeys.has(key)) continue;
         if (!this.deviceHasHidInterface(device)) continue;
@@ -578,6 +603,11 @@ export class UsbDriverService implements UsbDriverListener {
       if (resetCount > 0) {
         console.info(`${TAG} 已尝试重绑定 ${resetCount} 个 USB 设备的内核 HID 驱动`);
       }
+      releasedKeys.forEach((deviceKey: string): void => {
+        if (!presentKeys.has(deviceKey)) {
+          completedKeys.add(deviceKey);
+        }
+      });
     } catch (e) {
       console.warn(`${TAG} resetReleasedUsbDevices 异常:`, e);
     }

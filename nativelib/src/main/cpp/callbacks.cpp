@@ -39,6 +39,7 @@ extern void MicCapturerUpdatePacketLossPercent(int percent);
 #include <sched.h>
 #include <unistd.h>
 #include <fstream>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -178,9 +179,15 @@ struct AdaptiveTriggerCallbackData {
 };
 
 static constexpr size_t DS5_IR_QUEUE_CAPACITY = 4;
+// The common-c input path supports sixteen controller slots. Keep one pending
+// adaptive-trigger state per slot so a busy ArkTS thread cannot accumulate
+// stale reports or drop the newest Off state behind an unbounded TSFN queue.
+static constexpr size_t ADAPTIVE_TRIGGER_QUEUE_CAPACITY = 16;
 static std::deque<LI_DS5_HAPTICS_IR_FRAME_V2> g_ds5IrQueue;
 static bool g_ds5IrPumpQueued = false;
 static bool g_ds5IrShuttingDown = false;
+static std::deque<AdaptiveTriggerCallbackData> g_adaptiveTriggerQueue;
+static bool g_adaptiveTriggerPumpQueued = false;
 
 static bool IsDs5IrBoundary(const LI_DS5_HAPTICS_IR_FRAME_V2& frame) {
     return (frame.flags & (LI_DS5_HAPTICS_IR_FLAG_DISCONTINUITY |
@@ -189,6 +196,7 @@ static bool IsDs5IrBoundary(const LI_DS5_HAPTICS_IR_FRAME_V2& frame) {
 }
 
 static void QueueDs5IrPump();
+static void QueueAdaptiveTriggerPump();
 
 static void CallJs_StageStarting(napi_env env, napi_value js_callback, void* context, void* data) {
     CallbackData* cbData = (CallbackData*)data;
@@ -501,31 +509,71 @@ static bool SetObjectUint8Array(napi_env env,
     return napi_set_named_property(env, object, name, typedArray) == napi_ok;
 }
 
+static void MergeAdaptiveTriggerUpdate(AdaptiveTriggerCallbackData& target,
+                                       const AdaptiveTriggerCallbackData& update) {
+    const uint8_t triggerFlags = static_cast<uint8_t>(
+        update.eventFlags & (DS_EFFECT_RIGHT_TRIGGER | DS_EFFECT_LEFT_TRIGGER));
+    target.eventFlags = static_cast<uint8_t>(target.eventFlags | triggerFlags);
+    if ((triggerFlags & DS_EFFECT_RIGHT_TRIGGER) != 0U) {
+        target.typeRight = update.typeRight;
+        target.right = update.right;
+    }
+    if ((triggerFlags & DS_EFFECT_LEFT_TRIGGER) != 0U) {
+        target.typeLeft = update.typeLeft;
+        target.left = update.left;
+    }
+}
+
 static void CallJs_SetAdaptiveTriggers(napi_env env,
                                        napi_value js_callback,
                                        void* context,
                                        void* data) {
-    auto* callbackData = static_cast<AdaptiveTriggerCallbackData*>(data);
-    if (env != nullptr && js_callback != nullptr && callbackData != nullptr) {
-        napi_value triggerObject;
-        if (napi_create_object(env, &triggerObject) == napi_ok) {
-            SetObjectUint32(env, triggerObject, "controllerNumber", callbackData->controllerNumber);
-            SetObjectUint32(env, triggerObject, "eventFlags", callbackData->eventFlags);
-            SetObjectUint32(env, triggerObject, "leftEffectType", callbackData->typeLeft);
-            SetObjectUint32(env, triggerObject, "rightEffectType", callbackData->typeRight);
+    (void)context;
+    (void)data;
+    for (size_t processed = 0;
+         processed < ADAPTIVE_TRIGGER_QUEUE_CAPACITY;
+         ++processed) {
+        AdaptiveTriggerCallbackData callbackData{};
+        bool hasFrame = false;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            // The pump callback is no longer pending once it starts running.
+            // Reset before checking state so an empty callback cannot strand a
+            // later update behind a stale queued flag.
+            g_adaptiveTriggerPumpQueued = false;
+            if (!g_ds5IrShuttingDown && !g_adaptiveTriggerQueue.empty()) {
+                callbackData = std::move(g_adaptiveTriggerQueue.front());
+                g_adaptiveTriggerQueue.pop_front();
+                hasFrame = true;
+            }
+        }
 
-            const bool hasLeft = SetObjectUint8Array(
-                env, triggerObject, "leftEffect", callbackData->left.data(), callbackData->left.size());
-            const bool hasRight = SetObjectUint8Array(
-                env, triggerObject, "rightEffect", callbackData->right.data(), callbackData->right.size());
-            if (hasLeft && hasRight) {
-                napi_value undefined;
-                napi_get_undefined(env, &undefined);
-                napi_call_function(env, undefined, js_callback, 1, &triggerObject, nullptr);
+        if (!hasFrame) {
+            break;
+        }
+
+        if (env != nullptr && js_callback != nullptr) {
+            napi_value triggerObject;
+            if (napi_create_object(env, &triggerObject) == napi_ok) {
+                SetObjectUint32(env, triggerObject, "controllerNumber", callbackData.controllerNumber);
+                SetObjectUint32(env, triggerObject, "eventFlags", callbackData.eventFlags);
+                SetObjectUint32(env, triggerObject, "leftEffectType", callbackData.typeLeft);
+                SetObjectUint32(env, triggerObject, "rightEffectType", callbackData.typeRight);
+
+                const bool hasLeft = SetObjectUint8Array(
+                    env, triggerObject, "leftEffect", callbackData.left.data(), callbackData.left.size());
+                const bool hasRight = SetObjectUint8Array(
+                    env, triggerObject, "rightEffect", callbackData.right.data(), callbackData.right.size());
+                if (hasLeft && hasRight) {
+                    napi_value undefined;
+                    napi_get_undefined(env, &undefined);
+                    napi_call_function(env, undefined, js_callback, 1, &triggerObject, nullptr);
+                }
             }
         }
     }
-    delete callbackData;
+
+    QueueAdaptiveTriggerPump();
 }
 
 static void SetDs5HapticsIrLane(napi_env env,
@@ -627,6 +675,64 @@ static void QueueDs5IrPump() {
     }
 }
 
+static void QueueAdaptiveTriggerPump() {
+    napi_threadsafe_function triggerTsfn = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_ds5IrShuttingDown || g_adaptiveTriggerPumpQueued ||
+            g_adaptiveTriggerQueue.empty()) {
+            return;
+        }
+        triggerTsfn = g_connCallbacks.tsfn_setAdaptiveTriggers;
+        if (triggerTsfn == nullptr ||
+            napi_acquire_threadsafe_function(triggerTsfn) != napi_ok) {
+            return;
+        }
+        g_adaptiveTriggerPumpQueued = true;
+    }
+
+    const napi_status status = napi_call_threadsafe_function(
+        triggerTsfn, nullptr, napi_tsfn_nonblocking);
+    napi_release_threadsafe_function(triggerTsfn, napi_tsfn_release);
+    if (status != napi_ok) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_adaptiveTriggerPumpQueued = false;
+    }
+}
+
+static void EnqueueAdaptiveTriggerUpdate(const AdaptiveTriggerCallbackData& update) {
+    const uint8_t triggerFlags = static_cast<uint8_t>(
+        update.eventFlags & (DS_EFFECT_RIGHT_TRIGGER | DS_EFFECT_LEFT_TRIGGER));
+    if (triggerFlags == 0U ||
+        update.controllerNumber >= ADAPTIVE_TRIGGER_QUEUE_CAPACITY) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_ds5IrShuttingDown ||
+            g_connCallbacks.tsfn_setAdaptiveTriggers == nullptr) {
+            return;
+        }
+
+        auto pending = std::find_if(
+            g_adaptiveTriggerQueue.begin(), g_adaptiveTriggerQueue.end(),
+            [&update](const AdaptiveTriggerCallbackData& queued) {
+                return queued.controllerNumber == update.controllerNumber;
+            });
+        if (pending != g_adaptiveTriggerQueue.end()) {
+            MergeAdaptiveTriggerUpdate(*pending, update);
+        } else if (g_adaptiveTriggerQueue.size() < ADAPTIVE_TRIGGER_QUEUE_CAPACITY) {
+            g_adaptiveTriggerQueue.push_back(update);
+        } else {
+            // Valid controller numbers are limited to the same sixteen slots,
+            // so this is only a defensive fallback for malformed input.
+            g_adaptiveTriggerQueue.front() = update;
+        }
+    }
+    QueueAdaptiveTriggerPump();
+}
+
 static void EnqueueDs5IrFrame(const LI_DS5_HAPTICS_IR_FRAME_V2& frame) {
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -714,6 +820,8 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     g_env = env;
     g_ds5IrQueue.clear();
     g_ds5IrPumpQueued = false;
+    g_adaptiveTriggerQueue.clear();
+    g_adaptiveTriggerPumpQueued = false;
     g_ds5IrShuttingDown = false;
     
     napi_value callback;
@@ -797,7 +905,8 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     if (napi_get_named_property(env, callbacks, "setAdaptiveTriggers", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "setAdaptiveTriggers",
                                  CallJs_SetAdaptiveTriggers,
-                                 &g_connCallbacks.tsfn_setAdaptiveTriggers);
+                                 &g_connCallbacks.tsfn_setAdaptiveTriggers,
+                                 1);
     }
     if (napi_get_named_property(env, callbacks, "rumbleTriggers", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "rumbleTriggers", CallJs_RumbleTriggers, &g_connCallbacks.tsfn_rumbleTriggers);
@@ -817,6 +926,8 @@ void Callbacks_Cleanup(void) {
     g_ds5IrShuttingDown = true;
     g_ds5IrQueue.clear();
     g_ds5IrPumpQueued = false;
+    g_adaptiveTriggerQueue.clear();
+    g_adaptiveTriggerPumpQueued = false;
     
     // 释放线程安全函数
     if (g_videoCallbacks.tsfn_setup) napi_release_threadsafe_function(g_videoCallbacks.tsfn_setup, napi_tsfn_release);
@@ -1502,36 +1613,14 @@ void BridgeClSetAdaptiveTriggers(unsigned short controllerNumber, unsigned char 
         return;
     }
 
-    // Keep the TSFN alive across cleanup while the common-c callback is in
-    // flight. Callbacks_Cleanup() uses the same mutex before releasing and
-    // clearing the global handle, so no stale handle can be called here.
-    napi_threadsafe_function tsfn = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        if (g_ds5IrShuttingDown ||
-            g_connCallbacks.tsfn_setAdaptiveTriggers == nullptr) {
-            return;
-        }
-        tsfn = g_connCallbacks.tsfn_setAdaptiveTriggers;
-        if (napi_acquire_threadsafe_function(tsfn) != napi_ok) {
-            return;
-        }
-    }
-
-    auto* data = new AdaptiveTriggerCallbackData();
-    data->controllerNumber = controllerNumber;
-    data->eventFlags = eventFlags;
-    data->typeLeft = typeLeft;
-    data->typeRight = typeRight;
-    std::copy_n(left, data->left.size(), data->left.begin());
-    std::copy_n(right, data->right.size(), data->right.begin());
-
-    const napi_status status = napi_call_threadsafe_function(
-        tsfn, data, napi_tsfn_nonblocking);
-    if (status != napi_ok) {
-        delete data;
-    }
-    napi_release_threadsafe_function(tsfn, napi_tsfn_release);
+    AdaptiveTriggerCallbackData data{};
+    data.controllerNumber = controllerNumber;
+    data.eventFlags = eventFlags;
+    data.typeLeft = typeLeft;
+    data.typeRight = typeRight;
+    std::copy_n(left, data.left.size(), data.left.begin());
+    std::copy_n(right, data.right.size(), data.right.begin());
+    EnqueueAdaptiveTriggerUpdate(data);
 }
 
 void BridgeClResolutionChanged(unsigned int width, unsigned int height) {

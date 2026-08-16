@@ -25,6 +25,7 @@ const TAG = '[USB-DS5]';
 const OUTPUT_REPORT_SIZE = 48;
 const OUTPUT_REPORT_ID = 0x02;
 const OUTPUT_WRITE_TIMEOUT_MS = 500;
+const OUTPUT_STOP_RETRY_LIMIT = 1;
 const VALID_COMPATIBLE_RUMBLE = 0x01;
 const VALID_DISABLE_AUDIO_HAPTICS = 0x02;
 const VALID_RIGHT_TRIGGER = 0x04;
@@ -69,6 +70,7 @@ export class DualSenseController extends AbstractDualSenseController {
   private outputWriteInFlight: boolean = false;
   private outputDrainPromise: Promise<void> | null = null;
   private outputStopping: boolean = false;
+  private outputStopRetriesRemaining: number = 0;
   
   constructor(
     device: usbManager.USBDevice,
@@ -322,6 +324,7 @@ const gyrox = readShortLE(buffer, imuOffset);
   /** Stop both motor and trigger feedback with one coherent device report. */
   protected async stopFeedback(): Promise<void> {
     this.outputStopping = true;
+    this.outputStopRetriesRemaining = OUTPUT_STOP_RETRY_LIMIT;
     this.rumbleLow = 0;
     this.rumbleHigh = 0;
     this.resetTriggerEffects();
@@ -434,10 +437,22 @@ const gyrox = readShortLE(buffer, imuOffset);
       while (this.outputWritePending) {
         this.outputWritePending = false;
         const report = this.buildOutputReport();
-        const result = await this.bulkWrite(report, OUTPUT_WRITE_TIMEOUT_MS);
-        if (result !== report.length) {
-          console.warn(TAG + ' output report failed: expected=' +
-            report.length.toString() + ', actual=' + result.toString());
+        const stoppingReport = this.outputStopping;
+        let writeSucceeded = false;
+        try {
+          const result = await this.bulkWrite(report, OUTPUT_WRITE_TIMEOUT_MS);
+          writeSucceeded = result === report.length;
+          if (!writeSucceeded) {
+            console.warn(TAG + ' output report failed: expected=' +
+              report.length.toString() + ', actual=' + result.toString());
+          }
+        } catch (writeErr) {
+          console.error(TAG + ' output report exception: ' + String(writeErr));
+        }
+        if (!writeSucceeded && stoppingReport &&
+            this.outputStopRetriesRemaining > 0) {
+          this.outputStopRetriesRemaining--;
+          this.outputWritePending = true;
         }
       }
     } catch (err) {
