@@ -516,6 +516,11 @@ export class StreamViewModel {
       controllerType
     );
   }
+
+  /** USB 附加驱动晚于 GCK 到达时，刷新主机侧已声明的手柄能力。 */
+  refreshGamepadCapabilities(controllerIndex: number, controllerType: number): void {
+    this.streamingSession?.refreshPhysicalControllerCapabilities(controllerIndex, controllerType);
+  }
   
   /**
    * 获取串流会话

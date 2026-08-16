@@ -159,33 +159,30 @@ export class DualSenseController extends AbstractDualSenseController {
       }
     }
     
-    // IMU 数据 (从 offset 开始)
-    if (buffer.length >= offset + 12) {
-      const GYRO_SCALE = 2000.0 / 32768.0;
+    // The common DualSense USB input report starts after report ID 0x01.
+    // Its 15-byte buttons/reserved prefix is followed by gyro[3] and accel[3].
+    const imuOffset = 16;
+    const imuLength = 12;
+    if (buffer.length >= imuOffset + imuLength) {
+      // Nominal uncalibrated ranges from Sony's DualSense report format.
+      // Moonlight expects gyro in deg/s and acceleration in m/s^2.
+      const GYRO_SCALE = 2048.0 / 32768.0;
       const ACCEL_SCALE = 4.0 / 32768.0;
-      const G_TO_MS2 = 9.81;
-      
-      // 跳过一些字节到 IMU 数据位置
-      // DualSense IMU 数据在不同的偏移量
-      const imuOffset = 16;  // 根据实际报告格式调整
-      
-      if (buffer.length >= imuOffset + 12) {
-const gyrox = readShortLE(buffer, imuOffset);
-        const gyroy = readShortLE(buffer, imuOffset + 2);
-        const gyroz = readShortLE(buffer, imuOffset + 4);
+      const STANDARD_GRAVITY = 9.80665;
 
-        const accelx = readShortLE(buffer, imuOffset + 6);
-        const accely = readShortLE(buffer, imuOffset + 8);
-        const accelz = readShortLE(buffer, imuOffset + 10);
-        
-        this.gyroX = gyrox * GYRO_SCALE;
-        this.gyroY = gyroy * GYRO_SCALE;
-        this.gyroZ = gyroz * GYRO_SCALE;
-        
-        this.accelX = accelx * ACCEL_SCALE * G_TO_MS2;
-        this.accelY = accely * ACCEL_SCALE * G_TO_MS2;
-        this.accelZ = accelz * ACCEL_SCALE * G_TO_MS2;
-      }
+      const gyroX = readShortLE(buffer, imuOffset);
+      const gyroY = readShortLE(buffer, imuOffset + 2);
+      const gyroZ = readShortLE(buffer, imuOffset + 4);
+      const accelX = readShortLE(buffer, imuOffset + 6);
+      const accelY = readShortLE(buffer, imuOffset + 8);
+      const accelZ = readShortLE(buffer, imuOffset + 10);
+
+      this.gyroX = gyroX * GYRO_SCALE;
+      this.gyroY = gyroY * GYRO_SCALE;
+      this.gyroZ = gyroZ * GYRO_SCALE;
+      this.accelX = accelX * ACCEL_SCALE * STANDARD_GRAVITY;
+      this.accelY = accelY * ACCEL_SCALE * STANDARD_GRAVITY;
+      this.accelZ = accelZ * ACCEL_SCALE * STANDARD_GRAVITY;
     }
     
     return true;

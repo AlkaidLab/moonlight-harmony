@@ -912,6 +912,19 @@ export class StreamingSession {
     );
   }
 
+  /**
+   * 物理 USB 附加驱动可能晚于 GCK 输入设备到达。
+   * 对已声明的槽位重发 arrival，使主机重新读取新增的 IMU 能力。
+   */
+  refreshPhysicalControllerCapabilities(
+    controllerIndex: number,
+    controllerType: number = CONTROLLER_TYPE_XBOX
+  ): void {
+    if (!this.isRunning || !this.physicalControllerArrived.has(controllerIndex)) return;
+    this.physicalControllerArrived.delete(controllerIndex);
+    this.ensurePhysicalControllerArrival(controllerIndex, controllerType);
+  }
+
   // ---------------------------------------------------------------------------
   // 性能统计
   // ---------------------------------------------------------------------------
@@ -1633,7 +1646,7 @@ export class StreamingSession {
     if (this.physicalControllerArrived.has(controllerIndex)) return;
 
     let capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
-    capabilities |= GamepadManager.getInstance().getSensorCapabilities();
+    capabilities |= GamepadManager.getInstance().getSensorCapabilities(controllerIndex);
 
     let reportedType = controllerType;
     if ((capabilities & (LI_CCAP_ACCEL | LI_CCAP_GYRO)) && controllerType !== CONTROLLER_TYPE_PS) {
