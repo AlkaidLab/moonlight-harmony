@@ -351,17 +351,38 @@ export class StreamingSession {
    */
   private static getBrightnessRange(): number[] {
     const minBrightness = DEFAULT_HDR_MIN_BRIGHTNESS_NITS;
-    let maxBrightness = 500;
-    let maxAverageBrightness = 200;
+    // Keep the invalid-report fallback aligned with Foundation Sunshine's
+    // client_display_capabilities_t safe defaults.
+    const fallbackMaxBrightness = 1000;
+    const fallbackMaxAverageBrightness = 1000;
+    const minimumReliableSdrNits = 50;
+    const minimumReliablePeakNits = 100;
+    let maxBrightness = fallbackMaxBrightness;
+    let maxAverageBrightness = fallbackMaxAverageBrightness;
 
     try {
       const brightnessInfo = display.getBrightnessInfo(0);
       console.info(`[Brightness] sdrNits=${brightnessInfo.sdrNits}, ` +
         `currentHeadroom=${brightnessInfo.currentHeadroom}, maxHeadroom=${brightnessInfo.maxHeadroom}`);
 
-      if (brightnessInfo.sdrNits > 0) {
-        maxBrightness = brightnessInfo.sdrNits * brightnessInfo.maxHeadroom;
-        maxAverageBrightness = brightnessInfo.sdrNits;
+      const sdrNits = brightnessInfo.sdrNits;
+      const maxHeadroom = brightnessInfo.maxHeadroom;
+      const measuredMaxBrightness = sdrNits * maxHeadroom;
+      const hasReliableMeasurement = Number.isFinite(sdrNits) &&
+        Number.isFinite(maxHeadroom) &&
+        Number.isFinite(measuredMaxBrightness) &&
+        sdrNits >= minimumReliableSdrNits &&
+        maxHeadroom > 0 &&
+        measuredMaxBrightness >= minimumReliablePeakNits &&
+        measuredMaxBrightness >= sdrNits;
+
+      if (hasReliableMeasurement) {
+        maxBrightness = measuredMaxBrightness;
+        maxAverageBrightness = sdrNits;
+      } else {
+        console.warn(`[Brightness] measurement is too low or inconsistent, ` +
+          `using defaults: sdrNits=${sdrNits}, maxHeadroom=${maxHeadroom}, ` +
+          `peak=${measuredMaxBrightness}`);
       }
     } catch (err) {
       console.warn(`[Brightness] getBrightnessInfo 不可用，使用默认值: ${err}`);
