@@ -160,8 +160,8 @@ export class StreamInputHandler {
   releaseAllKeys(): void {
     const session = this.viewModel?.getSession();
     if (session) {
-      // 1. 释放所有追踪到的按键，并补齐 8 个 Windows 修饰键：覆盖按键拦截器路径
-      //    （该路径不进 activeVkKeys）以及其他漏追踪的边缘情况。
+      // 1. 释放所有追踪到的按键，并补齐 8 个 Windows 修饰键，兜底处理
+      //    修饰键状态与按键追踪状态不一致的边缘情况。
       //    对未按下的键补发 KEY_UP 在 Windows 端是安全的 no-op。
       const keysToRelease = new Set<number>(this.activeVkKeys);
       StreamInputHandler.MODIFIER_VK_CODES.forEach((vkCode: number) => {
@@ -525,6 +525,12 @@ export class StreamInputHandler {
           if (session) {
             const keyAction = isPressed ? KEY_ACTION_DOWN : KEY_ACTION_UP;
             session.sendKeyboardInput(vkCode, keyAction, this.modifierFlags);
+            // 拦截器路径同样需要跟踪按键，否则失焦时无法补发普通键 KEY_UP
+            if (isPressed) {
+              this.activeVkKeys.add(vkCode);
+            } else {
+              this.activeVkKeys.delete(vkCode);
+            }
           }
         }
         return;
@@ -546,6 +552,11 @@ export class StreamInputHandler {
           if (vkCode > 0) {
             const keyAction = isPressed ? 0x03 : 0x04; // KEY_DOWN : KEY_UP
             session.sendKeyboardInput(vkCode, keyAction, this.modifierFlags);
+            if (isPressed) {
+              this.activeVkKeys.add(vkCode);
+            } else {
+              this.activeVkKeys.delete(vkCode);
+            }
           }
         }
       }
