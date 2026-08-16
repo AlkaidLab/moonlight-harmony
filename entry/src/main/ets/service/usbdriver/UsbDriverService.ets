@@ -81,10 +81,15 @@ export class UsbDriverService implements UsbDriverListener {
   private rescanTimerId: number | null = null;
   // 重新扫描间隔（毫秒）- 每 5 秒检查一次
   private static readonly RESCAN_INTERVAL_MS: number = 5000;
+  // DualSense output teardown may wait for an in-flight USB report (bounded by
+  // its 500ms transfer timeout, plus the final coalesced report).
+  private static readonly USB_RESET_DELAY_MS: number = 1500;
   // DDK 高速轮询是否启用（缓存，用于 stop() 决定是否重绑内核驱动）
   private ddkEnabled: boolean = false;
   // 内核驱动重绑定定时器 ID（用于在重新启动时取消）
   private resetTimerId: number | null = null;
+  // stop() keeps DualSense transports alive while the final Off report drains.
+  private pendingControllerStops: Promise<void> | null = null;
   
   private constructor() {
     console.info(`${TAG} 创建 USB 驱动服务实例`);
@@ -157,6 +162,11 @@ export class UsbDriverService implements UsbDriverListener {
     if (this.started) {
       console.info(`${TAG} 服务已启动`);
       return;
+    }
+
+    if (this.pendingControllerStops !== null) {
+      await this.pendingControllerStops;
+      this.pendingControllerStops = null;
     }
     
     console.info(`${TAG} 启动 USB 驱动服务`);
@@ -357,16 +367,20 @@ export class UsbDriverService implements UsbDriverListener {
     // 保存已处理设备的键值，用于后续内核驱动重绑定
     const releasedDeviceKeys = new Set(this.processedDevices);
     
-    // 停止所有控制器（释放 USB 接口独占 + 关闭管道）
+    // 停止所有控制器（释放 USB 接口独占 + 关闭管道）。DualSense 的
+    // stop() 会异步等待最终 Off 报告，因此保存完成 Promise 供下一次 start() 等待。
     let stoppedCount = 0;
+    const stopPromises: Promise<void>[] = [];
     while (this.controllers.length > 0) {
       const controller = this.controllers.shift();
       if (controller) {
         console.info(`${TAG} 释放控制器: ${controller.getName()} (VID=0x${controller.getVendorId().toString(16)}, PID=0x${controller.getProductId().toString(16)})`);
         controller.stop();
+        stopPromises.push(controller.waitForStop());
         stoppedCount++;
       }
     }
+    this.pendingControllerStops = Promise.all(stopPromises).then((): void => {});
     
     this.processedDevices.clear();
     console.info(`${TAG} USB 驱动服务已停止，已释放 ${stoppedCount} 个控制器的 USB 独占`);
@@ -380,7 +394,7 @@ export class UsbDriverService implements UsbDriverListener {
       this.resetTimerId = setTimeout(() => {
         this.resetTimerId = null;
         this.resetReleasedUsbDevices(releasedDeviceKeys);
-      }, 300);  // 等待 300ms 确保管道完全关闭
+      }, UsbDriverService.USB_RESET_DELAY_MS);
     } else if (this.ddkEnabled) {
       console.info(`${TAG} DDK 模式，跳过内核 HID 驱动重绑定`);
     }
@@ -518,10 +532,11 @@ export class UsbDriverService implements UsbDriverListener {
         console.info(`${TAG} 设备已有活跃控制器，跳过: ${deviceKey}`);
         return;
       } else {
-        // 控制器已断开，移除旧控制器
-        console.info(`${TAG} 检测到旧控制器已断开，移除后重新创建: ${deviceKey}`);
+        // 控制器已断开；等待异步输出复位和 pipe 释放后再重建。
+        console.info(`${TAG} 检测到旧控制器已断开，等待释放后重新创建: ${deviceKey}`);
         existingController.stop();
-        // deviceRemoved 会在 stop 时被调用
+        await existingController.waitForStop();
+        if (!this.started) return;
       }
     }
     

@@ -22,7 +22,14 @@ import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { AudioHapticFrameFlag } from '../AudioHapticFrame';
 import { RUMBLE_MAX } from './GamepadTypes';
 import { DeviceVibrationCoordinator } from './DeviceVibrationCoordinator';
-import { Ds5HapticsIrV2Frame, Ds5HapticsIrLaneV2 } from '../streaming/MoonBridge';
+import {
+  Ds5HapticsIrV2Frame,
+  Ds5HapticsIrLaneV2,
+  AdaptiveTriggersFrame,
+  DS_EFFECT_RIGHT_TRIGGER,
+  DS_EFFECT_LEFT_TRIGGER,
+  DS_EFFECT_PAYLOAD_SIZE
+} from '../streaming/MoonBridge';
 import {
   GAME_VIBRATION_STRENGTH_DEFAULT,
   GAME_VIBRATION_STRENGTH_ORIGINAL,
@@ -268,15 +275,58 @@ export class GamepadVibrationService {
     this.renderMixedDevice(false);
   }
 
+  /** Forward Sunshine's raw adaptive trigger state to the matching USB slot. */
+  handleAdaptiveTriggers(frame: AdaptiveTriggersFrame): void {
+    if (!this.isValidControllerNumber(frame.controllerNumber)) {
+      console.warn('[Vibration] ignoring adaptive trigger frame with invalid controller number');
+      return;
+    }
+
+    const controllers = this.usbDriverService.getControllers();
+    const controllerNumber = Math.floor(frame.controllerNumber);
+    const controller = this.findControllerBySlot(controllers, controllerNumber);
+    if (!controller) return;
+
+    if (!this.vibrationFeedbackEnabled || this.gameVibrationStrength <= 0 ||
+        !this.shouldRenderUsbOutput()) {
+      this.clearAllTriggerEffects(controller);
+      return;
+    }
+
+    if (frame.leftEffect.length !== DS_EFFECT_PAYLOAD_SIZE ||
+        frame.rightEffect.length !== DS_EFFECT_PAYLOAD_SIZE) {
+      console.warn('[Vibration] ignoring adaptive trigger frame with invalid payload size');
+      return;
+    }
+
+    const eventFlags = Math.floor(frame.eventFlags) &
+      (DS_EFFECT_RIGHT_TRIGGER | DS_EFFECT_LEFT_TRIGGER);
+    if (eventFlags === 0) return;
+
+    controller.setAdaptiveTriggers(
+      eventFlags,
+      this.clampProtocolByte(frame.leftEffectType),
+      this.clampProtocolByte(frame.rightEffectType),
+      frame.leftEffect,
+      frame.rightEffect
+    );
+  }
+
   /**
    * 处理扳机震动
    */
   handleRumbleTriggers(controllerNumber: number, leftTrigger: number, rightTrigger: number): void {
-    if (!this.vibrationFeedbackEnabled) return;
-
     const controllers = this.usbDriverService.getControllers();
     const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumbleTriggers(
+    if (!controller) return;
+
+    if (!this.vibrationFeedbackEnabled || this.gameVibrationStrength <= 0 ||
+        !this.shouldRenderUsbOutput()) {
+      this.clearAllTriggerEffects(controller);
+      return;
+    }
+
+    controller.rumbleTriggers(
       this.applyGameVibrationStrength(leftTrigger),
       this.applyGameVibrationStrength(rightTrigger)
     );
@@ -364,8 +414,8 @@ export class GamepadVibrationService {
     try {
       const controllers = this.usbDriverService.getControllers();
       for (const controller of controllers) {
+        this.clearAllTriggerEffects(controller);
         controller.rumble(0, 0);
-        controller.rumbleTriggers(0, 0);
       }
       if (controllers.length > 0) {
         this.scheduleUsbStopConfirm(this.lastRumbleControllerNumber);
@@ -392,6 +442,10 @@ export class GamepadVibrationService {
     this.irStreamStates.delete(slot);
 
     const controllers = this.usbDriverService.getControllers();
+    const controller = this.findControllerBySlot(controllers, slot);
+    if (controller) {
+      this.clearAllTriggerEffects(controller);
+    }
     if (controllers.length > 0) {
       this.renderMixedUsb(controllers, slot);
     }
@@ -434,12 +488,12 @@ export class GamepadVibrationService {
     this.lastHighFreq = 0;
 
     const controllers = this.usbDriverService.getControllers();
+    for (const controller of controllers) {
+      this.clearAllTriggerEffects(controller);
+    }
     affectedSlots.forEach((slot: number): void => {
       this.renderMixedUsb(controllers, slot);
     });
-    for (const controller of controllers) {
-      controller.rumbleTriggers(0, 0);
-    }
     this.renderMixedDevice(false);
   }
 
@@ -570,6 +624,7 @@ export class GamepadVibrationService {
     if (!controller) return;
 
     if (!this.shouldRenderUsbOutput()) {
+      this.clearAllTriggerEffects(controller);
       controller.rumble(0, 0);
       return;
     }
@@ -615,6 +670,16 @@ export class GamepadVibrationService {
   private clampRumbleValue(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(RUMBLE_MAX, Math.floor(value)));
+  }
+
+  private clampProtocolByte(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(0xFF, Math.floor(value)));
+  }
+
+  /** Clear both the raw adaptive effect and the legacy trigger-rumble state. */
+  private clearAllTriggerEffects(controller: AbstractController): void {
+    controller.clearTriggerEffects();
   }
 
   private clampIntensity(value: number): number {
@@ -686,6 +751,7 @@ export class GamepadVibrationService {
 
     if (!this.shouldRenderUsbOutput()) {
       for (const controller of controllers) {
+        this.clearAllTriggerEffects(controller);
         controller.rumble(0, 0);
       }
     } else {

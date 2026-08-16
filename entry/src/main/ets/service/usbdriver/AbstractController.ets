@@ -284,6 +284,13 @@ export abstract class AbstractController {
    * 停止控制器
    */
   abstract stop(): void;
+
+  /**
+   * 等待控制器完成异步停机。默认控制器的 stop() 是同步的。
+   */
+  waitForStop(): Promise<void> {
+    return Promise.resolve();
+  }
   
   /**
    * 检查控制器是否已连接
@@ -323,4 +330,18 @@ export abstract class AbstractController {
    * @param rightTrigger 右扳机震动强度 (0-65535)
    */
   abstract rumbleTriggers(leftTrigger: number, rightTrigger: number): void;
+
+  /** Raw DualSense adaptive trigger update. Unsupported controllers ignore it. */
+  setAdaptiveTriggers(
+    _eventFlags: number,
+    _leftEffectType: number,
+    _rightEffectType: number,
+    _leftEffect: Uint8Array,
+    _rightEffect: Uint8Array
+  ): void {}
+
+  /** Clear all trigger feedback. Raw-effect controllers should override this atomically. */
+  clearTriggerEffects(): void {
+    this.rumbleTriggers(0, 0);
+  }
 }

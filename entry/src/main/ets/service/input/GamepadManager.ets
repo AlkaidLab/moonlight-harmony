@@ -18,7 +18,7 @@ import {
 import { SettingsService, SettingsKeys } from '../SettingsService';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
-import { MoonBridge, Ds5HapticsIrV2Frame } from '../streaming/MoonBridge';
+import { MoonBridge, Ds5HapticsIrV2Frame, AdaptiveTriggersFrame } from '../streaming/MoonBridge';
 import { MouseEmulationService, MouseEmulationCallback } from './MouseEmulationService';
 import { GamepadVibrationService } from './GamepadVibrationService';
 import { AudioHapticFrameFlag } from '../AudioHapticFrame';
@@ -2455,6 +2455,11 @@ export class GamepadManager implements UsbDriverListener {
    */
   handleDs5HapticsIrV2(frame: Ds5HapticsIrV2Frame): void {
     this.vibrationService.handleDs5HapticsIrV2(frame);
+  }
+
+  /** Route a raw DualSense adaptive trigger update to its controller slot. */
+  handleAdaptiveTriggers(frame: AdaptiveTriggersFrame): void {
+    this.vibrationService.handleAdaptiveTriggers(frame);
   }
 
   /** 处理扳机震动 */

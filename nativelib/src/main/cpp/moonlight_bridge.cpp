@@ -147,7 +147,7 @@ static CONNECTION_LISTENER_CALLBACKS g_connCallbacksStruct = {
     .rumbleTriggers = BridgeClRumbleTriggers,
     .setMotionEventState = BridgeClSetMotionEventState,
     .setControllerLED = BridgeClSetControllerLED,
-    .setAdaptiveTriggers = nullptr,
+    .setAdaptiveTriggers = BridgeClSetAdaptiveTriggers,
     .resolutionChanged = (void (*)(uint32_t, uint32_t))BridgeClResolutionChanged,
     .clipboardData = BridgeClClipboardData,
     // HarmonyOS accepts the device-independent IR stream and renders it in the

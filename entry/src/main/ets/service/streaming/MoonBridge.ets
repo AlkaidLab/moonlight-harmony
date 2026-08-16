@@ -114,6 +114,12 @@ export const LI_CCAP_GYRO = 0x20;
 export const LI_CCAP_BATTERY_STATE = 0x40;
 export const LI_CCAP_RGB_LED = 0x80;
 
+// DualSense adaptive trigger update flags and payload shape.
+export const DS_EFFECT_RIGHT_TRIGGER = 0x04;
+export const DS_EFFECT_LEFT_TRIGGER = 0x08;
+export const DS_EFFECT_PAYLOAD_SIZE = 10;
+export const DS_EFFECT_TYPE_OFF = 0x05;
+
 // 运动传感器类型
 export const LI_MOTION_TYPE_ACCEL = 0x01;
 export const LI_MOTION_TYPE_GYRO = 0x02;
@@ -167,6 +173,16 @@ export interface Ds5HapticsIrV2Frame {
   sourceFrameCount: number;
   lanes: Ds5HapticsIrLaneV2[];
   laneCorrelation: number;
+}
+
+/** Raw DualSense adaptive trigger state forwarded by Sunshine. */
+export interface AdaptiveTriggersFrame {
+  controllerNumber: number;
+  eventFlags: number;
+  leftEffectType: number;
+  rightEffectType: number;
+  leftEffect: Uint8Array;
+  rightEffect: Uint8Array;
 }
 
 // 音频配置
@@ -261,6 +277,8 @@ export interface ConnectionListenerCallbacks {
   rumble?: (controllerNumber: number, lowFreqMotor: number, highFreqMotor: number) => void;
   /** Device-independent DualSense IR v2 authored haptics. */
   ds5HapticsIrV2?: (frame: Ds5HapticsIrV2Frame) => void;
+  /** Raw DualSense adaptive trigger state. */
+  setAdaptiveTriggers?: (frame: AdaptiveTriggersFrame) => void;
   /** 连接状态更新 */
   connectionStatusUpdate?: (connectionStatus: number) => void;
   /** 分辨率变更 */
