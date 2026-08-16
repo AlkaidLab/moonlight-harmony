@@ -352,10 +352,11 @@ export class StreamingSession {
   }
 
   /**
-   * 获取设备屏幕亮度范围（用于服务端 HDR tone mapping）
+   * 获取用于服务端 HDR tone mapping 的静态显示能力 profile。
+   * 当前屏幕亮度仅用于诊断，不参与 capability 上报。
    * @returns [minBrightness, maxBrightness, maxAverageBrightness] (nits)
    */
-  private static getBrightnessRange(): number[] {
+  private static getHdrCapabilityProfile(): number[] {
     const minBrightness = DEFAULT_HDR_MIN_BRIGHTNESS_NITS;
     const maxBrightness = DEFAULT_HDR_MAX_BRIGHTNESS_NITS;
     const maxAverageBrightness = DEFAULT_HDR_MAX_FULL_FRAME_BRIGHTNESS_NITS;
@@ -1392,7 +1393,7 @@ export class StreamingSession {
       this.config.hdr = effectiveHdr;
     }
 
-    let brightnessRange = StreamingSession.getBrightnessRange();
+    let brightnessRange = StreamingSession.getHdrCapabilityProfile();
     if (effectiveHdr && this.config.hdrBrightnessOverride) {
       brightnessRange = StreamingSession.applyBrightnessOverride(brightnessRange, this.config.hdrPeakBrightnessNits);
       console.info('[Brightness] HDR override: min=' + brightnessRange[0].toString() +
