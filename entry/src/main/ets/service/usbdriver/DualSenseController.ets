@@ -22,10 +22,55 @@ import { readShortLE, TRIGGER_MAX } from '../input/GamepadTypes';
 
 const TAG = '[USB-DS5]';
 
+const OUTPUT_REPORT_SIZE = 48;
+const OUTPUT_REPORT_ID = 0x02;
+const OUTPUT_WRITE_TIMEOUT_MS = 500;
+const OUTPUT_STOP_RETRY_LIMIT = 1;
+const VALID_COMPATIBLE_RUMBLE = 0x01;
+const VALID_DISABLE_AUDIO_HAPTICS = 0x02;
+const VALID_RIGHT_TRIGGER = 0x04;
+const VALID_LEFT_TRIGGER = 0x08;
+const TRIGGER_EFFECT_PAYLOAD_SIZE = 10;
+// DualSense's USB clear-effect command (the 0x05 mode is not the same as a
+// zero-valued payload with a zero mode).
+const TRIGGER_EFFECT_OFF = 0x05;
+const TRIGGER_EFFECT_FEEDBACK = 0x01;
+
+const OFFSET_VALID_FLAG0 = 1;
+const OFFSET_VALID_FLAG1 = 2;
+const OFFSET_RUMBLE_RIGHT = 3;
+const OFFSET_RUMBLE_LEFT = 4;
+const OFFSET_RIGHT_TRIGGER_TYPE = 11;
+const OFFSET_RIGHT_TRIGGER_PAYLOAD = 12;
+const OFFSET_LEFT_TRIGGER_TYPE = 22;
+const OFFSET_LEFT_TRIGGER_PAYLOAD = 23;
+
 export class DualSenseController extends AbstractDualSenseController {
-  // 去重: 记录上次发送的振动值
-  private lastRumbleLow: number = -1;
-  private lastRumbleHigh: number = -1;
+  // DualSense output fields share one HID report. Keep motor, legacy trigger,
+  // and raw adaptive-trigger state separately, then merge them when the report
+  // is built. A legacy trigger update must not overwrite a raw effect that is
+  // currently active; once the raw effect is turned off, the last legacy state
+  // becomes effective again.
+  private rumbleLow: number = 0;
+  private rumbleHigh: number = 0;
+  private rightLegacyTriggerEffectType: number = TRIGGER_EFFECT_OFF;
+  private leftLegacyTriggerEffectType: number = TRIGGER_EFFECT_OFF;
+  private rightLegacyTriggerEffect: Uint8Array = new Uint8Array(TRIGGER_EFFECT_PAYLOAD_SIZE);
+  private leftLegacyTriggerEffect: Uint8Array = new Uint8Array(TRIGGER_EFFECT_PAYLOAD_SIZE);
+  private rightAdaptiveTriggerEffectType: number = TRIGGER_EFFECT_OFF;
+  private leftAdaptiveTriggerEffectType: number = TRIGGER_EFFECT_OFF;
+  private rightAdaptiveTriggerEffect: Uint8Array = new Uint8Array(TRIGGER_EFFECT_PAYLOAD_SIZE);
+  private leftAdaptiveTriggerEffect: Uint8Array = new Uint8Array(TRIGGER_EFFECT_PAYLOAD_SIZE);
+  private rightAdaptiveTriggerActive: boolean = false;
+  private leftAdaptiveTriggerActive: boolean = false;
+
+  // USB writes are asynchronous. Coalesce updates that arrive while a write is
+  // active, then send the latest complete state after the active write finishes.
+  private outputWritePending: boolean = false;
+  private outputWriteInFlight: boolean = false;
+  private outputDrainPromise: Promise<void> | null = null;
+  private outputStopping: boolean = false;
+  private outputStopRetriesRemaining: number = 0;
   
   constructor(
     device: usbManager.USBDevice,
@@ -212,59 +257,209 @@ export class DualSenseController extends AbstractDualSenseController {
    * 震动反馈 (去重: 跳过相同非零值, 零值始终发送)
    */
   rumble(lowFreqMotor: number, highFreqMotor: number): void {
+    if (this.outputStopping) return;
+
+    const nextLow = this.rumbleToByte(lowFreqMotor);
+    const nextHigh = this.rumbleToByte(highFreqMotor);
+
     // 零值(停止振动)始终发送, 非零重复值跳过
-    if (lowFreqMotor !== 0 || highFreqMotor !== 0) {
-      if (lowFreqMotor === this.lastRumbleLow && highFreqMotor === this.lastRumbleHigh) {
+    if (nextLow !== 0 || nextHigh !== 0) {
+      if (nextLow === this.rumbleLow && nextHigh === this.rumbleHigh) {
         return;
       }
     }
-    this.lastRumbleLow = lowFreqMotor;
-    this.lastRumbleHigh = highFreqMotor;
-
-    // DualSense 震动命令 (USB 模式)
-    const data = new Uint8Array(48);
-    data[0] = 0x02;  // 报告 ID
-    data[1] = 0xFF;  // 有效字段标志
-    data[2] = 0xF7;  // 有效字段标志 2
-    
-    // 震动强度
-    data[3] = (highFreqMotor >> 8) & 0xFF;  // 右马达 (高频)
-    data[4] = (lowFreqMotor >> 8) & 0xFF;   // 左马达 (低频)
-    
-    // 扳机效果（可选，设为默认）
-    data[11] = 0x00;  // 右扳机模式
-    data[22] = 0x00;  // 左扳机模式
-    
-    // 灯光（可选）
-    data[45] = 0x02;  // 玩家指示灯
-    data[46] = 0x00;  // R
-    data[47] = 0x00;  // G
-    // data[48] = 0xFF;  // B - 超出数组范围，移除
-    
-    this.bulkWrite(data);
+    this.rumbleLow = nextLow;
+    this.rumbleHigh = nextHigh;
+    this.queueOutputReport();
   }
   
   /**
    * 扳机震动反馈
    */
   rumbleTriggers(leftTrigger: number, rightTrigger: number): void {
-    // DualSense 支持自适应扳机效果
-    // 这里简化为震动模式
-    const data = new Uint8Array(48);
-    data[0] = 0x02;
-    data[1] = 0x04;  // 只更新扳机
-    data[2] = 0x00;
-    
-    // 右扳机效果
-    data[11] = 0x01;  // 连续阻力模式
-    data[12] = 0x00;  // 起始位置
-    data[13] = (rightTrigger >> 8) & 0xFF;  // 强度
-    
-    // 左扳机效果
-    data[22] = 0x01;
-    data[23] = 0x00;
-    data[24] = (leftTrigger >> 8) & 0xFF;
-    
-    this.bulkWrite(data);
+    if (this.outputStopping) return;
+
+    this.setLegacyTriggerRumbleState(true, this.rumbleToByte(leftTrigger));
+    this.setLegacyTriggerRumbleState(false, this.rumbleToByte(rightTrigger));
+    this.queueOutputReport();
+  }
+
+  /** Apply the raw DualSense type + 10-byte effect supplied by Sunshine. */
+  setAdaptiveTriggers(eventFlags: number,
+    leftEffectType: number, rightEffectType: number,
+    leftEffect: Uint8Array, rightEffect: Uint8Array): void {
+    if (this.outputStopping) return;
+
+    let updated = false;
+    if ((eventFlags & VALID_RIGHT_TRIGGER) !== 0) {
+      this.rightAdaptiveTriggerEffectType = this.clampByte(rightEffectType);
+      this.copyTriggerEffect(this.rightAdaptiveTriggerEffect, rightEffect);
+      this.rightAdaptiveTriggerActive =
+        this.rightAdaptiveTriggerEffectType !== TRIGGER_EFFECT_OFF;
+      updated = true;
+    }
+    if ((eventFlags & VALID_LEFT_TRIGGER) !== 0) {
+      this.leftAdaptiveTriggerEffectType = this.clampByte(leftEffectType);
+      this.copyTriggerEffect(this.leftAdaptiveTriggerEffect, leftEffect);
+      this.leftAdaptiveTriggerActive =
+        this.leftAdaptiveTriggerEffectType !== TRIGGER_EFFECT_OFF;
+      updated = true;
+    }
+    if (updated) {
+      this.queueOutputReport();
+    }
+  }
+
+  /** Clear legacy and raw trigger sources in a single output-state update. */
+  clearTriggerEffects(): void {
+    if (this.outputStopping) return;
+
+    this.resetTriggerEffects();
+    this.queueOutputReport();
+  }
+
+  /** Stop both motor and trigger feedback with one coherent device report. */
+  protected async stopFeedback(): Promise<void> {
+    this.outputStopping = true;
+    this.outputStopRetriesRemaining = OUTPUT_STOP_RETRY_LIMIT;
+    this.rumbleLow = 0;
+    this.rumbleHigh = 0;
+    this.resetTriggerEffects();
+    this.queueOutputReport();
+    await this.waitForOutputDrain();
+  }
+
+  private resetTriggerEffects(): void {
+    this.setLegacyTriggerRumbleState(true, 0);
+    this.setLegacyTriggerRumbleState(false, 0);
+    this.clearAdaptiveTriggerState(true);
+    this.clearAdaptiveTriggerState(false);
+  }
+
+  private setLegacyTriggerRumbleState(left: boolean, strength: number): void {
+    const effect = left ? this.leftLegacyTriggerEffect : this.rightLegacyTriggerEffect;
+    effect.fill(0);
+    const effectType = strength === 0 ? TRIGGER_EFFECT_OFF : TRIGGER_EFFECT_FEEDBACK;
+    if (strength !== 0) {
+      effect[0] = 0; // Start position
+      effect[1] = strength;
+    }
+    if (left) {
+      this.leftLegacyTriggerEffectType = effectType;
+    } else {
+      this.rightLegacyTriggerEffectType = effectType;
+    }
+  }
+
+  private clearAdaptiveTriggerState(left: boolean): void {
+    const effect = left ? this.leftAdaptiveTriggerEffect : this.rightAdaptiveTriggerEffect;
+    effect.fill(0);
+    if (left) {
+      this.leftAdaptiveTriggerEffectType = TRIGGER_EFFECT_OFF;
+      this.leftAdaptiveTriggerActive = false;
+    } else {
+      this.rightAdaptiveTriggerEffectType = TRIGGER_EFFECT_OFF;
+      this.rightAdaptiveTriggerActive = false;
+    }
+  }
+
+  private copyTriggerEffect(target: Uint8Array, source: Uint8Array): void {
+    target.fill(0);
+    const length = Math.min(TRIGGER_EFFECT_PAYLOAD_SIZE, source.length);
+    for (let index = 0; index < length; index++) {
+      target[index] = source[index];
+    }
+  }
+
+  private clampByte(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(0xFF, Math.floor(value)));
+  }
+
+  private rumbleToByte(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    const clamped = Math.max(0, Math.min(0xFFFF, Math.floor(value)));
+    return (clamped >> 8) & 0xFF;
+  }
+
+  private buildOutputReport(): Uint8Array {
+    const data = new Uint8Array(OUTPUT_REPORT_SIZE);
+    data[0] = OUTPUT_REPORT_ID;
+    data[OFFSET_VALID_FLAG0] = VALID_COMPATIBLE_RUMBLE |
+      VALID_DISABLE_AUDIO_HAPTICS | VALID_RIGHT_TRIGGER | VALID_LEFT_TRIGGER;
+    // Leave validFlag1 at zero so rumble/trigger updates do not modify LEDs,
+    // power saving, microphone state, or audio controls.
+    data[OFFSET_VALID_FLAG1] = 0;
+    data[OFFSET_RUMBLE_RIGHT] = this.rumbleHigh;
+    data[OFFSET_RUMBLE_LEFT] = this.rumbleLow;
+    const rightType = this.rightAdaptiveTriggerActive
+      ? this.rightAdaptiveTriggerEffectType
+      : this.rightLegacyTriggerEffectType;
+    const leftType = this.leftAdaptiveTriggerActive
+      ? this.leftAdaptiveTriggerEffectType
+      : this.leftLegacyTriggerEffectType;
+    const rightEffect = this.rightAdaptiveTriggerActive
+      ? this.rightAdaptiveTriggerEffect
+      : this.rightLegacyTriggerEffect;
+    const leftEffect = this.leftAdaptiveTriggerActive
+      ? this.leftAdaptiveTriggerEffect
+      : this.leftLegacyTriggerEffect;
+    data[OFFSET_RIGHT_TRIGGER_TYPE] = rightType;
+    data[OFFSET_LEFT_TRIGGER_TYPE] = leftType;
+    for (let index = 0; index < TRIGGER_EFFECT_PAYLOAD_SIZE; index++) {
+      data[OFFSET_RIGHT_TRIGGER_PAYLOAD + index] = rightEffect[index];
+      data[OFFSET_LEFT_TRIGGER_PAYLOAD + index] = leftEffect[index];
+    }
+    return data;
+  }
+
+  private queueOutputReport(): void {
+    this.outputWritePending = true;
+    if (!this.outputWriteInFlight) {
+      this.outputDrainPromise = this.drainOutputReports();
+    }
+  }
+
+  private async waitForOutputDrain(): Promise<void> {
+    while (this.outputDrainPromise !== null) {
+      const drain = this.outputDrainPromise;
+      await drain;
+    }
+  }
+
+  private async drainOutputReports(): Promise<void> {
+    if (this.outputWriteInFlight) return;
+    this.outputWriteInFlight = true;
+    try {
+      while (this.outputWritePending) {
+        this.outputWritePending = false;
+        const report = this.buildOutputReport();
+        const stoppingReport = this.outputStopping;
+        let writeSucceeded = false;
+        try {
+          const result = await this.bulkWrite(report, OUTPUT_WRITE_TIMEOUT_MS);
+          writeSucceeded = result === report.length;
+          if (!writeSucceeded) {
+            console.warn(TAG + ' output report failed: expected=' +
+              report.length.toString() + ', actual=' + result.toString());
+          }
+        } catch (writeErr) {
+          console.error(TAG + ' output report exception: ' + String(writeErr));
+        }
+        if (!writeSucceeded && stoppingReport &&
+            this.outputStopRetriesRemaining > 0) {
+          this.outputStopRetriesRemaining--;
+          this.outputWritePending = true;
+        }
+      }
+    } catch (err) {
+      console.error(TAG + ' output report exception: ' + String(err));
+    } finally {
+      this.outputWriteInFlight = false;
+      this.outputDrainPromise = null;
+      if (this.outputWritePending) {
+        this.queueOutputReport();
+      }
+    }
   }
 }

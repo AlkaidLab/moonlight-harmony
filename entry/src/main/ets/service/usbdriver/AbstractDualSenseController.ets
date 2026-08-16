@@ -37,6 +37,7 @@ export abstract class AbstractDualSenseController extends AbstractController {
   // DDK 高速轮询器 (绕过 usbManager IPC)
   private ddkPoller: DdkUsbPoller | null = null;
   private useDdkPolling: boolean = false;
+  private stopPromise: Promise<void> | null = null;
   
   // IMU 数据
   protected gyroX: number = 0;
@@ -512,11 +513,33 @@ export abstract class AbstractDualSenseController extends AbstractController {
     this.stopped = true;
     this.markStopped();
 
-    // 先发送振动停止命令（必须在 DDK 释放前，否则无法发送）
-    this.rumble(0, 0);
-
-    // 保存 DDK 状态，再停止 DDK 轮询器
+    // Keep the transport alive until the final feedback report has completed.
+    // USB bulkTransfer is asynchronous, so closing the pipe here can cancel the
+    // Off report before it reaches the controller.
     const wasDdkPolling = this.useDdkPolling;
+    this.stopPromise = this.stopAndRelease(wasDdkPolling);
+  }
+
+  waitForStop(): Promise<void> {
+    return this.stopPromise ?? Promise.resolve();
+  }
+
+  private async stopAndRelease(wasDdkPolling: boolean): Promise<void> {
+    try {
+      await this.stopFeedback();
+    } catch (err) {
+      console.warn(`${TAG} 停止反馈失败，继续释放控制器:`, err);
+    }
+
+    try {
+      this.releaseTransport(wasDdkPolling);
+    } catch (err) {
+      console.error(`${TAG} 释放控制器资源异常:`, err);
+    }
+  }
+
+  private releaseTransport(wasDdkPolling: boolean): void {
+    // 停止 DDK 轮询器
     if (this.ddkPoller) {
       this.ddkPoller.stop();
       this.ddkPoller = null;
@@ -544,6 +567,14 @@ export abstract class AbstractDualSenseController extends AbstractController {
     
     // 通知设备已移除
     this.notifyDeviceRemoved();
+  }
+
+  /**
+   * 停止设备反馈。DualSense 可覆盖此方法，用一份输出报告原子清理马达和扳机。
+   */
+  protected async stopFeedback(): Promise<void> {
+    this.rumble(0, 0);
+    this.rumbleTriggers(0, 0);
   }
   
   /**

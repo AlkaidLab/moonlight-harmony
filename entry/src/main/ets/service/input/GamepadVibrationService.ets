@@ -22,7 +22,14 @@ import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { AudioHapticFrameFlag } from '../AudioHapticFrame';
 import { RUMBLE_MAX } from './GamepadTypes';
 import { DeviceVibrationCoordinator } from './DeviceVibrationCoordinator';
-import { Ds5HapticsIrV2Frame, Ds5HapticsIrLaneV2 } from '../streaming/MoonBridge';
+import {
+  Ds5HapticsIrV2Frame,
+  Ds5HapticsIrLaneV2,
+  AdaptiveTriggersFrame,
+  DS_EFFECT_RIGHT_TRIGGER,
+  DS_EFFECT_LEFT_TRIGGER,
+  DS_EFFECT_PAYLOAD_SIZE
+} from '../streaming/MoonBridge';
 import {
   GAME_VIBRATION_STRENGTH_DEFAULT,
   GAME_VIBRATION_STRENGTH_ORIGINAL,
@@ -63,6 +70,8 @@ export class GamepadVibrationService {
   private static readonly IR_GATE_CLOSE_AMPLITUDE = 0.004;
   private static readonly IR_GATE_CLOSE_FRAMES = 4;
   private static readonly IR_OUTPUT_FLOOR = 0.004;
+  /** Generic USB rumble actuators do not need the authored stream's 200 Hz update rate. */
+  private static readonly IR_USB_RENDER_INTERVAL_MS = 10;
   /** Device vibrator APIs are relatively expensive; coalesce authored IR frames. */
   private static readonly DEVICE_RENDER_INTERVAL_MS = 40;
   private static readonly IR_FLAG_DISCONTINUITY = 0x01;
@@ -72,6 +81,7 @@ export class GamepadVibrationService {
   private static readonly IR_PRIORITY_OVER_GAME = true;
   private usbDriverService: UsbDriverService;
   private deviceVibrationCoordinator: DeviceVibrationCoordinator;
+  private hasExternalGamepad: () => boolean;
   
   // 设置
   private vibrationFeedbackEnabled = true;
@@ -98,6 +108,9 @@ export class GamepadVibrationService {
   private gameUsbRumble = new Map<number, MotorPair>();
   private irUsbRumble = new Map<number, MotorPair>();
   private audioUsbRumble = new Map<number, MotorPair>();
+  private lastIrUsbRenderAtMs = new Map<number, number>();
+  private pendingIrUsbRenderTimers = new Map<number, number>();
+  private usbOutputClearedDeviceKeys: Set<string> = new Set();
   private gameDeviceLow: number = 0;
   private gameDeviceHigh: number = 0;
   private gameDeviceControllerNumber: number = 0;
@@ -114,9 +127,11 @@ export class GamepadVibrationService {
   private pendingDeviceRenderTimer: number = -1;
   private pendingDeviceRenderTransient = false;
 
-  constructor(usbDriverService: UsbDriverService, deviceKeyToSlot: Map<string, number>) {
+  constructor(usbDriverService: UsbDriverService, deviceKeyToSlot: Map<string, number>,
+    hasExternalGamepad: () => boolean) {
     this.usbDriverService = usbDriverService;
     this.deviceKeyToSlotLookup = deviceKeyToSlot;
+    this.hasExternalGamepad = hasExternalGamepad;
     this.deviceVibrationCoordinator = DeviceVibrationCoordinator.getInstance();
     this.deviceVibrationCoordinator.setSourceResumeCallback((): void => {
       this.renderMixedDevice(false);
@@ -186,7 +201,8 @@ export class GamepadVibrationService {
     this.submitGameDeviceRumble(lowFreqMotor, highFreqMotor);
 
     // USB 停止确认: 100ms 后重发 stop(0,0)，防止首次 USB 传输被覆盖或丢失
-    if (lowFreqMotor === 0 && highFreqMotor === 0 && hasUsbController) {
+    if (lowFreqMotor === 0 && highFreqMotor === 0 && hasUsbController &&
+        !this.isIrUsbPriorityActive(controllerNumber)) {
       this.scheduleUsbStopConfirm(controllerNumber);
     }
   }
@@ -222,6 +238,7 @@ export class GamepadVibrationService {
       state.hasSequence = false;
       state.gateOpen = false;
       state.quietFrameCount = 0;
+      this.clearIrUsbRenderSchedule(controllerNumber);
     }
     if (state.hasSequence &&
         !this.isIrSequenceNewer(frame.sourceSequenceNumber, state.lastSequence)) {
@@ -263,20 +280,65 @@ export class GamepadVibrationService {
 
     const controllers = this.usbDriverService.getControllers();
     if (controllers.length > 0) {
-      this.renderMixedUsb(controllers, controllerNumber);
+      this.scheduleIrUsbRender(controllerNumber);
     }
     this.renderMixedDevice(false);
+  }
+
+  /** Forward Sunshine's raw adaptive trigger state to the matching USB slot. */
+  handleAdaptiveTriggers(frame: AdaptiveTriggersFrame): void {
+    if (!this.isValidControllerNumber(frame.controllerNumber)) {
+      console.warn('[Vibration] ignoring adaptive trigger frame with invalid controller number');
+      return;
+    }
+
+    const controllers = this.usbDriverService.getControllers();
+    const controllerNumber = Math.floor(frame.controllerNumber);
+    const controller = this.findControllerBySlot(controllers, controllerNumber);
+    if (!controller) return;
+
+    if (!this.vibrationFeedbackEnabled || this.gameVibrationStrength <= 0 ||
+        !this.shouldRenderUsbOutput()) {
+      this.clearAllTriggerEffects(controller);
+      return;
+    }
+
+    if (frame.leftEffect.length !== DS_EFFECT_PAYLOAD_SIZE ||
+        frame.rightEffect.length !== DS_EFFECT_PAYLOAD_SIZE) {
+      console.warn('[Vibration] ignoring adaptive trigger frame with invalid payload size');
+      return;
+    }
+
+    const eventFlags = Math.floor(frame.eventFlags) &
+      (DS_EFFECT_RIGHT_TRIGGER | DS_EFFECT_LEFT_TRIGGER);
+    if (eventFlags === 0) return;
+
+    this.usbOutputClearedDeviceKeys.delete(controller.getDeviceKey());
+    controller.setAdaptiveTriggers(
+      eventFlags,
+      this.clampProtocolByte(frame.leftEffectType),
+      this.clampProtocolByte(frame.rightEffectType),
+      frame.leftEffect,
+      frame.rightEffect
+    );
   }
 
   /**
    * 处理扳机震动
    */
   handleRumbleTriggers(controllerNumber: number, leftTrigger: number, rightTrigger: number): void {
-    if (!this.vibrationFeedbackEnabled) return;
-
     const controllers = this.usbDriverService.getControllers();
     const controller = this.findControllerBySlot(controllers, controllerNumber);
-    controller?.rumbleTriggers(
+    if (!controller) return;
+
+    if (!this.vibrationFeedbackEnabled || this.gameVibrationStrength <= 0 ||
+        !this.shouldRenderUsbOutput()) {
+      this.clearAllTriggerEffects(controller);
+      return;
+    }
+
+    this.usbOutputClearedDeviceKeys.delete(controller.getDeviceKey());
+    controller.rumbleTriggers(
       this.applyGameVibrationStrength(leftTrigger),
       this.applyGameVibrationStrength(rightTrigger)
     );
@@ -290,7 +352,8 @@ export class GamepadVibrationService {
       high: this.clampRumbleValue(highFreqMotor)
     });
     const controllers = this.usbDriverService.getControllers();
-    if (controllers.length > 0) {
+    if (controllers.length > 0 &&
+        !this.isIrUsbPriorityActive(controllerNumber)) {
       this.renderMixedUsb(controllers, controllerNumber);
     }
   }
@@ -363,9 +426,10 @@ export class GamepadVibrationService {
 
     try {
       const controllers = this.usbDriverService.getControllers();
+      this.usbOutputClearedDeviceKeys.clear();
       for (const controller of controllers) {
+        this.clearAllTriggerEffects(controller);
         controller.rumble(0, 0);
-        controller.rumbleTriggers(0, 0);
       }
       if (controllers.length > 0) {
         this.scheduleUsbStopConfirm(this.lastRumbleControllerNumber);
@@ -389,9 +453,14 @@ export class GamepadVibrationService {
       this.lastHighFreq = 0;
     }
     this.clearIrTimer(slot);
+    this.clearIrUsbRenderSchedule(slot);
     this.irStreamStates.delete(slot);
 
     const controllers = this.usbDriverService.getControllers();
+    const controller = this.findControllerBySlot(controllers, slot);
+    if (controller) {
+      this.clearAllTriggerEffects(controller);
+    }
     if (controllers.length > 0) {
       this.renderMixedUsb(controllers, slot);
     }
@@ -434,12 +503,12 @@ export class GamepadVibrationService {
     this.lastHighFreq = 0;
 
     const controllers = this.usbDriverService.getControllers();
+    for (const controller of controllers) {
+      this.clearAllTriggerEffects(controller);
+    }
     affectedSlots.forEach((slot: number): void => {
       this.renderMixedUsb(controllers, slot);
     });
-    for (const controller of controllers) {
-      controller.rumbleTriggers(0, 0);
-    }
     this.renderMixedDevice(false);
   }
 
@@ -478,6 +547,11 @@ export class GamepadVibrationService {
         state.watchdogTimer = -1;
       }
     });
+    this.pendingIrUsbRenderTimers.forEach((timerId: number): void => {
+      clearTimeout(timerId);
+    });
+    this.pendingIrUsbRenderTimers.clear();
+    this.lastIrUsbRenderAtMs.clear();
   }
 
   private getOrCreateIrStreamState(controllerNumber: number): IrStreamState {
@@ -509,6 +583,7 @@ export class GamepadVibrationService {
   }
 
   private clearIrSource(controllerNumber: number, resetSequence: boolean): void {
+    this.clearIrUsbRenderSchedule(controllerNumber);
     const hadUsbOutput = this.irUsbRumble.delete(controllerNumber);
     const hadDeviceOutput = this.irDeviceRumble.delete(controllerNumber);
     this.clearIrTimer(controllerNumber);
@@ -561,7 +636,50 @@ export class GamepadVibrationService {
       low: this.clampRumbleValue(lowFreqMotor),
       high: this.clampRumbleValue(highFreqMotor)
     });
+    if (this.isIrUsbPriorityActive(controllerNumber)) return;
     this.renderMixedUsb(controllers, controllerNumber);
+  }
+
+  private isIrUsbPriorityActive(controllerNumber: number): boolean {
+    return GamepadVibrationService.IR_PRIORITY_OVER_GAME &&
+      this.irUsbRumble.has(controllerNumber);
+  }
+
+  /** Coalesce the 5 ms authored stream into a latest-wins 100 Hz USB motor update. */
+  private scheduleIrUsbRender(controllerNumber: number): void {
+    const nowMs = Date.now();
+    const lastRenderAtMs = this.lastIrUsbRenderAtMs.get(controllerNumber) ?? 0;
+    const elapsedMs = nowMs - lastRenderAtMs;
+    if (elapsedMs >= GamepadVibrationService.IR_USB_RENDER_INTERVAL_MS) {
+      this.clearPendingIrUsbRender(controllerNumber);
+      this.lastIrUsbRenderAtMs.set(controllerNumber, nowMs);
+      this.renderMixedUsb(this.usbDriverService.getControllers(), controllerNumber);
+      return;
+    }
+    if (this.pendingIrUsbRenderTimers.has(controllerNumber)) return;
+
+    const delayMs = GamepadVibrationService.IR_USB_RENDER_INTERVAL_MS - elapsedMs;
+    let timerId: number = -1;
+    timerId = setTimeout((): void => {
+      if (this.pendingIrUsbRenderTimers.get(controllerNumber) !== timerId) return;
+      this.pendingIrUsbRenderTimers.delete(controllerNumber);
+      if (!this.irUsbRumble.has(controllerNumber)) return;
+      this.lastIrUsbRenderAtMs.set(controllerNumber, Date.now());
+      this.renderMixedUsb(this.usbDriverService.getControllers(), controllerNumber);
+    }, delayMs);
+    this.pendingIrUsbRenderTimers.set(controllerNumber, timerId);
+  }
+
+  private clearPendingIrUsbRender(controllerNumber: number): void {
+    const timerId = this.pendingIrUsbRenderTimers.get(controllerNumber);
+    if (timerId === undefined) return;
+    clearTimeout(timerId);
+    this.pendingIrUsbRenderTimers.delete(controllerNumber);
+  }
+
+  private clearIrUsbRenderSchedule(controllerNumber: number): void {
+    this.clearPendingIrUsbRender(controllerNumber);
+    this.lastIrUsbRenderAtMs.delete(controllerNumber);
   }
 
   private renderMixedUsb(controllers: AbstractController[],
@@ -570,9 +688,11 @@ export class GamepadVibrationService {
     if (!controller) return;
 
     if (!this.shouldRenderUsbOutput()) {
-      controller.rumble(0, 0);
+      this.clearUsbOutputOnce(controller);
       return;
     }
+
+    this.usbOutputClearedDeviceKeys.delete(controller.getDeviceKey());
 
     const emptyPair: MotorPair = { low: 0, high: 0 };
     const game = this.gameUsbRumble.get(controllerNumber) ?? emptyPair;
@@ -615,6 +735,26 @@ export class GamepadVibrationService {
   private clampRumbleValue(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(RUMBLE_MAX, Math.floor(value)));
+  }
+
+  private clampProtocolByte(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(0xFF, Math.floor(value)));
+  }
+
+  /** Clear both the raw adaptive effect and the legacy trigger-rumble state. */
+  private clearAllTriggerEffects(controller: AbstractController): void {
+    controller.clearTriggerEffects();
+  }
+
+  private clearUsbOutputOnce(controller: AbstractController): void {
+    const deviceKey = controller.getDeviceKey();
+    if (this.usbOutputClearedDeviceKeys.has(deviceKey)) {
+      return;
+    }
+    this.clearAllTriggerEffects(controller);
+    controller.rumble(0, 0);
+    this.usbOutputClearedDeviceKeys.add(deviceKey);
   }
 
   private clampIntensity(value: number): number {
@@ -666,7 +806,8 @@ export class GamepadVibrationService {
         return true;
       case '自动':
       default:
-        return this.usbDriverService.getControllers().length === 0;
+        return this.usbDriverService.getControllers().length === 0 &&
+          !this.hasExternalGamepad();
     }
   }
 
@@ -686,7 +827,7 @@ export class GamepadVibrationService {
 
     if (!this.shouldRenderUsbOutput()) {
       for (const controller of controllers) {
-        controller.rumble(0, 0);
+        this.clearUsbOutputOnce(controller);
       }
     } else {
       slots.forEach((slot: number): void => {

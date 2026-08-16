@@ -21,7 +21,7 @@ import {
 import { SettingsService, SettingsKeys } from '../SettingsService';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
-import { MoonBridge, Ds5HapticsIrV2Frame } from '../streaming/MoonBridge';
+import { MoonBridge, Ds5HapticsIrV2Frame, AdaptiveTriggersFrame } from '../streaming/MoonBridge';
 import { MouseEmulationService, MouseEmulationCallback } from './MouseEmulationService';
 import { GamepadVibrationService } from './GamepadVibrationService';
 import { AudioHapticFrameFlag } from '../AudioHapticFrame';
@@ -174,7 +174,11 @@ export class GamepadManager implements UsbDriverListener {
     this.usbDriverService = UsbDriverService.getInstance();
     this.deviceSensorService = DeviceSensorService.getInstance();
     this.mouseEmulationService = new MouseEmulationService();
-    this.vibrationService = new GamepadVibrationService(this.usbDriverService, this.deviceKeyToSlot);
+    this.vibrationService = new GamepadVibrationService(
+      this.usbDriverService,
+      this.deviceKeyToSlot,
+      (): boolean => this.hasConnectedGamepadOutsideUsbDriver()
+    );
     this.loadGCButtonMappingSettings();
     this.loadSensorSettings();
     this.loadUsbDriverSetting();
@@ -489,6 +493,15 @@ export class GamepadManager implements UsbDriverListener {
    */
   hasActiveGcGamepad(): boolean {
     return this.useGameControllerKit && this.gcDeviceIdToSlot.size > 0;
+  }
+
+  private hasConnectedGamepadOutsideUsbDriver(): boolean {
+    if (this.hasActiveGcGamepad()) return true;
+    let connected = false;
+    this.deviceInfoMap.forEach((info: GamepadInfo): void => {
+      if (!info.isUsb) connected = true;
+    });
+    return connected;
   }
 
   // ==================== 鼠标模拟（委托 MouseEmulationService） ====================
@@ -2596,6 +2609,11 @@ export class GamepadManager implements UsbDriverListener {
    */
   handleDs5HapticsIrV2(frame: Ds5HapticsIrV2Frame): void {
     this.vibrationService.handleDs5HapticsIrV2(frame);
+  }
+
+  /** Route a raw DualSense adaptive trigger update to its controller slot. */
+  handleAdaptiveTriggers(frame: AdaptiveTriggersFrame): void {
+    this.vibrationService.handleAdaptiveTriggers(frame);
   }
 
   /** 处理扳机震动 */

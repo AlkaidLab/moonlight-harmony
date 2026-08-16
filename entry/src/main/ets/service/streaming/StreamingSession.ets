@@ -46,7 +46,8 @@ import {
   KEY_ACTION_DOWN,
   KEY_ACTION_UP,
   STAGE_NAME_RESOLUTION,
-  Ds5HapticsIrV2Frame
+  Ds5HapticsIrV2Frame,
+  AdaptiveTriggersFrame
 } from './MoonBridge';
 import nativeLib from 'libmoonlight_nativelib.so';
 
@@ -216,6 +217,7 @@ interface StreamCallbacks {
   setHdrMode?: (enabled: boolean) => void;
   rumble?: (controllerNumber: number, lowFreqMotor: number, highFreqMotor: number) => void;
   ds5HapticsIrV2?: (frame: Ds5HapticsIrV2Frame) => void;
+  setAdaptiveTriggers?: (frame: AdaptiveTriggersFrame) => void;
   rumbleTriggers?: (controllerNumber: number, leftTrigger: number, rightTrigger: number) => void;
   setMotionEventState?: (controllerNumber: number, motionType: number, reportRateHz: number) => void;
   setControllerLED?: (controllerNumber: number, r: number, g: number, b: number) => void;
@@ -1295,6 +1297,10 @@ export class StreamingSession {
         if (this.hdrStateCallback) this.hdrStateCallback(enabled);
       },
       rumble: (cn: number, low: number, high: number): void => {
+        // Rumble callbacks are queued asynchronously and may outlive the
+        // connection that produced them. Do not let a late packet restart
+        // feedback after connectionTerminated has already cleared it.
+        if (!this.isRunning) return;
         GamepadManager.getInstance().handleRumble(cn, low, high);
       },
       ds5HapticsIrV2: (frame: Ds5HapticsIrV2Frame): void => {
@@ -1303,7 +1309,14 @@ export class StreamingSession {
         if (!this.isRunning) return;
         GamepadManager.getInstance().handleDs5HapticsIrV2(frame);
       },
+      setAdaptiveTriggers: (frame: AdaptiveTriggersFrame): void => {
+        // This callback owns a separate TSFN and may already be queued when the
+        // session ends. Never apply stale trigger state to the next session.
+        if (!this.isRunning) return;
+        GamepadManager.getInstance().handleAdaptiveTriggers(frame);
+      },
       rumbleTriggers: (cn: number, lt: number, rt: number): void => {
+        if (!this.isRunning) return;
         GamepadManager.getInstance().handleRumbleTriggers(cn, lt, rt);
       },
       setMotionEventState: (cn: number, motionType: number, rateHz: number): void => {
@@ -1759,6 +1772,10 @@ export class StreamingSession {
 
   private async cleanup(): Promise<void> {
     console.info('清理串流资源');
+    this.isRunning = false;
+    // LiStopConnection() suppresses connectionTerminated for an explicit stop,
+    // so clear controller output here as well as in the termination callback.
+    GamepadManager.getInstance().stopAllVibration();
     this.stopMicrophone();
     await this.stopAbr();
     this.nativeModule.setPerformanceModeEnabled(false);

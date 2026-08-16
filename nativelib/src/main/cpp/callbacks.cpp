@@ -39,6 +39,7 @@ extern void MicCapturerUpdatePacketLossPercent(int percent);
 #include <sched.h>
 #include <unistd.h>
 #include <fstream>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -168,10 +169,25 @@ struct Ds5HapticsIrFrameData {
     LI_DS5_HAPTICS_IR_FRAME_V2 frame{};
 };
 
+struct AdaptiveTriggerCallbackData {
+    uint16_t controllerNumber = 0;
+    uint8_t eventFlags = 0;
+    uint8_t typeLeft = 0;
+    uint8_t typeRight = 0;
+    std::array<uint8_t, DS_EFFECT_PAYLOAD_SIZE> left{};
+    std::array<uint8_t, DS_EFFECT_PAYLOAD_SIZE> right{};
+};
+
 static constexpr size_t DS5_IR_QUEUE_CAPACITY = 4;
+// The common-c input path supports sixteen controller slots. Keep one pending
+// adaptive-trigger state per slot so a busy ArkTS thread cannot accumulate
+// stale reports or drop the newest Off state behind an unbounded TSFN queue.
+static constexpr size_t ADAPTIVE_TRIGGER_QUEUE_CAPACITY = 16;
 static std::deque<LI_DS5_HAPTICS_IR_FRAME_V2> g_ds5IrQueue;
 static bool g_ds5IrPumpQueued = false;
 static bool g_ds5IrShuttingDown = false;
+static std::deque<AdaptiveTriggerCallbackData> g_adaptiveTriggerQueue;
+static bool g_adaptiveTriggerPumpQueued = false;
 
 static bool IsDs5IrBoundary(const LI_DS5_HAPTICS_IR_FRAME_V2& frame) {
     return (frame.flags & (LI_DS5_HAPTICS_IR_FLAG_DISCONTINUITY |
@@ -180,6 +196,7 @@ static bool IsDs5IrBoundary(const LI_DS5_HAPTICS_IR_FRAME_V2& frame) {
 }
 
 static void QueueDs5IrPump();
+static void QueueAdaptiveTriggerPump();
 
 static void CallJs_StageStarting(napi_env env, napi_value js_callback, void* context, void* data) {
     CallbackData* cbData = (CallbackData*)data;
@@ -470,6 +487,95 @@ static void SetObjectDouble(napi_env env,
     napi_set_named_property(env, object, name, property);
 }
 
+static bool SetObjectUint8Array(napi_env env,
+                                napi_value object,
+                                const char* name,
+                                const uint8_t* data,
+                                size_t length) {
+    void* bufferData = nullptr;
+    napi_value arrayBuffer;
+    if (napi_create_arraybuffer(env, length, &bufferData, &arrayBuffer) != napi_ok) {
+        return false;
+    }
+    if (length > 0) {
+        memcpy(bufferData, data, length);
+    }
+
+    napi_value typedArray;
+    if (napi_create_typedarray(env, napi_uint8_array, length,
+                               arrayBuffer, 0, &typedArray) != napi_ok) {
+        return false;
+    }
+    return napi_set_named_property(env, object, name, typedArray) == napi_ok;
+}
+
+static void MergeAdaptiveTriggerUpdate(AdaptiveTriggerCallbackData& target,
+                                       const AdaptiveTriggerCallbackData& update) {
+    const uint8_t triggerFlags = static_cast<uint8_t>(
+        update.eventFlags & (DS_EFFECT_RIGHT_TRIGGER | DS_EFFECT_LEFT_TRIGGER));
+    target.eventFlags = static_cast<uint8_t>(target.eventFlags | triggerFlags);
+    if ((triggerFlags & DS_EFFECT_RIGHT_TRIGGER) != 0U) {
+        target.typeRight = update.typeRight;
+        target.right = update.right;
+    }
+    if ((triggerFlags & DS_EFFECT_LEFT_TRIGGER) != 0U) {
+        target.typeLeft = update.typeLeft;
+        target.left = update.left;
+    }
+}
+
+static void CallJs_SetAdaptiveTriggers(napi_env env,
+                                       napi_value js_callback,
+                                       void* context,
+                                       void* data) {
+    (void)context;
+    (void)data;
+    for (size_t processed = 0;
+         processed < ADAPTIVE_TRIGGER_QUEUE_CAPACITY;
+         ++processed) {
+        AdaptiveTriggerCallbackData callbackData{};
+        bool hasFrame = false;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            // The pump callback is no longer pending once it starts running.
+            // Reset before checking state so an empty callback cannot strand a
+            // later update behind a stale queued flag.
+            g_adaptiveTriggerPumpQueued = false;
+            if (!g_ds5IrShuttingDown && !g_adaptiveTriggerQueue.empty()) {
+                callbackData = std::move(g_adaptiveTriggerQueue.front());
+                g_adaptiveTriggerQueue.pop_front();
+                hasFrame = true;
+            }
+        }
+
+        if (!hasFrame) {
+            break;
+        }
+
+        if (env != nullptr && js_callback != nullptr) {
+            napi_value triggerObject;
+            if (napi_create_object(env, &triggerObject) == napi_ok) {
+                SetObjectUint32(env, triggerObject, "controllerNumber", callbackData.controllerNumber);
+                SetObjectUint32(env, triggerObject, "eventFlags", callbackData.eventFlags);
+                SetObjectUint32(env, triggerObject, "leftEffectType", callbackData.typeLeft);
+                SetObjectUint32(env, triggerObject, "rightEffectType", callbackData.typeRight);
+
+                const bool hasLeft = SetObjectUint8Array(
+                    env, triggerObject, "leftEffect", callbackData.left.data(), callbackData.left.size());
+                const bool hasRight = SetObjectUint8Array(
+                    env, triggerObject, "rightEffect", callbackData.right.data(), callbackData.right.size());
+                if (hasLeft && hasRight) {
+                    napi_value undefined;
+                    napi_get_undefined(env, &undefined);
+                    napi_call_function(env, undefined, js_callback, 1, &triggerObject, nullptr);
+                }
+            }
+        }
+    }
+
+    QueueAdaptiveTriggerPump();
+}
+
 static void SetDs5HapticsIrLane(napi_env env,
                                 napi_value laneObject,
                                 const LI_DS5_HAPTICS_IR_LANE_V2& lane) {
@@ -569,6 +675,64 @@ static void QueueDs5IrPump() {
     }
 }
 
+static void QueueAdaptiveTriggerPump() {
+    napi_threadsafe_function triggerTsfn = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_ds5IrShuttingDown || g_adaptiveTriggerPumpQueued ||
+            g_adaptiveTriggerQueue.empty()) {
+            return;
+        }
+        triggerTsfn = g_connCallbacks.tsfn_setAdaptiveTriggers;
+        if (triggerTsfn == nullptr ||
+            napi_acquire_threadsafe_function(triggerTsfn) != napi_ok) {
+            return;
+        }
+        g_adaptiveTriggerPumpQueued = true;
+    }
+
+    const napi_status status = napi_call_threadsafe_function(
+        triggerTsfn, nullptr, napi_tsfn_nonblocking);
+    napi_release_threadsafe_function(triggerTsfn, napi_tsfn_release);
+    if (status != napi_ok) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_adaptiveTriggerPumpQueued = false;
+    }
+}
+
+static void EnqueueAdaptiveTriggerUpdate(const AdaptiveTriggerCallbackData& update) {
+    const uint8_t triggerFlags = static_cast<uint8_t>(
+        update.eventFlags & (DS_EFFECT_RIGHT_TRIGGER | DS_EFFECT_LEFT_TRIGGER));
+    if (triggerFlags == 0U ||
+        update.controllerNumber >= ADAPTIVE_TRIGGER_QUEUE_CAPACITY) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_ds5IrShuttingDown ||
+            g_connCallbacks.tsfn_setAdaptiveTriggers == nullptr) {
+            return;
+        }
+
+        auto pending = std::find_if(
+            g_adaptiveTriggerQueue.begin(), g_adaptiveTriggerQueue.end(),
+            [&update](const AdaptiveTriggerCallbackData& queued) {
+                return queued.controllerNumber == update.controllerNumber;
+            });
+        if (pending != g_adaptiveTriggerQueue.end()) {
+            MergeAdaptiveTriggerUpdate(*pending, update);
+        } else if (g_adaptiveTriggerQueue.size() < ADAPTIVE_TRIGGER_QUEUE_CAPACITY) {
+            g_adaptiveTriggerQueue.push_back(update);
+        } else {
+            // Valid controller numbers are limited to the same sixteen slots,
+            // so this is only a defensive fallback for malformed input.
+            g_adaptiveTriggerQueue.front() = update;
+        }
+    }
+    QueueAdaptiveTriggerPump();
+}
+
 static void EnqueueDs5IrFrame(const LI_DS5_HAPTICS_IR_FRAME_V2& frame) {
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -656,6 +820,8 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     g_env = env;
     g_ds5IrQueue.clear();
     g_ds5IrPumpQueued = false;
+    g_adaptiveTriggerQueue.clear();
+    g_adaptiveTriggerPumpQueued = false;
     g_ds5IrShuttingDown = false;
     
     napi_value callback;
@@ -696,7 +862,8 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     if (napi_get_named_property(env, callbacks, "audioHapticFrame", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "audioHapticFrame",
                                  CallJs_AudioHapticFrame,
-                                 &g_audioCallbacks.tsfn_audioHapticFrame);
+                                 &g_audioCallbacks.tsfn_audioHapticFrame,
+                                 16);
     }
     
     // 连接监听器回调
@@ -736,6 +903,12 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     if (napi_get_named_property(env, callbacks, "setControllerLED", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "setControllerLED", CallJs_SetControllerLED, &g_connCallbacks.tsfn_setControllerLED);
     }
+    if (napi_get_named_property(env, callbacks, "setAdaptiveTriggers", &callback) == napi_ok) {
+        CreateThreadsafeFunction(env, callback, "setAdaptiveTriggers",
+                                 CallJs_SetAdaptiveTriggers,
+                                 &g_connCallbacks.tsfn_setAdaptiveTriggers,
+                                 1);
+    }
     if (napi_get_named_property(env, callbacks, "rumbleTriggers", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "rumbleTriggers", CallJs_RumbleTriggers, &g_connCallbacks.tsfn_rumbleTriggers);
     }
@@ -754,6 +927,8 @@ void Callbacks_Cleanup(void) {
     g_ds5IrShuttingDown = true;
     g_ds5IrQueue.clear();
     g_ds5IrPumpQueued = false;
+    g_adaptiveTriggerQueue.clear();
+    g_adaptiveTriggerPumpQueued = false;
     
     // 释放线程安全函数
     if (g_videoCallbacks.tsfn_setup) napi_release_threadsafe_function(g_videoCallbacks.tsfn_setup, napi_tsfn_release);
@@ -783,6 +958,7 @@ void Callbacks_Cleanup(void) {
     if (g_connCallbacks.tsfn_setHdrMode) napi_release_threadsafe_function(g_connCallbacks.tsfn_setHdrMode, napi_tsfn_release);
     if (g_connCallbacks.tsfn_setMotionEventState) napi_release_threadsafe_function(g_connCallbacks.tsfn_setMotionEventState, napi_tsfn_release);
     if (g_connCallbacks.tsfn_setControllerLED) napi_release_threadsafe_function(g_connCallbacks.tsfn_setControllerLED, napi_tsfn_release);
+    if (g_connCallbacks.tsfn_setAdaptiveTriggers) napi_release_threadsafe_function(g_connCallbacks.tsfn_setAdaptiveTriggers, napi_tsfn_release);
     if (g_connCallbacks.tsfn_rumbleTriggers) napi_release_threadsafe_function(g_connCallbacks.tsfn_rumbleTriggers, napi_tsfn_release);
     if (g_connCallbacks.tsfn_resolutionChanged) napi_release_threadsafe_function(g_connCallbacks.tsfn_resolutionChanged, napi_tsfn_release);
     if (g_connCallbacks.tsfn_clipboardData) napi_release_threadsafe_function(g_connCallbacks.tsfn_clipboardData, napi_tsfn_release);
@@ -1113,6 +1289,7 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     
     // 使用 HarmonyOS AVCodec Opus 解码器
     // 注意：sampleData 可能为 NULL（丢包补偿 PLC），MoonlightOpusDecoder::Decode 内部会处理
+    const bool isPlcFrame = sampleData == nullptr || sampleLength <= 0;
     int decodeLen = MoonlightOpusDecoder::Decode(
         (const unsigned char*)sampleData,
         sampleLength,
@@ -1125,6 +1302,7 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     // sequence 关联：BridgeArInit/Cleanup 已有 INFO 日志，便于按时间轴对位
     static thread_local uint64_t s_arvFrameSeq = 0;
     static thread_local uint64_t s_arvDecodeFailCount = 0;
+    static thread_local uint64_t s_arvPlcFrameCount = 0;
     static thread_local int64_t  s_arvSatSum = 0;        // saturated sample 累计
     static thread_local int64_t  s_arvAbsSum = 0;
     static thread_local int      s_arvMaxAbs = 0;
@@ -1132,10 +1310,16 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     static thread_local int      s_arvHapticFrames = 0;
     static thread_local int      s_arvHapticAmplitudeMax = 0;
     static thread_local uint64_t s_arvHapticErrors = 0;
+    static thread_local int64_t  s_arvHapticProcessMaxUs = 0;
+    static thread_local uint64_t s_arvHapticProcessOverBudget = 0;
+    static thread_local uint64_t s_arvHapticQueueDrops = 0;
     constexpr int kSatThreshold = 30000;
     constexpr int kFramesPerLog = 200;  // ~1s @5ms/frame
 
     s_arvFrameSeq++;
+    if (isPlcFrame) {
+        ++s_arvPlcFrameCount;
+    }
     if (decodeLen <= 0) {
         s_arvDecodeFailCount++;
         if (s_arvDecodeFailCount <= 3 || (s_arvDecodeFailCount % 50) == 0) {
@@ -1175,9 +1359,12 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                         frameMaxAbs, totalSamples);
         }
 
-        // Portable SDK: decoded PCM -> sparse haptic IR.
+        // Portable SDK: decoded PCM -> sparse haptic IR. This runs after the
+        // PCM has been queued, so it must never be allowed to build an
+        // unbounded ArkTS backlog or hide an audio underrun in diagnostics.
         std::array<AhHapticFrame, 32> hapticFrames{};
         uint32_t hapticFrameCount = 0;
+        const auto hapticProcessStart = std::chrono::steady_clock::now();
         if (!g_audioHapticsEngine.ProcessFrame(
                 g_decodedAudioBuffer,
                 static_cast<uint32_t>(decodeLen),
@@ -1230,6 +1417,7 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                     const napi_status status = napi_call_threadsafe_function(
                         hapticTsfn, data, napi_tsfn_nonblocking);
                     if (status != napi_ok) {
+                        ++s_arvHapticQueueDrops;
                         delete data;
                     }
                 }
@@ -1237,27 +1425,48 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                     hapticTsfn, napi_tsfn_release);
             }
         }
+        const int64_t hapticProcessUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - hapticProcessStart).count();
+        s_arvHapticProcessMaxUs = std::max(s_arvHapticProcessMaxUs, hapticProcessUs);
+        if (hapticProcessUs > 2000) {
+            ++s_arvHapticProcessOverBudget;
+        }
     }
 
     if ((s_arvFrameSeq % kFramesPerLog) == 0 && s_arvSampleCount > 0) {
         const int satPct = (int)(s_arvSatSum * 100 / s_arvSampleCount);
         const int meanAbs = (int)(s_arvAbsSum / s_arvSampleCount);
+        const AudioRendererStats audioStats = AudioRendererInstance::GetStats();
         OH_LOG_INFO(LOG_APP,
             "[AUDIO_DIAG] window seq=%{public}llu frames=%{public}d samples=%{public}d "
             "maxAbs=%{public}d meanAbs=%{public}d satPct=%{public}d%% "
             "hapticFrames=%{public}d amplitudeMax=%{public}d "
-            "hapticErrors=%{public}llu decodeFails=%{public}llu",
+            "hapticErrors=%{public}llu decodeFails=%{public}llu "
+            "plcFrames=%{public}llu "
+            "hapticMaxUs=%{public}lld hapticOver2ms=%{public}llu "
+            "hapticQueueDrops=%{public}llu "
+            "audioUnderruns=%{public}u audioDropped=%{public}llu audioBufferedMs=%{public}.2f",
             (unsigned long long)s_arvFrameSeq, kFramesPerLog,
             s_arvSampleCount, s_arvMaxAbs, meanAbs, satPct,
             s_arvHapticFrames, s_arvHapticAmplitudeMax,
             static_cast<unsigned long long>(s_arvHapticErrors),
-            (unsigned long long)s_arvDecodeFailCount);
+            (unsigned long long)s_arvDecodeFailCount,
+            static_cast<unsigned long long>(s_arvPlcFrameCount),
+            static_cast<long long>(s_arvHapticProcessMaxUs),
+            static_cast<unsigned long long>(s_arvHapticProcessOverBudget),
+            static_cast<unsigned long long>(s_arvHapticQueueDrops),
+            audioStats.underruns,
+            static_cast<unsigned long long>(audioStats.droppedSamples),
+            audioStats.latencyMs);
         s_arvSatSum = 0;
         s_arvAbsSum = 0;
         s_arvSampleCount = 0;
         s_arvMaxAbs = 0;
         s_arvHapticFrames = 0;
         s_arvHapticAmplitudeMax = 0;
+        s_arvHapticProcessMaxUs = 0;
+        s_arvHapticProcessOverBudget = 0;
+        s_arvHapticQueueDrops = 0;
         // decodeFails 不清零，便于看累计
     }
 }
@@ -1429,6 +1638,23 @@ void BridgeClSetControllerLED(unsigned short controllerNumber, unsigned char r, 
         napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_setControllerLED, data, napi_tsfn_nonblocking);
         if (st != napi_ok) delete data;
     }
+}
+
+void BridgeClSetAdaptiveTriggers(unsigned short controllerNumber, unsigned char eventFlags,
+                                 unsigned char typeLeft, unsigned char typeRight,
+                                 unsigned char* left, unsigned char* right) {
+    if (left == nullptr || right == nullptr) {
+        return;
+    }
+
+    AdaptiveTriggerCallbackData data{};
+    data.controllerNumber = controllerNumber;
+    data.eventFlags = eventFlags;
+    data.typeLeft = typeLeft;
+    data.typeRight = typeRight;
+    std::copy_n(left, data.left.size(), data.left.begin());
+    std::copy_n(right, data.right.size(), data.right.begin());
+    EnqueueAdaptiveTriggerUpdate(data);
 }
 
 void BridgeClResolutionChanged(unsigned int width, unsigned int height) {
