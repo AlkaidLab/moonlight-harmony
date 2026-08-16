@@ -66,6 +66,10 @@ export class UsbDriverService implements UsbDriverListener {
   private static instance: UsbDriverService;
   
   private started: boolean = false;
+  // start()/stop() may overlap while USB teardown or event subscription awaits.
+  private startRequested: boolean = false;
+  private lifecycleGeneration: number = 0;
+  private pendingStart: Promise<void> | null = null;
   private controllers: AbstractController[] = [];
   private listener: UsbDriverListener | null = null;
   private stateListener: UsbDriverStateListener | null = null;
@@ -90,6 +94,8 @@ export class UsbDriverService implements UsbDriverListener {
   private resetTimerId: number | null = null;
   // stop() keeps DualSense transports alive while the final Off report drains.
   private pendingControllerStops: Promise<void> | null = null;
+  // Device keys awaiting kernel HID rebind after a controller release.
+  private pendingResetDeviceKeys: Set<string> = new Set();
   
   private constructor() {
     console.info(`${TAG} 创建 USB 驱动服务实例`);
@@ -149,58 +155,109 @@ export class UsbDriverService implements UsbDriverListener {
    * 可用于在设备空闲断开后手动重连
    */
   async rescanDevices(): Promise<void> {
+    const requestGeneration: number = this.lifecycleGeneration;
+    if (!this.isLifecycleActive(requestGeneration)) {
+      return;
+    }
     console.info(`${TAG} 手动触发设备重新扫描`);
     // 清空已处理设备列表，强制重新枚举所有设备
     this.processedDevices.clear();
-    await this.enumerateDevices();
+    await this.enumerateDevices(requestGeneration);
   }
   
   /**
    * 启动服务
    */
   async start(): Promise<void> {
+    if (!this.startRequested) {
+      this.startRequested = true;
+      this.lifecycleGeneration++;
+    }
+    const requestGeneration = this.lifecycleGeneration;
+
+    // All callers share the active transition. If stop() cancels it and a later
+    // start() requests a new generation, that generation starts after this one.
+    while (this.pendingStart !== null) {
+      const activeStart = this.pendingStart;
+      await activeStart;
+      if (!this.isStartRequestCurrent(requestGeneration)) {
+        return;
+      }
+    }
+
+    if (!this.isStartRequestCurrent(requestGeneration)) {
+      return;
+    }
     if (this.started) {
       console.info(`${TAG} 服务已启动`);
       return;
     }
 
+    const activeStart = this.startInternal(requestGeneration);
+    this.pendingStart = activeStart;
+    try {
+      await activeStart;
+    } finally {
+      if (this.pendingStart === activeStart) {
+        this.pendingStart = null;
+      }
+    }
+  }
+
+  private isStartRequestCurrent(requestGeneration: number): boolean {
+    return this.startRequested && this.lifecycleGeneration === requestGeneration;
+  }
+
+  private isLifecycleActive(requestGeneration: number): boolean {
+    return this.started && this.isStartRequestCurrent(requestGeneration);
+  }
+
+  private async startInternal(requestGeneration: number): Promise<void> {
     if (this.pendingControllerStops !== null) {
-      await this.pendingControllerStops;
-      this.pendingControllerStops = null;
+      const pendingStops = this.pendingControllerStops;
+      await pendingStops;
+      if (this.pendingControllerStops === pendingStops) {
+        this.pendingControllerStops = null;
+      }
     }
-    
+
+    if (!this.isStartRequestCurrent(requestGeneration)) {
+      return;
+    }
+
     console.info(`${TAG} 启动 USB 驱动服务`);
-    this.started = true;
-    
-    // 取消上一次 stop() 调度的内核驱动重绑定（避免干扰新会话）
-    if (this.resetTimerId !== null) {
-      clearTimeout(this.resetTimerId);
-      this.resetTimerId = null;
-      console.info(`${TAG} 已取消待执行的内核驱动重绑定`);
-    }
     
     // 订阅 USB 设备插拔事件
-    await this.subscribeUsbEvents();
-    
+    await this.subscribeUsbEvents(requestGeneration);
+    if (!this.isStartRequestCurrent(requestGeneration)) {
+      this.unsubscribeUsbEvents();
+      return;
+    }
+
+    this.started = true;
+
     // 枚举已连接的设备
-    await this.enumerateDevices();
-    
+    await this.enumerateDevices(requestGeneration);
+    if (!this.isLifecycleActive(requestGeneration)) {
+      return;
+    }
+
     // 启动定期重新扫描定时器
-    this.startRescanTimer();
+    this.startRescanTimer(requestGeneration);
   }
   
   /**
    * 启动定期重新扫描定时器
    * 用于检测从省电模式唤醒或重新连接的设备
    */
-  private startRescanTimer(): void {
+  private startRescanTimer(requestGeneration: number): void {
     if (this.rescanTimerId !== null) {
       return;
     }
     
     console.info(`${TAG} 启动设备重新扫描定时器，间隔 ${UsbDriverService.RESCAN_INTERVAL_MS}ms`);
     this.rescanTimerId = setInterval(() => {
-      this.checkAndRescanDevices();
+      this.checkAndRescanDevices(requestGeneration);
     }, UsbDriverService.RESCAN_INTERVAL_MS);
   }
   
@@ -219,7 +276,11 @@ export class UsbDriverService implements UsbDriverListener {
    * 检查并重新扫描设备
    * 如果有控制器断开但设备仍然连接，尝试重新初始化
    */
-  private async checkAndRescanDevices(): Promise<void> {
+  private async checkAndRescanDevices(requestGeneration: number): Promise<void> {
+    if (!this.isLifecycleActive(requestGeneration)) {
+      return;
+    }
+
     // 检查是否有断开的控制器但设备仍然存在
     try {
       const currentDevices = usbManager.getDevices();
@@ -252,7 +313,7 @@ export class UsbDriverService implements UsbDriverListener {
       
       if (hasUnprocessedDevices) {
         console.info(`${TAG} 检测到未处理的设备，执行重新枚举`);
-        await this.enumerateDevices();
+        await this.enumerateDevices(requestGeneration);
       }
     } catch (err) {
       console.error(`${TAG} 检查设备状态失败:`, err);
@@ -262,17 +323,30 @@ export class UsbDriverService implements UsbDriverListener {
   /**
    * 订阅 USB 设备插拔事件
    */
-  private async subscribeUsbEvents(): Promise<void> {
+  private async subscribeUsbEvents(requestGeneration: number): Promise<void> {
     try {
       const subscribeInfo: commonEventManager.CommonEventSubscribeInfo = {
         events: [USB_DEVICE_ATTACHED, USB_DEVICE_DETACHED]
       };
       
-      this.usbSubscriber = await commonEventManager.createSubscriber(subscribeInfo);
+      const subscriber: commonEventManager.CommonEventSubscriber =
+        await commonEventManager.createSubscriber(subscribeInfo);
+      if (!this.isStartRequestCurrent(requestGeneration)) {
+        try {
+          commonEventManager.unsubscribe(subscriber);
+        } catch (err) {
+          console.warn(`${TAG} 取消过期 USB 订阅失败:`, err);
+        }
+        return;
+      }
+      this.usbSubscriber = subscriber;
       
-      commonEventManager.subscribe(this.usbSubscriber, (err, data) => {
+      commonEventManager.subscribe(subscriber, (err, data) => {
         if (err) {
           console.error(`${TAG} USB 事件接收错误:`, err);
+          return;
+        }
+        if (!this.isLifecycleActive(requestGeneration)) {
           return;
         }
         
@@ -282,12 +356,12 @@ export class UsbDriverService implements UsbDriverListener {
           // 设备插入，延迟处理以等待系统稳定
           console.info(`${TAG} USB 设备已插入，延迟 500ms 后枚举设备`);
           setTimeout(() => {
-            this.enumerateDevices();
+            this.enumerateDevices(requestGeneration);
           }, 500);
         } else if (data.event === USB_DEVICE_DETACHED) {
           // 设备拔出，检查控制器状态
           console.info(`${TAG} USB 设备已拔出，检查控制器状态`);
-          this.checkDetachedControllers();
+          this.checkDetachedControllers(requestGeneration);
         }
       });
       
@@ -315,7 +389,11 @@ export class UsbDriverService implements UsbDriverListener {
   /**
    * 检查已断开的控制器
    */
-  private checkDetachedControllers(): void {
+  private checkDetachedControllers(requestGeneration: number): void {
+    if (!this.isLifecycleActive(requestGeneration)) {
+      return;
+    }
+
     // 获取当前已连接的 USB 设备列表
     try {
       const currentDevices = usbManager.getDevices();
@@ -350,7 +428,11 @@ export class UsbDriverService implements UsbDriverListener {
    * 停止服务
    */
   stop(): void {
+    this.startRequested = false;
+    this.lifecycleGeneration++;
+
     if (!this.started) {
+      this.schedulePendingReset();
       return;
     }
     
@@ -366,6 +448,9 @@ export class UsbDriverService implements UsbDriverListener {
     
     // 保存已处理设备的键值，用于后续内核驱动重绑定
     const releasedDeviceKeys = new Set(this.processedDevices);
+    releasedDeviceKeys.forEach((deviceKey: string): void => {
+      this.pendingResetDeviceKeys.add(deviceKey);
+    });
     
     // 停止所有控制器（释放 USB 接口独占 + 关闭管道）。DualSense 的
     // stop() 会异步等待最终 Off 报告，因此保存完成 Promise 供下一次 start() 等待。
@@ -385,21 +470,34 @@ export class UsbDriverService implements UsbDriverListener {
     this.processedDevices.clear();
     console.info(`${TAG} USB 驱动服务已停止，已释放 ${stoppedCount} 个控制器的 USB 独占`);
     
-    // 尝试触发内核 HID 驱动重新绑定
-    // 背景：claimInterface(force=true) 会解绑内核 HID 驱动，
-    // 但 releaseInterface() + closePipe() 后内核不会自动重新绑定。
-    // 策略：重新打开设备，通过 native ioctl (USBDEVFS_CONNECT) 显式通知内核重绑定。
-    // 注意：DDK 模式下跳过重绑定，避免下次启动时 ClaimInterface 竞争
-    if (stoppedCount > 0 && !this.ddkEnabled) {
-      this.resetTimerId = setTimeout(() => {
-        this.resetTimerId = null;
-        this.resetReleasedUsbDevices(releasedDeviceKeys);
-      }, UsbDriverService.USB_RESET_DELAY_MS);
-    } else if (this.ddkEnabled) {
+    // 尝试触发内核 HID 驱动重新绑定。DDK 模式下跳过重绑定，避免下次
+    // 启动时 ClaimInterface 竞争；待后续非 DDK 停止时再处理保留的 key。
+    if (!this.ddkEnabled) {
+      this.schedulePendingReset();
+    } else {
       console.info(`${TAG} DDK 模式，跳过内核 HID 驱动重绑定`);
     }
     
     this.ddkEnabled = false;
+  }
+
+  private schedulePendingReset(): void {
+    if (this.resetTimerId !== null) {
+      clearTimeout(this.resetTimerId);
+      this.resetTimerId = null;
+    }
+    if (this.ddkEnabled || this.pendingResetDeviceKeys.size === 0) {
+      return;
+    }
+
+    const releasedKeys: Set<string> = new Set(this.pendingResetDeviceKeys);
+    this.resetTimerId = setTimeout(() => {
+      this.resetTimerId = null;
+      const completedKeys: Set<string> = this.resetReleasedUsbDevices(releasedKeys);
+      completedKeys.forEach((deviceKey: string): void => {
+        this.pendingResetDeviceKeys.delete(deviceKey);
+      });
+    }, UsbDriverService.USB_RESET_DELAY_MS);
   }
   
   /**
@@ -411,15 +509,11 @@ export class UsbDriverService implements UsbDriverListener {
    *    等价于 libusb_attach_kernel_driver()
    * 3. 如果 CONNECT 失败，后备方案使用 USBDEVFS_RESET 重置设备
    */
-  private resetReleasedUsbDevices(releasedKeys: Set<string>): void {
-    // 如果服务已重新启动，跳过重置（避免干扰新会话的 USB 接口声明）
-    if (this.started) {
-      console.info(`${TAG} 服务已重新启动，跳过 USB 设备内核驱动重绑定`);
-      return;
-    }
+  private resetReleasedUsbDevices(releasedKeys: Set<string>): Set<string> {
+    const completedKeys: Set<string> = new Set();
     if (!usbHelper) {
       console.warn(`${TAG} UsbHelper native 模块不可用，无法重绑定内核驱动`);
-      return;
+      return completedKeys;
     }
     
     try {
@@ -432,6 +526,17 @@ export class UsbDriverService implements UsbDriverListener {
         
         if (!releasedKeys.has(key)) continue;
         if (!this.deviceHasHidInterface(device)) continue;
+
+        // A new lifecycle may already own this device. Rebinding it here would
+        // race the active controller, so only finish the pending bookkeeping.
+        const activeController = this.controllers.find(
+          (controller: AbstractController): boolean =>
+            controller.getDeviceKey() === key && controller.isConnected()
+        );
+        if (activeController) {
+          completedKeys.add(key);
+          continue;
+        }
         
         try {
           // 检查权限（之前已授权，应该仍然有效）
@@ -463,6 +568,7 @@ export class UsbDriverService implements UsbDriverListener {
           // 关闭连接
           usbManager.closePipe(pipe);
           resetCount++;
+          completedKeys.add(key);
           console.info(`${TAG} USB 设备内核驱动重绑定完成: ${device.name}`);
         } catch (e) {
           console.warn(`${TAG} USB 设备重置失败 (${device.name}):`, e);
@@ -475,6 +581,7 @@ export class UsbDriverService implements UsbDriverListener {
     } catch (e) {
       console.warn(`${TAG} resetReleasedUsbDevices 异常:`, e);
     }
+    return completedKeys;
   }
   
   /**
@@ -495,14 +602,21 @@ export class UsbDriverService implements UsbDriverListener {
   /**
    * 枚举 USB 设备
    */
-  private async enumerateDevices(): Promise<void> {
+  private async enumerateDevices(requestGeneration: number): Promise<void> {
+    if (!this.isLifecycleActive(requestGeneration)) {
+      return;
+    }
+
     try {
       const devices: usbManager.USBDevice[] = usbManager.getDevices();
       console.info(`${TAG} 发现 ${devices.length} 个 USB 设备`);
       
       for (let i: number = 0; i < devices.length; i++) {
+        if (!this.isLifecycleActive(requestGeneration)) {
+          return;
+        }
         const device: usbManager.USBDevice = devices[i];
-        await this.handleUsbDevice(device);
+        await this.handleUsbDevice(device, requestGeneration);
       }
     } catch (err) {
       console.error(`${TAG} 枚举设备失败:`, err);
@@ -512,7 +626,11 @@ export class UsbDriverService implements UsbDriverListener {
   /**
    * 处理 USB 设备
    */
-  private async handleUsbDevice(device: usbManager.USBDevice): Promise<void> {
+  private async handleUsbDevice(device: usbManager.USBDevice, requestGeneration: number): Promise<void> {
+    if (!this.isLifecycleActive(requestGeneration)) {
+      return;
+    }
+
     // 使用 busNum:devAddress 作为物理位置唯一标识
     const deviceKey = `${device.vendorId}:${device.productId}:${device.busNum}:${device.devAddress}`;
     
@@ -536,7 +654,7 @@ export class UsbDriverService implements UsbDriverListener {
         console.info(`${TAG} 检测到旧控制器已断开，等待释放后重新创建: ${deviceKey}`);
         existingController.stop();
         await existingController.waitForStop();
-        if (!this.started) return;
+        if (!this.isLifecycleActive(requestGeneration)) return;
       }
     }
     
@@ -563,6 +681,10 @@ export class UsbDriverService implements UsbDriverListener {
         if (this.stateListener) {
           this.stateListener.onUsbPermissionPromptCompleted();
         }
+
+        if (!this.isLifecycleActive(requestGeneration)) {
+          return;
+        }
         
         if (!granted) {
           console.warn(`${TAG} 用户拒绝了 USB 权限: ${device.name}`);
@@ -580,8 +702,15 @@ export class UsbDriverService implements UsbDriverListener {
     }
     
     // 异步操作后检查服务是否已停止（权限弹窗期间用户可能退出）
-    if (!this.started) {
+    if (!this.isLifecycleActive(requestGeneration)) {
       console.info(`${TAG} 服务已停止，放弃处理设备: ${device.name}`);
+      return;
+    }
+
+    // Read settings before opening the pipe so cancellation or a settings error
+    // cannot strand a locally owned USB transport.
+    const inputSettings = await SettingsService.getInstance().getInputSettings();
+    if (!this.isLifecycleActive(requestGeneration)) {
       return;
     }
     
@@ -625,7 +754,6 @@ export class UsbDriverService implements UsbDriverListener {
       controller.setDeviceLocation(device.busNum, device.devAddress, device.serial || '');
 
       // 应用 DDK 高速轮询设置
-      const inputSettings = await SettingsService.getInstance().getInputSettings();
       console.info(`${TAG} DDK 高速轮询设置: ${inputSettings.ddkHighSpeedPolling}`);
       if (inputSettings.ddkHighSpeedPolling) {
         this.ddkEnabled = true;
@@ -652,6 +780,8 @@ export class UsbDriverService implements UsbDriverListener {
       usbManager.closePipe(pipe);
       return;
     }
+
+    this.pendingResetDeviceKeys.delete(deviceKey);
     
     console.info(`${TAG} 控制器已启动: ID=${controller.getControllerId()}, Key=${deviceKey}`);
   }
@@ -723,12 +853,13 @@ export class UsbDriverService implements UsbDriverListener {
    * 刷新设备列表
    */
   async refreshDevices(): Promise<void> {
-    if (!this.started) {
+    const requestGeneration: number = this.lifecycleGeneration;
+    if (!this.isLifecycleActive(requestGeneration)) {
       return;
     }
     
     console.info(`${TAG} 刷新 USB 设备列表`);
-    await this.enumerateDevices();
+    await this.enumerateDevices(requestGeneration);
   }
   
   /**
