@@ -114,7 +114,8 @@ export class StreamLifecycleManager {
       } else if (state === AppState.FOREGROUND && this.wasInBackground) {
         console.info('[StreamPage] 应用从后台恢复');
         this.wasInBackground = false;
-        // 回前台先对账按键状态（窗口焦点回调可能已触发过，此处幂等）
+        // 回前台对账按键状态；与窗口焦点恢复回调先后到达时均可安全重复调用
+        // （未连接时 reconcileKeyState 不消费记录，留给重连后的焦点恢复）
         this.callbacks?.reconcileKeyState();
         this.handleAppResume();
       }

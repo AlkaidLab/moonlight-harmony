@@ -129,6 +129,8 @@ export class StreamInputHandler {
    */
   resetState(): void {
     this.releaseAllKeys();
+    // 对账记录不跨串流残留：新串流主机端状态全新，旧记录无意义
+    this.releasedVkKeys.clear();
     this.modifierFlags = 0;
     this.lastEscUpTime = 0;
     this.hasShownEscHint = false;
@@ -183,8 +185,11 @@ export class StreamInputHandler {
         session.sendKeyboardInput(vkCode, KEY_ACTION_UP, 0);
       });
     }
-    // 记录被强制抬起的键，焦点恢复时对账用（见 reconcileKeyState）
-    this.releasedVkKeys = new Set<number>(this.activeVkKeys);
+    // 累积记录被强制抬起的键（失焦与退后台可能连续触发，第二次
+    // activeVkKeys 已为空，覆盖赋值会丢掉记录），由 reconcileKeyState 消费后清空
+    this.activeVkKeys.forEach((vkCode: number) => {
+      this.releasedVkKeys.add(vkCode);
+    });
     this.activeVkKeys.clear();
     // 2. 清空本地修饰键位掩码，防止后续按键被错误拼上残留的 Alt/Ctrl 位
     this.modifierFlags = 0;
@@ -203,13 +208,18 @@ export class StreamInputHandler {
    * 低版本设备无该 API 时静默跳过（保持 releaseAllKeys 后的干净状态）。
    */
   reconcileKeyState(): void {
-    const session = this.viewModel?.getSession();
+    // 未连接（如后台断连等待重连）时不消费记录，
+    // 留给重连完成后窗口焦点恢复时再对账
+    if (!this.viewModel?.isConnected) return;
+    const session = this.viewModel.getSession();
     if (!session) return;
 
     // 1. 组装待查询的 HarmonyOS 键码：8 个修饰键 + 失焦时被强制释放的普通键
+    //    （修饰键已在 RECONCILE 列表中，跳过避免重复查询）
     const harmonyCodes: number[] = StreamInputHandler.RECONCILE_KEY_CODES.slice(0);
     const vkCodes: number[] = StreamInputHandler.RECONCILE_VK_CODES.slice(0);
     this.releasedVkKeys.forEach((vkCode: number) => {
+      if (StreamInputHandler.RECONCILE_VK_CODES.indexOf(vkCode) >= 0) return;
       const harmony = KeyboardTranslator.reverseTranslate(vkCode);
       if (harmony > 0) {
         harmonyCodes.push(harmony);
