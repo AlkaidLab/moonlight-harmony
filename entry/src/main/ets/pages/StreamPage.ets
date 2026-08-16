@@ -337,8 +337,12 @@ struct StreamPage {
         this.inputHandler.releaseAllKeys();
         this.inputHandler.stopMouseInterceptor();
         this.stopMouseKeepAlive();
-      } else if (!this.mouseInputSuspended) {
-        this.resumeMouseInterceptor();
+      } else {
+        // 焦点恢复：对账仍被物理按住的按键（补发差量事件），再恢复鼠标
+        this.inputHandler.reconcileKeyState();
+        if (!this.mouseInputSuspended) {
+          this.resumeMouseInterceptor();
+        }
       }
     });
 
@@ -439,6 +443,9 @@ struct StreamPage {
       },
       releaseAllKeys: () => {
         this.inputHandler.releaseAllKeys();
+      },
+      reconcileKeyState: () => {
+        this.inputHandler.reconcileKeyState();
       }
     });
     
@@ -986,6 +993,8 @@ struct StreamPage {
     this.gameMenuDialogController = null;
     if (!this.mouseInputSuspended) return;
     this.mouseInputSuspended = false;
+    // 菜单打开期间按键被强制释放过，恢复前对账仍按下的键
+    this.inputHandler.reconcileKeyState();
     this.resumeMouseInterceptor();
   }
 

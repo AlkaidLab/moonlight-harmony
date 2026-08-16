@@ -205,4 +205,27 @@ export class KeyboardTranslator {
       default: return 0;
     }
   }
+
+  /** VK → HarmonyOS 反向映射（懒加载，焦点恢复对账时反查物理键码用） */
+  private static reverseMap: Map<number, number> | null = null;
+
+  /**
+   * 将 Windows 虚拟键码反查为 HarmonyOS KeyCode
+   *
+   * @param vkCode Windows 虚拟键码
+   * @returns HarmonyOS KeyCode，无对应返回 0
+   */
+  static reverseTranslate(vkCode: number): number {
+    if (!KeyboardTranslator.reverseMap) {
+      const map = new Map<number, number>();
+      for (let keyCode = 2000; keyCode <= 2120; keyCode++) {
+        const vk = KeyboardTranslator.translate(keyCode);
+        if (vk > 0 && !map.has(vk)) {
+          map.set(vk, keyCode);
+        }
+      }
+      KeyboardTranslator.reverseMap = map;
+    }
+    return KeyboardTranslator.reverseMap.get(vkCode) ?? 0;
+  }
 }

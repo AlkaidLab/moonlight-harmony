@@ -144,6 +144,18 @@ export class StreamInputHandler {
     0x5B, 0x5C  // VK_LWIN, VK_RWIN
   ];
 
+  // ── 焦点恢复对账：修饰键 HarmonyOS KeyCode ↔ Windows VK（下标一一对应）──
+  // ALT_L/R, SHIFT_L/R, CTRL_L/R, META_L/R
+  private static readonly RECONCILE_KEY_CODES: number[] = [
+    2045, 2046, 2047, 2048, 2072, 2073, 2076, 2077
+  ];
+  private static readonly RECONCILE_VK_CODES: number[] = [
+    0xA4, 0xA5, 0xA0, 0xA1, 0xA2, 0xA3, 0x5B, 0x5C
+  ];
+
+  // ── 失焦释放时被强制抬起的普通键，恢复焦点时需复核是否仍物理按下 ──
+  private releasedVkKeys: Set<number> = new Set<number>();
+
   /**
    * 释放所有按下但未释放的键（含修饰键），并清空本地修饰键状态。
    *
@@ -171,9 +183,64 @@ export class StreamInputHandler {
         session.sendKeyboardInput(vkCode, KEY_ACTION_UP, 0);
       });
     }
+    // 记录被强制抬起的键，焦点恢复时对账用（见 reconcileKeyState）
+    this.releasedVkKeys = new Set<number>(this.activeVkKeys);
     this.activeVkKeys.clear();
     // 2. 清空本地修饰键位掩码，防止后续按键被错误拼上残留的 Alt/Ctrl 位
     this.modifierFlags = 0;
+  }
+
+  /**
+   * 焦点恢复时对账按键状态
+   *
+   * 失焦边界 releaseAllKeys() 把主机端按键全部抬起，但用户可能仍物理按着
+   * 部分键（典型：Alt+Tab 的 Alt、游戏中按住的方向键）。事件通道在失焦期间
+   * 收不到任何信息，无法凭事件推断，因此通过 OH_Input_GetKeyState 查询系统
+   * 权威按键状态，与本地追踪做差量同步：
+   *   - 物理按下但本地认为松开 → 补发 KEY_DOWN（用户还按着，主机端应恢复）
+   *   - 物理松开但本地认为按下 → 补发 KEY_UP（兜底 UP 被系统吞掉的情况）
+   *
+   * 低版本设备无该 API 时静默跳过（保持 releaseAllKeys 后的干净状态）。
+   */
+  reconcileKeyState(): void {
+    const session = this.viewModel?.getSession();
+    if (!session) return;
+
+    // 1. 组装待查询的 HarmonyOS 键码：8 个修饰键 + 失焦时被强制释放的普通键
+    const harmonyCodes: number[] = StreamInputHandler.RECONCILE_KEY_CODES.slice(0);
+    const vkCodes: number[] = StreamInputHandler.RECONCILE_VK_CODES.slice(0);
+    this.releasedVkKeys.forEach((vkCode: number) => {
+      const harmony = KeyboardTranslator.reverseTranslate(vkCode);
+      if (harmony > 0) {
+        harmonyCodes.push(harmony);
+        vkCodes.push(vkCode);
+      }
+    });
+
+    // 2. 查询真实物理状态（null = API 不可用，维持现状）
+    const states = InputInterceptorService.getInstance().queryKeyStates(harmonyCodes);
+    if (states === null || states.length !== harmonyCodes.length) return;
+
+    // 3. 差量同步：只对与本地状态不一致的键补发事件
+    let resynced = 0;
+    for (let i = 0; i < vkCodes.length; i++) {
+      if (states[i] < 0) continue; // 单键查询失败，保守跳过
+      const vkCode = vkCodes[i];
+      const pressed = states[i] === 1;
+      if (pressed === this.activeVkKeys.has(vkCode)) continue;
+      this.updateModifierFlags(vkCode, pressed);
+      session.sendKeyboardInput(vkCode, pressed ? KEY_ACTION_DOWN : KEY_ACTION_UP, this.modifierFlags);
+      if (pressed) {
+        this.activeVkKeys.add(vkCode);
+      } else {
+        this.activeVkKeys.delete(vkCode);
+      }
+      resynced++;
+    }
+    this.releasedVkKeys.clear();
+    if (resynced > 0) {
+      console.info(`[INPUT] 焦点恢复对账: ${resynced} 个按键状态已重新同步`);
+    }
   }
 
   // ==================== 鼠标高速轮询 ====================

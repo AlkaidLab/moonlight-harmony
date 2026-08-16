@@ -38,6 +38,8 @@ export interface LifecycleCallbacks {
   reconnectStreaming: () => void;
   /** 释放所有按键状态（退后台/失焦时调用，防止修饰键卡住） */
   releaseAllKeys: () => void;
+  /** 对账按键状态（回前台时调用，补发仍物理按住的键） */
+  reconcileKeyState: () => void;
 }
 
 export class StreamLifecycleManager {
@@ -112,6 +114,8 @@ export class StreamLifecycleManager {
       } else if (state === AppState.FOREGROUND && this.wasInBackground) {
         console.info('[StreamPage] 应用从后台恢复');
         this.wasInBackground = false;
+        // 回前台先对账按键状态（窗口焦点回调可能已触发过，此处幂等）
+        this.callbacks?.reconcileKeyState();
         this.handleAppResume();
       }
     };
