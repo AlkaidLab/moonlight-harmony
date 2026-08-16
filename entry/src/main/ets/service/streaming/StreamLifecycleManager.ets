@@ -36,6 +36,8 @@ export interface LifecycleCallbacks {
   stopStreaming: () => void;
   /** 重连串流（无后台保活时从后台恢复） */
   reconnectStreaming: () => void;
+  /** 释放所有按键状态（退后台/失焦时调用，防止修饰键卡住） */
+  releaseAllKeys: () => void;
 }
 
 export class StreamLifecycleManager {
@@ -104,6 +106,9 @@ export class StreamLifecycleManager {
       if (state === AppState.BACKGROUND) {
         console.info('[StreamPage] 应用进入后台');
         this.wasInBackground = true;
+        // 退后台时 KEY_UP 不会再送达应用，立即释放所有按键状态，
+        // 防止 Windows 端 Alt/Ctrl 卡住（切回后无法打字、鼠标操作异常）
+        this.callbacks?.releaseAllKeys();
       } else if (state === AppState.FOREGROUND && this.wasInBackground) {
         console.info('[StreamPage] 应用从后台恢复');
         this.wasInBackground = false;

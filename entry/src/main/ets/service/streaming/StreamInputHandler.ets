@@ -136,19 +136,44 @@ export class StreamInputHandler {
     this.stopMouseInterceptor();
   }
 
+  // ── Windows 修饰键 VK 码（用于失焦时补发 KEY_UP，防止主机端修饰键卡住）──
+  private static readonly MODIFIER_VK_CODES: number[] = [
+    0xA0, 0xA1, // VK_LSHIFT, VK_RSHIFT
+    0xA2, 0xA3, // VK_LCONTROL, VK_RCONTROL
+    0xA4, 0xA5, // VK_LMENU, VK_RMENU (Alt)
+    0x5B, 0x5C  // VK_LWIN, VK_RWIN
+  ];
+
   /**
-   * 释放所有通过 ArkUI onKeyEvent 按下但未释放的键
-   * 在焦点丢失（如 onBackPress 弹出对话框）时调用，防止键卡住
+   * 释放所有按下但未释放的键（含修饰键），并清空本地修饰键状态。
+   *
+   * 调用时机：
+   * - onBackPress 弹出对话框（焦点丢失）
+   * - 应用退后台 / 窗口失焦（Alt+Tab 切走）
+   * - 双击菜单键打开串流菜单
+   * - 串流停止 resetState
+   *
+   * 对齐 Android Game.onWindowFocusChanged → KeyboardInputHandler.clearModifierState()：
+   * 切后台期间 KEY_UP 不会送达应用，若不清除，Windows 端 Alt/Ctrl 会永久按下，
+   * 导致返回串流后无法打字、Blender 鼠标选择异常（Alt+左键=旋转视图）。
    */
   releaseAllKeys(): void {
-    if (this.activeVkKeys.size === 0) return;
     const session = this.viewModel?.getSession();
     if (session) {
-      this.activeVkKeys.forEach((vkCode: number) => {
+      // 1. 释放所有追踪到的按键，并补齐 8 个 Windows 修饰键：覆盖按键拦截器路径
+      //    （该路径不进 activeVkKeys）以及其他漏追踪的边缘情况。
+      //    对未按下的键补发 KEY_UP 在 Windows 端是安全的 no-op。
+      const keysToRelease = new Set<number>(this.activeVkKeys);
+      StreamInputHandler.MODIFIER_VK_CODES.forEach((vkCode: number) => {
+        keysToRelease.add(vkCode);
+      });
+      keysToRelease.forEach((vkCode: number) => {
         session.sendKeyboardInput(vkCode, KEY_ACTION_UP, 0);
       });
     }
     this.activeVkKeys.clear();
+    // 2. 清空本地修饰键位掩码，防止后续按键被错误拼上残留的 Alt/Ctrl 位
+    this.modifierFlags = 0;
   }
 
   // ==================== 鼠标高速轮询 ====================

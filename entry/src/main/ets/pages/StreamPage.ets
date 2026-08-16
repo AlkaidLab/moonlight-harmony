@@ -332,6 +332,9 @@ struct StreamPage {
     this.windowManager.setOnWindowFocusChanged((focused: boolean) => {
       if (!this.viewModel.isConnected) return;
       if (!focused) {
+        // 失焦（Alt+Tab 切走 / 弹系统对话框）：释放所有按键，
+        // 防止 KEY_UP 丢失导致主机端修饰键/普通键卡住
+        this.inputHandler.releaseAllKeys();
         this.inputHandler.stopMouseInterceptor();
         this.stopMouseKeepAlive();
       } else if (!this.mouseInputSuspended) {
@@ -433,6 +436,9 @@ struct StreamPage {
       },
       reconnectStreaming: () => {
         this.reconnectStreaming();
+      },
+      releaseAllKeys: () => {
+        this.inputHandler.releaseAllKeys();
       }
     });
     
