@@ -862,7 +862,8 @@ void Callbacks_Init(napi_env env, napi_value callbacks) {
     if (napi_get_named_property(env, callbacks, "audioHapticFrame", &callback) == napi_ok) {
         CreateThreadsafeFunction(env, callback, "audioHapticFrame",
                                  CallJs_AudioHapticFrame,
-                                 &g_audioCallbacks.tsfn_audioHapticFrame);
+                                 &g_audioCallbacks.tsfn_audioHapticFrame,
+                                 16);
     }
     
     // 连接监听器回调
@@ -1288,6 +1289,7 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     
     // 使用 HarmonyOS AVCodec Opus 解码器
     // 注意：sampleData 可能为 NULL（丢包补偿 PLC），MoonlightOpusDecoder::Decode 内部会处理
+    const bool isPlcFrame = sampleData == nullptr || sampleLength <= 0;
     int decodeLen = MoonlightOpusDecoder::Decode(
         (const unsigned char*)sampleData,
         sampleLength,
@@ -1300,6 +1302,7 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     // sequence 关联：BridgeArInit/Cleanup 已有 INFO 日志，便于按时间轴对位
     static thread_local uint64_t s_arvFrameSeq = 0;
     static thread_local uint64_t s_arvDecodeFailCount = 0;
+    static thread_local uint64_t s_arvPlcFrameCount = 0;
     static thread_local int64_t  s_arvSatSum = 0;        // saturated sample 累计
     static thread_local int64_t  s_arvAbsSum = 0;
     static thread_local int      s_arvMaxAbs = 0;
@@ -1307,10 +1310,16 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
     static thread_local int      s_arvHapticFrames = 0;
     static thread_local int      s_arvHapticAmplitudeMax = 0;
     static thread_local uint64_t s_arvHapticErrors = 0;
+    static thread_local int64_t  s_arvHapticProcessMaxUs = 0;
+    static thread_local uint64_t s_arvHapticProcessOverBudget = 0;
+    static thread_local uint64_t s_arvHapticQueueDrops = 0;
     constexpr int kSatThreshold = 30000;
     constexpr int kFramesPerLog = 200;  // ~1s @5ms/frame
 
     s_arvFrameSeq++;
+    if (isPlcFrame) {
+        ++s_arvPlcFrameCount;
+    }
     if (decodeLen <= 0) {
         s_arvDecodeFailCount++;
         if (s_arvDecodeFailCount <= 3 || (s_arvDecodeFailCount % 50) == 0) {
@@ -1350,9 +1359,12 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                         frameMaxAbs, totalSamples);
         }
 
-        // Portable SDK: decoded PCM -> sparse haptic IR.
+        // Portable SDK: decoded PCM -> sparse haptic IR. This runs after the
+        // PCM has been queued, so it must never be allowed to build an
+        // unbounded ArkTS backlog or hide an audio underrun in diagnostics.
         std::array<AhHapticFrame, 32> hapticFrames{};
         uint32_t hapticFrameCount = 0;
+        const auto hapticProcessStart = std::chrono::steady_clock::now();
         if (!g_audioHapticsEngine.ProcessFrame(
                 g_decodedAudioBuffer,
                 static_cast<uint32_t>(decodeLen),
@@ -1405,6 +1417,7 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                     const napi_status status = napi_call_threadsafe_function(
                         hapticTsfn, data, napi_tsfn_nonblocking);
                     if (status != napi_ok) {
+                        ++s_arvHapticQueueDrops;
                         delete data;
                     }
                 }
@@ -1412,27 +1425,48 @@ void BridgeArDecodeAndPlaySample(char* sampleData, int sampleLength) {
                     hapticTsfn, napi_tsfn_release);
             }
         }
+        const int64_t hapticProcessUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - hapticProcessStart).count();
+        s_arvHapticProcessMaxUs = std::max(s_arvHapticProcessMaxUs, hapticProcessUs);
+        if (hapticProcessUs > 2000) {
+            ++s_arvHapticProcessOverBudget;
+        }
     }
 
     if ((s_arvFrameSeq % kFramesPerLog) == 0 && s_arvSampleCount > 0) {
         const int satPct = (int)(s_arvSatSum * 100 / s_arvSampleCount);
         const int meanAbs = (int)(s_arvAbsSum / s_arvSampleCount);
+        const AudioRendererStats audioStats = AudioRendererInstance::GetStats();
         OH_LOG_INFO(LOG_APP,
             "[AUDIO_DIAG] window seq=%{public}llu frames=%{public}d samples=%{public}d "
             "maxAbs=%{public}d meanAbs=%{public}d satPct=%{public}d%% "
             "hapticFrames=%{public}d amplitudeMax=%{public}d "
-            "hapticErrors=%{public}llu decodeFails=%{public}llu",
+            "hapticErrors=%{public}llu decodeFails=%{public}llu "
+            "plcFrames=%{public}llu "
+            "hapticMaxUs=%{public}lld hapticOver2ms=%{public}llu "
+            "hapticQueueDrops=%{public}llu "
+            "audioUnderruns=%{public}u audioDropped=%{public}llu audioBufferedMs=%.2f",
             (unsigned long long)s_arvFrameSeq, kFramesPerLog,
             s_arvSampleCount, s_arvMaxAbs, meanAbs, satPct,
             s_arvHapticFrames, s_arvHapticAmplitudeMax,
             static_cast<unsigned long long>(s_arvHapticErrors),
-            (unsigned long long)s_arvDecodeFailCount);
+            (unsigned long long)s_arvDecodeFailCount,
+            static_cast<unsigned long long>(s_arvPlcFrameCount),
+            static_cast<long long>(s_arvHapticProcessMaxUs),
+            static_cast<unsigned long long>(s_arvHapticProcessOverBudget),
+            static_cast<unsigned long long>(s_arvHapticQueueDrops),
+            audioStats.underruns,
+            static_cast<unsigned long long>(audioStats.droppedSamples),
+            audioStats.latencyMs);
         s_arvSatSum = 0;
         s_arvAbsSum = 0;
         s_arvSampleCount = 0;
         s_arvMaxAbs = 0;
         s_arvHapticFrames = 0;
         s_arvHapticAmplitudeMax = 0;
+        s_arvHapticProcessMaxUs = 0;
+        s_arvHapticProcessOverBudget = 0;
+        s_arvHapticQueueDrops = 0;
         // decodeFails 不清零，便于看累计
     }
 }
