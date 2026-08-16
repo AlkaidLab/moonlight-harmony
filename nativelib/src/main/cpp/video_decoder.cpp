@@ -819,14 +819,7 @@ int VideoDecoder::Init(const VideoDecoderConfig& config, OHNativeWindow* window)
                 OH_LOG_WARN(LOG_APP, "{Init} Failed to set colorspace: %{public}d", csRet);
             }
             
-            // 3. 设置 HDR 白点亮度
-            float hdrWhitePointBrightness = 1.0f;
-            int32_t hdrBrightRet = OH_NativeWindow_NativeWindowHandleOpt(window_, SET_HDR_WHITE_POINT_BRIGHTNESS, hdrWhitePointBrightness);
-            if (hdrBrightRet != 0) {
-                OH_LOG_WARN(LOG_APP, "{Init} Failed to set HDR white point: %{public}d", hdrBrightRet);
-            }
-            
-            // 4. 设置 HDR 静态元数据（SMPTE 2086 + CTA 861.3）
+            // 3. 设置 HDR 静态元数据（SMPTE 2086 + CTA 861.3）
             // Sunshine 会通过控制流传递主机显示器/内容元数据；缺失时才使用 BT.2020 默认值。
             OH_NativeBuffer_StaticMetadata staticMetadata;
             bool hasHostHdrStaticMetadata = false;
