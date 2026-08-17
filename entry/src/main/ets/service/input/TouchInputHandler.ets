@@ -17,6 +17,11 @@ import nativeLib from 'libmoonlight_nativelib.so';
 import { PointXY } from './PanZoomHandler';
 import { TrackpadGestureHandler, TrackpadInputSink, TrackpadConfig } from './TrackpadGestureHandler';
 import {
+  Ds5TouchpadFeedback,
+  Ds5TouchpadGestureHandler,
+  Ds5TouchpadInputSink
+} from './Ds5TouchpadGestureHandler';
+import {
   BUTTON_ACTION_PRESS,
   BUTTON_ACTION_RELEASE,
   BUTTON_LEFT,
@@ -27,6 +32,7 @@ import {
   TOUCH_EVENT_CANCEL,
   TOUCH_EVENT_HOVER,
   TOUCH_EVENT_CANCEL_ALL,
+  LI_ERR_UNSUPPORTED,
   LI_TOOL_TYPE_UNKNOWN,
   LI_TOOL_TYPE_PEN,
   LI_TOOL_TYPE_ERASER,
@@ -42,7 +48,8 @@ import {
 export enum TouchInputMode {
   TRACKPAD = 'trackpad',  // 触摸板模式：相对移动
   DIRECT = 'direct',      // 直接触摸模式：绝对坐标（多点触控协议）
-  MOUSE = 'mouse'         // 鼠标模式：绝对定位 + 死区 + 长按右键 + 双指滚轮
+  MOUSE = 'mouse',        // 鼠标模式：绝对定位 + 死区 + 长按右键 + 双指滚轮
+  DS5_TOUCHPAD = 'ds5_touchpad' // 屏幕映射 DualSense 触控板
 }
 
 /**
@@ -145,6 +152,8 @@ export class TouchInputHandler {
 
   /** 触控板手势处理器（对齐 Android RelativeTouchContext） */
   private trackpad: TrackpadGestureHandler;
+  /** 屏幕映射 DualSense 触控板（与普通鼠标触控板完全独立） */
+  private ds5Touchpad: Ds5TouchpadGestureHandler = new Ds5TouchpadGestureHandler();
 
   // ====== 鼠标模式状态（绝对定位 + 死区 + 长按右键，对齐 Android AbsoluteTouchContext） ======
   /** 主手指按下位置 */
@@ -322,8 +331,26 @@ export class TouchInputHandler {
     if (this.mode === TouchInputMode.MOUSE && mode !== TouchInputMode.MOUSE) {
       this.resetMouseState(true);
     }
+    if (this.mode === TouchInputMode.DS5_TOUCHPAD && mode !== TouchInputMode.DS5_TOUCHPAD) {
+      this.ds5Touchpad.cancelActiveInput();
+    }
     this.mode = mode;
     console.info(`TouchInputHandler: 模式切换为 ${mode}`);
+  }
+
+  /** 绑定当前串流会话的 DS5 触控输出。 */
+  setDs5TouchpadSink(sink: Ds5TouchpadInputSink | null): void {
+    this.ds5Touchpad.setSink(sink);
+  }
+
+  /** 设置 DS5 触控板不受支持时的回退通知。 */
+  setDs5TouchpadUnsupportedCallback(callback: (() => void) | null): void {
+    this.ds5Touchpad.setUnsupportedCallback(callback);
+  }
+
+  /** 绑定 DS5 触点的本地视觉反馈，不改变远端输入协议。 */
+  setDs5TouchpadFeedbackCallback(callback: ((feedback: Ds5TouchpadFeedback) => void) | null): void {
+    this.ds5Touchpad.setFeedbackCallback(callback);
   }
 
   /**
@@ -335,6 +362,7 @@ export class TouchInputHandler {
   cancelActiveInput(): void {
     this.trackpad.dispose();
     this.resetMouseState(true);
+    this.ds5Touchpad.cancelActiveInput();
     this.touchStates.clear();
     this.lastForce.clear();
     this.lastSize.clear();
@@ -399,9 +427,14 @@ export class TouchInputHandler {
    */
   handleTouchEvent(event: TouchEvent): void {
     const touches = event.touches;
-    if (touches.length === 0) {
+
+    // DS5 触控板的 Up/Cancel 可能只携带 changedTouches，不能在这里提前返回。
+    if (this.mode === TouchInputMode.DS5_TOUCHPAD) {
+      this.ds5Touchpad.handleEvent(event);
       return;
     }
+
+    if (touches.length === 0) return;
 
     // 检测手写笔输入：SourceTool.Pen = 2
     // 仅在 DIRECT 模式下发送 Pen 协议事件（带压感/倾斜），
@@ -974,7 +1007,7 @@ export class TouchInputHandler {
             areaMajor, areaMinor, rotation, tilt
           );
           // 检测主机是否支持 Pen 事件
-          if (ret === -7) { // LI_ERR_UNSUPPORTED = -7
+          if (ret === LI_ERR_UNSUPPORTED) {
             console.warn('手写笔: 主机不支持 Pen 事件，回退到 Touch 事件');
             this.penUnsupported = true;
             // 回退：用 touch 事件重新发送
@@ -1087,6 +1120,7 @@ export class TouchInputHandler {
    */
   dispose(): void {
     this.trackpad.dispose();
+    this.ds5Touchpad.dispose();
     this.resetMouseState(false);
     this.touchStates.clear();
     this.lastForce.clear();

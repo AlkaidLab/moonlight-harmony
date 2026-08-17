@@ -39,7 +39,8 @@ export enum StreamConnectionState {
 export enum TouchMode {
   TRACKPAD = 'trackpad',
   DIRECT = 'direct',
-  MOUSE = 'mouse'
+  MOUSE = 'mouse',
+  DS5_TOUCHPAD = 'ds5_touchpad'
 }
 
 /**
@@ -254,7 +255,8 @@ export class StreamViewModel {
     // 确定触摸模式
     // 优先使用用户在菜单中选择过的模式（持久化在 LAST_TOUCH_MODE）
     const lastTouchMode = await PreferencesUtil.get<string>(SettingsKeys.LAST_TOUCH_MODE, '');
-    if (lastTouchMode && (lastTouchMode === 'trackpad' || lastTouchMode === 'direct' || lastTouchMode === 'mouse')) {
+    if (lastTouchMode && (lastTouchMode === 'trackpad' || lastTouchMode === 'direct' ||
+      lastTouchMode === 'mouse' || lastTouchMode === 'ds5_touchpad')) {
       this.touchMode = lastTouchMode as TouchMode;
     } else if (this.inputSettings.touchscreenTrackpad) {
       // 用户在设置中强制启用了触控板模式
@@ -305,6 +307,7 @@ export class StreamViewModel {
       
       // 创建串流会话
       this.streamingSession = new StreamingSession();
+      this.streamingSession.setDs5TouchpadEnabled(this.touchMode === TouchMode.DS5_TOUCHPAD);
       
       // 设置 HDR 状态回调，当 drSetup 检测到实际 HDR 状态时更新 UI
       this.streamingSession.setHdrStateCallback((isHdr: boolean) => {
@@ -598,11 +601,16 @@ export class StreamViewModel {
    */
   setTouchMode(mode: TouchMode): void {
     this.touchMode = mode;
+    this.streamingSession?.setDs5TouchpadEnabled(mode === TouchMode.DS5_TOUCHPAD);
     // 持久化用户在菜单中选择的触摸模式，断开重连后恢复
     PreferencesUtil.put(SettingsKeys.LAST_TOUCH_MODE, mode as string).catch((err: Error) => {
       console.warn(`StreamViewModel: 保存触摸模式失败: ${err.message}`);
     });
     console.info(`StreamViewModel: 触摸模式切换为 ${mode}`);
+  }
+
+  isDs5TouchpadSupported(): boolean {
+    return this.streamingSession?.isControllerTouchpadSupported() ?? false;
   }
 
   /**

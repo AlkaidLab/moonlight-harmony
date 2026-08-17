@@ -31,6 +31,7 @@ import { AudioVibrationService } from '../AudioVibrationService';
 import { AdaptiveBitrateService } from './AdaptiveBitrateService';
 import { NetworkBoostService } from '../network/NetworkBoostService';
 import { BandwidthProbeService } from '../network/BandwidthProbeService';
+import { Ds5TouchpadInputSink } from '../input/Ds5TouchpadGestureHandler';
 import { MoonBridge as ClipboardNativeBridge } from '../jni/ClipboardBridge';
 import {
   MoonBridge,
@@ -39,8 +40,12 @@ import {
   CONTROLLER_TYPE_PS,
   LI_CCAP_ANALOG_TRIGGERS,
   LI_CCAP_RUMBLE,
+  LI_CCAP_TOUCHPAD,
   LI_CCAP_ACCEL,
   LI_CCAP_GYRO,
+  LI_FF_CONTROLLER_TOUCH_EVENTS,
+  LI_ERR_UNSUPPORTED,
+  TOUCHPAD_FLAG,
   MODIFIER_SHIFT,
   MODIFIER_CTRL,
   MODIFIER_ALT,
@@ -198,6 +203,11 @@ interface NativeModule {
     controllerNumber: number, activeGamepadMask: number, type: number,
     supportedButtonFlags: number, capabilities: number
   ): number;
+  sendControllerTouchEvent(
+    controllerNumber: number, eventType: number, pointerId: number,
+    x: number, y: number, pressure: number
+  ): number;
+  getHostFeatureFlags(): number;
   sendControllerMotionEvent(
     controllerNumber: number, motionType: number, x: number, y: number, z: number
   ): number;
@@ -338,7 +348,7 @@ const STANDARD_BUTTON_FLAGS =
  * - 麦克风采集与传输
  * - 性能统计
  */
-export class StreamingSession {
+export class StreamingSession implements Ds5TouchpadInputSink {
 
   // ---------------------------------------------------------------------------
   // 静态方法
@@ -437,6 +447,16 @@ export class StreamingSession {
   private virtualControllerArrived: boolean = false;
   private physicalControllerArrived = new Set<number>();
   private activeGamepadMask: number = 0;
+  /** 在连接建立前锁定触控板能力，确保首次 arrival 就带正确元数据。 */
+  private ds5TouchpadEnabled: boolean = false;
+  /** 连接期间稳定不变的主机能力，避免触摸 MOVE 热路径跨 NAPI 查询。 */
+  private hostFeatureFlags: number = 0;
+  private hostFeatureFlagsKnown: boolean = false;
+  /** 屏幕触控板 clickpad 的粘滞状态，独立于各来源的完整手柄快照。 */
+  private ds5TouchpadButtonPressed: boolean = false;
+  /** 每个槽位最近一次完整状态，触控板点击必须在此状态上合并。 */
+  private controllerStates: Map<number, ControllerState> = new Map();
+  private physicalControllerTypes: Map<number, number> = new Map();
   private controllerState: ControllerState = {
     buttonFlags: 0,
     leftTrigger: 0,
@@ -854,6 +874,69 @@ export class StreamingSession {
   }
 
   /**
+   * 在下一次 controller arrival 上声明触控板能力。
+   * 该开关应在连接建立前设置；Sunshine 不会接受已分配槽位的重复 arrival。
+   */
+  setDs5TouchpadEnabled(enabled: boolean): void {
+    const changed = this.ds5TouchpadEnabled !== enabled;
+    this.ds5TouchpadEnabled = enabled;
+    if (changed && this.isRunning) {
+      this.reannouncePrimaryController();
+    }
+  }
+
+  isDs5TouchpadEnabled(): boolean {
+    return this.ds5TouchpadEnabled;
+  }
+
+  /** 主机是否宣告 controller-touch 扩展。 */
+  isControllerTouchpadSupported(): boolean {
+    if (!this.isRunning) return false;
+    if (!this.hostFeatureFlagsKnown) this.readHostFeatureFlags();
+    return (this.hostFeatureFlags & LI_FF_CONTROLLER_TOUCH_EVENTS) !== 0;
+  }
+
+  private readHostFeatureFlags(): number {
+    try {
+      this.hostFeatureFlags = this.nativeModule.getHostFeatureFlags();
+      this.hostFeatureFlagsKnown = true;
+    } catch (_) {
+      this.hostFeatureFlags = 0;
+      // Feature flags are fixed for the lifetime of the connection. Treat a
+      // failed read as unsupported and avoid retrying on every MOVE event.
+      this.hostFeatureFlagsKnown = true;
+    }
+    return this.hostFeatureFlags;
+  }
+
+  /** Ds5TouchpadInputSink: 发送屏幕触控板触点。 */
+  sendDs5TouchpadEvent(eventType: number, pointerId: number,
+    x: number, y: number, pressure: number): number {
+    // -2 means the local session is unavailable; it must not trigger the
+    // user-facing "host unsupported" fallback in the gesture handler.
+    if (!this.isRunning || !this.ds5TouchpadEnabled) return -2;
+    if (!this.isControllerTouchpadSupported()) return LI_ERR_UNSUPPORTED;
+
+    this.ensureVirtualControllerArrival(0);
+    return this.nativeModule.sendControllerTouchEvent(
+      0, eventType, pointerId, x, y, pressure
+    );
+  }
+
+  /** Ds5TouchpadInputSink: 在最近一次完整手柄状态上合并 clickpad。 */
+  setDs5TouchpadButtonPressed(pressed: boolean): void {
+    if (!this.isRunning || (!this.ds5TouchpadEnabled && pressed)) return;
+
+    if (this.ds5TouchpadEnabled) {
+      this.ensureVirtualControllerArrival(0);
+    } else if (!this.virtualControllerArrived && !this.physicalControllerArrived.has(0)) {
+      return;
+    }
+    this.ds5TouchpadButtonPressed = pressed;
+    this.sendControllerStateSnapshot(0, this.getControllerState(0));
+  }
+
+  /**
    * 发送虚拟手柄输入（供 CustomKeyManager 使用）
    *
    * 与直接调用 MoonBridge 不同，此方法会先确保 controllerArrival 已发送，
@@ -867,11 +950,15 @@ export class StreamingSession {
     if (!this.isRunning) return;
     const controllerIndex = 0;
     this.ensureVirtualControllerArrival(controllerIndex);
-    this.nativeModule.sendMultiControllerInput(
-      controllerIndex, this.activeGamepadMask,
-      buttonFlags, leftTrigger, rightTrigger,
-      leftStickX, leftStickY, rightStickX, rightStickY
-    );
+    this.controllerState.buttonFlags = buttonFlags;
+    this.controllerState.leftTrigger = leftTrigger;
+    this.controllerState.rightTrigger = rightTrigger;
+    this.controllerState.leftStickX = leftStickX;
+    this.controllerState.leftStickY = leftStickY;
+    this.controllerState.rightStickX = rightStickX;
+    this.controllerState.rightStickY = rightStickY;
+    this.controllerStates.set(controllerIndex, this.cloneControllerState(this.controllerState));
+    this.sendControllerStateSnapshot(controllerIndex, this.controllerState);
   }
 
   // ---------------------------------------------------------------------------
@@ -910,11 +997,17 @@ export class StreamingSession {
     }
 
     this.ensurePhysicalControllerArrival(controllerIndex, controllerType);
-    this.nativeModule.sendMultiControllerInput(
-      controllerIndex, this.activeGamepadMask,
-      buttons, leftTrigger, rightTrigger,
-      leftStickX, leftStickY, rightStickX, rightStickY
-    );
+    const state: ControllerState = {
+      buttonFlags: buttons,
+      leftTrigger: leftTrigger,
+      rightTrigger: rightTrigger,
+      leftStickX: leftStickX,
+      leftStickY: leftStickY,
+      rightStickX: rightStickX,
+      rightStickY: rightStickY
+    };
+    this.controllerStates.set(controllerIndex, state);
+    this.sendControllerStateSnapshot(controllerIndex, state);
   }
 
   /**
@@ -926,6 +1019,10 @@ export class StreamingSession {
     controllerType: number = CONTROLLER_TYPE_XBOX
   ): void {
     if (!this.isRunning || !this.physicalControllerArrived.has(controllerIndex)) return;
+    if (controllerIndex === 0 && this.virtualControllerArrived) {
+      this.reannouncePrimaryController(controllerType);
+      return;
+    }
     this.physicalControllerArrived.delete(controllerIndex);
     this.ensurePhysicalControllerArrival(controllerIndex, controllerType);
   }
@@ -1265,11 +1362,17 @@ export class StreamingSession {
       connectionStarted: (): void => {
         console.info('连接已建立');
         this.isRunning = true;
+        if (this.ds5TouchpadEnabled) {
+          const supported = this.isControllerTouchpadSupported();
+          console.info(`DS5 屏幕触控板: 主机 controller-touch=${supported}`);
+        }
         this.startMicrophoneIfNeeded();
       },
       connectionTerminated: (errorCode: number): void => {
         console.info(`连接已终止: ${errorCode}, userInitiated=${this.userInitiatedStop}`);
         this.isRunning = false;
+        this.hostFeatureFlags = 0;
+        this.hostFeatureFlagsKnown = false;
         NetworkBoostService.getInstance().stop();
         GamepadManager.getInstance().stopAllSensors();
         // 立即停止所有振动（设备马达 + USB 手柄马达 + 音频振动）
@@ -1633,21 +1736,26 @@ export class StreamingSession {
   private sendControllerState(controllerIndex: number): void {
     this.ensureVirtualControllerArrival(controllerIndex);
     const s = this.controllerState;
-    this.nativeModule.sendMultiControllerInput(
-      controllerIndex, this.activeGamepadMask,
-      s.buttonFlags, s.leftTrigger, s.rightTrigger,
-      s.leftStickX, s.leftStickY, s.rightStickX, s.rightStickY
-    );
+    this.controllerStates.set(controllerIndex, this.cloneControllerState(s));
+    this.sendControllerStateSnapshot(controllerIndex, s);
   }
 
   private ensureVirtualControllerArrival(controllerIndex: number): void {
-    if (this.virtualControllerArrived) return;
+    // A screen touchpad augments the primary physical controller. Reuse its
+    // slot instead of sending a duplicate arrival packet for controller 0.
+    if (this.virtualControllerArrived || this.physicalControllerArrived.has(controllerIndex)) return;
 
     this.activeGamepadMask |= (1 << controllerIndex);
+    const touchpadEnabled = this.ds5TouchpadEnabled;
+    const supportedButtons = touchpadEnabled
+      ? STANDARD_BUTTON_FLAGS | TOUCHPAD_FLAG
+      : STANDARD_BUTTON_FLAGS;
+    const controllerType = touchpadEnabled ? CONTROLLER_TYPE_PS : CONTROLLER_TYPE_XBOX;
+    const capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE |
+      (touchpadEnabled ? LI_CCAP_TOUCHPAD : 0);
     const ret = this.nativeModule.sendControllerArrivalEvent(
       controllerIndex, this.activeGamepadMask,
-      CONTROLLER_TYPE_XBOX, STANDARD_BUTTON_FLAGS,
-      LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE
+      controllerType, supportedButtons, capabilities
     );
 
     if (ret >= 0) {
@@ -1661,22 +1769,45 @@ export class StreamingSession {
   private ensurePhysicalControllerArrival(controllerIndex: number, controllerType: number = CONTROLLER_TYPE_XBOX): void {
     if (this.physicalControllerArrived.has(controllerIndex)) return;
 
+    // A virtual controller may have claimed slot 0 before the physical device
+    // produced its first input. Treat the first physical state as the same
+    // logical controller and keep the already-advertised capability profile.
+    if (this.virtualControllerArrived && controllerIndex === 0) {
+      this.physicalControllerArrived.add(controllerIndex);
+      this.physicalControllerTypes.set(controllerIndex, controllerType);
+      console.info(`[Gamepad] reusing virtual arrival for physical slot ${controllerIndex}`);
+      return;
+    }
+
     let capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
     capabilities |= GamepadManager.getInstance().getSensorCapabilities(controllerIndex);
+    if (this.ds5TouchpadEnabled && controllerIndex === 0) {
+      capabilities |= LI_CCAP_TOUCHPAD;
+    }
 
     let reportedType = controllerType;
-    if ((capabilities & (LI_CCAP_ACCEL | LI_CCAP_GYRO)) && controllerType !== CONTROLLER_TYPE_PS) {
+    if (this.ds5TouchpadEnabled && controllerIndex === 0) {
+      // A screen-provided touchpad is a PS-family capability. The host's
+      // explicit DS5 mode still decides whether the slot is backed by DS5.
+      reportedType = CONTROLLER_TYPE_PS;
+    }
+    if ((capabilities & (LI_CCAP_ACCEL | LI_CCAP_GYRO)) && reportedType !== CONTROLLER_TYPE_PS) {
       reportedType = CONTROLLER_TYPE_UNKNOWN;
     }
 
     this.activeGamepadMask |= (1 << controllerIndex);
     const ret = this.nativeModule.sendControllerArrivalEvent(
       controllerIndex, this.activeGamepadMask,
-      reportedType, STANDARD_BUTTON_FLAGS, capabilities
+      reportedType,
+      this.ds5TouchpadEnabled && controllerIndex === 0
+        ? STANDARD_BUTTON_FLAGS | TOUCHPAD_FLAG
+        : STANDARD_BUTTON_FLAGS,
+      capabilities
     );
 
     if (ret >= 0) {
       this.physicalControllerArrived.add(controllerIndex);
+      this.physicalControllerTypes.set(controllerIndex, controllerType);
       console.info(`[Gamepad] arrival: index=${controllerIndex}, type=${reportedType}(orig=${controllerType}), ` +
         `caps=0x${capabilities.toString(16)}, mask=0x${this.activeGamepadMask.toString(16)}`);
     }
@@ -1685,7 +1816,77 @@ export class StreamingSession {
   private resetControllerState(): void {
     this.virtualControllerArrived = false;
     this.physicalControllerArrived.clear();
+    this.physicalControllerTypes.clear();
     this.activeGamepadMask = 0;
+    this.hostFeatureFlags = 0;
+    this.hostFeatureFlagsKnown = false;
+    this.ds5TouchpadButtonPressed = false;
+    this.controllerStates.clear();
+    this.controllerState.buttonFlags = 0;
+    this.controllerState.leftTrigger = 0;
+    this.controllerState.rightTrigger = 0;
+    this.controllerState.leftStickX = 0;
+    this.controllerState.leftStickY = 0;
+    this.controllerState.rightStickX = 0;
+    this.controllerState.rightStickY = 0;
+  }
+
+  private getControllerState(controllerIndex: number): ControllerState {
+    const existing = this.controllerStates.get(controllerIndex);
+    if (existing) return existing;
+    const initial = this.cloneControllerState(this.controllerState);
+    this.controllerStates.set(controllerIndex, initial);
+    return initial;
+  }
+
+  private cloneControllerState(state: ControllerState): ControllerState {
+    return {
+      buttonFlags: state.buttonFlags,
+      leftTrigger: state.leftTrigger,
+      rightTrigger: state.rightTrigger,
+      leftStickX: state.leftStickX,
+      leftStickY: state.leftStickY,
+      rightStickX: state.rightStickX,
+      rightStickY: state.rightStickY
+    };
+  }
+
+  private sendControllerStateSnapshot(controllerIndex: number, state: ControllerState): void {
+    const buttonFlags = controllerIndex === 0 && this.ds5TouchpadEnabled && this.ds5TouchpadButtonPressed
+      ? state.buttonFlags | TOUCHPAD_FLAG
+      : state.buttonFlags;
+    this.nativeModule.sendMultiControllerInput(
+      controllerIndex, this.activeGamepadMask,
+      buttonFlags, state.leftTrigger, state.rightTrigger,
+      state.leftStickX, state.leftStickY, state.rightStickX, state.rightStickY
+    );
+  }
+
+  /**
+   * Rebuild slot 0 when the user changes the touchpad mode during a session.
+   * Sunshine ignores duplicate arrival packets, so a real removal packet is
+   * required before advertising the new capability profile.
+   */
+  private reannouncePrimaryController(physicalTypeOverride?: number): void {
+    if (!this.isRunning) return;
+
+    const hadPhysical = this.physicalControllerArrived.has(0);
+    const hadSlot = hadPhysical || this.virtualControllerArrived || (this.activeGamepadMask & 1) !== 0;
+    if (!hadSlot) return;
+
+    const remainingMask = this.activeGamepadMask & ~1;
+    this.nativeModule.sendMultiControllerInput(0, remainingMask, 0, 0, 0, 0, 0, 0, 0);
+    this.activeGamepadMask = remainingMask;
+    this.virtualControllerArrived = false;
+    this.physicalControllerArrived.delete(0);
+
+    if (hadPhysical) {
+      const originalType = physicalTypeOverride ??
+        this.physicalControllerTypes.get(0) ?? CONTROLLER_TYPE_XBOX;
+      this.ensurePhysicalControllerArrival(0, originalType);
+    } else {
+      this.ensureVirtualControllerArrival(0);
+    }
   }
 
   // ---------------------------------------------------------------------------
