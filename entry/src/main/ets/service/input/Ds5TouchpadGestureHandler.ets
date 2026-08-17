@@ -231,17 +231,16 @@ export class Ds5TouchpadGestureHandler {
 
     const ret = sink.sendDs5TouchpadEvent(eventType, pointerId, x, y, pressure);
     if (ret >= 0 && this.onFeedback) {
-      let feedbackType = eventType;
-      if (eventType === TOUCH_EVENT_CANCEL_ALL) {
-        feedbackType = DS5_TOUCH_FEEDBACK_CANCEL;
+      const feedbackType = this.toFeedbackType(eventType);
+      if (feedbackType !== 0) {
+        const feedback: Ds5TouchpadFeedback = {
+          type: feedbackType,
+          pointerId: pointerId,
+          x: x,
+          y: y
+        };
+        this.onFeedback(feedback);
       }
-      const feedback: Ds5TouchpadFeedback = {
-        type: feedbackType,
-        pointerId: pointerId,
-        x: x,
-        y: y
-      };
-      this.onFeedback(feedback);
     }
     if (ret === LI_ERR_UNSUPPORTED && !this.unsupportedReported) {
       this.unsupportedReported = true;
@@ -251,15 +250,27 @@ export class Ds5TouchpadGestureHandler {
     return ret;
   }
 
+  /** 协议事件值与本地反馈类型不同序，必须显式映射。返回 0 表示无对应反馈。 */
+  private toFeedbackType(eventType: number): number {
+    switch (eventType) {
+      case TOUCH_EVENT_DOWN:
+        return DS5_TOUCH_FEEDBACK_DOWN;
+      case TOUCH_EVENT_MOVE:
+        return DS5_TOUCH_FEEDBACK_MOVE;
+      case TOUCH_EVENT_UP:
+        return DS5_TOUCH_FEEDBACK_UP;
+      case TOUCH_EVENT_CANCEL_ALL:
+        return DS5_TOUCH_FEEDBACK_CANCEL;
+      default:
+        return 0;
+    }
+  }
+
   private pressClickButton(pointerId: number, x: number, y: number): void {
     const sink = this.sink;
     if (!sink) return;
 
-    if (this.clickReleaseTimer !== -1) {
-      clearTimeout(this.clickReleaseTimer);
-      this.clickReleaseTimer = -1;
-    }
-    if (this.clickPressed) sink.setDs5TouchpadButtonPressed(false);
+    if (this.clickPressed) this.releaseClickButton();
 
     sink.setDs5TouchpadButtonPressed(true);
     this.clickPressed = true;

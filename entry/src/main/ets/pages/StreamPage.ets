@@ -2027,6 +2027,17 @@ struct StreamPage {
     }
 
     if (feedback.pointerId < 0) return;
+    // pointerId 可能被复用：新触点激活时取消旧的淡出移除定时器，
+    // 否则 140ms 后活跃触点会被旧定时器误删。
+    if (feedback.type === DS5_TOUCH_FEEDBACK_DOWN ||
+      feedback.type === DS5_TOUCH_FEEDBACK_MOVE ||
+      feedback.type === DS5_TOUCH_FEEDBACK_CLICK_DOWN) {
+      const pending = this.ds5TouchFadeTimers.get(feedback.pointerId);
+      if (pending !== undefined) {
+        clearTimeout(pending);
+        this.ds5TouchFadeTimers.delete(feedback.pointerId);
+      }
+    }
     const current = this.ds5TouchIndicators;
     let found = false;
     const next: Ds5TouchIndicator[] = [];
