@@ -110,9 +110,69 @@ static bool CheckAndLoadInjectApi()
     // 尝试加载 deviceId 获取函数（可选，API 14+）
     g_pfnGetKeyEventDeviceId = (PFN_GetKeyEventDeviceId)dlsym(handle, "OH_Input_GetKeyEventDeviceId");
     LOGI("GetKeyEventDeviceId: %{public}s", g_pfnGetKeyEventDeviceId ? "available" : "not available");
-    
+
     // 不 dlclose，保持库加载
     return g_injectApiAvailable;
+}
+
+// ==================== 按键状态查询 API 动态加载 ====================
+// OH_Input_GetKeyState 族函数：查询按键当前物理按下状态。
+// 用于焦点恢复时对账——失焦边界统一释放按键后，用户可能仍物理按着
+// 某些键（典型：Alt+Tab 的 Alt），事件通道无法感知，只能查询权威状态。
+// 与注入 API 同理走 dlsym 运行时检测，低版本设备上静默禁用。
+
+typedef void *KeyStateHandle;  // Input_KeyState*（对本文件不透明）
+typedef KeyStateHandle (*PFN_CreateKeyState)(void);
+typedef void (*PFN_DestroyKeyState)(KeyStateHandle *);
+typedef void (*PFN_SetKeyCode)(KeyStateHandle, int32_t);
+typedef int32_t (*PFN_GetKeyPressed)(KeyStateHandle);  // 返回 Input_KeyStateAction
+typedef int32_t (*PFN_GetKeyState)(KeyStateHandle);    // 返回 Input_Result
+
+static PFN_CreateKeyState g_pfnCreateKeyState = nullptr;
+static PFN_DestroyKeyState g_pfnDestroyKeyState = nullptr;
+static PFN_SetKeyCode g_pfnSetKeyStateKeyCode = nullptr;
+static PFN_GetKeyPressed g_pfnGetKeyPressed = nullptr;
+static PFN_GetKeyState g_pfnGetKeyState = nullptr;
+static bool g_keyStateApiChecked = false;
+static bool g_keyStateApiAvailable = false;
+
+/**
+ * 检查并加载按键状态查询 API
+ */
+static bool CheckAndLoadKeyStateApi()
+{
+    if (g_keyStateApiChecked) {
+        return g_keyStateApiAvailable;
+    }
+    g_keyStateApiChecked = true;
+
+    void *handle = dlopen("libohinput.so", RTLD_NOW);
+    if (!handle) {
+        LOGW("Failed to dlopen libohinput.so for key state API");
+        return false;
+    }
+
+    g_pfnCreateKeyState      = (PFN_CreateKeyState)dlsym(handle, "OH_Input_CreateKeyState");
+    g_pfnDestroyKeyState     = (PFN_DestroyKeyState)dlsym(handle, "OH_Input_DestroyKeyState");
+    g_pfnSetKeyStateKeyCode  = (PFN_SetKeyCode)dlsym(handle, "OH_Input_SetKeyCode");
+    g_pfnGetKeyPressed       = (PFN_GetKeyPressed)dlsym(handle, "OH_Input_GetKeyPressed");
+    g_pfnGetKeyState         = (PFN_GetKeyState)dlsym(handle, "OH_Input_GetKeyState");
+
+    if (g_pfnCreateKeyState && g_pfnDestroyKeyState && g_pfnSetKeyStateKeyCode &&
+        g_pfnGetKeyPressed && g_pfnGetKeyState) {
+        g_keyStateApiAvailable = true;
+        LOGI("Key state query API available");
+    } else {
+        LOGW("Key state query API not available on this device");
+        g_pfnCreateKeyState = nullptr;
+        g_pfnDestroyKeyState = nullptr;
+        g_pfnSetKeyStateKeyCode = nullptr;
+        g_pfnGetKeyPressed = nullptr;
+        g_pfnGetKeyState = nullptr;
+    }
+
+    // 不 dlclose，保持库加载
+    return g_keyStateApiAvailable;
 }
 
 // ==================== 音量键回注 ====================
@@ -354,6 +414,81 @@ static napi_value IsInjectApiAvailable(napi_env env, napi_callback_info info)
     return ret;
 }
 
+/**
+ * queryKeyStates(keyCodes: number[]): number[] | null
+ *
+ * 查询一组 HarmonyOS KeyCode 的当前物理按下状态（焦点恢复对账用）。
+ * 返回与入参等长的数组：1=按下 0=松开 -1=该键查询失败；
+ * API 不可用（低版本设备）返回 null。
+ */
+static napi_value QueryKeyStates(napi_env env, napi_callback_info info)
+{
+    if (!CheckAndLoadKeyStateApi()) {
+        napi_value ret;
+        napi_get_null(env, &ret);
+        return ret;
+    }
+
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    if (argc < 1) {
+        napi_throw_type_error(env, nullptr, "queryKeyStates requires an array of key codes");
+        return nullptr;
+    }
+
+    bool isArray = false;
+    napi_is_array(env, argv[0], &isArray);
+    if (!isArray) {
+        napi_throw_type_error(env, nullptr, "queryKeyStates requires an array of key codes");
+        return nullptr;
+    }
+
+    uint32_t length = 0;
+    napi_get_array_length(env, argv[0], &length);
+
+    napi_value result;
+    napi_create_array_with_length(env, length, &result);
+
+    KeyStateHandle state = g_pfnCreateKeyState();
+    if (!state) {
+        for (uint32_t i = 0; i < length; i++) {
+            napi_value v;
+            napi_create_int32(env, -1, &v);
+            napi_set_element(env, result, i, v);
+        }
+        return result;
+    }
+
+    for (uint32_t i = 0; i < length; i++) {
+        napi_value elem;
+        napi_get_element(env, argv[0], i, &elem);
+
+        int32_t keyCode = 0;
+        napi_get_value_int32(env, elem, &keyCode);
+
+        // Input_KeyStateAction: KEY_PRESSED=0, KEY_RELEASED=1, KEY_DEFAULT=-1（未知）
+        // 对外统一为 1=按下 0=松开 -1=查询失败
+        int32_t pressed = -1;
+        g_pfnSetKeyStateKeyCode(state, keyCode);
+        if (g_pfnGetKeyState(state) == INPUT_SUCCESS) {
+            int32_t action = g_pfnGetKeyPressed(state);
+            if (action == 0) {
+                pressed = 1;
+            } else if (action == 1) {
+                pressed = 0;
+            }
+        }
+
+        napi_value v;
+        napi_create_int32(env, pressed, &v);
+        napi_set_element(env, result, i, v);
+    }
+
+    g_pfnDestroyKeyState(&state);
+    return result;
+}
+
 // ==================== 模块初始化 ====================
 
 napi_value InputInterceptor_Init(napi_env env, napi_value exports)
@@ -367,6 +502,7 @@ napi_value InputInterceptor_Init(napi_env env, napi_value exports)
         {"removeKeyInterceptor", nullptr, RemoveKeyInterceptor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isKeyInterceptorActive", nullptr, IsKeyInterceptorActive, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isInjectApiAvailable", nullptr, IsInjectApiAvailable, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"queryKeyStates", nullptr, QueryKeyStates, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
 
     napi_define_properties(env, interceptorObj, sizeof(methods) / sizeof(methods[0]), methods);

@@ -42,6 +42,7 @@ interface InputInterceptorNative {
   removeKeyInterceptor(): number;
   isKeyInterceptorActive(): boolean;
   isInjectApiAvailable(): boolean;
+  queryKeyStates(keyCodes: number[]): number[] | null;
 }
 
 interface MouseInterceptorNative {
@@ -133,6 +134,18 @@ export class InputInterceptorService {
       return this.native.isInjectApiAvailable();
     }
     return false;
+  }
+
+  /**
+   * 查询一组按键当前物理按下状态（焦点恢复时对账用）
+   * @param keyCodes HarmonyOS KeyCode 数组
+   * @returns 与入参等长的数组（1=按下 0=松开 -1=查询失败）；API 不可用返回 null
+   */
+  queryKeyStates(keyCodes: number[]): number[] | null {
+    if (this.native && keyCodes.length > 0) {
+      return this.native.queryKeyStates(keyCodes);
+    }
+    return null;
   }
 }
 

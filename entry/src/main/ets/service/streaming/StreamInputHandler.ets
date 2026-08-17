@@ -129,6 +129,8 @@ export class StreamInputHandler {
    */
   resetState(): void {
     this.releaseAllKeys();
+    // 对账记录不跨串流残留：新串流主机端状态全新，旧记录无意义
+    this.releasedVkKeys.clear();
     this.modifierFlags = 0;
     this.lastEscUpTime = 0;
     this.hasShownEscHint = false;
@@ -136,19 +138,119 @@ export class StreamInputHandler {
     this.stopMouseInterceptor();
   }
 
+  // ── Windows 修饰键 VK 码（用于失焦时补发 KEY_UP，防止主机端修饰键卡住）──
+  private static readonly MODIFIER_VK_CODES: number[] = [
+    0xA0, 0xA1, // VK_LSHIFT, VK_RSHIFT
+    0xA2, 0xA3, // VK_LCONTROL, VK_RCONTROL
+    0xA4, 0xA5, // VK_LMENU, VK_RMENU (Alt)
+    0x5B, 0x5C  // VK_LWIN, VK_RWIN
+  ];
+
+  // ── 焦点恢复对账：修饰键 HarmonyOS KeyCode ↔ Windows VK（下标一一对应）──
+  // ALT_L/R, SHIFT_L/R, CTRL_L/R, META_L/R
+  private static readonly RECONCILE_KEY_CODES: number[] = [
+    2045, 2046, 2047, 2048, 2072, 2073, 2076, 2077
+  ];
+  private static readonly RECONCILE_VK_CODES: number[] = [
+    0xA4, 0xA5, 0xA0, 0xA1, 0xA2, 0xA3, 0x5B, 0x5C
+  ];
+
+  // ── 失焦释放时被强制抬起的普通键，恢复焦点时需复核是否仍物理按下 ──
+  private releasedVkKeys: Set<number> = new Set<number>();
+
   /**
-   * 释放所有通过 ArkUI onKeyEvent 按下但未释放的键
-   * 在焦点丢失（如 onBackPress 弹出对话框）时调用，防止键卡住
+   * 释放所有按下但未释放的键（含修饰键），并清空本地修饰键状态。
+   *
+   * 调用时机：
+   * - onBackPress 弹出对话框（焦点丢失）
+   * - 应用退后台 / 窗口失焦（Alt+Tab 切走）
+   * - 双击菜单键打开串流菜单
+   * - 串流停止 resetState
+   *
+   * 对齐 Android Game.onWindowFocusChanged → KeyboardInputHandler.clearModifierState()：
+   * 切后台期间 KEY_UP 不会送达应用，若不清除，Windows 端 Alt/Ctrl 会永久按下，
+   * 导致返回串流后无法打字、Blender 鼠标选择异常（Alt+左键=旋转视图）。
    */
   releaseAllKeys(): void {
-    if (this.activeVkKeys.size === 0) return;
     const session = this.viewModel?.getSession();
     if (session) {
-      this.activeVkKeys.forEach((vkCode: number) => {
+      // 1. 释放所有追踪到的按键，并补齐 8 个 Windows 修饰键，兜底处理
+      //    修饰键状态与按键追踪状态不一致的边缘情况。
+      //    对未按下的键补发 KEY_UP 在 Windows 端是安全的 no-op。
+      const keysToRelease = new Set<number>(this.activeVkKeys);
+      StreamInputHandler.MODIFIER_VK_CODES.forEach((vkCode: number) => {
+        keysToRelease.add(vkCode);
+      });
+      keysToRelease.forEach((vkCode: number) => {
         session.sendKeyboardInput(vkCode, KEY_ACTION_UP, 0);
       });
     }
+    // 累积记录被强制抬起的键（失焦与退后台可能连续触发，第二次
+    // activeVkKeys 已为空，覆盖赋值会丢掉记录），由 reconcileKeyState 消费后清空
+    this.activeVkKeys.forEach((vkCode: number) => {
+      this.releasedVkKeys.add(vkCode);
+    });
     this.activeVkKeys.clear();
+    // 2. 清空本地修饰键位掩码，防止后续按键被错误拼上残留的 Alt/Ctrl 位
+    this.modifierFlags = 0;
+  }
+
+  /**
+   * 焦点恢复时对账按键状态
+   *
+   * 失焦边界 releaseAllKeys() 把主机端按键全部抬起，但用户可能仍物理按着
+   * 部分键（典型：Alt+Tab 的 Alt、游戏中按住的方向键）。事件通道在失焦期间
+   * 收不到任何信息，无法凭事件推断，因此通过 OH_Input_GetKeyState 查询系统
+   * 权威按键状态，与本地追踪做差量同步：
+   *   - 物理按下但本地认为松开 → 补发 KEY_DOWN（用户还按着，主机端应恢复）
+   *   - 物理松开但本地认为按下 → 补发 KEY_UP（兜底 UP 被系统吞掉的情况）
+   *
+   * 低版本设备无该 API 时静默跳过（保持 releaseAllKeys 后的干净状态）。
+   */
+  reconcileKeyState(): void {
+    // 未连接（如后台断连等待重连）时不消费记录，
+    // 留给重连完成后窗口焦点恢复时再对账
+    if (!this.viewModel?.isConnected) return;
+    const session = this.viewModel.getSession();
+    if (!session) return;
+
+    // 1. 组装待查询的 HarmonyOS 键码：8 个修饰键 + 失焦时被强制释放的普通键
+    //    （修饰键已在 RECONCILE 列表中，跳过避免重复查询）
+    const harmonyCodes: number[] = StreamInputHandler.RECONCILE_KEY_CODES.slice(0);
+    const vkCodes: number[] = StreamInputHandler.RECONCILE_VK_CODES.slice(0);
+    this.releasedVkKeys.forEach((vkCode: number) => {
+      if (StreamInputHandler.RECONCILE_VK_CODES.indexOf(vkCode) >= 0) return;
+      const harmony = KeyboardTranslator.reverseTranslate(vkCode);
+      if (harmony > 0) {
+        harmonyCodes.push(harmony);
+        vkCodes.push(vkCode);
+      }
+    });
+
+    // 2. 查询真实物理状态（null = API 不可用，维持现状）
+    const states = InputInterceptorService.getInstance().queryKeyStates(harmonyCodes);
+    if (states === null || states.length !== harmonyCodes.length) return;
+
+    // 3. 差量同步：只对与本地状态不一致的键补发事件
+    let resynced = 0;
+    for (let i = 0; i < vkCodes.length; i++) {
+      if (states[i] < 0) continue; // 单键查询失败，保守跳过
+      const vkCode = vkCodes[i];
+      const pressed = states[i] === 1;
+      if (pressed === this.activeVkKeys.has(vkCode)) continue;
+      this.updateModifierFlags(vkCode, pressed);
+      session.sendKeyboardInput(vkCode, pressed ? KEY_ACTION_DOWN : KEY_ACTION_UP, this.modifierFlags);
+      if (pressed) {
+        this.activeVkKeys.add(vkCode);
+      } else {
+        this.activeVkKeys.delete(vkCode);
+      }
+      resynced++;
+    }
+    this.releasedVkKeys.clear();
+    if (resynced > 0) {
+      console.info(`[INPUT] 焦点恢复对账: ${resynced} 个按键状态已重新同步`);
+    }
   }
 
   // ==================== 鼠标高速轮询 ====================
@@ -500,6 +602,12 @@ export class StreamInputHandler {
           if (session) {
             const keyAction = isPressed ? KEY_ACTION_DOWN : KEY_ACTION_UP;
             session.sendKeyboardInput(vkCode, keyAction, this.modifierFlags);
+            // 拦截器路径同样需要跟踪按键，否则失焦时无法补发普通键 KEY_UP
+            if (isPressed) {
+              this.activeVkKeys.add(vkCode);
+            } else {
+              this.activeVkKeys.delete(vkCode);
+            }
           }
         }
         return;
@@ -521,6 +629,11 @@ export class StreamInputHandler {
           if (vkCode > 0) {
             const keyAction = isPressed ? 0x03 : 0x04; // KEY_DOWN : KEY_UP
             session.sendKeyboardInput(vkCode, keyAction, this.modifierFlags);
+            if (isPressed) {
+              this.activeVkKeys.add(vkCode);
+            } else {
+              this.activeVkKeys.delete(vkCode);
+            }
           }
         }
       }

@@ -205,4 +205,43 @@ export class KeyboardTranslator {
       default: return 0;
     }
   }
+
+  /** VK → HarmonyOS 反向映射（懒加载，焦点恢复对账时反查物理键码用） */
+  private static reverseMap: Map<number, number> | null = null;
+
+  // 多个 HarmonyOS 键码映射到同一 VK 时的优先键码（否则反查会命中
+  // 键码更小的来源，如 0x0D 命中 DPAD_CENTER 2016 而非主键盘 Enter 2054）
+  private static readonly REVERSE_OVERRIDES: Map<number, number> =
+    KeyboardTranslator.buildReverseOverrides();
+
+  private static buildReverseOverrides(): Map<number, number> {
+    const map = new Map<number, number>();
+    map.set(0x0D, 2054); // VK_RETURN   ← ENTER（非 DPAD_CENTER 2016 / NUMPAD_ENTER 2119）
+    map.set(0xBB, 2058); // VK_OEM_PLUS ← EQUALS（非 PLUS 2066）
+    return map;
+  }
+
+  /**
+   * 将 Windows 虚拟键码反查为 HarmonyOS KeyCode
+   *
+   * @param vkCode Windows 虚拟键码
+   * @returns HarmonyOS KeyCode，无对应返回 0
+   */
+  static reverseTranslate(vkCode: number): number {
+    if (!KeyboardTranslator.reverseMap) {
+      const overrides = KeyboardTranslator.REVERSE_OVERRIDES;
+      const map = new Map<number, number>();
+      for (let keyCode = 2000; keyCode <= 2120; keyCode++) {
+        const vk = KeyboardTranslator.translate(keyCode);
+        if (vk > 0 && !map.has(vk) && !overrides.has(vk)) {
+          map.set(vk, keyCode);
+        }
+      }
+      overrides.forEach((keyCode: number, vk: number) => {
+        map.set(vk, keyCode);
+      });
+      KeyboardTranslator.reverseMap = map;
+    }
+    return KeyboardTranslator.reverseMap.get(vkCode) ?? 0;
+  }
 }
