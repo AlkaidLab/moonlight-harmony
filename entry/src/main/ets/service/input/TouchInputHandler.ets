@@ -32,6 +32,7 @@ import {
   TOUCH_EVENT_CANCEL,
   TOUCH_EVENT_HOVER,
   TOUCH_EVENT_CANCEL_ALL,
+  LI_ERR_UNSUPPORTED,
   LI_TOOL_TYPE_UNKNOWN,
   LI_TOOL_TYPE_PEN,
   LI_TOOL_TYPE_ERASER,
@@ -1006,7 +1007,7 @@ export class TouchInputHandler {
             areaMajor, areaMinor, rotation, tilt
           );
           // 检测主机是否支持 Pen 事件
-          if (ret === -7) { // LI_ERR_UNSUPPORTED = -7
+          if (ret === LI_ERR_UNSUPPORTED) {
             console.warn('手写笔: 主机不支持 Pen 事件，回退到 Touch 事件');
             this.penUnsupported = true;
             // 回退：用 touch 事件重新发送

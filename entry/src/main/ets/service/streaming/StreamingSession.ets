@@ -449,6 +449,11 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private activeGamepadMask: number = 0;
   /** 在连接建立前锁定触控板能力，确保首次 arrival 就带正确元数据。 */
   private ds5TouchpadEnabled: boolean = false;
+  /** 连接期间稳定不变的主机能力，避免触摸 MOVE 热路径跨 NAPI 查询。 */
+  private hostFeatureFlags: number = 0;
+  private hostFeatureFlagsKnown: boolean = false;
+  /** 屏幕触控板 clickpad 的粘滞状态，独立于各来源的完整手柄快照。 */
+  private ds5TouchpadButtonPressed: boolean = false;
   /** 每个槽位最近一次完整状态，触控板点击必须在此状态上合并。 */
   private controllerStates: Map<number, ControllerState> = new Map();
   private physicalControllerTypes: Map<number, number> = new Map();
@@ -887,17 +892,27 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   /** 主机是否宣告 controller-touch 扩展。 */
   isControllerTouchpadSupported(): boolean {
     if (!this.isRunning) return false;
+    if (!this.hostFeatureFlagsKnown) this.readHostFeatureFlags();
+    return (this.hostFeatureFlags & LI_FF_CONTROLLER_TOUCH_EVENTS) !== 0;
+  }
+
+  private readHostFeatureFlags(): number {
     try {
-      return (this.nativeModule.getHostFeatureFlags() & LI_FF_CONTROLLER_TOUCH_EVENTS) !== 0;
+      this.hostFeatureFlags = this.nativeModule.getHostFeatureFlags();
+      this.hostFeatureFlagsKnown = true;
     } catch (_) {
-      return false;
+      this.hostFeatureFlags = 0;
+      this.hostFeatureFlagsKnown = false;
     }
+    return this.hostFeatureFlags;
   }
 
   /** Ds5TouchpadInputSink: 发送屏幕触控板触点。 */
   sendDs5TouchpadEvent(eventType: number, pointerId: number,
     x: number, y: number, pressure: number): number {
-    if (!this.isRunning || !this.ds5TouchpadEnabled) return LI_ERR_UNSUPPORTED;
+    // -2 means the local session is unavailable; it must not trigger the
+    // user-facing "host unsupported" fallback in the gesture handler.
+    if (!this.isRunning || !this.ds5TouchpadEnabled) return -2;
     if (!this.isControllerTouchpadSupported()) return LI_ERR_UNSUPPORTED;
 
     this.ensureVirtualControllerArrival(0);
@@ -915,14 +930,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     } else if (!this.virtualControllerArrived && !this.physicalControllerArrived.has(0)) {
       return;
     }
-    const state = this.getControllerState(0);
-    if (pressed) {
-      state.buttonFlags |= TOUCHPAD_FLAG;
-    } else {
-      state.buttonFlags &= ~TOUCHPAD_FLAG;
-    }
-    this.controllerStates.set(0, state);
-    this.sendControllerStateSnapshot(0, state);
+    this.ds5TouchpadButtonPressed = pressed;
+    this.sendControllerStateSnapshot(0, this.getControllerState(0));
   }
 
   /**
@@ -947,11 +956,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.controllerState.rightStickX = rightStickX;
     this.controllerState.rightStickY = rightStickY;
     this.controllerStates.set(controllerIndex, this.cloneControllerState(this.controllerState));
-    this.nativeModule.sendMultiControllerInput(
-      controllerIndex, this.activeGamepadMask,
-      buttonFlags, leftTrigger, rightTrigger,
-      leftStickX, leftStickY, rightStickX, rightStickY
-    );
+    this.sendControllerStateSnapshot(controllerIndex, this.controllerState);
   }
 
   // ---------------------------------------------------------------------------
@@ -1012,6 +1017,10 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     controllerType: number = CONTROLLER_TYPE_XBOX
   ): void {
     if (!this.isRunning || !this.physicalControllerArrived.has(controllerIndex)) return;
+    if (controllerIndex === 0 && this.virtualControllerArrived) {
+      this.reannouncePrimaryController(controllerType);
+      return;
+    }
     this.physicalControllerArrived.delete(controllerIndex);
     this.ensurePhysicalControllerArrival(controllerIndex, controllerType);
   }
@@ -1360,6 +1369,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       connectionTerminated: (errorCode: number): void => {
         console.info(`连接已终止: ${errorCode}, userInitiated=${this.userInitiatedStop}`);
         this.isRunning = false;
+        this.hostFeatureFlags = 0;
+        this.hostFeatureFlagsKnown = false;
         NetworkBoostService.getInstance().stop();
         GamepadManager.getInstance().stopAllSensors();
         // 立即停止所有振动（设备马达 + USB 手柄马达 + 音频振动）
@@ -1805,6 +1816,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.physicalControllerArrived.clear();
     this.physicalControllerTypes.clear();
     this.activeGamepadMask = 0;
+    this.hostFeatureFlags = 0;
+    this.hostFeatureFlagsKnown = false;
+    this.ds5TouchpadButtonPressed = false;
     this.controllerStates.clear();
     this.controllerState.buttonFlags = 0;
     this.controllerState.leftTrigger = 0;
@@ -1836,9 +1850,12 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   }
 
   private sendControllerStateSnapshot(controllerIndex: number, state: ControllerState): void {
+    const buttonFlags = controllerIndex === 0 && this.ds5TouchpadEnabled && this.ds5TouchpadButtonPressed
+      ? state.buttonFlags | TOUCHPAD_FLAG
+      : state.buttonFlags;
     this.nativeModule.sendMultiControllerInput(
       controllerIndex, this.activeGamepadMask,
-      state.buttonFlags, state.leftTrigger, state.rightTrigger,
+      buttonFlags, state.leftTrigger, state.rightTrigger,
       state.leftStickX, state.leftStickY, state.rightStickX, state.rightStickY
     );
   }
@@ -1848,7 +1865,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
    * Sunshine ignores duplicate arrival packets, so a real removal packet is
    * required before advertising the new capability profile.
    */
-  private reannouncePrimaryController(): void {
+  private reannouncePrimaryController(physicalTypeOverride?: number): void {
     if (!this.isRunning) return;
 
     const hadPhysical = this.physicalControllerArrived.has(0);
@@ -1862,7 +1879,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.physicalControllerArrived.delete(0);
 
     if (hadPhysical) {
-      const originalType = this.physicalControllerTypes.get(0) ?? CONTROLLER_TYPE_XBOX;
+      const originalType = physicalTypeOverride ??
+        this.physicalControllerTypes.get(0) ?? CONTROLLER_TYPE_XBOX;
       this.ensurePhysicalControllerArrival(0, originalType);
     } else {
       this.ensureVirtualControllerArrival(0);
