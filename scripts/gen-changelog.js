@@ -122,6 +122,14 @@ function insertIntoChangelog(entry) {
   }
 
   const content = fs.readFileSync(CHANGELOG_PATH, 'utf-8');
+  const versionMatch = entry.match(/^## \[([^\]]+)\]/m);
+  if (versionMatch) {
+    const versionHeading = `## [${versionMatch[1]}]`;
+    if (content.includes(versionHeading)) {
+      console.log(`CHANGELOG 已存在版本 ${versionMatch[1]}，跳过重复写入`);
+      return true;
+    }
+  }
   // 在第一个 ## 之前插入新条目
   const firstVersionIndex = content.indexOf('\n## [');
   if (firstVersionIndex === -1) {

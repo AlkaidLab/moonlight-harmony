@@ -25,6 +25,66 @@
   - 最新版本放在最前面
 -->
 
+<!-- releases 798-806 are not present in this checkout
+- 🐛 release stuck keys on focus loss (#109)
+- 🔧 stop forcing native window white point
+- 🩹 use static display capability profile
+- 🛡️ reject transient low brightness reports
+- 🔨 expose audio buffer latency
+- 🐛 bound simulated IR rumble output
+- 🔧 cache physical controller motion slots
+- 🩹 bound trigger callbacks and harden USB teardown
+- 🛡️ serialize driver lifecycle transitions
+- 🔨 refresh late controller capabilities
+- 🐛 route physical motion by device identity
+- 🔧 repair DualSense motion forwarding
+- 🩹 suppress low-level DualSense IR noise (#105)
+- 🛡️ 缓存重复的 AAAA 查询 (#101)
+- 🔨 按码流自动识别 HDR Vivid (#98)
+- 🐛 恢复按键触感并统一机身振动 (#96)
+- 🔧 保留客户端黑位精度 (#95)
+- 🩹 应用解码器颜色元数据 (#94)
+- 🛡️ recover RTSP host resolution (#93)
+- 🔨 打通 HEVC/AV1 CUVA HDR Vivid 链路 (#92)
+- 🐛 修复自动刷新导致应用列表跳动 (#90)
+- 🔧 clear stale targets on PTS reanchor
+-->
+
+## [1.0.0.806] - 2026-08-17
+
+### 新增
+- ✨ connect HarmonyOS DualSense adaptive triggers
+- 🎉 add DualSense IR v2 client pipeline (#104)
+- 🆕 add pre-stream bandwidth probing (#99)
+- ⚡ make three-finger IME gesture optional (#97)
+
+### 优化
+- 🎯 name static capability profile
+
+### 修复
+- 🐛 release stuck keys on focus loss (#109)
+- 🔧 stop forcing native window white point
+- 🩹 use static display capability profile
+- 🛡️ reject transient low brightness reports
+- 🔨 expose audio buffer latency
+- 🐛 bound simulated IR rumble output
+- 🔧 cache physical controller motion slots
+- 🩹 bound trigger callbacks and harden USB teardown
+- 🛡️ serialize driver lifecycle transitions
+- 🔨 refresh late controller capabilities
+- 🐛 route physical motion by device identity
+- 🔧 repair DualSense motion forwarding
+- 🩹 suppress low-level DualSense IR noise (#105)
+- 🛡️ 缓存重复的 AAAA 查询 (#101)
+- 🔨 按码流自动识别 HDR Vivid (#98)
+- 🐛 恢复按键触感并统一机身振动 (#96)
+- 🔧 保留客户端黑位精度 (#95)
+- 🩹 应用解码器颜色元数据 (#94)
+- 🛡️ recover RTSP host resolution (#93)
+- 🔨 打通 HEVC/AV1 CUVA HDR Vivid 链路 (#92)
+- 🐛 修复自动刷新导致应用列表跳动 (#90)
+- 🔧 clear stale targets on PTS reanchor
+
 ## [1.0.0.797] - 2026-07-27
 HDR Vivid 内容识别与全屏串流鼠标输入优化
 
