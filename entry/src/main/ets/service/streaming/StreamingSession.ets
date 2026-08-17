@@ -902,7 +902,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       this.hostFeatureFlagsKnown = true;
     } catch (_) {
       this.hostFeatureFlags = 0;
-      this.hostFeatureFlagsKnown = false;
+      // Feature flags are fixed for the lifetime of the connection. Treat a
+      // failed read as unsupported and avoid retrying on every MOVE event.
+      this.hostFeatureFlagsKnown = true;
     }
     return this.hostFeatureFlags;
   }
