@@ -79,6 +79,8 @@ export class StreamMenuManager {
         return '直接触摸模式';
       case 'mouse':
         return '鼠标模式';
+      case 'ds5_touchpad':
+        return 'DS5 触控板模式';
       default:
         return this.viewModel.touchMode;
     }
@@ -230,6 +232,11 @@ export class StreamMenuManager {
         title: currentMode === 'mouse' ? '✓ 鼠标模式' : '  鼠标模式',
         subtitle: '相对移动 + 按住拖动',
         value: 'mouse'
+      },
+      {
+        title: currentMode === 'ds5_touchpad' ? '✓ DS5 触控板' : '  DS5 触控板',
+        subtitle: '屏幕映射 DualSense 触控板，支持双指',
+        value: 'ds5_touchpad'
       },
       {
         title: '🖱️ 切换远程鼠标指针',

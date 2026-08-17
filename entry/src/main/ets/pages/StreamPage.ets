@@ -335,6 +335,7 @@ struct StreamPage {
         // 失焦（Alt+Tab 切走 / 弹系统对话框）：释放所有按键，
         // 防止 KEY_UP 丢失导致主机端修饰键/普通键卡住
         this.inputHandler.releaseAllKeys();
+        this.touchInputHandler.cancelActiveInput();
         this.inputHandler.stopMouseInterceptor();
         this.stopMouseKeepAlive();
       } else {
@@ -788,6 +789,8 @@ struct StreamPage {
     this.lifecycleManager.stopBackgroundTask();
     
     // 清理 ViewModel
+    this.touchInputHandler.cancelActiveInput();
+    this.touchInputHandler.setDs5TouchpadSink(null);
     this.viewModel.dispose();
     
     // 清理触摸处理器
@@ -1408,6 +1411,23 @@ struct StreamPage {
 
     await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
 
+    // 将屏幕 DS5 触控板绑定到本次会话的 controller slot 0。
+    this.touchInputHandler.setDs5TouchpadSink(this.viewModel.getSession());
+    this.touchInputHandler.setDs5TouchpadUnsupportedCallback(() => {
+      if (this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) return;
+      setTimeout(() => {
+        if (this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) return;
+        this.setTouchMode(TouchMode.TRACKPAD);
+        ToastQueue.show({ message: '主机未启用 DS5 触控板协议，已回退为普通触控板', duration: 2500 });
+      }, 0);
+    });
+
+    if (this.viewModel.touchMode === TouchMode.DS5_TOUCHPAD &&
+      !this.viewModel.isDs5TouchpadSupported()) {
+      this.setTouchMode(TouchMode.TRACKPAD);
+      ToastQueue.show({ message: '主机未启用 DS5 触控板协议，已回退为普通触控板', duration: 2500 });
+    }
+
     // 串流启动后调度未识别 USB 手柄检测（延迟内 GCK 完成扫描）
     this.scheduleUnhandledUsbDetection();
   }
@@ -1454,8 +1474,7 @@ struct StreamPage {
       }
       
       // 设置触摸输入模式
-      const touchModeStr = this.viewModel.touchMode as string;
-      this.touchInputHandler.setMode(touchModeStr as TouchInputMode);
+      this.touchInputHandler.setMode(this.toTouchInputMode(this.viewModel.touchMode));
       // 配置双击时间阈值和双击拖动
       if (streamConfig) {
         this.touchInputHandler.setDoubleTapTimeThreshold(streamConfig.doubleTapTimeThreshold);
@@ -1817,6 +1836,7 @@ struct StreamPage {
     }
 
     this.stopClipboardSync();
+    this.touchInputHandler.cancelActiveInput();
 
     const report = this.buildCurrentStreamReport();
     await this.saveStreamDiagnostics(report.diagnosticsText);
@@ -1851,6 +1871,7 @@ struct StreamPage {
     }
 
     this.stopClipboardSync();
+    this.touchInputHandler.cancelActiveInput();
 
     const report = this.buildCurrentStreamReport();
     await this.saveStreamDiagnostics(report.diagnosticsText);
@@ -1889,6 +1910,8 @@ struct StreamPage {
       this.stopClipboardSync();
 
       // 先停止当前会话（静默，不导航不显示 toast）
+      this.touchInputHandler.cancelActiveInput();
+      this.touchInputHandler.setDs5TouchpadSink(null);
       await this.viewModel.stopStreaming();
       console.info('[StreamPage] 旧会话已停止，开始重新连接...');
 
@@ -1944,6 +1967,8 @@ struct StreamPage {
         return '多点触控模式';
       case 'mouse':
         return '鼠标模式';
+      case 'ds5_touchpad':
+        return 'DS5 触控板模式';
       default:
         return this.viewModel.touchMode;
     }
@@ -1958,7 +1983,8 @@ struct StreamPage {
     }
     // 虚拟手柄显示时，默认不处理触摸输入（避免与虚拟按键手势竞争）
     // touchPassthrough 开启时允许共存
-    if (this.viewModel.showController && !this.touchPassthrough) {
+    if (this.viewModel.showController && !this.touchPassthrough &&
+      this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) {
       return;
     }
     this.touchInputHandler.handleTouchEvent(event);
@@ -1988,9 +2014,35 @@ struct StreamPage {
    * 设置触摸模式
    */
   setTouchMode(mode: string): void {
-    this.viewModel.setTouchMode(mode as TouchMode);
-    this.touchInputHandler.setMode(mode as TouchInputMode);
+    const nextMode = mode as TouchMode;
+    if (nextMode === TouchMode.DS5_TOUCHPAD && this.viewModel.isConnected &&
+      !this.viewModel.isDs5TouchpadSupported()) {
+      ToastQueue.show({ message: '主机未启用 DS5 触控板协议', duration: 2200 });
+      return;
+    }
+
+    this.touchInputHandler.cancelActiveInput();
+    if (nextMode === TouchMode.DS5_TOUCHPAD && this.isTouchOverrideEnabled) {
+      this.isTouchOverrideEnabled = false;
+      this.panZoomHandler.cancelActiveGesture();
+    }
+    this.viewModel.setTouchMode(nextMode);
+    this.touchInputHandler.setMode(this.toTouchInputMode(nextMode));
     console.info(`StreamPage: 触摸模式切换为 ${mode}`);
+  }
+
+  private toTouchInputMode(mode: TouchMode): TouchInputMode {
+    switch (mode) {
+      case TouchMode.DIRECT:
+        return TouchInputMode.DIRECT;
+      case TouchMode.MOUSE:
+        return TouchInputMode.MOUSE;
+      case TouchMode.DS5_TOUCHPAD:
+        return TouchInputMode.DS5_TOUCHPAD;
+      case TouchMode.TRACKPAD:
+      default:
+        return TouchInputMode.TRACKPAD;
+    }
   }
   
   /**
@@ -2041,7 +2093,9 @@ struct StreamPage {
           .height(this.xComponentHeight)
           .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
           .attributeModifier(this.aihdrModifier)
-          .hitTestBehavior((this.viewModel.showController && !this.touchPassthrough) ? HitTestMode.None : HitTestMode.Default)
+          .hitTestBehavior((this.viewModel.showController && !this.touchPassthrough &&
+            this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD)
+            ? HitTestMode.None : HitTestMode.Default)
           .onTouch((event: TouchEvent) => {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
             // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
