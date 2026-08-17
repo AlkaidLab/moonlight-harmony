@@ -63,20 +63,19 @@ function versionToCode(versionName) {
 // --- 查找上一版本的 commit ---
 function findPreviousVersionCommit() {
   try {
-    // 查找最近的 "chore: 版本升级" commit（跳过 HEAD，因为 HEAD 可能就是上一次版本升级）
-    const hashes = execSync(
-      'git log --oneline --grep="版本升级" --format="%H" -2',
+    // Locate the commit that added the current version heading. This works
+    // with all historical release commit formats and does not depend on the
+    // commit message wording.
+    const changelog = fs.readFileSync(
+      path.join(ROOT, 'entry/src/main/resources/rawfile/CHANGELOG.md'), 'utf-8');
+    const latestVersion = changelog.match(/^## \[([^\]]+)\]/m)?.[1];
+    if (!latestVersion) return null;
+
+    const heading = `## [${latestVersion}]`;
+    return execSync(
+      `git log --format=%H -S${JSON.stringify(heading)} -- entry/src/main/resources/rawfile/CHANGELOG.md -1`,
       { encoding: 'utf-8', cwd: ROOT }
-    ).trim().split('\n').filter(Boolean);
-
-    const headHash = execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: ROOT }).trim();
-
-    // 返回第一个不是 HEAD 的版本升级 commit
-    for (const h of hashes) {
-      if (h !== headHash) return h;
-    }
-    // 如果只有一个且就是 HEAD，返回它（说明 HEAD 后有未提交的变更）
-    return hashes[0] || null;
+    ).trim() || null;
   } catch {
     return null;
   }
