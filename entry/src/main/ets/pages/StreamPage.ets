@@ -25,6 +25,15 @@ import { GameMenuDialog, GameMenuCallbacks } from '../components/dialogs/GameMen
 import { StreamMenuManager } from '../components/StreamMenuManager';
 import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { TouchInputHandler, TouchInputMode } from '../service/input/TouchInputHandler';
+import {
+  DS5_TOUCH_FEEDBACK_CANCEL,
+  DS5_TOUCH_FEEDBACK_CLICK_DOWN,
+  DS5_TOUCH_FEEDBACK_CLICK_UP,
+  DS5_TOUCH_FEEDBACK_DOWN,
+  DS5_TOUCH_FEEDBACK_MOVE,
+  DS5_TOUCH_FEEDBACK_UP,
+  Ds5TouchpadFeedback
+} from '../service/input/Ds5TouchpadGestureHandler';
 import { StreamWindowManager, DisplaySize } from '../service/streaming/StreamWindowManager';
 import { ShortcutManager, Shortcut } from '../components/ShortcutManager';
 import { pickRandomConnectingTip } from '../components/StreamConnectingTips';
@@ -91,6 +100,16 @@ interface StreamPageParams {
   displayGuid?: string;   // 指定的显示器 GUID
   useVdd?: boolean;       // 是否使用虚拟显示器
   posterPath?: string;    // 应用本地海报路径，连接中遮罩背景
+}
+
+interface Ds5TouchIndicator {
+  pointerId: number;
+  x: number;
+  y: number;
+  contactActive: boolean;
+  clickPressed: boolean;
+  opacity: number;
+  scale: number;
 }
 
 class BuiltStreamReport {
@@ -208,6 +227,8 @@ struct StreamPage {
   @State videoTranslateX: number = 0;
   /** 视频垂直平移 (vp) */
   @State videoTranslateY: number = 0;
+  /** DS5 触控板本地触点回显，短暂显示且不参与命中测试。 */
+  @State private ds5TouchIndicators: Ds5TouchIndicator[] = [];
 
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
@@ -257,6 +278,7 @@ struct StreamPage {
   private streamReportAiRequestId: number = 0;
   // AI 可用性探测的延时定时器，aboutToDisappear 时需清理
   private aiProbeTimer: number | null = null;
+  private ds5TouchFadeTimers: Map<number, number> = new Map();
   
   // 页面参数
   private computerId: string = '';
@@ -790,7 +812,9 @@ struct StreamPage {
     
     // 清理 ViewModel
     this.touchInputHandler.cancelActiveInput();
+    this.clearDs5TouchIndicators();
     this.touchInputHandler.setDs5TouchpadSink(null);
+    this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
     this.viewModel.dispose();
     
     // 清理触摸处理器
@@ -1413,6 +1437,9 @@ struct StreamPage {
 
     // 将屏幕 DS5 触控板绑定到本次会话的 controller slot 0。
     this.touchInputHandler.setDs5TouchpadSink(this.viewModel.getSession());
+    this.touchInputHandler.setDs5TouchpadFeedbackCallback((feedback: Ds5TouchpadFeedback): void => {
+      this.handleDs5TouchpadFeedback(feedback);
+    });
     this.touchInputHandler.setDs5TouchpadUnsupportedCallback(() => {
       if (this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) return;
       setTimeout(() => {
@@ -1837,6 +1864,7 @@ struct StreamPage {
 
     this.stopClipboardSync();
     this.touchInputHandler.cancelActiveInput();
+    this.clearDs5TouchIndicators();
 
     const report = this.buildCurrentStreamReport();
     await this.saveStreamDiagnostics(report.diagnosticsText);
@@ -1911,7 +1939,9 @@ struct StreamPage {
 
       // 先停止当前会话（静默，不导航不显示 toast）
       this.touchInputHandler.cancelActiveInput();
+      this.clearDs5TouchIndicators();
       this.touchInputHandler.setDs5TouchpadSink(null);
+      this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
       await this.viewModel.stopStreaming();
       console.info('[StreamPage] 旧会话已停止，开始重新连接...');
 
@@ -1990,6 +2020,103 @@ struct StreamPage {
     this.touchInputHandler.handleTouchEvent(event);
   }
 
+  private handleDs5TouchpadFeedback(feedback: Ds5TouchpadFeedback): void {
+    if (feedback.type === DS5_TOUCH_FEEDBACK_CANCEL) {
+      this.clearDs5TouchIndicators();
+      return;
+    }
+
+    if (feedback.pointerId < 0) return;
+    const current = this.ds5TouchIndicators;
+    let found = false;
+    const next: Ds5TouchIndicator[] = [];
+    for (let i = 0; i < current.length; i++) {
+      const indicator = current[i];
+      if (indicator.pointerId !== feedback.pointerId) {
+        next.push(indicator);
+        continue;
+      }
+
+      found = true;
+      const updated: Ds5TouchIndicator = {
+        pointerId: indicator.pointerId,
+        x: feedback.x,
+        y: feedback.y,
+        contactActive: indicator.contactActive,
+        clickPressed: indicator.clickPressed,
+        opacity: 1,
+        scale: 1
+      };
+      if (feedback.type === DS5_TOUCH_FEEDBACK_DOWN ||
+        feedback.type === DS5_TOUCH_FEEDBACK_MOVE) {
+        updated.contactActive = true;
+        updated.clickPressed = false;
+      } else if (feedback.type === DS5_TOUCH_FEEDBACK_UP) {
+        updated.contactActive = false;
+        updated.scale = 0.82;
+        updated.opacity = 0.82;
+      } else if (feedback.type === DS5_TOUCH_FEEDBACK_CLICK_DOWN) {
+        updated.clickPressed = true;
+        updated.scale = 1.12;
+      } else if (feedback.type === DS5_TOUCH_FEEDBACK_CLICK_UP) {
+        updated.clickPressed = false;
+        updated.contactActive = false;
+        updated.scale = 0.78;
+        updated.opacity = 0.72;
+      }
+      next.push(updated);
+    }
+
+    if (!found && (feedback.type === DS5_TOUCH_FEEDBACK_DOWN ||
+      feedback.type === DS5_TOUCH_FEEDBACK_CLICK_DOWN)) {
+      const created: Ds5TouchIndicator = {
+        pointerId: feedback.pointerId,
+        x: feedback.x,
+        y: feedback.y,
+        contactActive: feedback.type === DS5_TOUCH_FEEDBACK_DOWN,
+        clickPressed: feedback.type === DS5_TOUCH_FEEDBACK_CLICK_DOWN,
+        opacity: 1,
+        scale: feedback.type === DS5_TOUCH_FEEDBACK_CLICK_DOWN ? 1.12 : 1
+      };
+      next.push(created);
+    }
+
+    this.ds5TouchIndicators = next;
+    let shouldScheduleRemoval = feedback.type === DS5_TOUCH_FEEDBACK_CLICK_UP;
+    if (feedback.type === DS5_TOUCH_FEEDBACK_UP) {
+      for (let i = 0; i < this.ds5TouchIndicators.length; i++) {
+        const indicator = this.ds5TouchIndicators[i];
+        if (indicator.pointerId === feedback.pointerId && !indicator.clickPressed) {
+          shouldScheduleRemoval = true;
+          break;
+        }
+      }
+    }
+    if (shouldScheduleRemoval) {
+      this.scheduleDs5TouchIndicatorRemoval(feedback.pointerId);
+    }
+  }
+
+  private scheduleDs5TouchIndicatorRemoval(pointerId: number): void {
+    const previous = this.ds5TouchFadeTimers.get(pointerId);
+    if (previous !== undefined) clearTimeout(previous);
+    const timer = setTimeout(() => {
+      this.ds5TouchIndicators = this.ds5TouchIndicators.filter(
+        (indicator: Ds5TouchIndicator): boolean => indicator.pointerId !== pointerId
+      );
+      this.ds5TouchFadeTimers.delete(pointerId);
+    }, 140);
+    this.ds5TouchFadeTimers.set(pointerId, timer);
+  }
+
+  private clearDs5TouchIndicators(): void {
+    this.ds5TouchFadeTimers.forEach((timer: number): void => {
+      clearTimeout(timer);
+    });
+    this.ds5TouchFadeTimers.clear();
+    this.ds5TouchIndicators = [];
+  }
+
   /**
    * 处理本地系统触摸手势。
    *
@@ -2022,6 +2149,7 @@ struct StreamPage {
     }
 
     this.touchInputHandler.cancelActiveInput();
+    this.clearDs5TouchIndicators();
     if (nextMode === TouchMode.DS5_TOUCHPAD && this.isTouchOverrideEnabled) {
       this.isTouchOverrideEnabled = false;
       this.panZoomHandler.cancelActiveGesture();
@@ -2209,6 +2337,12 @@ struct StreamPage {
         })
       }
 
+      // DS5 触控板本地回显层：只画触点，不拦截后续触摸。
+      if (this.viewModel.isConnected && this.viewModel.touchMode === TouchMode.DS5_TOUCHPAD &&
+        this.ds5TouchIndicators.length > 0) {
+        this.Ds5TouchpadFeedbackOverlay()
+      }
+
       // 自定义按键覆盖层
       if (this.showCustomKeys && this.viewModel.isConnected) {
         Column() {
@@ -2300,6 +2434,60 @@ struct StreamPage {
   }
 
   // ==================== UI Builders ====================
+
+  @Builder
+  Ds5TouchpadFeedbackOverlay() {
+    Stack() {
+      ForEach(this.ds5TouchIndicators, (indicator: Ds5TouchIndicator) => {
+        Stack() {
+          Circle()
+            .width(42)
+            .height(42)
+            .fill(indicator.clickPressed ? '#45FFD166' : '#24FFFFFF')
+            .border({
+              width: indicator.clickPressed ? 2.5 : 1.5,
+              color: indicator.clickPressed ? '#FFF4C15D' : '#CCFFFFFF'
+            })
+          Circle()
+            .width(indicator.clickPressed ? 8 : 5)
+            .height(indicator.clickPressed ? 8 : 5)
+            .fill(indicator.clickPressed ? '#FFFFD166' : '#E6FFFFFF')
+        }
+          .width(42)
+          .height(42)
+          .position({
+            x: (indicator.x * 100) + '%',
+            y: (indicator.y * 100) + '%'
+          })
+          .translate({
+            x: -21,
+            y: -21
+          })
+          .opacity(indicator.opacity)
+          .scale({
+            x: indicator.scale,
+            y: indicator.scale
+          })
+          .hitTestBehavior(HitTestMode.None)
+      }, (indicator: Ds5TouchIndicator): string => String(indicator.pointerId))
+    }
+      .width(this.xComponentWidth)
+      .height(this.xComponentHeight)
+      .alignContent(this.xComponentAlignment)
+      .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+      .scale({
+        x: this.videoScale,
+        y: this.videoScale,
+        centerX: 0,
+        centerY: 0
+      })
+      .translate({
+        x: this.videoTranslateX,
+        y: this.videoTranslateY
+      })
+      .clip(true)
+      .hitTestBehavior(HitTestMode.None)
+  }
 
   @Builder
   KeyboardInputPanel() {

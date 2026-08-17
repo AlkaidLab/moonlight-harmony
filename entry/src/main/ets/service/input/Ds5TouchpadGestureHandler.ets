@@ -23,6 +23,21 @@ export interface Ds5TouchpadInputSink {
   setDs5TouchpadButtonPressed(pressed: boolean): void;
 }
 
+export const DS5_TOUCH_FEEDBACK_DOWN = 1;
+export const DS5_TOUCH_FEEDBACK_MOVE = 2;
+export const DS5_TOUCH_FEEDBACK_UP = 3;
+export const DS5_TOUCH_FEEDBACK_CANCEL = 4;
+export const DS5_TOUCH_FEEDBACK_CLICK_DOWN = 5;
+export const DS5_TOUCH_FEEDBACK_CLICK_UP = 6;
+
+/** Local-only feedback for showing the touch contact without changing input. */
+export interface Ds5TouchpadFeedback {
+  type: number;
+  pointerId: number;
+  x: number;
+  y: number;
+}
+
 interface Ds5TouchState {
   startX: number;
   startY: number;
@@ -49,9 +64,13 @@ export class Ds5TouchpadGestureHandler {
   private touches: Map<number, Ds5TouchState> = new Map();
   private clickReleaseTimer: number = -1;
   private clickPressed: boolean = false;
+  private clickPointerId: number = -1;
+  private clickX: number = 0;
+  private clickY: number = 0;
   private tapToClickEnabled: boolean = true;
   private unsupportedReported: boolean = false;
   private onUnsupported: (() => void) | null = null;
+  private onFeedback: ((feedback: Ds5TouchpadFeedback) => void) | null = null;
 
   setSink(sink: Ds5TouchpadInputSink | null): void {
     if (this.sink === sink) return;
@@ -62,6 +81,10 @@ export class Ds5TouchpadGestureHandler {
 
   setUnsupportedCallback(callback: (() => void) | null): void {
     this.onUnsupported = callback;
+  }
+
+  setFeedbackCallback(callback: ((feedback: Ds5TouchpadFeedback) => void) | null): void {
+    this.onFeedback = callback;
   }
 
   /** 将单指短触映射为 DualSense 触控板机械按键。 */
@@ -102,6 +125,7 @@ export class Ds5TouchpadGestureHandler {
     this.cancelActiveInput();
     this.sink = null;
     this.onUnsupported = null;
+    this.onFeedback = null;
     this.unsupportedReported = false;
   }
 
@@ -184,12 +208,16 @@ export class Ds5TouchpadGestureHandler {
       const state = this.touches.get(touch.id);
       if (!state) continue;
 
-      if (this.tapToClickEnabled && this.isTap(touch, state, now)) this.pressClickButton();
+      const normalizedX = this.normalize(touch.x, areaWidth);
+      const normalizedY = this.normalize(touch.y, areaHeight);
+      if (this.tapToClickEnabled && this.isTap(touch, state, now)) {
+        this.pressClickButton(touch.id, normalizedX, normalizedY);
+      }
       this.sendTouch(
         TOUCH_EVENT_UP,
         touch.id,
-        this.normalize(touch.x, areaWidth),
-        this.normalize(touch.y, areaHeight),
+        normalizedX,
+        normalizedY,
         0,
       );
       this.touches.delete(touch.id);
@@ -202,6 +230,19 @@ export class Ds5TouchpadGestureHandler {
     if (!sink) return -2;
 
     const ret = sink.sendDs5TouchpadEvent(eventType, pointerId, x, y, pressure);
+    if (ret >= 0 && this.onFeedback) {
+      let feedbackType = eventType;
+      if (eventType === TOUCH_EVENT_CANCEL_ALL) {
+        feedbackType = DS5_TOUCH_FEEDBACK_CANCEL;
+      }
+      const feedback: Ds5TouchpadFeedback = {
+        type: feedbackType,
+        pointerId: pointerId,
+        x: x,
+        y: y
+      };
+      this.onFeedback(feedback);
+    }
     if (ret === LI_ERR_UNSUPPORTED && !this.unsupportedReported) {
       this.unsupportedReported = true;
       const callback = this.onUnsupported;
@@ -210,7 +251,7 @@ export class Ds5TouchpadGestureHandler {
     return ret;
   }
 
-  private pressClickButton(): void {
+  private pressClickButton(pointerId: number, x: number, y: number): void {
     const sink = this.sink;
     if (!sink) return;
 
@@ -222,6 +263,18 @@ export class Ds5TouchpadGestureHandler {
 
     sink.setDs5TouchpadButtonPressed(true);
     this.clickPressed = true;
+    this.clickPointerId = pointerId;
+    this.clickX = x;
+    this.clickY = y;
+    if (this.onFeedback) {
+      const feedback: Ds5TouchpadFeedback = {
+        type: DS5_TOUCH_FEEDBACK_CLICK_DOWN,
+        pointerId: pointerId,
+        x: x,
+        y: y
+      };
+      this.onFeedback(feedback);
+    }
     this.clickReleaseTimer = setTimeout(() => {
       this.clickReleaseTimer = -1;
       this.releaseClickButton();
@@ -237,7 +290,17 @@ export class Ds5TouchpadGestureHandler {
 
     const sink = this.sink;
     if (sink) sink.setDs5TouchpadButtonPressed(false);
+    if (this.onFeedback) {
+      const feedback: Ds5TouchpadFeedback = {
+        type: DS5_TOUCH_FEEDBACK_CLICK_UP,
+        pointerId: this.clickPointerId,
+        x: this.clickX,
+        y: this.clickY
+      };
+      this.onFeedback(feedback);
+    }
     this.clickPressed = false;
+    this.clickPointerId = -1;
   }
 
   private markMultiTouchGesture(): void {

@@ -16,7 +16,11 @@
 import nativeLib from 'libmoonlight_nativelib.so';
 import { PointXY } from './PanZoomHandler';
 import { TrackpadGestureHandler, TrackpadInputSink, TrackpadConfig } from './TrackpadGestureHandler';
-import { Ds5TouchpadGestureHandler, Ds5TouchpadInputSink } from './Ds5TouchpadGestureHandler';
+import {
+  Ds5TouchpadFeedback,
+  Ds5TouchpadGestureHandler,
+  Ds5TouchpadInputSink
+} from './Ds5TouchpadGestureHandler';
 import {
   BUTTON_ACTION_PRESS,
   BUTTON_ACTION_RELEASE,
@@ -341,6 +345,11 @@ export class TouchInputHandler {
   /** 设置 DS5 触控板不受支持时的回退通知。 */
   setDs5TouchpadUnsupportedCallback(callback: (() => void) | null): void {
     this.ds5Touchpad.setUnsupportedCallback(callback);
+  }
+
+  /** 绑定 DS5 触点的本地视觉反馈，不改变远端输入协议。 */
+  setDs5TouchpadFeedbackCallback(callback: ((feedback: Ds5TouchpadFeedback) => void) | null): void {
+    this.ds5Touchpad.setFeedbackCallback(callback);
   }
 
   /**
