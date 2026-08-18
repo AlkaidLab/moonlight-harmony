@@ -33,6 +33,7 @@ import { NetworkBoostService } from '../network/NetworkBoostService';
 import { BandwidthProbeService } from '../network/BandwidthProbeService';
 import { Ds5TouchpadInputSink } from '../input/Ds5TouchpadGestureHandler';
 import { MoonBridge as ClipboardNativeBridge } from '../jni/ClipboardBridge';
+import { sampleDisplayBrightness, MeasuredBrightnessProfile } from './BrightnessSampler';
 import {
   MoonBridge,
   CONTROLLER_TYPE_UNKNOWN,
@@ -82,6 +83,8 @@ export interface StreamStats {
   codecOutputFrames: number;
   droppedFrames: number;
   hdrVivid: boolean;       // 码流中检测到 CUVA HDR Vivid 动态元数据
+  hostMaxLuminance: number;    // 宿主上报的虚拟屏峰值亮度 (nits, 0=未知)
+  hostMaxFullFrame: number;    // 宿主上报的满帧亮度 (nits, 0=未知)
   framesLost: number;
   totalFrames: number;
   globalAvgDecodeLatency: number;  // 全局平均解码延迟 ms
@@ -133,6 +136,15 @@ export interface DecoderCapabilities {
 
 /** HDR 状态变化回调 */
 export type HdrStateCallback = (isHdr: boolean) => void;
+
+/** 宿主通过 SS_HDR_METADATA 下发的 HDR 显示/内容元数据(单位 nits,minDisplayLuminance 为 1/10000 nit) */
+export interface HostHdrMetadata {
+  maxDisplayLuminance: number;
+  minDisplayLuminance: number;
+  maxContentLightLevel: number;
+  maxFrameAverageLightLevel: number;
+  maxFullFrameLuminance: number;
+}
 
 /** 编解码器状态变化回调 */
 export type CodecStateCallback = (codec: string) => void;
@@ -230,7 +242,7 @@ interface StreamCallbacks {
   connectionStarted?: () => void;
   connectionTerminated?: (errorCode: number) => void;
   connectionStatusUpdate?: (connectionStatus: number) => void;
-  setHdrMode?: (enabled: boolean) => void;
+  setHdrMode?: (enabled: boolean, metadata?: HostHdrMetadata) => void;
   rumble?: (controllerNumber: number, lowFreqMotor: number, highFreqMotor: number) => void;
   ds5HapticsIrV2?: (frame: Ds5HapticsIrV2Frame) => void;
   setAdaptiveTriggers?: (frame: AdaptiveTriggersFrame) => void;
@@ -362,26 +374,56 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   }
 
   /**
-   * 获取用于服务端 HDR tone mapping 的静态显示能力 profile。
-   * 当前屏幕亮度仅用于诊断，不参与 capability 上报。
+   * 解析上报给 Sunshine 的 HDR 亮度范围。
+   * 优先级:手动滑条覆盖(仅峰值/满帧)> 窗口采样实测 > 静态 profile。
+   * sdrNits 与滑条正交:只要实测有效就上报。
    * @returns [minBrightness, maxBrightness, maxAverageBrightness] (nits)
    */
-  private static getHdrCapabilityProfile(): number[] {
-    const minBrightness = DEFAULT_HDR_MIN_BRIGHTNESS_NITS;
-    const maxBrightness = DEFAULT_HDR_MAX_BRIGHTNESS_NITS;
-    const maxAverageBrightness = DEFAULT_HDR_MAX_FULL_FRAME_BRIGHTNESS_NITS;
+  private async resolveBrightnessRange(effectiveHdr: boolean): Promise<number[]> {
+    const staticProfile = [
+      DEFAULT_HDR_MIN_BRIGHTNESS_NITS,
+      DEFAULT_HDR_MAX_BRIGHTNESS_NITS,
+      DEFAULT_HDR_MAX_FULL_FRAME_BRIGHTNESS_NITS
+    ];
 
-    try {
-      const brightnessInfo = display.getBrightnessInfo(0);
-      console.info(`[Brightness] sdrNits=${brightnessInfo.sdrNits}, ` +
-        `currentHeadroom=${brightnessInfo.currentHeadroom}, maxHeadroom=${brightnessInfo.maxHeadroom}`);
-    } catch (err) {
-      console.warn(`[Brightness] getBrightnessInfo 不可用，使用默认值: ${err}`);
+    if (!effectiveHdr) {
+      console.info('[Brightness] 非 HDR 会话,使用静态 profile: ' +
+        `min=${staticProfile[0]}, max=${staticProfile[1]}, avg=${staticProfile[2]} nits`);
+      return staticProfile;
     }
 
-    console.info(`[Brightness] using static HDR capability profile: ` +
-      `min=${minBrightness}, max=${maxBrightness}, avg=${maxAverageBrightness} nits`);
-    return [minBrightness, maxBrightness, maxAverageBrightness];
+    // HDR 会话统一等待采样(在 start() 已提前发起,与网络请求重叠;此处兜底 2s)
+    this.lastMeasuredSdrNits = 0;
+    let measured: MeasuredBrightnessProfile | null = null;
+    if (this.brightnessSamplePromise) {
+      measured = await Promise.race([
+        this.brightnessSamplePromise,
+        new Promise<MeasuredBrightnessProfile | null>(resolve => setTimeout(() => resolve(null), 2000))
+      ]);
+      if (measured) {
+        this.lastMeasuredSdrNits = measured.sdrNits;
+      }
+    } else {
+      console.warn('[Brightness] 无采样结果');
+    }
+
+    if (this.config?.hdrBrightnessOverride) {
+      const overridden = StreamingSession.applyBrightnessOverride(staticProfile, this.config.hdrPeakBrightnessNits);
+      console.info('[Brightness] HDR 手动覆盖: min=' + overridden[0].toString() +
+        ', max=' + overridden[1].toString() +
+        ', avg=' + overridden[2].toString() +
+        ', sdr=' + this.lastMeasuredSdrNits.toString() + ' nits');
+      return overridden;
+    }
+
+    if (measured) {
+      console.info('[Brightness] 实测 profile: sdr=' + measured.sdrNits.toString() +
+        ', max=' + measured.maxBrightness.toString() +
+        ', avg=' + measured.maxAverageBrightness.toString() + ' nits');
+      return [DEFAULT_HDR_MIN_BRIGHTNESS_NITS, measured.maxBrightness, measured.maxAverageBrightness];
+    }
+    console.warn('[Brightness] 采样超时或未通过校验,回退静态 profile');
+    return staticProfile;
   }
 
   private static applyBrightnessOverride(range: number[], peakBrightnessNits: number): number[] {
@@ -419,6 +461,12 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private riKeyId: number = 0;
   private displayGuid: string = '';
   private useVdd: boolean = false;
+  /** 启动时提前发起的亮度采样(与网络等待重叠),永不 reject */
+  private brightnessSamplePromise: Promise<MeasuredBrightnessProfile | null> | null = null;
+  /** 实测 SDR 参考白 (nits,0=未测量/不可靠),用于 sdrBrightness 上报 */
+  private lastMeasuredSdrNits: number = 0;
+  /** sdrNits 动态性探针(brightnessInfoChange 日志),仅诊断不参与上报 */
+  private brightnessProbeHandler: ((displayId: number, info: display.BrightnessInfo) => void) | null = null;
 
   // 服务器信息
   private serverAppVersion: string = '';
@@ -476,6 +524,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     hostLatency: 0, networkLatency: 0, packetLoss: 0,
     decodedFrames: 0, codecOutputFrames: 0, droppedFrames: 0,
     hdrVivid: false,
+    hostMaxLuminance: 0, hostMaxFullFrame: 0,
     framesLost: 0, totalFrames: 0,
     globalAvgDecodeLatency: 0, globalAvgHostLatency: 0, globalAvgFps: 0,
     droppedByL1: 0, droppedByL2: 0, droppedByL3: 0, droppedByL4: 0, droppedByL5: 0,
@@ -490,6 +539,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     presentationLeadAtLeast8Ms: 0, presentationPendingHighWater: 0
   };
   private lastValidStats: StreamStats | null = null;
+  /** 宿主最近一次通过 SS_HDR_METADATA 下发的元数据(null=未收到) */
+  private lastHostHdrMetadata: HostHdrMetadata | null = null;
 
   // 滑动窗口丢包率统计（对齐 Android: lastTwo = lastWindow + activeWindow）
   private prevSnapshotLost: number = 0;    // 上一窗口起始时的累计 framesLost
@@ -586,6 +637,11 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.useVdd = useVdd || false;
     this.abilityContext = context;
     this.userInitiatedStop = false;
+    this.lastMeasuredSdrNits = 0;
+    this.lastHostHdrMetadata = null;
+    // 亮度采样提前发起,与后续网络请求重叠执行,不增加启动延迟
+    this.brightnessSamplePromise = sampleDisplayBrightness(0).catch(() => null);
+    this.registerBrightnessProbe();
 
     console.info(`开始串流: computer=${computerId}, app=${appId}`);
     console.info(`配置: ${config.width}x${config.height}@${config.fps}fps, ${config.bitrate}kbps, ${config.codec}`);
@@ -1041,6 +1097,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       this.stats.codecOutputFrames = vs.codecOutputFrames || 0;
       this.stats.droppedFrames = vs.framesDropped;
       this.stats.hdrVivid = vs.hdrVivid || false;
+      this.stats.hostMaxLuminance = this.lastHostHdrMetadata ? this.lastHostHdrMetadata.maxDisplayLuminance : 0;
+      this.stats.hostMaxFullFrame = this.lastHostHdrMetadata ? this.lastHostHdrMetadata.maxFullFrameLuminance : 0;
       this.stats.fps = vs.fps || 0;
       this.stats.codecOutputFps = vs.codecOutputFps || 0;
       this.stats.renderedFps = vs.renderedFps || 0;
@@ -1129,6 +1187,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       codecOutputFrames: this.stats.codecOutputFrames,
       droppedFrames: this.stats.droppedFrames,
       hdrVivid: this.stats.hdrVivid,
+      hostMaxLuminance: this.stats.hostMaxLuminance,
+      hostMaxFullFrame: this.stats.hostMaxFullFrame,
       framesLost: this.stats.framesLost,
       totalFrames: this.stats.totalFrames,
       globalAvgDecodeLatency: this.stats.globalAvgDecodeLatency,
@@ -1395,8 +1455,10 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       clipboardData: (kind: number, token: number, payload: Uint8Array): void => {
         ClipboardNativeBridge.onClipboardDataReceived(kind, token, payload);
       },
-      setHdrMode: (enabled: boolean): void => {
-        console.info(`HDR 模式变化通知: ${enabled}`);
+      setHdrMode: (enabled: boolean, metadata?: HostHdrMetadata): void => {
+        console.info(`HDR 模式变化通知: ${enabled}` +
+          (metadata ? `, hostMaxLum=${metadata.maxDisplayLuminance}, hostFullFrame=${metadata.maxFullFrameLuminance}` : ''));
+        this.lastHostHdrMetadata = metadata ?? null;
         if (this.config && this.config.hdr !== enabled) {
           this.config.hdr = enabled;
         }
@@ -1496,13 +1558,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       this.config.hdr = effectiveHdr;
     }
 
-    let brightnessRange = StreamingSession.getHdrCapabilityProfile();
-    if (effectiveHdr && this.config.hdrBrightnessOverride) {
-      brightnessRange = StreamingSession.applyBrightnessOverride(brightnessRange, this.config.hdrPeakBrightnessNits);
-      console.info('[Brightness] HDR override: min=' + brightnessRange[0].toString() +
-        ', max=' + brightnessRange[1].toString() +
-        ', avg=' + brightnessRange[2].toString() + ' nits');
-    }
+    const brightnessRange = await this.resolveBrightnessRange(effectiveHdr);
 
     const launchConfig: LaunchConfig = {
       appId: this.appId,
@@ -1521,6 +1577,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       minBrightness: brightnessRange[0],
       maxBrightness: brightnessRange[1],
       maxAverageBrightness: brightnessRange[2],
+      sdrBrightness: this.lastMeasuredSdrNits > 0 ? this.lastMeasuredSdrNits : undefined,
       screenCombinationMode: this.config.screenCombinationMode,
     };
 
@@ -1974,9 +2031,36 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   // 内部 — 清理
   // ---------------------------------------------------------------------------
 
+  /**
+   * sdrNits 动态性探针:记录 brightnessInfoChange 事件三元组,用于判定
+   * 亮度滑条调的是白位还是整体缩放(A/B/C 模型)。纯日志,不影响上报。
+   */
+  private registerBrightnessProbe(): void {
+    try {
+      this.brightnessProbeHandler = (displayId: number, info: display.BrightnessInfo): void => {
+        console.info(`[BrightnessProbe] display=${displayId}, sdrNits=${info.sdrNits}, ` +
+          `currentHeadroom=${info.currentHeadroom}, maxHeadroom=${info.maxHeadroom}`);
+      };
+      display.on('brightnessInfoChange', this.brightnessProbeHandler);
+    } catch (err) {
+      this.brightnessProbeHandler = null;
+      console.warn(`[BrightnessProbe] brightnessInfoChange 不可用: ${err}`);
+    }
+  }
+
+  private unregisterBrightnessProbe(): void {
+    if (this.brightnessProbeHandler) {
+      try {
+        display.off('brightnessInfoChange', this.brightnessProbeHandler);
+      } catch (_) { /* ignore */ }
+      this.brightnessProbeHandler = null;
+    }
+  }
+
   private async cleanup(): Promise<void> {
     console.info('清理串流资源');
     this.isRunning = false;
+    this.unregisterBrightnessProbe();
     // LiStopConnection() suppresses connectionTerminated for an explicit stop,
     // so clear controller output here as well as in the termination callback.
     GamepadManager.getInstance().stopAllVibration();

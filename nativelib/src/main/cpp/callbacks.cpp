@@ -151,7 +151,7 @@ static bool ConvertSunshineHdrMetadata(const SS_HDR_METADATA* source, Smpte2086M
 // 通用参数传递结构
 typedef struct {
     int intParams[4];
-    double doubleParams[2];
+    double doubleParams[6];
     void* ptrParam;
     int ptrSize;
 } CallbackData;
@@ -290,12 +290,18 @@ static void CallJs_ConnectionStatusUpdate(napi_env env, napi_value js_callback, 
 static void CallJs_SetHdrMode(napi_env env, napi_value js_callback, void* context, void* data) {
     CallbackData* cbData = (CallbackData*)data;
     if (env != nullptr && js_callback != nullptr) {
-        napi_value argv[1];
+        // argv: [enabled, hasMetadata, maxDisplayLuminance, minDisplayLuminance,
+        //        maxContentLightLevel, maxFrameAverageLightLevel, maxFullFrameLuminance]
+        napi_value argv[7];
         napi_get_boolean(env, cbData->intParams[0] != 0, &argv[0]);
-        
+        napi_get_boolean(env, cbData->intParams[1] != 0, &argv[1]);
+        for (int i = 0; i < 5; i++) {
+            napi_create_double(env, cbData->doubleParams[i], &argv[2 + i]);
+        }
+
         napi_value undefined;
         napi_get_undefined(env, &undefined);
-        napi_call_function(env, undefined, js_callback, 1, argv, nullptr);
+        napi_call_function(env, undefined, js_callback, 7, argv, nullptr);
     }
     delete cbData;
 }
@@ -1596,10 +1602,20 @@ void BridgeClSetHdrMode(bool enabled, void* hdrMetadata) {
         VideoDecoderInstance::SetHdrStaticMetadata(nullptr);
     }
     
-    // 通知 ArkTS 层 HDR 状态变化
+    // 通知 ArkTS 层 HDR 状态变化;透传 SS_HDR_METADATA 原始亮度字段
+    // (不经 Smpte2086 转换,那会丢 minLuminance 缩放语义与 full-frame 字段)
     if (g_connCallbacks.tsfn_setHdrMode) {
         CallbackData* data = new CallbackData();
         data->intParams[0] = enabled;
+        if (enabled && hdrMetadata != nullptr) {
+            const SS_HDR_METADATA* meta = static_cast<const SS_HDR_METADATA*>(hdrMetadata);
+            data->intParams[1] = 1;
+            data->doubleParams[0] = static_cast<double>(meta->maxDisplayLuminance);
+            data->doubleParams[1] = static_cast<double>(meta->minDisplayLuminance);
+            data->doubleParams[2] = static_cast<double>(meta->maxContentLightLevel);
+            data->doubleParams[3] = static_cast<double>(meta->maxFrameAverageLightLevel);
+            data->doubleParams[4] = static_cast<double>(meta->maxFullFrameLuminance);
+        }
         napi_status st = napi_call_threadsafe_function(g_connCallbacks.tsfn_setHdrMode, data, napi_tsfn_nonblocking);
         if (st != napi_ok) delete data;
     }
