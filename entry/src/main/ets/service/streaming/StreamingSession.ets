@@ -45,6 +45,7 @@ import {
   LI_CCAP_ACCEL,
   LI_CCAP_GYRO,
   LI_FF_CONTROLLER_TOUCH_EVENTS,
+  LI_FF_DYNAMIC_SDR_WHITE,
   LI_ERR_UNSUPPORTED,
   TOUCHPAD_FLAG,
   MODIFIER_SHIFT,
@@ -220,6 +221,7 @@ interface NativeModule {
     x: number, y: number, pressure: number
   ): number;
   getHostFeatureFlags(): number;
+  sendClientSdrWhiteNits(nits: number): number;
   sendControllerMotionEvent(
     controllerNumber: number, motionType: number, x: number, y: number, z: number
   ): number;
@@ -349,6 +351,11 @@ const STANDARD_BUTTON_FLAGS =
   MoonlightButton.LS | MoonlightButton.RS |
   MoonlightButton.START | MoonlightButton.BACK | MoonlightButton.SPECIAL;
 
+/** 亮度事件防抖和 SDR white 发送迟滞，避免拖动亮度条时刷控制包。 */
+const SDR_WHITE_DEBOUNCE_MS = 500;
+const SDR_WHITE_MIN_DELTA_NITS = 10;
+const SDR_WHITE_MIN_DELTA_RATIO = 0.05;
+
 // =============================================================================
 // StreamingSession
 // =============================================================================
@@ -470,8 +477,13 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private brightnessSamplePromise: Promise<MeasuredBrightnessProfile | null> | null = null;
   /** 实测 SDR 参考白 (nits,0=未测量/不可靠),用于 sdrBrightness 上报 */
   private lastMeasuredSdrNits: number = 0;
-  /** sdrNits 动态性探针(brightnessInfoChange 日志),仅诊断不参与上报 */
+  /** brightnessInfoChange 监听器；事件只作失效信号，实际值由窗口重采样获得。 */
   private brightnessProbeHandler: ((displayId: number, info: display.BrightnessInfo) => void) | null = null;
+  private brightnessUpdateTimer: number = -1;
+  private brightnessSampleInFlight: boolean = false;
+  private brightnessSamplePending: boolean = false;
+  private brightnessUpdateGeneration: number = 0;
+  private lastSentSdrWhiteNits: number = 0;
 
   // 服务器信息
   private serverAppVersion: string = '';
@@ -643,6 +655,10 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.abilityContext = context;
     this.userInitiatedStop = false;
     this.lastMeasuredSdrNits = 0;
+    this.lastSentSdrWhiteNits = 0;
+    this.brightnessSamplePending = false;
+    this.brightnessSampleInFlight = false;
+    this.brightnessUpdateGeneration++;
     this.lastHostHdrMetadata = null;
     // 亮度采样提前发起,与后续网络请求重叠执行,不增加启动延迟
     this.brightnessSamplePromise = sampleDisplayBrightness(0).catch(() => null);
@@ -1431,6 +1447,12 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       connectionStarted: (): void => {
         console.info('连接已建立');
         this.isRunning = true;
+        this.readHostFeatureFlags();
+        if (this.lastMeasuredSdrNits > 0) {
+          this.sendDynamicSdrWhite(this.lastMeasuredSdrNits);
+        } else {
+          this.scheduleBrightnessResample(0);
+        }
         if (this.ds5TouchpadEnabled) {
           const supported = this.isControllerTouchpadSupported();
           console.info(`DS5 屏幕触控板: 主机 controller-touch=${supported}`);
@@ -1440,7 +1462,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       connectionTerminated: (errorCode: number): void => {
         console.info(`连接已终止: ${errorCode}, userInitiated=${this.userInitiatedStop}`);
         this.isRunning = false;
-        this.unregisterBrightnessProbe();
+        this.stopBrightnessUpdates();
         this.hostFeatureFlags = 0;
         this.hostFeatureFlagsKnown = false;
         NetworkBoostService.getInstance().stop();
@@ -2054,21 +2076,91 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   // 内部 — 清理
   // ---------------------------------------------------------------------------
 
-  /**
-   * sdrNits 动态性探针:记录 brightnessInfoChange 事件三元组,用于判定
-   * 亮度滑条调的是白位还是整体缩放(A/B/C 模型)。纯日志,不影响上报。
-   */
+  /** 注册亮度变化失效信号；不直接信任事件携带的瞬时值。 */
   private registerBrightnessProbe(): void {
     try {
       this.brightnessProbeHandler = (displayId: number, info: display.BrightnessInfo): void => {
         console.info(`[BrightnessProbe] display=${displayId}, sdrNits=${info.sdrNits}, ` +
           `currentHeadroom=${info.currentHeadroom}, maxHeadroom=${info.maxHeadroom}`);
+        if (displayId === 0) {
+          this.scheduleBrightnessResample(SDR_WHITE_DEBOUNCE_MS);
+        }
       };
       display.on('brightnessInfoChange', this.brightnessProbeHandler);
     } catch (err) {
       this.brightnessProbeHandler = null;
       console.warn(`[BrightnessProbe] brightnessInfoChange 不可用: ${err}`);
     }
+  }
+
+  private isDynamicSdrWhiteSupported(): boolean {
+    return this.isRunning && this.config?.hdr === true && this.config.hdrMode === HdrMode.HLG &&
+      (this.hostFeatureFlags & LI_FF_DYNAMIC_SDR_WHITE) !== 0;
+  }
+
+  private sendDynamicSdrWhite(nits: number): void {
+    if (!this.isDynamicSdrWhiteSupported() || !Number.isFinite(nits) || nits <= 0) return;
+    if (this.lastSentSdrWhiteNits > 0) {
+      const threshold = Math.max(SDR_WHITE_MIN_DELTA_NITS,
+        this.lastSentSdrWhiteNits * SDR_WHITE_MIN_DELTA_RATIO);
+      if (Math.abs(nits - this.lastSentSdrWhiteNits) < threshold) return;
+    }
+
+    const result = this.nativeModule.sendClientSdrWhiteNits(nits);
+    if (result === 0) {
+      this.lastSentSdrWhiteNits = nits;
+      this.lastMeasuredSdrNits = nits;
+      console.info(`[Brightness] 动态 SDR white 已更新: ${nits} nits`);
+    } else {
+      console.warn(`[Brightness] 动态 SDR white 发送失败: nits=${nits}, error=${result}`);
+    }
+  }
+
+  private scheduleBrightnessResample(delayMs: number): void {
+    if (!this.isDynamicSdrWhiteSupported()) return;
+    if (this.brightnessSampleInFlight) {
+      this.brightnessSamplePending = true;
+      return;
+    }
+    if (this.brightnessUpdateTimer >= 0) {
+      clearTimeout(this.brightnessUpdateTimer);
+    }
+    const generation = this.brightnessUpdateGeneration;
+    this.brightnessUpdateTimer = setTimeout(() => {
+      this.brightnessUpdateTimer = -1;
+      this.resampleAndSendSdrWhite(generation);
+    }, delayMs);
+  }
+
+  private async resampleAndSendSdrWhite(generation: number): Promise<void> {
+    if (generation !== this.brightnessUpdateGeneration || !this.isDynamicSdrWhiteSupported()) return;
+    this.brightnessSampleInFlight = true;
+    try {
+      const measured = await sampleDisplayBrightness(0);
+      if (generation === this.brightnessUpdateGeneration && measured && this.isDynamicSdrWhiteSupported()) {
+        this.sendDynamicSdrWhite(measured.sdrNits);
+      }
+    } catch (err) {
+      console.warn(`[Brightness] 动态重采样失败: ${err}`);
+    } finally {
+      if (generation !== this.brightnessUpdateGeneration) return;
+      this.brightnessSampleInFlight = false;
+      if (this.brightnessSamplePending) {
+        this.brightnessSamplePending = false;
+        this.scheduleBrightnessResample(SDR_WHITE_DEBOUNCE_MS);
+      }
+    }
+  }
+
+  private stopBrightnessUpdates(): void {
+    this.brightnessUpdateGeneration++;
+    if (this.brightnessUpdateTimer >= 0) {
+      clearTimeout(this.brightnessUpdateTimer);
+      this.brightnessUpdateTimer = -1;
+    }
+    this.brightnessSamplePending = false;
+    this.brightnessSampleInFlight = false;
+    this.unregisterBrightnessProbe();
   }
 
   private unregisterBrightnessProbe(): void {
@@ -2083,7 +2175,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private async cleanup(): Promise<void> {
     console.info('清理串流资源');
     this.isRunning = false;
-    this.unregisterBrightnessProbe();
+    this.stopBrightnessUpdates();
     // LiStopConnection() suppresses connectionTerminated for an explicit stop,
     // so clear controller output here as well as in the termination callback.
     GamepadManager.getInstance().stopAllVibration();

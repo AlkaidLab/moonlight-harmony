@@ -1493,6 +1493,22 @@ napi_value MoonBridge_GetHostFeatureFlags(napi_env env, napi_callback_info info)
     return result;
 }
 
+napi_value MoonBridge_SendClientSdrWhiteNits(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    double nits = 0.0;
+    int ret = LI_DYNAMIC_SDR_WHITE_ERR_INVALID;
+    if (argc == 1 && napi_get_value_double(env, args[0], &nits) == napi_ok) {
+        ret = LiSendClientSdrWhiteNits(static_cast<float>(nits));
+    }
+
+    napi_value result;
+    napi_create_int32(env, ret, &result);
+    return result;
+}
+
 napi_value MoonBridge_GetLaunchUrlQueryParameters(napi_env env, napi_callback_info info) {
     const char* params = LiGetLaunchUrlQueryParameters();
     

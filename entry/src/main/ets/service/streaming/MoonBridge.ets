@@ -75,6 +75,7 @@ export const LI_ROT_UNKNOWN = 0xFFFF;
 // 主机功能标志
 export const LI_FF_PEN_TOUCH_EVENTS = 0x01;
 export const LI_FF_CONTROLLER_TOUCH_EVENTS = 0x02;
+export const LI_FF_DYNAMIC_SDR_WHITE = 0x100;
 export const LI_ERR_UNSUPPORTED = -5501;
 
 // 手柄按钮（完整定义见 CustomKeyTypes.GamepadButton）
@@ -715,6 +716,10 @@ class MoonBridgeClass {
 
   getHostFeatureFlags(): number {
     return nativeLib.getHostFeatureFlags();
+  }
+
+  sendClientSdrWhiteNits(nits: number): number {
+    return nativeLib.sendClientSdrWhiteNits(nits);
   }
 
   // ==========================================================================
