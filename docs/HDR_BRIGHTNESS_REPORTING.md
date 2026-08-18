@@ -30,6 +30,19 @@
 
 sdrNits 并非恒定面板参数,是系统状态快照(亮度滑条/显示模式可能改变它);客户端同时注册 `brightnessInfoChange` 探针打日志(`[BrightnessProbe]`),用于评估其动态性。
 
+## 运行时更新协议
+
+动态 SDR 白位更新仅用于 Sunshine 加密 HLG 会话。宿主通过 `LI_FF_DYNAMIC_SDR_WHITE` (`0x100`) 声明支持后,客户端才发送可靠控制包 `0x5506`;不支持时继续使用 launch 阶段的 `sdrBrightness` 快照,旧客户端和旧宿主行为不变。
+
+客户端对亮度变化做 500ms 防抖,并仅在变化达到 5% 或 10 nits 时发送。有效范围为 [50,1000] nits。控制包 payload 固定 8 字节:
+
+| 偏移 | 编码 | 语义 |
+|---|---|---|
+| 0–3 | little-endian int32 | 参数类型 `9` (`CLIENT_SDR_WHITE_NITS`) |
+| 4–7 | little-endian IEEE-754 float32 | 当前 SDR 参考白(nits) |
+
+该可靠通道没有应用层 ACK;发送成功只表示控制包已进入可靠发送队列,不表示宿主已经应用。宿主必须校验参数类型、payload 长度和数值范围,未知参数保持向前兼容地忽略。
+
 ## 诊断
 
 串流性能浮层 DECODER 行显示 `屏<sdrr>/<peak>→<hostMaxLum>nit`:手机实测 SDR 白位/峰值 vs 宿主通过 SS_HDR_METADATA 回传的 `maxDisplayLuminance`。两者偏差大即 tone-map 目标与真实面板脱节,优先排查宿主是否吃到上述参数。
