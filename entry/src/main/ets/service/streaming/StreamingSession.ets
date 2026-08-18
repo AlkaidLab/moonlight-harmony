@@ -353,6 +353,8 @@ const STANDARD_BUTTON_FLAGS =
 
 /** 亮度事件防抖和 SDR white 发送迟滞，避免拖动亮度条时刷控制包。 */
 const SDR_WHITE_DEBOUNCE_MS = 500;
+const SDR_WHITE_MIN_NITS = 50;
+const SDR_WHITE_MAX_NITS = 1000;
 const SDR_WHITE_MIN_DELTA_NITS = 10;
 const SDR_WHITE_MIN_DELTA_RATIO = 0.05;
 
@@ -2099,7 +2101,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   }
 
   private sendDynamicSdrWhite(nits: number): void {
-    if (!this.isDynamicSdrWhiteSupported() || !Number.isFinite(nits) || nits <= 0) return;
+    if (!this.isDynamicSdrWhiteSupported() || !Number.isFinite(nits) ||
+      nits < SDR_WHITE_MIN_NITS || nits > SDR_WHITE_MAX_NITS) return;
     if (this.lastSentSdrWhiteNits > 0) {
       const threshold = Math.max(SDR_WHITE_MIN_DELTA_NITS,
         this.lastSentSdrWhiteNits * SDR_WHITE_MIN_DELTA_RATIO);

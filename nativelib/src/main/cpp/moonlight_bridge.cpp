@@ -39,6 +39,7 @@ int LiSendClipboardData(const void* payload, int length);
 #include "mic_capturer.h"
 #include <hilog/log.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <arpa/inet.h>
 #include <native_window/external_window.h>
@@ -1500,7 +1501,8 @@ napi_value MoonBridge_SendClientSdrWhiteNits(napi_env env, napi_callback_info in
 
     double nits = 0.0;
     int ret = LI_DYNAMIC_SDR_WHITE_ERR_INVALID;
-    if (argc == 1 && napi_get_value_double(env, args[0], &nits) == napi_ok) {
+    if (argc == 1 && napi_get_value_double(env, args[0], &nits) == napi_ok &&
+        std::isfinite(nits) && nits >= 50.0 && nits <= 1000.0) {
         ret = LiSendClientSdrWhiteNits(static_cast<float>(nits));
     }
 
