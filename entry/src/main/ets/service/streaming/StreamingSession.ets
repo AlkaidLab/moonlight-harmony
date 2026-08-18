@@ -453,6 +453,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   /** 用户主动发起的停止（菜单断开/退出游戏），抑制 connectionTerminated 回调弹窗 */
   private userInitiatedStop: boolean = false;
   private isStartingConnection: boolean = false;
+  /** 回调代次:native 各回调走独立 TSFN,无跨队列顺序;init() 重注册时递增,用于丢弃旧代次迟到回调 */
+  private static callbackGeneration: number = 0;
+  private registeredGeneration: number = 0;
   private connectionStartPromise: Promise<number> | null = null;
   private lastFailedStage: number = 0;
   private computer: ComputerInfo | null = null;
@@ -1371,6 +1374,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
   private async initializeNative(): Promise<void> {
     console.info('初始化 Native 模块');
+    this.registeredGeneration = ++StreamingSession.callbackGeneration;
 
     const callbacks: StreamCallbacks = {
       drSetup: (videoFormat: number, width: number, height: number, redrawRate: number): void => {
@@ -1462,6 +1466,10 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       setHdrMode: (enabled: boolean, hasMetadata: boolean, maxDisplayLuminance: number,
         minDisplayLuminance: number, maxContentLightLevel: number, maxFrameAverageLightLevel: number,
         maxFullFrameLuminance: number): void => {
+        // setHdrMode 与 connectionTerminated 分属不同 TSFN,无跨队列顺序保证:
+        // 丢弃旧代次注册或已终止会话的迟到回调(启动窗口靠 isStartingConnection 放行)
+        if (this.registeredGeneration !== StreamingSession.callbackGeneration) return;
+        if (!this.isRunning && !this.isStartingConnection) return;
         const metadata: HostHdrMetadata | null = hasMetadata ? {
           maxDisplayLuminance,
           minDisplayLuminance,
