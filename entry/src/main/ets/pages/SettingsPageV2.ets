@@ -1211,7 +1211,7 @@ struct SettingsPageV2 {
                 title: '手动 HDR 亮度校准',
                 subtitle: this.hdrBrightnessOverride
                   ? '上报峰值 ' + this.hdrPeakBrightnessNits.toString() + ' nits，重新连接后生效'
-                  : '默认按屏幕实测亮度上报，过曝/偏暗时可手动覆盖',
+                  : '默认优先按屏幕实测亮度上报；测量不可靠时回退默认值，过曝/偏暗时可手动覆盖',
                 type: 'toggle',
                 visible: this.enableHdr,
                 value: this.hdrBrightnessOverride,

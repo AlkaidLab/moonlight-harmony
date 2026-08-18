@@ -242,7 +242,10 @@ interface StreamCallbacks {
   connectionStarted?: () => void;
   connectionTerminated?: (errorCode: number) => void;
   connectionStatusUpdate?: (connectionStatus: number) => void;
-  setHdrMode?: (enabled: boolean, metadata?: HostHdrMetadata) => void;
+  /** native 侧按位置传 7 参:enabled + hasMetadata + 五个亮度值(见 callbacks.cpp CallJs_SetHdrMode) */
+  setHdrMode?: (enabled: boolean, hasMetadata: boolean, maxDisplayLuminance: number,
+    minDisplayLuminance: number, maxContentLightLevel: number, maxFrameAverageLightLevel: number,
+    maxFullFrameLuminance: number) => void;
   rumble?: (controllerNumber: number, lowFreqMotor: number, highFreqMotor: number) => void;
   ds5HapticsIrV2?: (frame: Ds5HapticsIrV2Frame) => void;
   setAdaptiveTriggers?: (frame: AdaptiveTriggersFrame) => void;
@@ -1431,6 +1434,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       connectionTerminated: (errorCode: number): void => {
         console.info(`连接已终止: ${errorCode}, userInitiated=${this.userInitiatedStop}`);
         this.isRunning = false;
+        this.unregisterBrightnessProbe();
         this.hostFeatureFlags = 0;
         this.hostFeatureFlagsKnown = false;
         NetworkBoostService.getInstance().stop();
@@ -1455,10 +1459,19 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       clipboardData: (kind: number, token: number, payload: Uint8Array): void => {
         ClipboardNativeBridge.onClipboardDataReceived(kind, token, payload);
       },
-      setHdrMode: (enabled: boolean, metadata?: HostHdrMetadata): void => {
+      setHdrMode: (enabled: boolean, hasMetadata: boolean, maxDisplayLuminance: number,
+        minDisplayLuminance: number, maxContentLightLevel: number, maxFrameAverageLightLevel: number,
+        maxFullFrameLuminance: number): void => {
+        const metadata: HostHdrMetadata | null = hasMetadata ? {
+          maxDisplayLuminance,
+          minDisplayLuminance,
+          maxContentLightLevel,
+          maxFrameAverageLightLevel,
+          maxFullFrameLuminance
+        } : null;
         console.info(`HDR 模式变化通知: ${enabled}` +
           (metadata ? `, hostMaxLum=${metadata.maxDisplayLuminance}, hostFullFrame=${metadata.maxFullFrameLuminance}` : ''));
-        this.lastHostHdrMetadata = metadata ?? null;
+        this.lastHostHdrMetadata = metadata;
         if (this.config && this.config.hdr !== enabled) {
           this.config.hdr = enabled;
         }
