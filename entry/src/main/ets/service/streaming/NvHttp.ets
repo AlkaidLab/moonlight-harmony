@@ -1225,6 +1225,11 @@ export class NvHttp {
     params.push(`minBrightness=${minBrightness}`);
     params.push(`maxBrightness=${maxBrightness}`);
     params.push(`maxAverageBrightness=${maxAvgBrightness}`);
+    // SDR 参考白(宿主用于虚拟屏 SDR 白位与 CUVA 动态元数据 paper white 锚点);
+    // 仅实测有效时携带,旧宿主忽略未知参数
+    if (config.sdrBrightness !== undefined && Number.isFinite(config.sdrBrightness) && config.sdrBrightness > 0) {
+      params.push(`sdrBrightness=${Math.round(config.sdrBrightness)}`);
+    }
 
     // 屏幕组合模式（Sunshine 多显示器管理）
     if (config.screenCombinationMode !== undefined && config.screenCombinationMode !== -1) {
@@ -1533,6 +1538,7 @@ export interface LaunchConfig {
   minBrightness?: number;       // 客户端屏幕最小亮度 (nits)
   maxBrightness?: number;       // 客户端屏幕最大亮度 (nits)
   maxAverageBrightness?: number; // 客户端屏幕最大平均亮度 (nits)
+  sdrBrightness?: number;       // 客户端 SDR 参考白 (nits),仅实测有效时携带
   screenCombinationMode?: number; // 屏幕组合模式 (-1=主机默认, 0=不修改, 1=确保开启, 2=主屏, 3=仅此屏)
 }
 

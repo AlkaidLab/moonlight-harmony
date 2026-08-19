@@ -14,7 +14,7 @@
  * 从 StreamPage 抽离的独立组件，显示串流性能数据
  * 支持拖动、吸附、布局切换等功能
  */
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, display } from '@kit.ArkUI';
 import { batteryInfo } from '@kit.BasicServicesKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './dialogs/OptionPickerDialog';
 import { ToastQueue } from '../utils/ToastQueue';
@@ -60,6 +60,10 @@ export struct PerformanceOverlay {
   @State perfHostLatency: number = 0;
   @State perfPacketLoss: number = 0;
   @State perfHdrVivid: boolean = false;
+  // HDR 亮度诊断:手机实测 SDR 白位/峰值 vs 宿主上报目标 (nits)
+  @State perfPhoneSdrNits: number = 0;
+  @State perfPhonePeakNits: number = 0;
+  @State perfHostMaxLuminance: number = 0;
   @State perfBatteryLevel: number = 100;
   @State perfIsCharging: boolean = false;
   @State perfUpscaleMode: number = 0;
@@ -224,6 +228,14 @@ export struct PerformanceOverlay {
       this.perfHostLatency = stats.hostLatency;
       this.perfPacketLoss = stats.packetLoss;
       this.perfHdrVivid = stats.hdrVivid;
+      this.perfHostMaxLuminance = stats.hostMaxLuminance || 0;
+      if (this.viewModel.actualHdr) {
+        try {
+          const brightnessInfo = display.getBrightnessInfo(0);
+          this.perfPhoneSdrNits = Math.round(brightnessInfo.sdrNits);
+          this.perfPhonePeakNits = Math.round(brightnessInfo.sdrNits * brightnessInfo.maxHeadroom);
+        } catch (_) { /* 低版本系统无此 API */ }
+      }
 
       // 🎃 愚人节彩蛋：负延迟串流™
       if (isAprilFools()) {
@@ -558,6 +570,12 @@ export struct PerformanceOverlay {
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
+        if (this.viewModel.actualHdr && this.perfHostMaxLuminance > 0) {
+          Text(` 屏${this.perfPhoneSdrNits}/${this.perfPhonePeakNits}→${this.perfHostMaxLuminance}nit`)
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#CCFFFFFF')
+        }
       }
       .margin({ bottom: 4 })
     }
@@ -704,6 +722,11 @@ export struct PerformanceOverlay {
           .fontSize(11)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
+        if (this.viewModel.actualHdr && this.perfHostMaxLuminance > 0) {
+          Text(` 屏${this.perfPhoneSdrNits}/${this.perfPhonePeakNits}→${this.perfHostMaxLuminance}nit`)
+            .fontSize(10)
+            .fontColor('#CCFFFFFF')
+        }
         if (this.hasNextItem(PerformanceItem.DECODER)) this.Separator()
       }
       

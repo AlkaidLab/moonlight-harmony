@@ -108,6 +108,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "getPendingVideoFrames", nullptr, MoonBridge_GetPendingVideoFrames, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getEstimatedRttInfo", nullptr, MoonBridge_GetEstimatedRttInfo, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getHostFeatureFlags", nullptr, MoonBridge_GetHostFeatureFlags, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "sendClientSdrWhiteNits", nullptr, MoonBridge_SendClientSdrWhiteNits, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getLaunchUrlQueryParameters", nullptr, MoonBridge_GetLaunchUrlQueryParameters, nullptr, nullptr, nullptr, napi_default, nullptr },
         
         // 工具函数
