@@ -238,7 +238,7 @@ export class AudioVibrationService {
       case '同时': return true;
       case '自动':
       default:
-        return !GamepadManager.getInstance().hasUsbControllers();
+        return !GamepadManager.getInstance().hasAnyGamepad();
     }
   }
 
@@ -249,7 +249,7 @@ export class AudioVibrationService {
       case '仅设备': return false;
       case '自动':
       default:
-        return GamepadManager.getInstance().hasUsbControllers();
+        return GamepadManager.getInstance().hasAnyGamepad();
     }
   }
 

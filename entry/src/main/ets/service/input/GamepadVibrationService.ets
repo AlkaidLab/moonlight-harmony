@@ -74,6 +74,13 @@ export class GamepadVibrationService {
   private static readonly IR_USB_RENDER_INTERVAL_MS = 10;
   /** Device vibrator APIs are relatively expensive; coalesce authored IR frames. */
   private static readonly DEVICE_RENDER_INTERVAL_MS = 40;
+  /**
+   * The body actuator is a single, broad-band motor. In simultaneous mode it
+   * should add weight rather than mirror the controller's high-frequency
+   * detail. Keep these gains separate from the controller output path.
+   */
+  private static readonly BODY_LOW_BAND_GAIN = 0.72;
+  private static readonly BODY_HIGH_BAND_GAIN = 0.28;
   private static readonly IR_FLAG_DISCONTINUITY = 0x01;
   private static readonly IR_FLAG_STREAM_END = 0x04;
   private static readonly IR_FLAG_SILENT = 0x08;
@@ -1025,7 +1032,11 @@ export class GamepadVibrationService {
     // the single scalar intensity accepted by the device vibrator.
     const lowIntensity = this.mixWithHeadroom(gameLowIntensity, irLowIntensity, 100);
     const highIntensity = this.mixWithHeadroom(gameHighIntensity, irHighIntensity, 100);
-    const gameIntensity = Math.max(lowIntensity, highIntensity);
+    // A controller can express two motor bands independently. The body motor
+    // cannot, so its continuous channel deliberately favors the low band and
+    // attenuates high-frequency detail. This makes "同时" complementary:
+    // the controller carries detail while the body adds physical weight.
+    const gameIntensity = this.getBodyContinuousIntensity(lowIntensity, highIntensity);
     const audioContinuous =
       !irActive && Date.now() <= this.audioDeviceContinuousUntilMs
         ? this.audioDeviceContinuous
@@ -1070,6 +1081,20 @@ export class GamepadVibrationService {
       this.triggerMixedTimeFallback(
         mixedContinuous, mixedTransient, effectiveAudioTransient, renderEpoch);
     }
+  }
+
+  private getBodyContinuousIntensity(lowIntensity: number,
+    highIntensity: number): number {
+    // With no controller destination, the body is the only actuator and must
+    // retain the full authored energy. Attenuation is reserved for simultaneous
+    // mode, where the controller carries the high-frequency detail.
+    if (this.vibrationMode !== '同时') {
+      return Math.max(lowIntensity, highIntensity);
+    }
+    return this.clampIntensity(
+      lowIntensity * GamepadVibrationService.BODY_LOW_BAND_GAIN +
+      highIntensity * GamepadVibrationService.BODY_HIGH_BAND_GAIN
+    );
   }
 
   /**
