@@ -77,6 +77,19 @@ export class StreamReportStats {
   presentationLead4To8Ms: number = 0;
   presentationLeadAtLeast8Ms: number = 0;
   presentationPendingHighWater: number = 0;
+  phoneSdrNits: number = 0;
+  phonePeakNits: number = 0;
+  hostMaxLuminance: number = 0;
+  hostMaxFullFrame: number = 0;
+  hdrMode: number = 0;
+  hdrBrightnessSource: string = 'static';
+  hdrBrightnessOverride: boolean = false;
+  measuredSdrNits: number = 0;
+  measuredPeakNits: number = 0;
+  measuredFullFrameNits: number = 0;
+  sentSdrWhiteNits: number = 0;
+  sentPeakNits: number = 0;
+  sentFullFrameNits: number = 0;
 }
 
 export interface StreamReportMetric {
@@ -125,6 +138,19 @@ export interface StreamReportData {
   generatedAt: string;
   aiStatus: StreamReportAiStatus;
   aiBadgeText: string;
+  phoneSdrNits: number;
+  phonePeakNits: number;
+  hostMaxLuminance: number;
+  hostMaxFullFrame: number;
+  hdrMode: number;
+  hdrBrightnessSource: string;
+  hdrBrightnessOverride: boolean;
+  measuredSdrNits: number;
+  measuredPeakNits: number;
+  measuredFullFrameNits: number;
+  sentSdrWhiteNits: number;
+  sentPeakNits: number;
+  sentFullFrameNits: number;
 }
 
 export function createStreamReportConfigSnapshot(config: StreamConfig | null | undefined): StreamReportConfigSnapshot | null {
@@ -164,7 +190,20 @@ export function createEmptyStreamReport(): StreamReportData {
     configLine: 'Moonlight V+',
     generatedAt: '',
     aiStatus: StreamReportAiStatus.NONE,
-    aiBadgeText: ''
+    aiBadgeText: '',
+    phoneSdrNits: 0,
+    phonePeakNits: 0,
+    hostMaxLuminance: 0,
+    hostMaxFullFrame: 0,
+    hdrMode: 0,
+    hdrBrightnessSource: 'static',
+    hdrBrightnessOverride: false,
+    measuredSdrNits: 0,
+    measuredPeakNits: 0,
+    measuredFullFrameNits: 0,
+    sentSdrWhiteNits: 0,
+    sentPeakNits: 0,
+    sentFullFrameNits: 0
   };
 }
 
@@ -202,7 +241,20 @@ export function copyStreamReportWithAiMeta(data: StreamReportData, aiStatus: Str
     configLine: data.configLine,
     generatedAt: data.generatedAt,
     aiStatus,
-    aiBadgeText
+    aiBadgeText,
+    phoneSdrNits: data.phoneSdrNits,
+    phonePeakNits: data.phonePeakNits,
+    hostMaxLuminance: data.hostMaxLuminance,
+    hostMaxFullFrame: data.hostMaxFullFrame,
+    hdrMode: data.hdrMode,
+    hdrBrightnessSource: data.hdrBrightnessSource,
+    hdrBrightnessOverride: data.hdrBrightnessOverride,
+    measuredSdrNits: data.measuredSdrNits,
+    measuredPeakNits: data.measuredPeakNits,
+    measuredFullFrameNits: data.measuredFullFrameNits,
+    sentSdrWhiteNits: data.sentSdrWhiteNits,
+    sentPeakNits: data.sentPeakNits,
+    sentFullFrameNits: data.sentFullFrameNits
   };
 }
 
@@ -327,6 +379,21 @@ export function buildStreamDiagnosticsText(stats: StreamReportStats,
   lines.push('mode: decode=' + decodeMode + ', pts=' + ptsMode + ', vsync=' + vsyncMode +
     ', vrr=' + vrrMode + ', buffers=' + bufferText);
   lines.push('duration: ' + formatDuration(durationMs));
+  if (config?.hdr) {
+    const hdrModeText = stats.hdrMode === 2 ? 'HLG' : (stats.hdrMode === 1 ? 'HDR10/PQ' : 'unknown');
+    lines.push('hdr-mode: ' + hdrModeText + ', brightness-source=' + stats.hdrBrightnessSource +
+      ', manual-override=' + stats.hdrBrightnessOverride.toString());
+    lines.push('hdr-measured: sdr=' + formatDiagnosticCount(stats.measuredSdrNits) +
+      ' nits, peak=' + formatDiagnosticCount(stats.measuredPeakNits) +
+      ' nits, full-frame=' + formatDiagnosticCount(stats.measuredFullFrameNits) + ' nits');
+    lines.push('hdr-sent: sdr-white=' + formatDiagnosticCount(stats.sentSdrWhiteNits) +
+      ' nits, peak=' + formatDiagnosticCount(stats.sentPeakNits) +
+      ' nits, full-frame=' + formatDiagnosticCount(stats.sentFullFrameNits) + ' nits');
+    lines.push('hdr-host: peak=' + formatDiagnosticCount(stats.hostMaxLuminance) +
+      ' nits, full-frame=' + formatDiagnosticCount(stats.hostMaxFullFrame) + ' nits');
+    lines.push('hdr-display-now: sdr=' + formatDiagnosticCount(stats.phoneSdrNits) +
+      ' nits, peak=' + formatDiagnosticCount(stats.phonePeakNits) + ' nits');
+  }
   lines.push('');
   lines.push('fps-avg: rx=' + formatDiagnosticFps(receivedAvgFps) +
     ', output=' + formatDiagnosticFps(outputAvgFps) +
@@ -540,7 +607,20 @@ export function buildStreamReportDataFromSnapshot(stats: StreamReportStats,
     configLine: `${resolution} · ${codec} · ${hdr}`,
     generatedAt: getNowText(),
     aiStatus: StreamReportAiStatus.NONE,
-    aiBadgeText: ''
+    aiBadgeText: '',
+    phoneSdrNits: safeNumber(stats.phoneSdrNits, 0),
+    phonePeakNits: safeNumber(stats.phonePeakNits, 0),
+    hostMaxLuminance: safeNumber(stats.hostMaxLuminance, 0),
+    hostMaxFullFrame: safeNumber(stats.hostMaxFullFrame, 0),
+    hdrMode: stats.hdrMode,
+    hdrBrightnessSource: stats.hdrBrightnessSource,
+    hdrBrightnessOverride: stats.hdrBrightnessOverride,
+    measuredSdrNits: safeNumber(stats.measuredSdrNits, 0),
+    measuredPeakNits: safeNumber(stats.measuredPeakNits, 0),
+    measuredFullFrameNits: safeNumber(stats.measuredFullFrameNits, 0),
+    sentSdrWhiteNits: safeNumber(stats.sentSdrWhiteNits, 0),
+    sentPeakNits: safeNumber(stats.sentPeakNits, 0),
+    sentFullFrameNits: safeNumber(stats.sentFullFrameNits, 0)
   };
 }
 
@@ -922,6 +1002,26 @@ export struct StreamSessionReport {
         .borderRadius(16)
         .backgroundColor('#18FFFFFF')
         .border({ width: 1, color: '#12FFFFFF' })
+
+        if (this.data.phoneSdrNits > 0 && this.data.phonePeakNits > 0 && this.data.hostMaxLuminance > 0) {
+          Column({ space: 5 }) {
+            Text('HDR 亮度诊断')
+              .fontSize(13)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#FFFFFFFF')
+            Text(`手机 SDR 白点 ${this.data.phoneSdrNits} nit · 峰值 ${this.data.phonePeakNits} nit`)
+              .fontSize(11)
+              .fontColor('#B8FFFFFF')
+            Text(`主机上报峰值 ${this.data.hostMaxLuminance} nit`)
+              .fontSize(11)
+              .fontColor('#B8FFFFFF')
+          }
+          .width('100%')
+          .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+          .borderRadius(16)
+          .backgroundColor('#16A8D8EA')
+          .border({ width: 1, color: '#24A8D8EA' })
+        }
 
         if (this.data.metrics.length >= 6) {
           Column({ space: 10 }) {

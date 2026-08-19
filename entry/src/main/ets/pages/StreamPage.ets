@@ -1612,6 +1612,28 @@ struct StreamPage {
     snapshot.droppedByL4 = stats.droppedByL4;
     snapshot.droppedByL5 = stats.droppedByL5;
     if (sessionStats) {
+      snapshot.hostMaxLuminance = sessionStats.hostMaxLuminance;
+      snapshot.hostMaxFullFrame = sessionStats.hostMaxFullFrame;
+      snapshot.hdrMode = sessionStats.hdrMode;
+      snapshot.hdrBrightnessSource = sessionStats.hdrBrightnessSource;
+      snapshot.hdrBrightnessOverride = sessionStats.hdrBrightnessOverride;
+      snapshot.measuredSdrNits = sessionStats.measuredSdrNits;
+      snapshot.measuredPeakNits = sessionStats.measuredPeakNits;
+      snapshot.measuredFullFrameNits = sessionStats.measuredFullFrameNits;
+      snapshot.sentSdrWhiteNits = sessionStats.sentSdrWhiteNits;
+      snapshot.sentPeakNits = sessionStats.sentPeakNits;
+      snapshot.sentFullFrameNits = sessionStats.sentFullFrameNits;
+    }
+    if (this.viewModel.streamConfig?.hdr) {
+      try {
+        const brightnessInfo = display.getBrightnessInfo(0);
+        snapshot.phoneSdrNits = Math.round(brightnessInfo.sdrNits);
+        snapshot.phonePeakNits = Math.round(brightnessInfo.sdrNits * brightnessInfo.maxHeadroom);
+      } catch (_) {
+        // 低版本系统无亮度诊断 API 时保持 0，不显示诊断卡片
+      }
+    }
+    if (sessionStats) {
       snapshot.codecOutputFps = sessionStats.codecOutputFps;
       snapshot.codecOutputFrames = sessionStats.codecOutputFrames;
       snapshot.framesLost = sessionStats.framesLost;

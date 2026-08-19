@@ -86,6 +86,15 @@ export interface StreamStats {
   hdrVivid: boolean;       // 码流中检测到 CUVA HDR Vivid 动态元数据
   hostMaxLuminance: number;    // 宿主上报的虚拟屏峰值亮度 (nits, 0=未知)
   hostMaxFullFrame: number;    // 宿主上报的满帧亮度 (nits, 0=未知)
+  hdrMode: number;             // 0=SDR, 1=HDR10/PQ, 2=HLG
+  hdrBrightnessSource: string; // measured/manual-override/static
+  hdrBrightnessOverride: boolean;
+  measuredSdrNits: number;
+  measuredPeakNits: number;
+  measuredFullFrameNits: number;
+  sentSdrWhiteNits: number;
+  sentPeakNits: number;
+  sentFullFrameNits: number;
   framesLost: number;
   totalFrames: number;
   globalAvgDecodeLatency: number;  // 全局平均解码延迟 ms
@@ -406,6 +415,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
     // HDR 会话统一等待采样(在 start() 已提前发起,与网络请求重叠;此处兜底 2s)
     this.lastMeasuredSdrNits = 0;
+    this.lastMeasuredPeakNits = 0;
+    this.lastMeasuredFullFrameNits = 0;
+    this.brightnessSource = 'static';
     let measured: MeasuredBrightnessProfile | null = null;
     if (this.brightnessSamplePromise) {
       measured = await Promise.race([
@@ -414,12 +426,16 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       ]);
       if (measured) {
         this.lastMeasuredSdrNits = measured.sdrNits;
+        this.lastMeasuredPeakNits = measured.maxBrightness;
+        this.lastMeasuredFullFrameNits = measured.maxAverageBrightness;
+        this.brightnessSource = 'measured';
       }
     } else {
       console.warn('[Brightness] 无采样结果');
     }
 
     if (this.config?.hdrBrightnessOverride) {
+      this.brightnessSource = 'manual-override';
       const overridden = StreamingSession.applyBrightnessOverride(staticProfile, this.config.hdrPeakBrightnessNits);
       console.info('[Brightness] HDR 手动覆盖: min=' + overridden[0].toString() +
         ', max=' + overridden[1].toString() +
@@ -479,6 +495,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private brightnessSamplePromise: Promise<MeasuredBrightnessProfile | null> | null = null;
   /** 实测 SDR 参考白 (nits,0=未测量/不可靠),用于 sdrBrightness 上报 */
   private lastMeasuredSdrNits: number = 0;
+  private lastMeasuredPeakNits: number = 0;
+  private lastMeasuredFullFrameNits: number = 0;
+  private brightnessSource: string = 'static';
   /** brightnessInfoChange 监听器；事件只作失效信号，实际值由窗口重采样获得。 */
   private brightnessProbeHandler: ((displayId: number, info: display.BrightnessInfo) => void) | null = null;
   private brightnessUpdateTimer: number = -1;
@@ -544,6 +563,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     decodedFrames: 0, codecOutputFrames: 0, droppedFrames: 0,
     hdrVivid: false,
     hostMaxLuminance: 0, hostMaxFullFrame: 0,
+    hdrMode: 0, hdrBrightnessSource: 'static', hdrBrightnessOverride: false,
+    measuredSdrNits: 0, measuredPeakNits: 0, measuredFullFrameNits: 0,
+    sentSdrWhiteNits: 0, sentPeakNits: 0, sentFullFrameNits: 0,
     framesLost: 0, totalFrames: 0,
     globalAvgDecodeLatency: 0, globalAvgHostLatency: 0, globalAvgFps: 0,
     droppedByL1: 0, droppedByL2: 0, droppedByL3: 0, droppedByL4: 0, droppedByL5: 0,
@@ -1212,6 +1234,15 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       hdrVivid: this.stats.hdrVivid,
       hostMaxLuminance: this.stats.hostMaxLuminance,
       hostMaxFullFrame: this.stats.hostMaxFullFrame,
+      hdrMode: this.stats.hdrMode,
+      hdrBrightnessSource: this.stats.hdrBrightnessSource,
+      hdrBrightnessOverride: this.stats.hdrBrightnessOverride,
+      measuredSdrNits: this.stats.measuredSdrNits,
+      measuredPeakNits: this.stats.measuredPeakNits,
+      measuredFullFrameNits: this.stats.measuredFullFrameNits,
+      sentSdrWhiteNits: this.stats.sentSdrWhiteNits,
+      sentPeakNits: this.stats.sentPeakNits,
+      sentFullFrameNits: this.stats.sentFullFrameNits,
       framesLost: this.stats.framesLost,
       totalFrames: this.stats.totalFrames,
       globalAvgDecodeLatency: this.stats.globalAvgDecodeLatency,
@@ -1606,6 +1637,16 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     }
 
     const brightnessRange = await this.resolveBrightnessRange(effectiveHdr);
+
+    this.stats.hdrMode = effectiveHdr ? this.config.hdrMode : 0;
+    this.stats.hdrBrightnessSource = effectiveHdr ? this.brightnessSource : 'static';
+    this.stats.hdrBrightnessOverride = effectiveHdr && this.config.hdrBrightnessOverride;
+    this.stats.measuredSdrNits = this.lastMeasuredSdrNits;
+    this.stats.measuredPeakNits = this.lastMeasuredPeakNits;
+    this.stats.measuredFullFrameNits = this.lastMeasuredFullFrameNits;
+    this.stats.sentSdrWhiteNits = this.lastMeasuredSdrNits;
+    this.stats.sentPeakNits = effectiveHdr ? brightnessRange[1] : 0;
+    this.stats.sentFullFrameNits = effectiveHdr ? brightnessRange[2] : 0;
 
     const launchConfig: LaunchConfig = {
       appId: this.appId,

@@ -50,33 +50,8 @@
 - 🔧 clear stale targets on PTS reanchor
 -->
 
-## [1.0.0.808] - 2026-08-18
-HDR 亮度上报稳定化与 SDR 白位闭环
-
-### 新增
-- **亮度探针**：串流期间监听 `brightnessInfoChange` 事件并打日志（`[BrightnessProbe]` 三元组），用于分析亮度滑条与 sdrNits/headroom 的联动关系，纯日志不影响上报
-
-### 优化
-- **上报值量化**：峰值亮度吸附标准档（400–4000 九档），满帧亮度归整 50 倍数，避免逐会话微变触发宿主 VDD 重建（配合宿主侧容差比较）
-- **手动滑条携带 sdrBrightness**：手动校准只覆盖峰值/满帧，实测 SDR 参考白照常上报
-
-### 修复
-- **SDR 白位脱钩**：宿主（foundation-sunshine）消费 `sdrBrightness`，在 HLG 转换中对 SDR 波段按 `phoneSdr/windowsSdr` 增益重锚，游戏 UI/中灰落到手机自己的 SDR 白位（HDR Vivid 过曝修复收尾）
-
-## [1.0.0.807] - 2026-08-17
-HDR 亮度真实上报,修复 HDR Vivid 过曝
-
-### 新增
-- **亮度实测上报**：串流启动时窗口采样 `getBrightnessInfo`（5 次 × 250ms，与网络请求重叠不增加延迟），按中位数/75 分位聚合真实 sdrNits、峰值与满帧亮度并上报，测量不可靠时回退静态 profile；手动滑条覆盖保留为最高优先级
-- **sdrBrightness 参数**：launch 请求新增 SDR 参考白上报（仅实测有效时携带），宿主契约见 docs/HDR_BRIGHTNESS_REPORTING.md
-- **浮层亮度诊断**：性能浮层 DECODER 行显示手机实测 SDR/峰值与宿主上报目标的对比（`屏sdr/peak→hostMaxLum nit`）
-
-### 优化
-- 复活亮度校验门（sdrNits ≥ 50、样本波动比 ≤ 1.5、峰值 ≥ 100 且 ≥ sdrNits），拒绝瞬态低报
-- SS_HDR_METADATA 宿主元数据透传至 ArkTS 层并计入 StreamStats（hostMaxLuminance/hostMaxFullFrame）
-
-### 修复
-- **HDR Vivid 过曝**：以实测亮度与真实 SDR 参考白替代静态虚构 1000/1000/1000，宿主虚拟屏与 CUVA 动态元数据不再建立在虚构面板上
+## [1.0.0.807] - 2026-08-18
+HDR 亮度上报优化
 
 ## [1.0.0.806] - 2026-08-17
 
