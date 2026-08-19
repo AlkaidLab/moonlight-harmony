@@ -2653,15 +2653,6 @@ export class GamepadManager implements UsbDriverListener {
     return this.vibrationService.hasUsbControllers();
   }
 
-  /**
-   * Whether any controller input route is currently active. Audio haptics use
-   * this in automatic mode so Bluetooth/Game Controller Kit devices do not
-   * accidentally fall back to the body motor while a controller is present.
-   */
-  hasAnyGamepad(): boolean {
-    return this.hasUsbControllers() || this.hasConnectedGamepadOutsideUsbDriver();
-  }
-
   /** 立即停止所有振动（设备马达 + USB 控制器马达） */
   stopAllVibration(): void {
     this.vibrationService.stopAll();

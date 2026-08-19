@@ -238,7 +238,11 @@ export class AudioVibrationService {
       case '同时': return true;
       case '自动':
       default:
-        return !GamepadManager.getInstance().hasAnyGamepad();
+        // Automatic audio haptics may use the gamepad path only when this
+        // service can actually drive a USB rumble endpoint. Bluetooth/GCK
+        // input devices do not currently expose an audio haptics backend, so
+        // keep the body fallback enabled for those devices.
+        return !GamepadManager.getInstance().hasUsbControllers();
     }
   }
 
@@ -249,7 +253,7 @@ export class AudioVibrationService {
       case '仅设备': return false;
       case '自动':
       default:
-        return GamepadManager.getInstance().hasAnyGamepad();
+        return GamepadManager.getInstance().hasUsbControllers();
     }
   }
 
