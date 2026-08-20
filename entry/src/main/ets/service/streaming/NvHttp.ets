@@ -243,18 +243,7 @@ export class NvHttp {
    * 替代重复的 new NvHttp(selectBestAddress(c), c.serverCert, ctx, c.httpPort, c.httpsPort)
    */
   static fromComputer(computer: NvHttpHost, context?: common.UIAbilityContext): NvHttp {
-    const address = selectBestAddress(computer);
-    const httpFallback = computer.httpPort || NvHttp.DEFAULT_HTTP_PORT;
-    const targetPort = NvHttp.resolveHttpPort(address, httpFallback);
-    const activePort = computer.address ? NvHttp.resolveHttpPort(computer.address, httpFallback) : 0;
-    const portMatches = activePort > 0 && activePort === targetPort;
-    return new NvHttp(
-      address,
-      computer.serverCert || null,
-      context,
-      computer.httpPort,
-      portMatches ? computer.httpsPort : undefined
-    );
+    return NvHttp.fromAddress(selectBestAddress(computer), computer, context);
   }
 
   /**

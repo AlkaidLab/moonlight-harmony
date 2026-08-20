@@ -364,9 +364,13 @@ export class PcListActions {
         const startMs = Date.now();
         try {
           // 基础可达性使用 HTTP，避免把证书/HTTPS 故障误判成整个网络不可达。
+          // 此处刻意不传 context：不配置客户端证书文件时 getServerInfo() 才走 HTTP。
           const nvHttp = NvHttp.fromAddress(addr, computerInfo);
           const info = await nvHttp.getServerInfo();
-          if (info.uniqueId && info.uniqueId !== computerInfo.uuid && !computerInfo.uuid.startsWith('discovered-')) {
+          if (!info.uniqueId) {
+            throw new Error('服务器响应缺少主机 UUID');
+          }
+          if (info.uniqueId !== computerInfo.uuid && !computerInfo.uuid.startsWith('discovered-')) {
             throw new Error(`主机身份不匹配 (${info.uniqueId})`);
           }
           const elapsed = Date.now() - startMs;
@@ -406,8 +410,10 @@ export class PcListActions {
       }
     }
     const connectionAddress = selectBestAddress(computerInfo);
+    const connectionAddressTested = !!connectionAddress && addressSet.has(connectionAddress);
+    const connectionAddressUntested = !!connectionAddress && !connectionAddressTested;
     const connectionResult = reachableResults.find(result => result.address === connectionAddress);
-    const connectionAddressUnavailable = !!connectionAddress && !connectionResult;
+    const connectionAddressUnavailable = connectionAddressTested && !connectionResult;
 
     const serverInfo = displayResult?.serverInfo || undefined;
     let appListReachable: boolean | undefined;
@@ -429,7 +435,10 @@ export class PcListActions {
     if (reachableResults.length > 0) {
       lines.push('[OK] 基础网络可达');
       if (computer.isPaired) {
-        if (connectionAddressUnavailable) {
+        if (connectionAddressUntested) {
+          const addressKind = currentPreferred ? '锁定地址' : '当前连接地址';
+          lines.push(`[!] ${addressKind}为本机回环地址，未执行诊断`);
+        } else if (connectionAddressUnavailable) {
           const addressKind = currentPreferred ? '锁定地址' : '当前连接地址';
           lines.push(`[!] ${addressKind}不可达，备用地址仅用于网络诊断`);
         } else if (appListReachable) {
@@ -461,6 +470,8 @@ export class PcListActions {
         if (computer.isPaired) {
           if (appListReachable) {
             pairText = '已配对（已验证）';
+          } else if (connectionAddressUntested) {
+            pairText = '本地已配对（连接地址未测试）';
           } else if (connectionAddressUnavailable) {
             pairText = currentPreferred
               ? '本地已配对（锁定地址不可达）'
@@ -547,17 +558,18 @@ export class PcListActions {
       buttons: dialogButtons
     }).then(async (result) => {
       const action = actions[result.index];
-      if (action === 'unlock') {
-        await this.computerManager.updateComputer(computer.uuid, { preferredAddress: '' });
-        computer.preferredAddress = '';
-        this.ui.syncViewModel();
-        ToastQueue.show({ message: '已解除地址锁定' });
-      } else if (action) {
-        await this.computerManager.updateComputer(computer.uuid, { preferredAddress: action });
-        computer.preferredAddress = action;
-        this.ui.syncViewModel();
-        ToastQueue.show({ message: `已锁定: ${action}` });
+      if (!action) return;
+      const nextAddress = action === 'unlock' ? '' : action;
+      try {
+        await this.computerManager.updateComputer(computer.uuid, { preferredAddress: nextAddress });
+      } catch (err) {
+        const message = (err as Error).message || String(err);
+        ToastQueue.show({ message: `保存地址锁定失败: ${message}` });
+        return;
       }
+      computer.preferredAddress = nextAddress;
+      this.ui.syncViewModel();
+      ToastQueue.show({ message: nextAddress ? `已锁定: ${nextAddress}` : '已解除地址锁定' });
     }).catch(() => {
       // 用户取消
     });

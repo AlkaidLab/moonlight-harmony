@@ -248,9 +248,17 @@ export class ComputerManager {
       const nvHttp = NvHttp.fromAddress(address, computer, this.context || undefined);
       const serverInfo = await nvHttp.getServerInfo();
 
+      // 网络请求返回时条目可能已被用户删除；成功路径不能把它重新插入。
+      if (this.computers.get(computer.uuid) !== computer) {
+        return;
+      }
+      if (!serverInfo.uniqueId) {
+        throw new Error('mDNS 验证响应缺少主机 UUID');
+      }
+
       // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
       let target = computer;
-      if (serverInfo.uniqueId && computer.uuid !== serverInfo.uniqueId) {
+      if (computer.uuid !== serverInfo.uniqueId) {
         if (computer.uuid.startsWith('discovered-')) {
           target = this.reconcileUuid(computer, serverInfo.uniqueId);
         } else {
@@ -656,6 +664,9 @@ export class ComputerManager {
           delayMs: MANUAL_ADD_RETRY_DELAY_MS
         })
         : await nvHttp.getServerInfo(false);
+      if (!serverInfo.uniqueId) {
+        throw new Error('服务器响应缺少主机 UUID');
+      }
 
       // 检查是否已存在相同 UUID 的电脑
       const existing = this.computers.get(serverInfo.uniqueId);
@@ -980,7 +991,11 @@ export class ComputerManager {
       const nvHttp = NvHttp.fromAddress(address, computer, this.context || undefined);
       const likelyOnline = computer.state === ComputerState.ONLINE && address === computer.address;
       const serverInfo = await nvHttp.getServerInfo(likelyOnline);
-      if (serverInfo.uniqueId && computer.uuid !== serverInfo.uniqueId && !computer.uuid.startsWith('discovered-')) {
+      if (!serverInfo.uniqueId) {
+        console.warn(`ComputerManager: 轮询 ${address} 的响应缺少主机 UUID`);
+        return { address, serverInfo: null };
+      }
+      if (computer.uuid !== serverInfo.uniqueId && !computer.uuid.startsWith('discovered-')) {
         console.warn(`ComputerManager: 轮询 ${address} 返回其他主机 expected=${computer.uuid}, actual=${serverInfo.uniqueId}`);
         return { address, serverInfo: null };
       }
@@ -1066,9 +1081,18 @@ export class ComputerManager {
   private updateComputerFromPoll(computer: ComputerInfo, result: PollResult): void {
     const info = result.serverInfo!;
 
+    // 丢弃删除/替换条目后才完成的陈旧请求，避免 reconcileUuid 将其复活。
+    if (this.computers.get(computer.uuid) !== computer) {
+      return;
+    }
+    if (!info.uniqueId) {
+      console.warn(`ComputerManager: 忽略缺少主机 UUID 的轮询结果 (${result.address})`);
+      return;
+    }
+
     // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
     let target = computer;
-    if (info.uniqueId && computer.uuid !== info.uniqueId) {
+    if (computer.uuid !== info.uniqueId) {
       if (computer.uuid.startsWith('discovered-')) {
         target = this.reconcileUuid(computer, info.uniqueId);
       } else {

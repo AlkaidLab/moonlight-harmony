@@ -181,18 +181,15 @@ function nvHttpFromAddressModel(address, computer) {
   };
 }
 
+// Mirrors selectBestAddress().
+function selectBestAddressModel(computer) {
+  return computer.preferredAddress || computer.address || computer.manualAddress ||
+    computer.localAddress || computer.ipv6Address || computer.remoteAddress || '';
+}
+
 // Mirrors selectBestAddress() + NvHttp.fromComputer().
 function nvHttpFromComputerModel(computer) {
-  const address = computer.preferredAddress || computer.address || computer.manualAddress ||
-    computer.localAddress || computer.ipv6Address || computer.remoteAddress || '';
-  const fallback = computer.httpPort || DEFAULT_HTTP_PORT;
-  const targetPort = resolveHttpPort(address, fallback);
-  const activePort = computer.address ? resolveHttpPort(computer.address, fallback) : 0;
-  return {
-    address,
-    httpPort: targetPort,
-    httpsPort: activePort > 0 && activePort === targetPort ? (computer.httpsPort || 0) : 0
-  };
+  return nvHttpFromAddressModel(selectBestAddressModel(computer), computer);
 }
 
 // Availability polling remains route-agnostic even when the user locks the
@@ -213,13 +210,17 @@ function networkTestResultModel(computer, results) {
   const displayResult = reachable.reduce((best, result) => {
     return !best || result.latencyMs < best.latencyMs ? result : best;
   }, null);
-  const connectionAddress = computer.preferredAddress || computer.address || computer.manualAddress ||
-    computer.localAddress || computer.ipv6Address || computer.remoteAddress || '';
+  const connectionAddress = selectBestAddressModel(computer);
+  const connectionAddressTested = results.some((result) => result.address === connectionAddress);
   const connectionResult = reachable.find((result) => result.address === connectionAddress);
 
   return {
     baseStatus: reachable.length > 0 ? 'REACHABLE' : 'FAILED',
-    authStatus: connectionAddress && !connectionResult
+    authStatus: computer.pairState !== 'PAIRED'
+      ? 'NOT_PAIRED'
+      : connectionAddress && !connectionAddressTested
+        ? computer.preferredAddress ? 'LOCKED_ADDRESS_UNTESTED' : 'CONNECTION_ADDRESS_UNTESTED'
+        : connectionAddress && !connectionResult
       ? computer.preferredAddress ? 'LOCKED_ADDRESS_UNREACHABLE' : 'CONNECTION_ADDRESS_UNREACHABLE'
       : connectionResult?.appListReachable === true ? 'READY' : 'AUTH_UNAVAILABLE',
     displayAddress: displayResult?.address,
@@ -227,8 +228,9 @@ function networkTestResultModel(computer, results) {
   };
 }
 
-function acceptPollIdentityModel(computer, serverInfo) {
-  if (!serverInfo?.uniqueId || computer.uuid === serverInfo.uniqueId) return true;
+function acceptPollResultModel(computer, currentComputer, serverInfo) {
+  if (currentComputer !== computer || !serverInfo?.uniqueId) return false;
+  if (computer.uuid === serverInfo.uniqueId) return true;
   return computer.uuid.startsWith('discovered-');
 }
 
@@ -1395,13 +1397,43 @@ async function testPreferredAddressUnavailableDoesNotAuthenticateFallbackScenari
   assert.strictEqual(computer.state, 'OFFLINE');
 }
 
-async function testPollRejectsWrongHostIdentityScenario() {
+async function testPollIdentityAndStaleResultScenario() {
   const known = createComputer({ uuid: 'host-a' });
   const temporary = createComputer({ uuid: 'discovered-Jue' });
 
-  assert.strictEqual(acceptPollIdentityModel(known, { uniqueId: 'host-b' }), false);
-  assert.strictEqual(acceptPollIdentityModel(known, { uniqueId: 'host-a' }), true);
-  assert.strictEqual(acceptPollIdentityModel(temporary, { uniqueId: 'host-b' }), true);
+  assert.strictEqual(acceptPollResultModel(known, known, { uniqueId: 'host-b' }), false);
+  assert.strictEqual(acceptPollResultModel(known, known, { uniqueId: 'host-a' }), true);
+  assert.strictEqual(acceptPollResultModel(known, known, { uniqueId: '' }), false);
+  assert.strictEqual(acceptPollResultModel(temporary, temporary, { uniqueId: 'host-b' }), true);
+  assert.strictEqual(acceptPollResultModel(temporary, undefined, { uniqueId: 'host-b' }), false);
+}
+
+async function testUnpairedAndUntestedRouteDiagnosticScenario() {
+  const unpaired = createComputer({
+    address: '192.168.6.102',
+    pairState: 'NOT_PAIRED'
+  });
+  const unpairedDiagnostic = networkTestResultModel(unpaired, [{
+    address: '192.168.6.102',
+    latencyMs: 5,
+    serverInfo: { uniqueId: unpaired.uuid }
+  }]);
+  assert.strictEqual(unpairedDiagnostic.authStatus, 'NOT_PAIRED');
+
+  const loopbackSelected = createComputer({
+    address: '127.0.0.1',
+    manualAddress: '192.168.6.102',
+    pairState: 'PAIRED'
+  });
+  const loopbackDiagnostic = networkTestResultModel(loopbackSelected, [{
+    address: '192.168.6.102',
+    latencyMs: 5,
+    appListReachable: true,
+    serverInfo: { uniqueId: loopbackSelected.uuid }
+  }]);
+  assert.strictEqual(loopbackDiagnostic.baseStatus, 'REACHABLE');
+  assert.strictEqual(loopbackDiagnostic.authStatus, 'CONNECTION_ADDRESS_UNTESTED');
+  assert.strictEqual(loopbackDiagnostic.connectionAddress, '127.0.0.1');
 }
 
 async function testPreferredAddressStaleHttpsPortScenario() {
@@ -1734,7 +1766,8 @@ async function main() {
     ['scenario: network diagnostic remains read-only', testNetworkDiagnosticStateSplitScenario],
     ['scenario: preferred address does not constrain availability polling', testPreferredAddressPollSplitScenario],
     ['scenario: unavailable preferred address does not authenticate fallback', testPreferredAddressUnavailableDoesNotAuthenticateFallbackScenario],
-    ['scenario: polling rejects a different host identity', testPollRejectsWrongHostIdentityScenario],
+    ['scenario: polling rejects missing, different, or stale host identity', testPollIdentityAndStaleResultScenario],
+    ['scenario: diagnostic distinguishes unpaired and untested routes', testUnpairedAndUntestedRouteDiagnosticScenario],
     ['scenario: preferred address invalidates stale HTTPS port', testPreferredAddressStaleHttpsPortScenario],
     ['launch/resume/quit model', testLaunchResumeQuitModel],
     ['unpair and pairing port model', testUnpairAndPairingPortModel],
