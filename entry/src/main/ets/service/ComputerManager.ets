@@ -251,7 +251,11 @@ export class ComputerManager {
       // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
       let target = computer;
       if (serverInfo.uniqueId && computer.uuid !== serverInfo.uniqueId) {
-        target = this.reconcileUuid(computer, serverInfo.uniqueId);
+        if (computer.uuid.startsWith('discovered-')) {
+          target = this.reconcileUuid(computer, serverInfo.uniqueId);
+        } else {
+          throw new Error(`mDNS 验证返回了其他主机: expected=${computer.uuid}, actual=${serverInfo.uniqueId}`);
+        }
       }
 
       // 走单一合并入口，保证与轮询/添加路径使用同一套守卫规则
@@ -976,6 +980,10 @@ export class ComputerManager {
       const nvHttp = NvHttp.fromAddress(address, computer, this.context || undefined);
       const likelyOnline = computer.state === ComputerState.ONLINE && address === computer.address;
       const serverInfo = await nvHttp.getServerInfo(likelyOnline);
+      if (serverInfo.uniqueId && computer.uuid !== serverInfo.uniqueId && !computer.uuid.startsWith('discovered-')) {
+        console.warn(`ComputerManager: 轮询 ${address} 返回其他主机 expected=${computer.uuid}, actual=${serverInfo.uniqueId}`);
+        return { address, serverInfo: null };
+      }
       return { address, serverInfo };
     } catch (err) {
       return { address, serverInfo: null };
@@ -1061,7 +1069,12 @@ export class ComputerManager {
     // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
     let target = computer;
     if (info.uniqueId && computer.uuid !== info.uniqueId) {
-      target = this.reconcileUuid(computer, info.uniqueId);
+      if (computer.uuid.startsWith('discovered-')) {
+        target = this.reconcileUuid(computer, info.uniqueId);
+      } else {
+        console.warn(`ComputerManager: 忽略其他主机的轮询结果 expected=${computer.uuid}, actual=${info.uniqueId}`);
+        return;
+      }
     }
 
     // 合并服务器信息（所有字段守卫规则集中在 mergeServerInfo）
