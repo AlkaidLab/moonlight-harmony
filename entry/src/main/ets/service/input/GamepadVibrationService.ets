@@ -75,9 +75,9 @@ export class GamepadVibrationService {
   /** Device vibrator APIs are relatively expensive; coalesce authored IR frames. */
   private static readonly DEVICE_RENDER_INTERVAL_MS = 40;
   /**
-   * The body actuator is a single, broad-band motor. In simultaneous mode it
-   * should add weight rather than mirror the controller's high-frequency
-   * detail. Keep these gains separate from the controller output path.
+   * The body actuator is a single, broad-band motor. In 协同 mode it should
+   * add weight rather than mirror the controller's high-frequency detail.
+   * Keep these gains separate from the controller output path.
    */
   private static readonly BODY_LOW_BAND_GAIN = 0.72;
   private static readonly BODY_HIGH_BAND_GAIN = 0.28;
@@ -88,7 +88,6 @@ export class GamepadVibrationService {
   private static readonly IR_PRIORITY_OVER_GAME = true;
   private usbDriverService: UsbDriverService;
   private deviceVibrationCoordinator: DeviceVibrationCoordinator;
-  private hasExternalGamepad: () => boolean;
   
   // 设置
   private vibrationFeedbackEnabled = true;
@@ -134,11 +133,9 @@ export class GamepadVibrationService {
   private pendingDeviceRenderTimer: number = -1;
   private pendingDeviceRenderTransient = false;
 
-  constructor(usbDriverService: UsbDriverService, deviceKeyToSlot: Map<string, number>,
-    hasExternalGamepad: () => boolean) {
+  constructor(usbDriverService: UsbDriverService, deviceKeyToSlot: Map<string, number>) {
     this.usbDriverService = usbDriverService;
     this.deviceKeyToSlotLookup = deviceKeyToSlot;
-    this.hasExternalGamepad = hasExternalGamepad;
     this.deviceVibrationCoordinator = DeviceVibrationCoordinator.getInstance();
     this.deviceVibrationCoordinator.setSourceResumeCallback((): void => {
       this.renderMixedDevice(false);
@@ -796,7 +793,7 @@ export class GamepadVibrationService {
       case '仅设备':
         return false;
       case '仅手柄':
-      case '同时':
+      case '协同':
         return true;
       case '自动':
       default:
@@ -809,12 +806,14 @@ export class GamepadVibrationService {
       case '仅手柄':
         return false;
       case '仅设备':
-      case '同时':
+      case '协同':
         return true;
       case '自动':
       default:
-        return this.usbDriverService.getControllers().length === 0 &&
-          !this.hasExternalGamepad();
+        // Bluetooth/GCK gamepads expose no rumble backend, so the body is the
+        // only usable actuator whenever no USB-driven controller exists —
+        // same policy as the audio haptics path.
+        return this.usbDriverService.getControllers().length === 0;
     }
   }
 
@@ -1034,18 +1033,21 @@ export class GamepadVibrationService {
     const highIntensity = this.mixWithHeadroom(gameHighIntensity, irHighIntensity, 100);
     // A controller can express two motor bands independently. The body motor
     // cannot, so its continuous channel deliberately favors the low band and
-    // attenuates high-frequency detail. This makes "同时" complementary:
+    // attenuates high-frequency detail. This makes "协同" complementary:
     // the controller carries detail while the body adds physical weight.
     const gameIntensity = this.getBodyContinuousIntensity(lowIntensity, highIntensity);
     const audioContinuous =
       !irActive && Date.now() <= this.audioDeviceContinuousUntilMs
         ? this.audioDeviceContinuous
         : 0;
+    // Audio haptics gets the same complementary treatment while a controller
+    // destination is live: the body adds weight instead of mirroring what the
+    // controller already plays.
     const mixedContinuous = this.mixWithHeadroom(
-      gameIntensity, audioContinuous, 100);
+      gameIntensity, this.shapeAudioForBody(audioContinuous), 100);
     const mixedTransient = effectiveAudioTransient
       ? this.mixWithHeadroom(
-        gameIntensity, this.audioDeviceTransient, 100)
+        gameIntensity, this.shapeAudioForBody(this.audioDeviceTransient), 100)
       : 0;
 
     if (this.deviceVibrationCoordinator.isTouchHapticActive()) return;
@@ -1085,16 +1087,38 @@ export class GamepadVibrationService {
 
   private getBodyContinuousIntensity(lowIntensity: number,
     highIntensity: number): number {
-    // With no controller destination, the body is the only actuator and must
-    // retain the full authored energy. Attenuation is reserved for simultaneous
-    // mode, where the controller carries the high-frequency detail.
-    if (this.vibrationMode !== '同时') {
+    // With no live controller destination, the body is the only actuator and
+    // must retain the full authored energy. Attenuation is reserved for 协同
+    // mode with a USB controller attached, where the controller carries the
+    // high-frequency detail.
+    if (!this.isComplementaryBodyShapingActive()) {
       return Math.max(lowIntensity, highIntensity);
     }
     return this.clampIntensity(
       lowIntensity * GamepadVibrationService.BODY_LOW_BAND_GAIN +
       highIntensity * GamepadVibrationService.BODY_HIGH_BAND_GAIN
     );
+  }
+
+  /** 互补衰减只在「协同」且确实有 USB 手柄承载细节时生效。 */
+  private isComplementaryBodyShapingActive(): boolean {
+    return this.vibrationMode === '协同' && this.hasUsbControllers();
+  }
+
+  /**
+   * 协同模式下的音频互塑：sharpness 反映音频频谱倾向，低频内容保留接近
+   * BODY_LOW_BAND_GAIN 的量感，尖锐内容衰减到 BODY_HIGH_BAND_GAIN，与游戏
+   * rumble 的双频段权重保持同一套互补语义。
+   */
+  private shapeAudioForBody(intensity: number): number {
+    if (intensity <= 0 || !this.isComplementaryBodyShapingActive()) {
+      return intensity;
+    }
+    const gain = GamepadVibrationService.BODY_HIGH_BAND_GAIN +
+      (1 - this.audioDeviceSharpness) *
+        (GamepadVibrationService.BODY_LOW_BAND_GAIN -
+          GamepadVibrationService.BODY_HIGH_BAND_GAIN);
+    return this.clampIntensity(intensity * gain);
   }
 
   /**

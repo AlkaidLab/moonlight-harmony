@@ -27,7 +27,8 @@ import {
   PerfOverlayPosition,
   getRecommendedBitrate,
   GAME_VIBRATION_STRENGTH_DEFAULT,
-  normalizeGameVibrationStrength
+  normalizeGameVibrationStrength,
+  normalizeVibrationMode
 } from '../model/StreamConfig';
 
 /**
@@ -72,7 +73,7 @@ export class SettingsKeys {
 
   // 输入 - 手柄设置
   static readonly ENABLE_VIBRATION: string = 'settings_enable_vibration';
-  static readonly VIBRATION_MODE: string = 'settings_vibration_mode';  // 震动模式：自动/仅手柄/仅设备/同时
+  static readonly VIBRATION_MODE: string = 'settings_vibration_mode';  // 震动模式：自动/仅手柄/仅设备/协同
   static readonly VIBRATE_FALLBACK_STRENGTH: string = 'settings_vibrate_fallback_strength';  // 历史存储键，现用于游戏震动强度
   static readonly ENABLE_AUDIO_VIBRATION: string = 'settings_enable_audio_vibration';  // 音频振动（低频驱动）
   static readonly AUDIO_VIBRATION_STRENGTH: string = 'settings_audio_vibration_strength';  // 音频振动强度 (0-100)
@@ -193,7 +194,7 @@ export class SettingsKeys {
 export interface InputSettings {
   // 手柄
   enableVibration: boolean;
-  vibrationMode: string;  // 自动/仅手柄/仅设备/同时
+  vibrationMode: string;  // 自动/仅手柄/仅设备/协同
   gameVibrationStrength: number;
   enableAudioVibration: boolean;  // 音频振动（低频驱动）
   audioVibrationStrength: number;  // 音频振动强度 (0-100)
@@ -622,7 +623,8 @@ export class SettingsService {
 
     // 获取输入设置
     const enableVibration = await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true);
-    const vibrationMode = await this.getString(SettingsKeys.VIBRATION_MODE, '自动');
+    const vibrationMode = normalizeVibrationMode(
+      await this.getString(SettingsKeys.VIBRATION_MODE, '自动'));
     const gameVibrationStrength = normalizeGameVibrationStrength(
       await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, GAME_VIBRATION_STRENGTH_DEFAULT)
     );
@@ -777,7 +779,8 @@ export class SettingsService {
     return {
       // 手柄
       enableVibration: await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true),
-      vibrationMode: await this.getString(SettingsKeys.VIBRATION_MODE, '自动'),
+      vibrationMode: normalizeVibrationMode(
+        await this.getString(SettingsKeys.VIBRATION_MODE, '自动')),
       gameVibrationStrength: normalizeGameVibrationStrength(
         await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, GAME_VIBRATION_STRENGTH_DEFAULT)
       ),

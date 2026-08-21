@@ -176,8 +176,7 @@ export class GamepadManager implements UsbDriverListener {
     this.mouseEmulationService = new MouseEmulationService();
     this.vibrationService = new GamepadVibrationService(
       this.usbDriverService,
-      this.deviceKeyToSlot,
-      (): boolean => this.hasConnectedGamepadOutsideUsbDriver()
+      this.deviceKeyToSlot
     );
     this.loadGCButtonMappingSettings();
     this.loadSensorSettings();
@@ -493,15 +492,6 @@ export class GamepadManager implements UsbDriverListener {
    */
   hasActiveGcGamepad(): boolean {
     return this.useGameControllerKit && this.gcDeviceIdToSlot.size > 0;
-  }
-
-  private hasConnectedGamepadOutsideUsbDriver(): boolean {
-    if (this.hasActiveGcGamepad()) return true;
-    let connected = false;
-    this.deviceInfoMap.forEach((info: GamepadInfo): void => {
-      if (!info.isUsb) connected = true;
-    });
-    return connected;
   }
 
   // ==================== 鼠标模拟（委托 MouseEmulationService） ====================

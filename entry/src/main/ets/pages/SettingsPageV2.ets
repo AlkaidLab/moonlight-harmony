@@ -23,7 +23,8 @@ import {
   GAME_VIBRATION_STRENGTH_MIN,
   GAME_VIBRATION_STRENGTH_ORIGINAL,
   GAME_VIBRATION_STRENGTH_STEP,
-  normalizeGameVibrationStrength
+  normalizeGameVibrationStrength,
+  normalizeVibrationMode
 } from '../model/StreamConfig';
 import { PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
@@ -539,7 +540,8 @@ struct SettingsPageV2 {
       
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
-      this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
+      this.vibrationMode = normalizeVibrationMode(
+        await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动'));
       this.gameVibrationStrength = await this.loadGameVibrationStrength();
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
@@ -1481,7 +1483,7 @@ struct SettingsPageV2 {
                 type: 'segment',
                 value: this.vibrationMode,
                 visible: this.enableVibration,
-                segmentLabels: ['自动', '仅手柄', '仅设备', '同时'],
+                segmentLabels: ['自动', '仅手柄', '仅设备', '协同'],
                 onSegmentChange: (value: string) => {
                   this.vibrationMode = value;
                   this.saveSetting(SettingsKeys.VIBRATION_MODE, value);
@@ -3683,7 +3685,7 @@ struct SettingsPageV2 {
       { title: '自动', subtitle: '有手柄用手柄震动，无手柄用设备震动', value: '自动' } as PickerOption,
       { title: '仅手柄', subtitle: '只使用手柄震动', value: '仅手柄' } as PickerOption,
       { title: '仅设备', subtitle: '只使用设备震动', value: '仅设备' } as PickerOption,
-      { title: '同时', subtitle: '手柄和设备同时震动', value: '同时' } as PickerOption
+      { title: '协同', subtitle: '手柄承载高频细节，机身补充低频量感', value: '协同' } as PickerOption
     ];
     const config: PickerConfig = {
       title: '选择震动模式',
