@@ -460,7 +460,7 @@ export struct GameMenuDialog {
     const modes: TouchModeOption[] = [
       { key: 'trackpad', text: '触控板', subtitle: '像笔记本触控板一样操作' },
       { key: 'direct', text: '多点触控', subtitle: '直接点击屏幕位置' },
-      { key: 'mouse', text: '鼠标模式', subtitle: '模拟鼠标移动和点击' },
+      { key: 'mouse', text: '触摸鼠标', subtitle: '模拟鼠标移动和点击' },
       { key: 'ds5_touchpad', text: 'DS5 触控板', subtitle: '屏幕映射 DualSense 触控板，支持双指' }
     ];
 

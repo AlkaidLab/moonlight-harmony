@@ -2009,24 +2009,6 @@ struct StreamPage {
   }
 
   /**
-   * 获取触摸模式的中文名称
-   */
-  getTouchModeName(): string {
-    switch (this.viewModel.touchMode) {
-      case 'trackpad':
-        return '触控板模式';
-      case 'direct':
-        return '多点触控模式';
-      case 'mouse':
-        return '鼠标模式';
-      case 'ds5_touchpad':
-        return 'DS5 触控板模式';
-      default:
-        return this.viewModel.touchMode;
-    }
-  }
-  
-  /**
    * 处理触摸事件
    */
   handleTouch(event: TouchEvent): void {
