@@ -229,7 +229,7 @@ export class StreamMenuManager {
         value: 'direct'
       },
       {
-        title: currentMode === 'mouse' ? '✓ 鼠标模式' : '  鼠标模式',
+        title: currentMode === 'mouse' ? '✓ 触摸鼠标' : '  触摸鼠标',
         subtitle: '相对移动 + 按住拖动',
         value: 'mouse'
       },

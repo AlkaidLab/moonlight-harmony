@@ -42,6 +42,7 @@ import { DeveloperUnlockResult, DeveloperUnlockService, DeveloperUnlockStatus } 
 import { GitHubDeviceCode } from '../utils/GitHubStarVerifier';
 import { ToastQueue } from '../utils/ToastQueue';
 import { METERED_BANDWIDTH_PROBE_MAX_BYTES } from '../service/network/BandwidthProbeService';
+import { GYRO_SENSITIVITY_MIN, GYRO_SENSITIVITY_MAX } from '../service/input/GyroAssistService';
 
 /**
  * 选择器选项接口
@@ -1574,8 +1575,8 @@ struct SettingsPageV2 {
                 type: 'slider',
                 visible: this.gyroAssistEnabled,
                 value: this.gyroSensitivity,
-                min: 0.5,
-                max: 3,
+                min: GYRO_SENSITIVITY_MIN,
+                max: GYRO_SENSITIVITY_MAX,
                 step: 0.1,
                 formatValue: (v: number) => `${v.toFixed(1)}x`,
                 onSliderChange: (value: number) => {

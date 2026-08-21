@@ -46,6 +46,10 @@ const TRIGGER_ACTIVATE_THRESHOLD: number = 51; // 255 * 0.2
 /** 默认灵敏度倍率 */
 const DEFAULT_SENSITIVITY: number = 2.0;
 
+/** 体感灵敏度倍率范围 */
+export const GYRO_SENSITIVITY_MIN: number = 0.5;
+export const GYRO_SENSITIVITY_MAX: number = 10.0;
+
 /** 默认报告频率 */
 const GYRO_REPORT_RATE_HZ: number = 120;
 
