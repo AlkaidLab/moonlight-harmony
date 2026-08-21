@@ -33,7 +33,7 @@ import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { InputInterceptorService } from '../service/input/InputInterceptorService';
 import { GamepadManager } from '../service/input/GamepadManager';
-import { SettingsKeys, UiSettings, normalizeVibrationMode } from '../service/SettingsService';
+import { SettingsKeys, UiSettings } from '../service/SettingsService';
 import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
 import { isAihdrSupported } from '../components/AihdrModifier';
@@ -189,7 +189,7 @@ struct SettingsPageV2 {
   
   // 输入 - 手柄设置
   @State enableVibration: boolean = true;
-  @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/同时
+  @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/协同
   @State gameVibrationStrength: number = GAME_VIBRATION_STRENGTH_DEFAULT;
   @State enableAudioVibration: boolean = false;
   @State audioVibrationStrength: number = 60;
@@ -540,11 +540,7 @@ struct SettingsPageV2 {
       
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
-      const storedVibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
-      this.vibrationMode = normalizeVibrationMode(storedVibrationMode);
-      if (this.vibrationMode !== storedVibrationMode) {
-        await PreferencesUtil.put(SettingsKeys.VIBRATION_MODE, this.vibrationMode);
-      }
+      this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
       this.gameVibrationStrength = await this.loadGameVibrationStrength();
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
