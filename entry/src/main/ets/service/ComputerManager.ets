@@ -1324,7 +1324,7 @@ export class ComputerManager {
 
     await WakeOnLan.sendWolToAddresses(
       computer.macAddress,
-      this.collectAddresses(computer),
+      collectKnownAddresses(computer),
       computer.httpPort || NvHttp.DEFAULT_HTTP_PORT
     );
   }
