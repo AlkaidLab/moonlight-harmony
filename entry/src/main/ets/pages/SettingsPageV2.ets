@@ -1061,7 +1061,7 @@ struct SettingsPageV2 {
                 title: '码率上限',
                 subtitle: this.bitrate === 0 
                   ? `自动 (推荐: ${this.getRecommendedBitrateForCurrentSettings()} Mbps)` 
-                  : this.bandwidthProbeEnabled ? '自动初始码率不会超过此值' : '视频传输比特率',
+                  : this.bandwidthProbeEnabled ? '自动选码率和动态调节的上限' : '视频传输比特率上限',
                 type: 'slider',
                 value: this.bitrate,
                 min: 1,  // 对数滑块最小值为1（0单独处理为"自动"）
@@ -1079,8 +1079,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '自动初始码率',
-                subtitle: this.bandwidthProbeEnabled ? '开流前预估可用带宽' : '直接使用码率上限',
+                title: '开流前自动选码率',
+                subtitle: this.bandwidthProbeEnabled ? '连接前预估带宽，自动选择初始码率' : '关闭后直接使用码率上限',
                 type: 'toggle',
                 value: this.bandwidthProbeEnabled,
                 action: () => {
@@ -1102,8 +1102,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '串流中动态调节',
-                subtitle: this.adaptiveBitrate ? '根据网络状况自动调节码率' : '手动码率模式',
+                title: '串流中自动调节码率',
+                subtitle: this.adaptiveBitrate ? '根据网络状况自动调节码率，不超过码率上限' : '关闭后使用固定码率',
                 tooltip: '实时上报丢包率、延迟、帧率等网络指标，由本地 PID 控制器自动调节码率；连接基地阳光的米塔智能体时，服务端 LLM 可综合游戏类型和画面复杂度给出更精准的码率推荐',
                 type: 'toggle',
                 value: this.adaptiveBitrate,
@@ -1113,8 +1113,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '分辨率缩放',
-                subtitle: '主机渲染分辨率比例',
+                title: '主机分辨率缩放',
+                subtitle: '按所选串流分辨率调整主机渲染分辨率',
                 type: 'slider',
                 value: this.hostScale,
                 min: 50,   // Android: 50-400%, step 10
@@ -1153,7 +1153,7 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: 'HDR',
+                title: '串流 HDR',
                 subtitle: this.videoFormat === 'H.264' 
                   ? 'H.264 不支持 HDR' 
                   : '需要支持 HDR 的显示器',
@@ -1190,10 +1190,10 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: 'HDR 高亮度',
-                subtitle: this.videoFormat === 'H.264' 
-                  ? '需要 HEVC/AV1' 
-                  : '使用高亮度 HDR 模式',
+                title: '本机 HDR 屏幕增亮',
+                subtitle: this.videoFormat === 'H.264'
+                  ? '需要 HEVC/AV1'
+                  : '提高本机屏幕亮度，与上报给主机的峰值亮度无关',
                 type: 'toggle',
                 visible: this.enableHdr,
                 value: this.enableHdrHighBrightness,
@@ -1208,10 +1208,10 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '手动 HDR 亮度校准',
+                title: 'HDR 峰值亮度校准',
                 subtitle: this.hdrBrightnessOverride
-                  ? '上报峰值 ' + this.hdrPeakBrightnessNits.toString() + ' nits，重新连接后生效'
-                  : '默认优先按屏幕实测亮度上报；测量不可靠时回退默认值，过曝/偏暗时可手动覆盖',
+                  ? '向主机上报 ' + this.hdrPeakBrightnessNits.toString() + ' nits，重新连接后生效'
+                  : '自动测量本机亮度；过曝或偏暗时可手动指定上报值',
                 type: 'toggle',
                 visible: this.enableHdr,
                 value: this.hdrBrightnessOverride,
@@ -1226,8 +1226,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: 'HDR 峰值亮度',
-                subtitle: '数值越高，Sunshine 会按更亮的 HDR 屏幕处理',
+                title: 'HDR 峰值亮度（上报主机）',
+                subtitle: '告知主机本机屏幕的最高亮度，不改变屏幕实际亮度',
                 type: 'slider',
                 visible: this.enableHdr && this.hdrBrightnessOverride,
                 value: this.hdrPeakBrightnessNits,
@@ -1305,10 +1305,10 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '全范围颜色',
+                title: '全范围色彩',
                 subtitle: this.enableHdr
                   ? 'HDR 模式下需与服务端编码范围一致'
-                  : '使用完整颜色范围 (0-255)',
+                  : '使用完整色彩范围（0–255）',
                 tooltip: '仅在服务端与解码器均使用全范围时开启；范围不一致会导致黑位或高光异常',
                 type: 'toggle',
                 value: this.fullRange,
@@ -1359,7 +1359,7 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '本地音频',
+                title: '主机同时播放音频',
                 subtitle: '同时在主机上播放音频',
                 type: 'toggle',
                 value: this.enableLocalAudio,
@@ -1424,7 +1424,7 @@ struct SettingsPageV2 {
             ]
           })
 
-          // 振动设置：游戏震动与音频触感汇入同一组执行器，集中配置
+          // 振动设置：游戏振动与音频触感汇入同一组执行器，集中配置
           this.SettingsGroup({
             id: 'vibration',
             icon: $r('sys.symbol.waveform'),
@@ -1432,7 +1432,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '振动反馈',
-                subtitle: '串流游戏震动反馈',
+                subtitle: '串流游戏振动反馈',
                 type: 'toggle',
                 value: this.enableVibration,
                 action: () => {
@@ -1441,10 +1441,10 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '震动强度',
+                title: '振动强度',
                 subtitle: this.gameVibrationStrength > GAME_VIBRATION_STRENGTH_ORIGINAL ?
                   '超过 100% 为 app 侧放大，不突破系统/硬件上限' :
-                  '串流游戏震动强度，100% 为原始强度',
+                  '串流游戏振动强度，100% 为原始强度',
                 type: 'slider',
                 visible: this.enableVibration,
                 value: this.gameVibrationStrength,
@@ -1494,7 +1494,7 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '震动模式',
+                title: '振动模式',
                 subtitle: this.getVibrationModeSubtitle(),
                 type: 'segment',
                 value: this.vibrationMode,
@@ -1515,8 +1515,8 @@ struct SettingsPageV2 {
             title: '手柄',
             items: [
               {
-                title: '多手柄支持',
-                subtitle: '支持多个游戏手柄',
+                title: '多手柄输入',
+                subtitle: '允许多个手柄同时输入',
                 type: 'toggle',
                 value: this.multiController,
                 action: () => {
@@ -1550,7 +1550,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '手柄运动传感器',
-                subtitle: '启用陀螺仪和加速度计',
+                subtitle: '把手柄的陀螺仪数据转发给主机（游戏需支持体感）',
                 type: 'toggle',
                 value: this.gamepadMotionSensors,
                 action: () => {
@@ -1560,7 +1560,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '体感助手',
-                subtitle: '设备陀螺仪映射为右摇杆（串流菜单可临时调整）',
+                subtitle: '本机陀螺仪直接操控右摇杆，无需游戏支持体感',
                 type: 'toggle',
                 value: this.gyroAssistEnabled,
                 action: () => {
@@ -1618,7 +1618,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '设备运动传感器回退',
-                subtitle: '使用设备传感器替代手柄',
+                subtitle: '手柄没有体感时，用本机传感器数据顶替转发',
                 type: 'toggle',
                 visible: this.gamepadMotionSensors,
                 value: this.gamepadMotionFallback,
@@ -1628,7 +1628,7 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '触摸板作为鼠标',
+                title: '手柄触摸板作鼠标',
                 subtitle: 'DualSense/DS4 触摸板模拟鼠标（需 USB 驱动）',
                 type: 'toggle',
                 value: this.gamepadTouchpadMouse,
@@ -1677,8 +1677,8 @@ struct SettingsPageV2 {
             title: 'USB 驱动',
             items: [
               {
-                title: 'USB 手柄驱动',
-                subtitle: '启用 USB 手柄的震动和 LED 等高级功能。手柄输入仍由系统统一处理',
+                title: 'USB 手柄振动与 LED',
+                subtitle: '启用 USB 手柄的振动和 LED 等高级功能。手柄输入仍由系统统一处理',
                 type: 'toggle',
                 value: this.usbDriverEnabled,
                 action: () => {
@@ -1927,8 +1927,8 @@ struct SettingsPageV2 {
             title: '主机',
             items: [
               {
-                title: '服务器端优化',
-                subtitle: '让服务器优化游戏设置',
+                title: 'NVIDIA 游戏优化',
+                subtitle: '让兼容的 NVIDIA 服务端自动优化游戏设置',
                 type: 'toggle',
                 value: this.enableSops,
                 action: () => {
@@ -1989,8 +1989,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '获取公网 IP',
-                subtitle: '使用 STUN 获取被控端公网地址',
+                title: 'STUN 公网地址探测',
+                subtitle: '通过 STUN 探测主机公网地址，用于网络诊断',
                 type: 'toggle',
                 value: this.enableStun,
                 action: () => {
@@ -2105,7 +2105,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '解码队列深度',
-                subtitle: '0=自动(2)，同步模式也限制软件队列',
+                subtitle: '0=自动（2）；数值越大越平滑，延迟也可能增加',
                 type: 'slider',
                 value: this.decoderBufferCount,
                 min: 0,
@@ -2170,7 +2170,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '性能模式',
-                subtitle: '优化线程优先级和系统资源调度',
+                subtitle: '提高线程优先级，降低调度延迟，但会增加功耗和发热',
                 type: 'toggle',
                 value: this.performanceMode,
                 action: () => {
@@ -3668,14 +3668,14 @@ struct SettingsPageV2 {
   private showEnhancedTouchZoneDividerPicker(): void { }
   private showPointerVelocityFactorPicker(): void { }
   
-  /** 震动模式分段项下方的说明文字，随所选模式变化。 */
+  /** 振动模式分段项下方的说明文字，随所选模式变化。 */
   private getVibrationModeSubtitle(): string {
     switch (this.vibrationMode) {
-      case '仅手柄': return '只使用手柄震动';
-      case '仅设备': return '只使用设备震动';
+      case '仅手柄': return '只使用手柄振动';
+      case '仅设备': return '只使用设备振动';
       case '协同': return '手柄承载高频细节，机身补充低频量感';
       case '自动':
-      default: return '有手柄用手柄震动，无手柄用设备震动';
+      default: return '有手柄用手柄振动，无手柄用设备振动';
     }
   }
   private showAudioVibrationSceneModePicker(): void {
@@ -4320,7 +4320,7 @@ struct PrivacyPolicyDialog {
     } as PrivacySection,
     { 
       title: '权限使用', 
-      content: '• 网络权限：建立与电脑的连接\n• 麦克风：语音聊天功能（可选）\n• 振动：手柄震动反馈\n• 传感器：体感控制功能（可选）'
+      content: '• 网络权限：建立与电脑的连接\n• 麦克风：语音聊天功能（可选）\n• 振动：手柄振动反馈\n• 传感器：体感控制功能（可选）'
     } as PrivacySection,
     { 
       title: '第三方服务', 
