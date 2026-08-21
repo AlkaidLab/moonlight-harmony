@@ -1480,6 +1480,7 @@ struct SettingsPageV2 {
                 title: '震动模式',
                 type: 'segment',
                 value: this.vibrationMode,
+                subtitle: this.getVibrationModeSubtitle(),
                 visible: this.enableVibration,
                 segmentLabels: ['自动', '仅手柄', '仅设备', '协同'],
                 onSegmentChange: (value: string) => {
@@ -3675,27 +3676,15 @@ struct SettingsPageV2 {
   private showEnhancedTouchZoneDividerPicker(): void { }
   private showPointerVelocityFactorPicker(): void { }
   
-  /**
-   * 显示震动模式选择器
-   */
-  private showVibrationModePicker(): void {
-    const options: PickerOption[] = [
-      { title: '自动', subtitle: '有手柄用手柄震动，无手柄用设备震动', value: '自动' } as PickerOption,
-      { title: '仅手柄', subtitle: '只使用手柄震动', value: '仅手柄' } as PickerOption,
-      { title: '仅设备', subtitle: '只使用设备震动', value: '仅设备' } as PickerOption,
-      { title: '协同', subtitle: '手柄承载高频细节，机身补充低频量感', value: '协同' } as PickerOption
-    ];
-    const config: PickerConfig = {
-      title: '选择震动模式',
-      subtitle: '选择震动反馈的来源',
-      selectedValue: this.vibrationMode,
-      options: options,
-      onSelect: (option: PickerOption) => {
-        this.vibrationMode = option.value as string;
-        this.saveSetting(SettingsKeys.VIBRATION_MODE, option.value as string);
-      }
-    };
-    this.showPicker(config);
+  /** 震动模式分段项下方的说明文字，随所选模式变化。 */
+  private getVibrationModeSubtitle(): string {
+    switch (this.vibrationMode) {
+      case '仅手柄': return '只使用手柄震动';
+      case '仅设备': return '只使用设备震动';
+      case '协同': return '手柄承载高频细节，机身补充低频量感';
+      case '自动':
+      default: return '有手柄用手柄震动，无手柄用设备震动';
+    }
   }
   private showAudioVibrationSceneModePicker(): void {
     const options: PickerOption[] = [
