@@ -20,7 +20,14 @@ import { CustomKeyStore } from '../../service/customkey/CustomKeyStore';
 import { ShortcutManager, Shortcut } from '../ShortcutManager';
 import { ActionDialog, ActionDialogConfig, ConfirmDialog, ConfirmDialogConfig } from './ConfirmDialog';
 import { SuperCmd } from '../../service/streaming/NvHttp';
-import { GyroAssistService, GYRO_ACTIVATION_ALWAYS, GYRO_ACTIVATION_LT, GYRO_ACTIVATION_RT } from '../../service/input/GyroAssistService';
+import {
+  GyroAssistService,
+  GYRO_ACTIVATION_ALWAYS,
+  GYRO_ACTIVATION_LT,
+  GYRO_ACTIVATION_RT,
+  GYRO_SENSITIVITY_MIN,
+  GYRO_SENSITIVITY_MAX
+} from '../../service/input/GyroAssistService';
 import { SettingsKeys } from '../../service/SettingsService';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService } from '../../service/input/DeviceSensorService';
@@ -460,7 +467,7 @@ export struct GameMenuDialog {
     const modes: TouchModeOption[] = [
       { key: 'trackpad', text: '触控板', subtitle: '像笔记本触控板一样操作' },
       { key: 'direct', text: '多点触控', subtitle: '直接点击屏幕位置' },
-      { key: 'mouse', text: '鼠标模式', subtitle: '模拟鼠标移动和点击' },
+      { key: 'mouse', text: '触摸鼠标', subtitle: '模拟鼠标移动和点击' },
       { key: 'ds5_touchpad', text: 'DS5 触控板', subtitle: '屏幕映射 DualSense 触控板，支持双指' }
     ];
 
@@ -1546,8 +1553,8 @@ export struct GameMenuDialog {
 
           Slider({
             value: this.gyroSensitivity,
-            min: 0.5,
-            max: 10.0,
+            min: GYRO_SENSITIVITY_MIN,
+            max: GYRO_SENSITIVITY_MAX,
             step: 0.1,
             style: SliderStyle.OutSet
           })
@@ -1567,9 +1574,9 @@ export struct GameMenuDialog {
             })
 
           Row() {
-            Text('0.5x').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
+            Text(GYRO_SENSITIVITY_MIN.toFixed(1) + 'x').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
             Blank()
-            Text('3.0x').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
+            Text(GYRO_SENSITIVITY_MAX.toFixed(1) + 'x').fontSize(OV_FONT_XS).fontColor(StreamMenuColors.TextFaint)
           }
           .width('100%')
         }

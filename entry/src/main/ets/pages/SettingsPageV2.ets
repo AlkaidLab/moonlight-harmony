@@ -42,6 +42,7 @@ import { DeveloperUnlockResult, DeveloperUnlockService, DeveloperUnlockStatus } 
 import { GitHubDeviceCode } from '../utils/GitHubStarVerifier';
 import { ToastQueue } from '../utils/ToastQueue';
 import { METERED_BANDWIDTH_PROBE_MAX_BYTES } from '../service/network/BandwidthProbeService';
+import { GYRO_SENSITIVITY_MIN, GYRO_SENSITIVITY_MAX } from '../service/input/GyroAssistService';
 
 /**
  * 选择器选项接口
@@ -188,7 +189,7 @@ struct SettingsPageV2 {
   
   // 输入 - 手柄设置
   @State enableVibration: boolean = true;
-  @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/同时
+  @State vibrationMode: string = '自动';  // 自动/仅手柄/仅设备/协同
   @State gameVibrationStrength: number = GAME_VIBRATION_STRENGTH_DEFAULT;
   @State enableAudioVibration: boolean = false;
   @State audioVibrationStrength: number = 60;
@@ -226,12 +227,12 @@ struct SettingsPageV2 {
   @State mouseNavButtons: boolean = false;
   @State gameMouseMode: boolean = false;   // 游戏鼠标模式（相对模式+光标回弹）
   
-  // 增强触控设置
-  @State enableEnhancedTouch: boolean = true;
-  @State enhancedTouchOnRight: boolean = false;
-  @State enhancedTouchZoneDivider: number = 50;
-  @State pointerVelocityFactor: number = 100;
-  @State longPressFlatRegion: number = 0;
+  // 体感助手设置
+  @State gyroAssistEnabled: boolean = false;
+  @State gyroSensitivity: number = 1.0;
+  @State gyroInvertX: boolean = false;
+  @State gyroInvertY: boolean = false;
+  @State gyroActivationKey: number = -1;
   
   // 主机设置
   @State enableSops: boolean = true;
@@ -297,11 +298,11 @@ struct SettingsPageV2 {
   private sidebarGroups: SidebarGroupMeta[] = [
     { id: 'video', icon: $r('sys.symbol.video_fill'), title: '视频' },
     { id: 'audio', icon: $r('sys.symbol.speaker_wave_2_fill'), title: '音频' },
+    { id: 'vibration', icon: $r('sys.symbol.waveform'), title: '振动' },
     { id: 'gamepad', icon: $r('sys.symbol.gamecontroller_fill'), title: '手柄' },
     { id: 'usb_driver', icon: $r('sys.symbol.charg_cable'), title: 'USB 驱动' },
     { id: 'osc', icon: $r('sys.symbol.gamecontroller'), title: '屏幕控制器' },
     { id: 'mouse', icon: $r('sys.symbol.mouse'), title: '鼠标触控' },
-    { id: 'enhanced_touch', icon: $r('sys.symbol.bolt_fill'), title: '增强触控' },
     { id: 'host', icon: $r('sys.symbol.computer_host_fill'), title: '主机' },
     { id: 'post_process', icon: $r('sys.symbol.wand_and_stars'), title: '后处理' },
     { id: 'performance', icon: $r('sys.symbol.slider_horizontal_2'), title: '性能与调试' },
@@ -582,12 +583,12 @@ struct SettingsPageV2 {
       this.mouseNavButtons = await this.loadBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false);
       this.gameMouseMode = await this.loadBoolean(SettingsKeys.GAME_MOUSE_MODE, false);
       
-      // 增强触控设置
-      this.enableEnhancedTouch = await this.loadBoolean(SettingsKeys.ENABLE_ENHANCED_TOUCH, true);
-      this.enhancedTouchOnRight = await this.loadBoolean(SettingsKeys.ENHANCED_TOUCH_ON_RIGHT, false);
-      this.enhancedTouchZoneDivider = await PreferencesUtil.get<number>(SettingsKeys.ENHANCED_TOUCH_ZONE_DIVIDER, 50);
-      this.pointerVelocityFactor = await PreferencesUtil.get<number>(SettingsKeys.POINTER_VELOCITY_FACTOR, 100);
-      this.longPressFlatRegion = await PreferencesUtil.get<number>(SettingsKeys.LONG_PRESS_FLAT_REGION, 0);
+      // 体感助手设置
+      this.gyroAssistEnabled = await this.loadBoolean(SettingsKeys.GYRO_ASSIST_ENABLED, false);
+      this.gyroSensitivity = await PreferencesUtil.get<number>(SettingsKeys.GYRO_SENSITIVITY, 1.0);
+      this.gyroInvertX = await this.loadBoolean(SettingsKeys.GYRO_INVERT_X, false);
+      this.gyroInvertY = await this.loadBoolean(SettingsKeys.GYRO_INVERT_Y, false);
+      this.gyroActivationKey = await PreferencesUtil.get<number>(SettingsKeys.GYRO_ACTIVATION_KEY, -1);
       
       // 主机设置
       this.enableSops = await this.loadBoolean(SettingsKeys.ENABLE_SOPS, true);
@@ -1061,7 +1062,8 @@ struct SettingsPageV2 {
                 title: '码率上限',
                 subtitle: this.bitrate === 0 
                   ? `自动 (推荐: ${this.getRecommendedBitrateForCurrentSettings()} Mbps)` 
-                  : this.bandwidthProbeEnabled ? '自动初始码率不会超过此值' : '视频传输比特率',
+                  : (this.bandwidthProbeEnabled || this.adaptiveBitrate)
+                    ? '自动选码率和动态调节的上限' : '视频传输比特率上限',
                 type: 'slider',
                 value: this.bitrate,
                 min: 1,  // 对数滑块最小值为1（0单独处理为"自动"）
@@ -1079,8 +1081,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '自动初始码率',
-                subtitle: this.bandwidthProbeEnabled ? '开流前预估可用带宽' : '直接使用码率上限',
+                title: '开流前自动选码率',
+                subtitle: this.bandwidthProbeEnabled ? '连接前预估带宽，自动选择初始码率' : '关闭后直接使用码率上限',
                 type: 'toggle',
                 value: this.bandwidthProbeEnabled,
                 action: () => {
@@ -1102,8 +1104,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '串流中动态调节',
-                subtitle: this.adaptiveBitrate ? '根据网络状况自动调节码率' : '手动码率模式',
+                title: '串流中自动调节码率',
+                subtitle: this.adaptiveBitrate ? '根据网络状况自动调节码率，不超过码率上限' : '关闭后使用固定码率',
                 tooltip: '实时上报丢包率、延迟、帧率等网络指标，由本地 PID 控制器自动调节码率；连接基地阳光的米塔智能体时，服务端 LLM 可综合游戏类型和画面复杂度给出更精准的码率推荐',
                 type: 'toggle',
                 value: this.adaptiveBitrate,
@@ -1113,8 +1115,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '分辨率缩放',
-                subtitle: '主机渲染分辨率比例',
+                title: '主机分辨率缩放',
+                subtitle: '按所选串流分辨率调整主机渲染分辨率',
                 type: 'slider',
                 value: this.hostScale,
                 min: 50,   // Android: 50-400%, step 10
@@ -1153,7 +1155,7 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: 'HDR',
+                title: '串流 HDR',
                 subtitle: this.videoFormat === 'H.264' 
                   ? 'H.264 不支持 HDR' 
                   : '需要支持 HDR 的显示器',
@@ -1190,10 +1192,10 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: 'HDR 高亮度',
-                subtitle: this.videoFormat === 'H.264' 
-                  ? '需要 HEVC/AV1' 
-                  : '使用高亮度 HDR 模式',
+                title: '本机 HDR 屏幕增亮',
+                subtitle: this.videoFormat === 'H.264'
+                  ? '需要 HEVC/AV1'
+                  : '提高本机屏幕亮度，与上报给主机的峰值亮度无关',
                 type: 'toggle',
                 visible: this.enableHdr,
                 value: this.enableHdrHighBrightness,
@@ -1208,10 +1210,10 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '手动 HDR 亮度校准',
+                title: 'HDR 峰值亮度校准',
                 subtitle: this.hdrBrightnessOverride
-                  ? '上报峰值 ' + this.hdrPeakBrightnessNits.toString() + ' nits，重新连接后生效'
-                  : '默认优先按屏幕实测亮度上报；测量不可靠时回退默认值，过曝/偏暗时可手动覆盖',
+                  ? '向主机上报 ' + this.hdrPeakBrightnessNits.toString() + ' nits，重新连接后生效'
+                  : '自动测量本机亮度；过曝或偏暗时可手动指定上报值',
                 type: 'toggle',
                 visible: this.enableHdr,
                 value: this.hdrBrightnessOverride,
@@ -1226,8 +1228,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: 'HDR 峰值亮度',
-                subtitle: '数值越高，Sunshine 会按更亮的 HDR 屏幕处理',
+                title: 'HDR 峰值亮度（上报主机）',
+                subtitle: '告知主机本机屏幕的最高亮度，不改变屏幕实际亮度',
                 type: 'slider',
                 visible: this.enableHdr && this.hdrBrightnessOverride,
                 value: this.hdrPeakBrightnessNits,
@@ -1305,10 +1307,10 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '全范围颜色',
+                title: '全范围色彩',
                 subtitle: this.enableHdr
                   ? 'HDR 模式下需与服务端编码范围一致'
-                  : '使用完整颜色范围 (0-255)',
+                  : '使用完整色彩范围（0–255）',
                 tooltip: '仅在服务端与解码器均使用全范围时开启；范围不一致会导致黑位或高光异常',
                 type: 'toggle',
                 value: this.fullRange,
@@ -1359,7 +1361,7 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '本地音频',
+                title: '主机同时播放音频',
                 subtitle: '同时在主机上播放音频',
                 type: 'toggle',
                 value: this.enableLocalAudio,
@@ -1420,6 +1422,42 @@ struct SettingsPageV2 {
                     this.saveSetting(SettingsKeys.MIC_BITRATE, value);
                   }
                 }
+              }
+            ]
+          })
+
+          // 振动设置：游戏振动与音频触感汇入同一组执行器，集中配置
+          this.SettingsGroup({
+            id: 'vibration',
+            icon: $r('sys.symbol.waveform'),
+            title: '振动',
+            items: [
+              {
+                title: '振动反馈',
+                subtitle: '串流游戏振动反馈',
+                type: 'toggle',
+                value: this.enableVibration,
+                action: () => {
+                  this.enableVibration = !this.enableVibration;
+                  this.saveSetting(SettingsKeys.ENABLE_VIBRATION, this.enableVibration);
+                }
+              },
+              {
+                title: '振动强度',
+                subtitle: this.gameVibrationStrength > GAME_VIBRATION_STRENGTH_ORIGINAL ?
+                  '超过 100% 为 app 侧放大，不突破系统/硬件上限' :
+                  '串流游戏振动强度，100% 为原始强度',
+                type: 'slider',
+                visible: this.enableVibration,
+                value: this.gameVibrationStrength,
+                min: GAME_VIBRATION_STRENGTH_MIN,
+                max: GAME_VIBRATION_STRENGTH_MAX,
+                step: GAME_VIBRATION_STRENGTH_STEP,
+                unit: '%',
+                onSliderChange: (value: number) => {
+                  this.gameVibrationStrength = normalizeGameVibrationStrength(value);
+                  this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, this.gameVibrationStrength);
+                }
               },
               {
                 title: '音频振动',
@@ -1456,10 +1494,22 @@ struct SettingsPageV2 {
                   this.audioVibrationSceneMode = value;
                   this.saveSetting(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, value);
                 }
+              },
+              {
+                title: '振动模式',
+                subtitle: this.getVibrationModeSubtitle(),
+                type: 'segment',
+                value: this.vibrationMode,
+                visible: this.enableVibration || this.enableAudioVibration,
+                segmentLabels: ['自动', '仅手柄', '仅设备', '协同'],
+                onSegmentChange: (value: string) => {
+                  this.vibrationMode = value;
+                  this.saveSetting(SettingsKeys.VIBRATION_MODE, value);
+                }
               }
             ]
           })
-          
+
           // 手柄设置
           this.SettingsGroup({
             id: 'gamepad',
@@ -1467,47 +1517,8 @@ struct SettingsPageV2 {
             title: '手柄',
             items: [
               {
-                title: '振动反馈',
-                subtitle: '串流游戏震动反馈',
-                type: 'toggle',
-                value: this.enableVibration,
-                action: () => {
-                  this.enableVibration = !this.enableVibration;
-                  this.saveSetting(SettingsKeys.ENABLE_VIBRATION, this.enableVibration);
-                }
-              },
-              {
-                title: '震动模式',
-                type: 'segment',
-                value: this.vibrationMode,
-                subtitle: this.getVibrationModeSubtitle(),
-                visible: this.enableVibration,
-                segmentLabels: ['自动', '仅手柄', '仅设备', '协同'],
-                onSegmentChange: (value: string) => {
-                  this.vibrationMode = value;
-                  this.saveSetting(SettingsKeys.VIBRATION_MODE, value);
-                }
-              },
-              {
-                title: '震动强度',
-                subtitle: this.gameVibrationStrength > GAME_VIBRATION_STRENGTH_ORIGINAL ?
-                  '超过 100% 为 app 侧放大，不突破系统/硬件上限' :
-                  '串流游戏震动强度，100% 为原始强度',
-                type: 'slider',
-                visible: this.enableVibration,
-                value: this.gameVibrationStrength,
-                min: GAME_VIBRATION_STRENGTH_MIN,
-                max: GAME_VIBRATION_STRENGTH_MAX,
-                step: GAME_VIBRATION_STRENGTH_STEP,
-                unit: '%',
-                onSliderChange: (value: number) => {
-                  this.gameVibrationStrength = normalizeGameVibrationStrength(value);
-                  this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, this.gameVibrationStrength);
-                }
-              },
-              {
-                title: '多手柄支持',
-                subtitle: '支持多个游戏手柄',
+                title: '多手柄输入',
+                subtitle: '允许多个手柄同时输入',
                 type: 'toggle',
                 value: this.multiController,
                 action: () => {
@@ -1541,7 +1552,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '手柄运动传感器',
-                subtitle: '启用陀螺仪和加速度计',
+                subtitle: '把手柄的陀螺仪数据转发给主机（游戏需支持体感）',
                 type: 'toggle',
                 value: this.gamepadMotionSensors,
                 action: () => {
@@ -1550,8 +1561,66 @@ struct SettingsPageV2 {
                 }
               },
               {
+                title: '体感助手',
+                subtitle: '本机陀螺仪直接操控右摇杆，无需游戏支持体感',
+                type: 'toggle',
+                value: this.gyroAssistEnabled,
+                action: () => {
+                  this.gyroAssistEnabled = !this.gyroAssistEnabled;
+                  this.saveSetting(SettingsKeys.GYRO_ASSIST_ENABLED, this.gyroAssistEnabled);
+                }
+              },
+              {
+                title: '体感灵敏度',
+                subtitle: '倍率越高，越小的旋转幅度即可满偏',
+                type: 'slider',
+                visible: this.gyroAssistEnabled,
+                value: this.gyroSensitivity,
+                min: GYRO_SENSITIVITY_MIN,
+                max: GYRO_SENSITIVITY_MAX,
+                step: 0.1,
+                formatValue: (v: number) => `${v.toFixed(1)}x`,
+                onSliderChange: (value: number) => {
+                  this.gyroSensitivity = Math.round(value * 10) / 10;
+                  this.saveSetting(SettingsKeys.GYRO_SENSITIVITY, this.gyroSensitivity);
+                }
+              },
+              {
+                title: '体感 X 轴反转',
+                type: 'toggle',
+                visible: this.gyroAssistEnabled,
+                value: this.gyroInvertX,
+                action: () => {
+                  this.gyroInvertX = !this.gyroInvertX;
+                  this.saveSetting(SettingsKeys.GYRO_INVERT_X, this.gyroInvertX);
+                }
+              },
+              {
+                title: '体感 Y 轴反转',
+                type: 'toggle',
+                visible: this.gyroAssistEnabled,
+                value: this.gyroInvertY,
+                action: () => {
+                  this.gyroInvertY = !this.gyroInvertY;
+                  this.saveSetting(SettingsKeys.GYRO_INVERT_Y, this.gyroInvertY);
+                }
+              },
+              {
+                title: '体感激活方式',
+                subtitle: '常开，或按住扳机时启用',
+                type: 'segment',
+                visible: this.gyroAssistEnabled,
+                value: String(this.gyroActivationKey),
+                segmentLabels: ['常开', 'LT', 'RT'],
+                segmentValues: ['-1', '0', '1'],
+                onSegmentChange: (value: string) => {
+                  this.gyroActivationKey = Math.round(Number(value));
+                  this.saveSetting(SettingsKeys.GYRO_ACTIVATION_KEY, this.gyroActivationKey);
+                }
+              },
+              {
                 title: '设备运动传感器回退',
-                subtitle: '使用设备传感器替代手柄',
+                subtitle: '手柄没有体感时，用本机传感器数据顶替转发',
                 type: 'toggle',
                 visible: this.gamepadMotionSensors,
                 value: this.gamepadMotionFallback,
@@ -1561,7 +1630,7 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '触摸板作为鼠标',
+                title: '手柄触摸板作鼠标',
                 subtitle: 'DualSense/DS4 触摸板模拟鼠标（需 USB 驱动）',
                 type: 'toggle',
                 value: this.gamepadTouchpadMouse,
@@ -1610,8 +1679,8 @@ struct SettingsPageV2 {
             title: 'USB 驱动',
             items: [
               {
-                title: 'USB 手柄驱动',
-                subtitle: '启用 USB 手柄的震动和 LED 等高级功能。手柄输入仍由系统统一处理',
+                title: 'USB 手柄振动与 LED',
+                subtitle: '启用 USB 手柄的振动和 LED 等高级功能。手柄输入仍由系统统一处理',
                 type: 'toggle',
                 value: this.usbDriverEnabled,
                 action: () => {
@@ -1853,81 +1922,6 @@ struct SettingsPageV2 {
             ]
           })
           
-          // 增强触控设置 (实验性，设置值已保存但尚未接入 TouchInputHandler)
-          this.SettingsGroup({
-            id: 'enhanced_touch',
-            icon: $r('sys.symbol.bolt_fill'),
-            title: '增强触控 (实验性)',
-            items: [
-              {
-                title: '启用增强触控',
-                subtitle: '尚未实装，敬请期待',
-                type: 'toggle',
-                value: this.enableEnhancedTouch,
-                action: () => {
-                  this.enableEnhancedTouch = !this.enableEnhancedTouch;
-                  this.saveSetting(SettingsKeys.ENABLE_ENHANCED_TOUCH, this.enableEnhancedTouch);
-                }
-              },
-              {
-                title: '触控区域在右侧',
-                subtitle: '将增强触控区域放在右侧',
-                type: 'toggle',
-                visible: this.enableEnhancedTouch,
-                value: this.enhancedTouchOnRight,
-                action: () => {
-                  this.enhancedTouchOnRight = !this.enhancedTouchOnRight;
-                  this.saveSetting(SettingsKeys.ENHANCED_TOUCH_ON_RIGHT, this.enhancedTouchOnRight);
-                }
-              },
-              {
-                title: '触控区域分割',
-                subtitle: '触控区域占比',
-                type: 'slider',
-                visible: this.enableEnhancedTouch,
-                value: this.enhancedTouchZoneDivider,
-                min: 10,
-                max: 90,
-                step: 5,
-                unit: '%',
-                onSliderChange: (value: number) => {
-                  this.enhancedTouchZoneDivider = value;
-                  this.saveSetting(SettingsKeys.ENHANCED_TOUCH_ZONE_DIVIDER, value);
-                }
-              },
-              {
-                title: '指针速度因子',
-                subtitle: '指针移动速度倍数',
-                type: 'slider',
-                visible: this.enableEnhancedTouch,
-                value: this.pointerVelocityFactor,
-                min: 10,
-                max: 200,
-                step: 10,
-                unit: '%',
-                onSliderChange: (value: number) => {
-                  this.pointerVelocityFactor = value;
-                  this.saveSetting(SettingsKeys.POINTER_VELOCITY_FACTOR, value);
-                }
-              },
-              {
-                title: '长按平坦区域',
-                subtitle: '长按触发范围',
-                type: 'slider',
-                visible: this.enableEnhancedTouch,
-                value: this.longPressFlatRegion,
-                min: 0,
-                max: 50,
-                step: 5,
-                unit: ' px',
-                onSliderChange: (value: number) => {
-                  this.longPressFlatRegion = value;
-                  this.saveSetting(SettingsKeys.LONG_PRESS_FLAT_REGION, value);
-                }
-              }
-            ]
-          })
-          
           // 主机设置
           this.SettingsGroup({
             id: 'host',
@@ -1935,8 +1929,8 @@ struct SettingsPageV2 {
             title: '主机',
             items: [
               {
-                title: '服务器端优化',
-                subtitle: '让服务器优化游戏设置',
+                title: 'NVIDIA 游戏优化',
+                subtitle: '让兼容的 NVIDIA 服务端自动优化游戏设置',
                 type: 'toggle',
                 value: this.enableSops,
                 action: () => {
@@ -1997,8 +1991,8 @@ struct SettingsPageV2 {
                 }
               },
               {
-                title: '获取公网 IP',
-                subtitle: '使用 STUN 获取被控端公网地址',
+                title: 'STUN 公网地址探测',
+                subtitle: '通过 STUN 探测主机公网地址，用于网络诊断',
                 type: 'toggle',
                 value: this.enableStun,
                 action: () => {
@@ -2055,8 +2049,8 @@ struct SettingsPageV2 {
                 action: () => this.showSdrToHdrModePicker()
               },
               {
-                title: '显示峰值亮度',
-                subtitle: 'HDR 增强的目标峰值亮度上限',
+                title: 'SDR→HDR 亮度上限',
+                subtitle: '本机 SDR→HDR 映射的目标亮度，与报给主机的「HDR 峰值亮度」无关',
                 type: 'slider',
                 visible: this.sdrToHdrMode === 1,
                 value: this.sdrToHdrPeakNits,
@@ -2113,7 +2107,7 @@ struct SettingsPageV2 {
             items: [
               {
                 title: '解码队列深度',
-                subtitle: '0=自动(2)，同步模式也限制软件队列',
+                subtitle: '0=自动（2）；数值越大越平滑，延迟也可能增加',
                 type: 'slider',
                 value: this.decoderBufferCount,
                 min: 0,
@@ -2178,7 +2172,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '性能模式',
-                subtitle: '优化线程优先级和系统资源调度',
+                subtitle: '提高线程优先级，降低调度延迟，但会增加功耗和发热',
                 type: 'toggle',
                 value: this.performanceMode,
                 action: () => {
@@ -3676,14 +3670,14 @@ struct SettingsPageV2 {
   private showEnhancedTouchZoneDividerPicker(): void { }
   private showPointerVelocityFactorPicker(): void { }
   
-  /** 震动模式分段项下方的说明文字，随所选模式变化。 */
+  /** 振动模式分段项下方的说明文字，随所选模式变化。 */
   private getVibrationModeSubtitle(): string {
     switch (this.vibrationMode) {
-      case '仅手柄': return '只使用手柄震动';
-      case '仅设备': return '只使用设备震动';
+      case '仅手柄': return '只使用手柄振动';
+      case '仅设备': return '只使用设备振动';
       case '协同': return '手柄承载高频细节，机身补充低频量感';
       case '自动':
-      default: return '有手柄用手柄震动，无手柄用设备震动';
+      default: return '有手柄用手柄振动，无手柄用设备振动';
     }
   }
   private showAudioVibrationSceneModePicker(): void {
@@ -4328,7 +4322,7 @@ struct PrivacyPolicyDialog {
     } as PrivacySection,
     { 
       title: '权限使用', 
-      content: '• 网络权限：建立与电脑的连接\n• 麦克风：语音聊天功能（可选）\n• 振动：手柄震动反馈\n• 传感器：体感控制功能（可选）'
+      content: '• 网络权限：建立与电脑的连接\n• 麦克风：语音聊天功能（可选）\n• 振动：手柄振动反馈\n• 传感器：体感控制功能（可选）'
     } as PrivacySection,
     { 
       title: '第三方服务', 
