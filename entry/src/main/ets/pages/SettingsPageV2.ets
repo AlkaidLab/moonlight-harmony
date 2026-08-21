@@ -226,12 +226,12 @@ struct SettingsPageV2 {
   @State mouseNavButtons: boolean = false;
   @State gameMouseMode: boolean = false;   // 游戏鼠标模式（相对模式+光标回弹）
   
-  // 增强触控设置
-  @State enableEnhancedTouch: boolean = true;
-  @State enhancedTouchOnRight: boolean = false;
-  @State enhancedTouchZoneDivider: number = 50;
-  @State pointerVelocityFactor: number = 100;
-  @State longPressFlatRegion: number = 0;
+  // 体感助手设置
+  @State gyroAssistEnabled: boolean = false;
+  @State gyroSensitivity: number = 1.0;
+  @State gyroInvertX: boolean = false;
+  @State gyroInvertY: boolean = false;
+  @State gyroActivationKey: number = -1;
   
   // 主机设置
   @State enableSops: boolean = true;
@@ -297,11 +297,11 @@ struct SettingsPageV2 {
   private sidebarGroups: SidebarGroupMeta[] = [
     { id: 'video', icon: $r('sys.symbol.video_fill'), title: '视频' },
     { id: 'audio', icon: $r('sys.symbol.speaker_wave_2_fill'), title: '音频' },
+    { id: 'vibration', icon: $r('sys.symbol.waveform'), title: '振动' },
     { id: 'gamepad', icon: $r('sys.symbol.gamecontroller_fill'), title: '手柄' },
     { id: 'usb_driver', icon: $r('sys.symbol.charg_cable'), title: 'USB 驱动' },
     { id: 'osc', icon: $r('sys.symbol.gamecontroller'), title: '屏幕控制器' },
     { id: 'mouse', icon: $r('sys.symbol.mouse'), title: '鼠标触控' },
-    { id: 'enhanced_touch', icon: $r('sys.symbol.bolt_fill'), title: '增强触控' },
     { id: 'host', icon: $r('sys.symbol.computer_host_fill'), title: '主机' },
     { id: 'post_process', icon: $r('sys.symbol.wand_and_stars'), title: '后处理' },
     { id: 'performance', icon: $r('sys.symbol.slider_horizontal_2'), title: '性能与调试' },
@@ -582,12 +582,12 @@ struct SettingsPageV2 {
       this.mouseNavButtons = await this.loadBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false);
       this.gameMouseMode = await this.loadBoolean(SettingsKeys.GAME_MOUSE_MODE, false);
       
-      // 增强触控设置
-      this.enableEnhancedTouch = await this.loadBoolean(SettingsKeys.ENABLE_ENHANCED_TOUCH, true);
-      this.enhancedTouchOnRight = await this.loadBoolean(SettingsKeys.ENHANCED_TOUCH_ON_RIGHT, false);
-      this.enhancedTouchZoneDivider = await PreferencesUtil.get<number>(SettingsKeys.ENHANCED_TOUCH_ZONE_DIVIDER, 50);
-      this.pointerVelocityFactor = await PreferencesUtil.get<number>(SettingsKeys.POINTER_VELOCITY_FACTOR, 100);
-      this.longPressFlatRegion = await PreferencesUtil.get<number>(SettingsKeys.LONG_PRESS_FLAT_REGION, 0);
+      // 体感助手设置
+      this.gyroAssistEnabled = await this.loadBoolean(SettingsKeys.GYRO_ASSIST_ENABLED, false);
+      this.gyroSensitivity = await PreferencesUtil.get<number>(SettingsKeys.GYRO_SENSITIVITY, 1.0);
+      this.gyroInvertX = await this.loadBoolean(SettingsKeys.GYRO_INVERT_X, false);
+      this.gyroInvertY = await this.loadBoolean(SettingsKeys.GYRO_INVERT_Y, false);
+      this.gyroActivationKey = await PreferencesUtil.get<number>(SettingsKeys.GYRO_ACTIVATION_KEY, -1);
       
       // 主机设置
       this.enableSops = await this.loadBoolean(SettingsKeys.ENABLE_SOPS, true);
@@ -1420,6 +1420,42 @@ struct SettingsPageV2 {
                     this.saveSetting(SettingsKeys.MIC_BITRATE, value);
                   }
                 }
+              }
+            ]
+          })
+
+          // 振动设置：游戏震动与音频触感汇入同一组执行器，集中配置
+          this.SettingsGroup({
+            id: 'vibration',
+            icon: $r('sys.symbol.waveform'),
+            title: '振动',
+            items: [
+              {
+                title: '振动反馈',
+                subtitle: '串流游戏震动反馈',
+                type: 'toggle',
+                value: this.enableVibration,
+                action: () => {
+                  this.enableVibration = !this.enableVibration;
+                  this.saveSetting(SettingsKeys.ENABLE_VIBRATION, this.enableVibration);
+                }
+              },
+              {
+                title: '震动强度',
+                subtitle: this.gameVibrationStrength > GAME_VIBRATION_STRENGTH_ORIGINAL ?
+                  '超过 100% 为 app 侧放大，不突破系统/硬件上限' :
+                  '串流游戏震动强度，100% 为原始强度',
+                type: 'slider',
+                visible: this.enableVibration,
+                value: this.gameVibrationStrength,
+                min: GAME_VIBRATION_STRENGTH_MIN,
+                max: GAME_VIBRATION_STRENGTH_MAX,
+                step: GAME_VIBRATION_STRENGTH_STEP,
+                unit: '%',
+                onSliderChange: (value: number) => {
+                  this.gameVibrationStrength = normalizeGameVibrationStrength(value);
+                  this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, this.gameVibrationStrength);
+                }
               },
               {
                 title: '音频振动',
@@ -1456,55 +1492,28 @@ struct SettingsPageV2 {
                   this.audioVibrationSceneMode = value;
                   this.saveSetting(SettingsKeys.AUDIO_VIBRATION_SCENE_MODE, value);
                 }
+              },
+              {
+                title: '震动模式',
+                subtitle: this.getVibrationModeSubtitle(),
+                type: 'segment',
+                value: this.vibrationMode,
+                visible: this.enableVibration || this.enableAudioVibration,
+                segmentLabels: ['自动', '仅手柄', '仅设备', '协同'],
+                onSegmentChange: (value: string) => {
+                  this.vibrationMode = value;
+                  this.saveSetting(SettingsKeys.VIBRATION_MODE, value);
+                }
               }
             ]
           })
-          
+
           // 手柄设置
           this.SettingsGroup({
             id: 'gamepad',
             icon: $r('sys.symbol.gamecontroller_fill'),
             title: '手柄',
             items: [
-              {
-                title: '振动反馈',
-                subtitle: '串流游戏震动反馈',
-                type: 'toggle',
-                value: this.enableVibration,
-                action: () => {
-                  this.enableVibration = !this.enableVibration;
-                  this.saveSetting(SettingsKeys.ENABLE_VIBRATION, this.enableVibration);
-                }
-              },
-              {
-                title: '震动模式',
-                type: 'segment',
-                value: this.vibrationMode,
-                subtitle: this.getVibrationModeSubtitle(),
-                visible: this.enableVibration,
-                segmentLabels: ['自动', '仅手柄', '仅设备', '协同'],
-                onSegmentChange: (value: string) => {
-                  this.vibrationMode = value;
-                  this.saveSetting(SettingsKeys.VIBRATION_MODE, value);
-                }
-              },
-              {
-                title: '震动强度',
-                subtitle: this.gameVibrationStrength > GAME_VIBRATION_STRENGTH_ORIGINAL ?
-                  '超过 100% 为 app 侧放大，不突破系统/硬件上限' :
-                  '串流游戏震动强度，100% 为原始强度',
-                type: 'slider',
-                visible: this.enableVibration,
-                value: this.gameVibrationStrength,
-                min: GAME_VIBRATION_STRENGTH_MIN,
-                max: GAME_VIBRATION_STRENGTH_MAX,
-                step: GAME_VIBRATION_STRENGTH_STEP,
-                unit: '%',
-                onSliderChange: (value: number) => {
-                  this.gameVibrationStrength = normalizeGameVibrationStrength(value);
-                  this.saveSetting(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, this.gameVibrationStrength);
-                }
-              },
               {
                 title: '多手柄支持',
                 subtitle: '支持多个游戏手柄',
@@ -1547,6 +1556,64 @@ struct SettingsPageV2 {
                 action: () => {
                   this.gamepadMotionSensors = !this.gamepadMotionSensors;
                   this.saveSetting(SettingsKeys.GAMEPAD_MOTION_SENSORS, this.gamepadMotionSensors);
+                }
+              },
+              {
+                title: '体感助手',
+                subtitle: '设备陀螺仪映射为右摇杆（串流菜单可临时调整）',
+                type: 'toggle',
+                value: this.gyroAssistEnabled,
+                action: () => {
+                  this.gyroAssistEnabled = !this.gyroAssistEnabled;
+                  this.saveSetting(SettingsKeys.GYRO_ASSIST_ENABLED, this.gyroAssistEnabled);
+                }
+              },
+              {
+                title: '体感灵敏度',
+                subtitle: '倍率越高，越小的旋转幅度即可满偏',
+                type: 'slider',
+                visible: this.gyroAssistEnabled,
+                value: this.gyroSensitivity,
+                min: 0.5,
+                max: 3,
+                step: 0.1,
+                formatValue: (v: number) => `${v.toFixed(1)}x`,
+                onSliderChange: (value: number) => {
+                  this.gyroSensitivity = Math.round(value * 10) / 10;
+                  this.saveSetting(SettingsKeys.GYRO_SENSITIVITY, this.gyroSensitivity);
+                }
+              },
+              {
+                title: '体感 X 轴反转',
+                type: 'toggle',
+                visible: this.gyroAssistEnabled,
+                value: this.gyroInvertX,
+                action: () => {
+                  this.gyroInvertX = !this.gyroInvertX;
+                  this.saveSetting(SettingsKeys.GYRO_INVERT_X, this.gyroInvertX);
+                }
+              },
+              {
+                title: '体感 Y 轴反转',
+                type: 'toggle',
+                visible: this.gyroAssistEnabled,
+                value: this.gyroInvertY,
+                action: () => {
+                  this.gyroInvertY = !this.gyroInvertY;
+                  this.saveSetting(SettingsKeys.GYRO_INVERT_Y, this.gyroInvertY);
+                }
+              },
+              {
+                title: '体感激活方式',
+                subtitle: '常开，或按住扳机时启用',
+                type: 'segment',
+                visible: this.gyroAssistEnabled,
+                value: String(this.gyroActivationKey),
+                segmentLabels: ['常开', 'LT', 'RT'],
+                segmentValues: ['-1', '0', '1'],
+                onSegmentChange: (value: string) => {
+                  this.gyroActivationKey = Math.round(Number(value));
+                  this.saveSetting(SettingsKeys.GYRO_ACTIVATION_KEY, this.gyroActivationKey);
                 }
               },
               {
@@ -1853,81 +1920,6 @@ struct SettingsPageV2 {
             ]
           })
           
-          // 增强触控设置 (实验性，设置值已保存但尚未接入 TouchInputHandler)
-          this.SettingsGroup({
-            id: 'enhanced_touch',
-            icon: $r('sys.symbol.bolt_fill'),
-            title: '增强触控 (实验性)',
-            items: [
-              {
-                title: '启用增强触控',
-                subtitle: '尚未实装，敬请期待',
-                type: 'toggle',
-                value: this.enableEnhancedTouch,
-                action: () => {
-                  this.enableEnhancedTouch = !this.enableEnhancedTouch;
-                  this.saveSetting(SettingsKeys.ENABLE_ENHANCED_TOUCH, this.enableEnhancedTouch);
-                }
-              },
-              {
-                title: '触控区域在右侧',
-                subtitle: '将增强触控区域放在右侧',
-                type: 'toggle',
-                visible: this.enableEnhancedTouch,
-                value: this.enhancedTouchOnRight,
-                action: () => {
-                  this.enhancedTouchOnRight = !this.enhancedTouchOnRight;
-                  this.saveSetting(SettingsKeys.ENHANCED_TOUCH_ON_RIGHT, this.enhancedTouchOnRight);
-                }
-              },
-              {
-                title: '触控区域分割',
-                subtitle: '触控区域占比',
-                type: 'slider',
-                visible: this.enableEnhancedTouch,
-                value: this.enhancedTouchZoneDivider,
-                min: 10,
-                max: 90,
-                step: 5,
-                unit: '%',
-                onSliderChange: (value: number) => {
-                  this.enhancedTouchZoneDivider = value;
-                  this.saveSetting(SettingsKeys.ENHANCED_TOUCH_ZONE_DIVIDER, value);
-                }
-              },
-              {
-                title: '指针速度因子',
-                subtitle: '指针移动速度倍数',
-                type: 'slider',
-                visible: this.enableEnhancedTouch,
-                value: this.pointerVelocityFactor,
-                min: 10,
-                max: 200,
-                step: 10,
-                unit: '%',
-                onSliderChange: (value: number) => {
-                  this.pointerVelocityFactor = value;
-                  this.saveSetting(SettingsKeys.POINTER_VELOCITY_FACTOR, value);
-                }
-              },
-              {
-                title: '长按平坦区域',
-                subtitle: '长按触发范围',
-                type: 'slider',
-                visible: this.enableEnhancedTouch,
-                value: this.longPressFlatRegion,
-                min: 0,
-                max: 50,
-                step: 5,
-                unit: ' px',
-                onSliderChange: (value: number) => {
-                  this.longPressFlatRegion = value;
-                  this.saveSetting(SettingsKeys.LONG_PRESS_FLAT_REGION, value);
-                }
-              }
-            ]
-          })
-          
           // 主机设置
           this.SettingsGroup({
             id: 'host',
@@ -2055,8 +2047,8 @@ struct SettingsPageV2 {
                 action: () => this.showSdrToHdrModePicker()
               },
               {
-                title: '显示峰值亮度',
-                subtitle: 'HDR 增强的目标峰值亮度上限',
+                title: 'SDR→HDR 亮度上限',
+                subtitle: '本机 SDR→HDR 映射的目标亮度，与报给主机的「HDR 峰值亮度」无关',
                 type: 'slider',
                 visible: this.sdrToHdrMode === 1,
                 value: this.sdrToHdrPeakNits,

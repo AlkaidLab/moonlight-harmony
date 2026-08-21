@@ -78,7 +78,7 @@ export class StreamMenuManager {
       case 'direct':
         return '直接触摸模式';
       case 'mouse':
-        return '鼠标模式';
+        return '触摸鼠标';
       case 'ds5_touchpad':
         return 'DS5 触控板模式';
       default:
