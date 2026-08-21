@@ -17,6 +17,11 @@ import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { CryptoUtil } from '../utils/CryptoUtil';
 import { WakeOnLan } from './network/WakeOnLan';
 import { isLanAddress, getBestIpv6Address, isIPv4Address, isIPv6Address, isLoopbackIPv4, parseAddressAndPort } from '../utils/NetHelper';
+import {
+  classifyServerIdentity,
+  collectKnownAddresses,
+  ServerIdentityDisposition
+} from './network/ComputerNetworkPolicy';
 import { connection } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
@@ -252,18 +257,9 @@ export class ComputerManager {
       if (this.computers.get(computer.uuid) !== computer) {
         return;
       }
-      if (!serverInfo.uniqueId) {
-        throw new Error('mDNS 验证响应缺少主机 UUID');
-      }
-
-      // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
-      let target = computer;
-      if (computer.uuid !== serverInfo.uniqueId) {
-        if (computer.uuid.startsWith('discovered-')) {
-          target = this.reconcileUuid(computer, serverInfo.uniqueId);
-        } else {
-          throw new Error(`mDNS 验证返回了其他主机: expected=${computer.uuid}, actual=${serverInfo.uniqueId}`);
-        }
+      const target = this.resolveComputerIdentity(computer, serverInfo.uniqueId, 'mDNS 验证');
+      if (!target) {
+        throw new Error('mDNS 验证返回无效的主机身份');
       }
 
       // 走单一合并入口，保证与轮询/添加路径使用同一套守卫规则
@@ -317,6 +313,27 @@ export class ComputerManager {
       this.offlineCount.set(realUuid, carriedCount);
     }
     return computer;
+  }
+
+  /** 在进入合并路径前统一验证身份，并只为 discovered-* 条目执行 UUID 归一。 */
+  private resolveComputerIdentity(
+    computer: ComputerInfo,
+    serverUniqueId: string | undefined,
+    source: string
+  ): ComputerInfo | null {
+    const disposition = classifyServerIdentity(computer.uuid, serverUniqueId);
+    if (disposition === ServerIdentityDisposition.MATCH) {
+      return computer;
+    }
+    if (disposition === ServerIdentityDisposition.RECONCILE_DISCOVERED) {
+      return this.reconcileUuid(computer, serverUniqueId!);
+    }
+    if (disposition === ServerIdentityDisposition.MISSING) {
+      console.warn(`ComputerManager: ${source}响应缺少主机 UUID`);
+    } else {
+      console.warn(`ComputerManager: ${source}返回其他主机 expected=${computer.uuid}, actual=${serverUniqueId}`);
+    }
+    return null;
   }
 
   /**
@@ -920,7 +937,7 @@ export class ComputerManager {
    * 期间保留原状态，避免短暂网络抖动 / Sunshine 重启时的误报闪烁。
    */
   async pollComputer(computer: ComputerInfo): Promise<boolean> {
-    const addresses = this.collectAddresses(computer);
+    const addresses = collectKnownAddresses(computer);
     if (addresses.length === 0) {
       // 没有任何地址可试，直接认定离线；强制 OFFLINE 后计数不再被读取，清除即可
       computer.state = ComputerState.OFFLINE;
@@ -971,19 +988,6 @@ export class ComputerManager {
   }
 
   /**
-   * 收集电脑的所有可用地址（去重，按优先级排序）
-   */
-  private collectAddresses(computer: ComputerInfo): string[] {
-    const addressSet = new Set<string>();
-    if (computer.manualAddress) addressSet.add(computer.manualAddress);
-    if (computer.address) addressSet.add(computer.address);
-    if (computer.localAddress) addressSet.add(computer.localAddress);
-    if (computer.remoteAddress) addressSet.add(computer.remoteAddress);
-    if (computer.ipv6Address) addressSet.add(computer.ipv6Address);
-    return Array.from(addressSet);
-  }
-
-  /**
    * 尝试通过单个地址轮询
    */
   private async tryPollAddress(address: string, computer: ComputerInfo): Promise<PollResult> {
@@ -991,11 +995,12 @@ export class ComputerManager {
       const nvHttp = NvHttp.fromAddress(address, computer, this.context || undefined);
       const likelyOnline = computer.state === ComputerState.ONLINE && address === computer.address;
       const serverInfo = await nvHttp.getServerInfo(likelyOnline);
-      if (!serverInfo.uniqueId) {
+      const identity = classifyServerIdentity(computer.uuid, serverInfo.uniqueId);
+      if (identity === ServerIdentityDisposition.MISSING) {
         console.warn(`ComputerManager: 轮询 ${address} 的响应缺少主机 UUID`);
         return { address, serverInfo: null };
       }
-      if (computer.uuid !== serverInfo.uniqueId && !computer.uuid.startsWith('discovered-')) {
+      if (identity === ServerIdentityDisposition.MISMATCH) {
         console.warn(`ComputerManager: 轮询 ${address} 返回其他主机 expected=${computer.uuid}, actual=${serverInfo.uniqueId}`);
         return { address, serverInfo: null };
       }
@@ -1085,20 +1090,9 @@ export class ComputerManager {
     if (this.computers.get(computer.uuid) !== computer) {
       return;
     }
-    if (!info.uniqueId) {
-      console.warn(`ComputerManager: 忽略缺少主机 UUID 的轮询结果 (${result.address})`);
+    const target = this.resolveComputerIdentity(computer, info.uniqueId, `轮询 ${result.address}`);
+    if (!target) {
       return;
-    }
-
-    // 处理 UUID 归一：discovered-* 临时条目获得真实 UUID
-    let target = computer;
-    if (computer.uuid !== info.uniqueId) {
-      if (computer.uuid.startsWith('discovered-')) {
-        target = this.reconcileUuid(computer, info.uniqueId);
-      } else {
-        console.warn(`ComputerManager: 忽略其他主机的轮询结果 expected=${computer.uuid}, actual=${info.uniqueId}`);
-        return;
-      }
     }
 
     // 合并服务器信息（所有字段守卫规则集中在 mergeServerInfo）
@@ -1330,7 +1324,7 @@ export class ComputerManager {
 
     await WakeOnLan.sendWolToAddresses(
       computer.macAddress,
-      this.collectAddresses(computer),
+      collectKnownAddresses(computer),
       computer.httpPort || NvHttp.DEFAULT_HTTP_PORT
     );
   }

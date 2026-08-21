@@ -22,6 +22,11 @@ import { ComputerManager } from '../service/ComputerManager';
 import { PairingManager, PairState as PMPairState } from '../service/network/PairingManager';
 import { NvHttp, ServerInfo } from '../service/streaming/NvHttp';
 import { PairState, ComputerState, selectBestAddress, ComputerInfo } from '../model/ComputerInfo';
+import {
+  classifyServerIdentity,
+  collectKnownAddresses,
+  ServerIdentityDisposition
+} from '../service/network/ComputerNetworkPolicy';
 import { ConfirmDialogConfig, InfoDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { AppColors } from '../common/Theme';
 import { isLoopbackIPv4 } from '../utils/NetHelper';
@@ -333,18 +338,12 @@ export class PcListActions {
     const computerInfo = computer.toComputerInfo();
     const context = getContext() as common.UIAbilityContext;
 
-    // 收集所有可用地址（过滤 127.x 回环地址）
-    const addressSet = new Set<string>();
-    const addIfValid = (addr: string | undefined) => {
-      if (addr && !isLoopbackIPv4(addr)) addressSet.add(addr);
-    };
-    addIfValid(computerInfo.preferredAddress);
-    addIfValid(computerInfo.manualAddress);
-    addIfValid(computerInfo.address);
-    addIfValid(computerInfo.localAddress);
-    addIfValid(computerInfo.remoteAddress);
-    addIfValid(computerInfo.ipv6Address);
-    const addresses = Array.from(addressSet);
+    // 诊断包含锁定地址，但过滤服务器自报的 127.x 回环地址。
+    const addresses = collectKnownAddresses(computerInfo, {
+      includePreferred: true,
+      excludeLoopbackIPv4: true
+    });
+    const addressSet = new Set<string>(addresses);
 
     if (addresses.length === 0) {
       this.ui.showInfoDialog({ title: '网络测试', content: '没有可用的连接地址' });
@@ -367,10 +366,11 @@ export class PcListActions {
           // 此处刻意不传 context：不配置客户端证书文件时 getServerInfo() 才走 HTTP。
           const nvHttp = NvHttp.fromAddress(addr, computerInfo);
           const info = await nvHttp.getServerInfo();
-          if (!info.uniqueId) {
+          const identity = classifyServerIdentity(computerInfo.uuid, info.uniqueId);
+          if (identity === ServerIdentityDisposition.MISSING) {
             throw new Error('服务器响应缺少主机 UUID');
           }
-          if (info.uniqueId !== computerInfo.uuid && !computerInfo.uuid.startsWith('discovered-')) {
+          if (identity === ServerIdentityDisposition.MISMATCH) {
             throw new Error(`主机身份不匹配 (${info.uniqueId})`);
           }
           const elapsed = Date.now() - startMs;

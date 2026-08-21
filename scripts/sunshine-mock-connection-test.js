@@ -162,6 +162,12 @@ function isLanAddress(address) {
     host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd') || host === '::1';
 }
 
+function isLanIPv4AddressModel(address) {
+  const host = String(address).replace(/:\d+$/, '');
+  return isIPv4Address(host) &&
+    (isPrivateIPv4(host) || isLoopbackIPv4(host) || host.startsWith('169.254.'));
+}
+
 function resolveHttpPort(address, fallback) {
   const match = String(address).match(/^[^:]+:(\d+)$/);
   if (!match) return fallback;
@@ -183,8 +189,12 @@ function nvHttpFromAddressModel(address, computer) {
 
 // Mirrors selectBestAddress().
 function selectBestAddressModel(computer) {
-  return computer.preferredAddress || computer.address || computer.manualAddress ||
-    computer.localAddress || computer.ipv6Address || computer.remoteAddress || '';
+  if (computer.preferredAddress) return computer.preferredAddress;
+  if (computer.address) return computer.address;
+  if (computer.manualAddress) return computer.manualAddress;
+  if (computer.localAddress && isLanIPv4AddressModel(computer.localAddress)) return computer.localAddress;
+  if (computer.ipv6Address && isLanAddress(computer.ipv6Address)) return computer.ipv6Address;
+  return computer.localAddress || computer.ipv6Address || computer.remoteAddress || '';
 }
 
 // Mirrors selectBestAddress() + NvHttp.fromComputer().
@@ -194,14 +204,13 @@ function nvHttpFromComputerModel(computer) {
 
 // Availability polling remains route-agnostic even when the user locks the
 // address used by authenticated AppList/streaming requests.
-function collectPollAddressesModel(computer) {
-  return Array.from(new Set([
-    computer.manualAddress,
-    computer.address,
-    computer.localAddress,
-    computer.remoteAddress,
-    computer.ipv6Address
-  ].filter(Boolean)));
+function collectKnownAddressesModel(computer, { includePreferred = false, excludeLoopbackIPv4 = false } = {}) {
+  const values = includePreferred ? [computer.preferredAddress] : [];
+  values.push(computer.manualAddress, computer.address, computer.localAddress,
+    computer.remoteAddress, computer.ipv6Address);
+  return Array.from(new Set(values.filter((address) => {
+    return address && (!excludeLoopbackIPv4 || !isLoopbackIPv4(address));
+  })));
 }
 
 // Mirrors the read-only, layered result produced by PcListActions.testNetwork().
@@ -228,10 +237,16 @@ function networkTestResultModel(computer, results) {
   };
 }
 
+function classifyServerIdentityModel(computerUuid, serverUniqueId) {
+  if (!serverUniqueId) return 'MISSING';
+  if (computerUuid === serverUniqueId) return 'MATCH';
+  return computerUuid.startsWith('discovered-') ? 'RECONCILE_DISCOVERED' : 'MISMATCH';
+}
+
 function acceptPollResultModel(computer, currentComputer, serverInfo) {
-  if (currentComputer !== computer || !serverInfo?.uniqueId) return false;
-  if (computer.uuid === serverInfo.uniqueId) return true;
-  return computer.uuid.startsWith('discovered-');
+  if (currentComputer !== computer) return false;
+  const identity = classifyServerIdentityModel(computer.uuid, serverInfo?.uniqueId);
+  return identity === 'MATCH' || identity === 'RECONCILE_DISCOVERED';
 }
 
 function parseAddressAndPortModel(address) {
@@ -1298,6 +1313,44 @@ async function testHttpsPortReuseModel() {
   assert.strictEqual(samePortDifferentHost.httpsPort, 47984);
 }
 
+async function testComputerNetworkPolicyModels() {
+  const lanIpv6Fallback = createComputer({
+    address: '',
+    localAddress: '203.0.113.20',
+    ipv6Address: 'fd00::20',
+    remoteAddress: '198.51.100.20'
+  });
+  assert.strictEqual(selectBestAddressModel(lanIpv6Fallback), 'fd00::20');
+
+  const globalIpv6Fallback = createComputer({
+    address: '',
+    localAddress: '203.0.113.20',
+    ipv6Address: '240e:1234::20',
+    remoteAddress: '198.51.100.20'
+  });
+  assert.strictEqual(selectBestAddressModel(globalIpv6Fallback), '203.0.113.20');
+
+  const addresses = collectKnownAddressesModel(createComputer({
+    preferredAddress: '100.97.89.33',
+    manualAddress: 'manual.example.com',
+    address: '127.0.0.1',
+    localAddress: '192.168.6.102',
+    remoteAddress: '100.97.89.33',
+    ipv6Address: 'fd00::20'
+  }), { includePreferred: true, excludeLoopbackIPv4: true });
+  assert.deepStrictEqual(addresses, [
+    '100.97.89.33',
+    'manual.example.com',
+    '192.168.6.102',
+    'fd00::20'
+  ]);
+
+  assert.strictEqual(classifyServerIdentityModel('host-a', ''), 'MISSING');
+  assert.strictEqual(classifyServerIdentityModel('host-a', 'host-a'), 'MATCH');
+  assert.strictEqual(classifyServerIdentityModel('discovered-Jue', 'host-a'), 'RECONCILE_DISCOVERED');
+  assert.strictEqual(classifyServerIdentityModel('host-a', 'host-b'), 'MISMATCH');
+}
+
 async function testServerInfoReachabilityDoesNotProveAppListScenario() {
   const { httpPort } = await findAdjacentPortPair();
   const mock = await new FoundationSunshineMock({
@@ -1362,7 +1415,7 @@ async function testPreferredAddressPollSplitScenario() {
   });
 
   const connection = nvHttpFromComputerModel(computer);
-  const pollCandidates = collectPollAddressesModel(computer);
+  const pollCandidates = collectKnownAddressesModel(computer);
   const pollResult = await raceForFirstSuccessModel(
     pollCandidates.map((address) => delay(5, { address, serverInfo: { hostname: 'Jue' } }))
   );
@@ -1762,6 +1815,7 @@ async function main() {
     ['ComputerManager merge model', testComputerManagerMergeModel],
     ['poll race prefers LAN', testPollRacePrefersLan],
     ['HTTPS port reuse model', testHttpsPortReuseModel],
+    ['computer network policy models', testComputerNetworkPolicyModels],
     ['scenario: serverinfo reachability does not prove applist', testServerInfoReachabilityDoesNotProveAppListScenario],
     ['scenario: network diagnostic remains read-only', testNetworkDiagnosticStateSplitScenario],
     ['scenario: preferred address does not constrain availability polling', testPreferredAddressPollSplitScenario],
