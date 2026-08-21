@@ -27,11 +27,6 @@ export function normalizeGameVibrationStrength(value: number): number {
   return Math.max(GAME_VIBRATION_STRENGTH_MIN, Math.min(GAME_VIBRATION_STRENGTH_MAX, roundedValue));
 }
 
-/** 兼容历史设置值：震动模式「同时」已更名为「协同」。 */
-export function normalizeVibrationMode(mode: string): string {
-  return mode === '同时' ? '协同' : mode;
-}
-
 export interface StreamConfig {
   // 视频设置
   width: number;

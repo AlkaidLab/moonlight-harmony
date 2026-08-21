@@ -27,8 +27,7 @@ import {
   PerfOverlayPosition,
   getRecommendedBitrate,
   GAME_VIBRATION_STRENGTH_DEFAULT,
-  normalizeGameVibrationStrength,
-  normalizeVibrationMode
+  normalizeGameVibrationStrength
 } from '../model/StreamConfig';
 
 /**
@@ -623,8 +622,7 @@ export class SettingsService {
 
     // 获取输入设置
     const enableVibration = await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true);
-    const vibrationMode = normalizeVibrationMode(
-      await this.getString(SettingsKeys.VIBRATION_MODE, '自动'));
+    const vibrationMode = await this.getString(SettingsKeys.VIBRATION_MODE, '自动');
     const gameVibrationStrength = normalizeGameVibrationStrength(
       await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, GAME_VIBRATION_STRENGTH_DEFAULT)
     );
@@ -779,8 +777,7 @@ export class SettingsService {
     return {
       // 手柄
       enableVibration: await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true),
-      vibrationMode: normalizeVibrationMode(
-        await this.getString(SettingsKeys.VIBRATION_MODE, '自动')),
+      vibrationMode: await this.getString(SettingsKeys.VIBRATION_MODE, '自动'),
       gameVibrationStrength: normalizeGameVibrationStrength(
         await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, GAME_VIBRATION_STRENGTH_DEFAULT)
       ),

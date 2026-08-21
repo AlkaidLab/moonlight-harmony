@@ -23,8 +23,7 @@ import {
   GAME_VIBRATION_STRENGTH_MIN,
   GAME_VIBRATION_STRENGTH_ORIGINAL,
   GAME_VIBRATION_STRENGTH_STEP,
-  normalizeGameVibrationStrength,
-  normalizeVibrationMode
+  normalizeGameVibrationStrength
 } from '../model/StreamConfig';
 import { PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
@@ -540,8 +539,7 @@ struct SettingsPageV2 {
       
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
-      this.vibrationMode = normalizeVibrationMode(
-        await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动'));
+      this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
       this.gameVibrationStrength = await this.loadGameVibrationStrength();
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
