@@ -187,6 +187,11 @@ export class SettingsKeys {
   static readonly PERFORMANCE_MODE: string = 'settings_performance_mode';
 }
 
+/** 将历史振动模式值归一化为当前显示和路由使用的值。 */
+export function normalizeVibrationMode(mode: string): string {
+  return mode === '同时' ? '协同' : mode;
+}
+
 /**
  * 输入设置
  */
@@ -622,7 +627,7 @@ export class SettingsService {
 
     // 获取输入设置
     const enableVibration = await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true);
-    const vibrationMode = await this.getString(SettingsKeys.VIBRATION_MODE, '自动');
+    const vibrationMode = await this.getNormalizedVibrationMode();
     const gameVibrationStrength = normalizeGameVibrationStrength(
       await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, GAME_VIBRATION_STRENGTH_DEFAULT)
     );
@@ -777,7 +782,7 @@ export class SettingsService {
     return {
       // 手柄
       enableVibration: await this.getBoolean(SettingsKeys.ENABLE_VIBRATION, true),
-      vibrationMode: await this.getString(SettingsKeys.VIBRATION_MODE, '自动'),
+      vibrationMode: await this.getNormalizedVibrationMode(),
       gameVibrationStrength: normalizeGameVibrationStrength(
         await this.getNumber(SettingsKeys.VIBRATE_FALLBACK_STRENGTH, GAME_VIBRATION_STRENGTH_DEFAULT)
       ),
@@ -830,6 +835,15 @@ export class SettingsService {
       pointerVelocityFactor: await this.getNumber(SettingsKeys.POINTER_VELOCITY_FACTOR, 100),
       longPressFlatRegion: await this.getNumber(SettingsKeys.LONG_PRESS_FLAT_REGION, 0)
     };
+  }
+
+  private async getNormalizedVibrationMode(): Promise<string> {
+    const storedMode = await this.getString(SettingsKeys.VIBRATION_MODE, '自动');
+    const normalizedMode = normalizeVibrationMode(storedMode);
+    if (normalizedMode !== storedMode) {
+      await PreferencesUtil.put(SettingsKeys.VIBRATION_MODE, normalizedMode);
+    }
+    return normalizedMode;
   }
 
   /**

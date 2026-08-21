@@ -25,7 +25,7 @@
  * 灵敏度模型:
  *   effectiveSensitivity = 180° / multiplier
  *   旋转速度达到 effectiveSensitivity deg/s 时摇杆满偏
- *   multiplier=1.0 → 180°/s 满偏; multiplier=3.0 → 60°/s 满偏
+ *   multiplier=1.0 → 180°/s 满偏; multiplier=10.0 → 18°/s 满偏
  */
 
 import { DeviceSensorService, LI_MOTION_TYPE_GYRO, SensorDataCallback } from './DeviceSensorService';
@@ -174,11 +174,12 @@ export class GyroAssistService {
   }
 
   /**
-   * 设置灵敏度倍率 (0.5 ~ 3.0)
+   * 设置灵敏度倍率 (0.5 ~ 10.0)
    * 倍率越高，越小的旋转幅度即可让摇杆满偏
    */
   setSensitivity(multiplier: number): void {
-    this._sensitivityMultiplier = Math.max(0.5, Math.min(10.0, multiplier));
+    this._sensitivityMultiplier = Math.max(GYRO_SENSITIVITY_MIN,
+      Math.min(GYRO_SENSITIVITY_MAX, multiplier));
   }
 
   /**
@@ -216,7 +217,8 @@ export class GyroAssistService {
    * 从设置加载配置
    */
   loadSettings(settings: GyroAssistSettings): void {
-    this._sensitivityMultiplier = settings.sensitivity;
+    this._sensitivityMultiplier = Math.max(GYRO_SENSITIVITY_MIN,
+      Math.min(GYRO_SENSITIVITY_MAX, settings.sensitivity));
     this._invertX = settings.invertX;
     this._invertY = settings.invertY;
     this._activationKey = settings.activationKey;

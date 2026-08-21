@@ -33,7 +33,7 @@ import { MultiOptionPickerDialog, MultiOptionPickerDialogConfig, MultiOptionItem
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { InputInterceptorService } from '../service/input/InputInterceptorService';
 import { GamepadManager } from '../service/input/GamepadManager';
-import { SettingsKeys, UiSettings } from '../service/SettingsService';
+import { SettingsKeys, UiSettings, normalizeVibrationMode } from '../service/SettingsService';
 import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
 import { isAihdrSupported } from '../components/AihdrModifier';
@@ -540,7 +540,11 @@ struct SettingsPageV2 {
       
       // 输入 - 手柄设置
       this.enableVibration = await this.loadBoolean(SettingsKeys.ENABLE_VIBRATION, true);
-      this.vibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
+      const storedVibrationMode = await PreferencesUtil.get<string>(SettingsKeys.VIBRATION_MODE, '自动');
+      this.vibrationMode = normalizeVibrationMode(storedVibrationMode);
+      if (this.vibrationMode !== storedVibrationMode) {
+        await PreferencesUtil.put(SettingsKeys.VIBRATION_MODE, this.vibrationMode);
+      }
       this.gameVibrationStrength = await this.loadGameVibrationStrength();
       this.enableAudioVibration = await this.loadBoolean(SettingsKeys.ENABLE_AUDIO_VIBRATION, false);
       this.audioVibrationStrength = await PreferencesUtil.get<number>(SettingsKeys.AUDIO_VIBRATION_STRENGTH, 60);
@@ -1062,7 +1066,8 @@ struct SettingsPageV2 {
                 title: '码率上限',
                 subtitle: this.bitrate === 0 
                   ? `自动 (推荐: ${this.getRecommendedBitrateForCurrentSettings()} Mbps)` 
-                  : this.bandwidthProbeEnabled ? '自动选码率和动态调节的上限' : '视频传输比特率上限',
+                  : (this.bandwidthProbeEnabled || this.adaptiveBitrate)
+                    ? '自动选码率和动态调节的上限' : '视频传输比特率上限',
                 type: 'slider',
                 value: this.bitrate,
                 min: 1,  // 对数滑块最小值为1（0单独处理为"自动"）
