@@ -331,12 +331,14 @@ export class PcListActions {
   async testNetwork(computer: ObservableComputer): Promise<void> {
     ToastQueue.show({ message: '正在检测网络…' });
     const computerInfo = computer.toComputerInfo();
+    const context = getContext() as common.UIAbilityContext;
 
     // 收集所有可用地址（过滤 127.x 回环地址）
     const addressSet = new Set<string>();
     const addIfValid = (addr: string | undefined) => {
       if (addr && !isLoopbackIPv4(addr)) addressSet.add(addr);
     };
+    addIfValid(computerInfo.preferredAddress);
     addIfValid(computerInfo.manualAddress);
     addIfValid(computerInfo.address);
     addIfValid(computerInfo.localAddress);
@@ -361,8 +363,16 @@ export class PcListActions {
       for (let i = 0; i < TEST_ROUNDS; i++) {
         const startMs = Date.now();
         try {
+          // 基础可达性使用 HTTP，避免把证书/HTTPS 故障误判成整个网络不可达。
+          // 此处刻意不传 context：不配置客户端证书文件时 getServerInfo() 才走 HTTP。
           const nvHttp = NvHttp.fromAddress(addr, computerInfo);
           const info = await nvHttp.getServerInfo();
+          if (!info.uniqueId) {
+            throw new Error('服务器响应缺少主机 UUID');
+          }
+          if (info.uniqueId !== computerInfo.uuid && !computerInfo.uuid.startsWith('discovered-')) {
+            throw new Error(`主机身份不匹配 (${info.uniqueId})`);
+          }
           const elapsed = Date.now() - startMs;
           roundLatencies.push(elapsed);
           lastServerInfo = info;
@@ -390,11 +400,57 @@ export class PcListActions {
     const reachableResults = results.filter(r => r.reachable);
     const unreachableResults = results.filter(r => !r.reachable);
 
-    // 取第一个成功的 serverInfo 显示服务器信息
-    const serverInfo = reachableResults.find(r => r.serverInfo)?.serverInfo;
+    const currentPreferred = computerInfo.preferredAddress;
+
+    // 基础信息取延迟最低的可达地址；实际认证链路必须遵循用户锁定地址。
+    let displayResult: AddressTestResult | undefined;
+    for (const result of reachableResults) {
+      if (!displayResult || result.latencyMs < displayResult.latencyMs) {
+        displayResult = result;
+      }
+    }
+    const connectionAddress = selectBestAddress(computerInfo);
+    const connectionAddressTested = !!connectionAddress && addressSet.has(connectionAddress);
+    const connectionAddressUntested = !!connectionAddress && !connectionAddressTested;
+    const connectionResult = reachableResults.find(result => result.address === connectionAddress);
+    const connectionAddressUnavailable = connectionAddressTested && !connectionResult;
+
+    const serverInfo = displayResult?.serverInfo || undefined;
+    let appListReachable: boolean | undefined;
+    let appListError = '';
+    if (computer.isPaired && connectionResult) {
+      // serverinfo 可由 HTTP 回退成功，不能据此宣称配对链路完整可用。
+      // 只验证真正会被 AppList/串流使用的地址，不用备用地址制造假阳性。
+      try {
+        const latestComputer = this.computerManager.getComputer(computer.uuid) || computerInfo;
+        const nvHttp = NvHttp.fromAddress(connectionResult.address, latestComputer, context);
+        await nvHttp.getAppList();
+        appListReachable = true;
+      } catch (err) {
+        appListReachable = false;
+        appListError = (err as Error).message || String(err);
+      }
+    }
 
     if (reachableResults.length > 0) {
-      lines.push('[OK] 连接成功');
+      lines.push('[OK] 基础网络可达');
+      if (computer.isPaired) {
+        if (connectionAddressUntested) {
+          const addressKind = currentPreferred ? '锁定地址' : '当前连接地址';
+          lines.push(`[!] ${addressKind}为本机回环地址，未执行诊断`);
+        } else if (connectionAddressUnavailable) {
+          const addressKind = currentPreferred ? '锁定地址' : '当前连接地址';
+          lines.push(`[!] ${addressKind}不可达，备用地址仅用于网络诊断`);
+        } else if (appListReachable) {
+          lines.push('[OK] 应用列表认证可用');
+        } else {
+          lines.push('[!] 主机可达，但应用列表认证不可用');
+          if (appListError) {
+            const shortAppError = appListError.length > 80 ? appListError.substring(0, 80) + '…' : appListError;
+            lines.push(`    ${shortAppError}`);
+          }
+        }
+      }
       lines.push('');
 
       // 地址延迟
@@ -410,7 +466,21 @@ export class PcListActions {
         lines.push('');
         lines.push(`主机名: ${serverInfo.hostname}`);
         if (serverInfo.gpuType) lines.push(`GPU: ${serverInfo.gpuType}`);
-        lines.push(`配对: ${computer.isPaired ? '已配对' : '未配对'}`);
+        let pairText = '未配对';
+        if (computer.isPaired) {
+          if (appListReachable) {
+            pairText = '已配对（已验证）';
+          } else if (connectionAddressUntested) {
+            pairText = '本地已配对（连接地址未测试）';
+          } else if (connectionAddressUnavailable) {
+            pairText = currentPreferred
+              ? '本地已配对（锁定地址不可达）'
+              : '本地已配对（当前连接地址不可达）';
+          } else {
+            pairText = '本地已配对（认证未通过）';
+          }
+        }
+        lines.push(`配对: ${pairText}`);
         if (serverInfo.currentGame > 0) lines.push(`运行中游戏 ID: ${serverInfo.currentGame}`);
       }
     } else {
@@ -428,7 +498,6 @@ export class PcListActions {
     }
 
     // 当前锁定的地址
-    const currentPreferred = computerInfo.preferredAddress;
     if (currentPreferred) {
       lines.push('');
       lines.push(`📌 已锁定: ${currentPreferred}`);
@@ -487,17 +556,20 @@ export class PcListActions {
       title: '锁定优先连接地址',
       message: currentPreferred ? `当前锁定: ${currentPreferred}` : '选择要锁定的地址',
       buttons: dialogButtons
-    }).then((result) => {
+    }).then(async (result) => {
       const action = actions[result.index];
-      if (action === 'unlock') {
-        this.computerManager.updateComputer(computer.uuid, { preferredAddress: '' });
-        computer.preferredAddress = '';
-        ToastQueue.show({ message: '已解除地址锁定' });
-      } else if (action) {
-        this.computerManager.updateComputer(computer.uuid, { preferredAddress: action });
-        computer.preferredAddress = action;
-        ToastQueue.show({ message: `已锁定: ${action}` });
+      if (!action) return;
+      const nextAddress = action === 'unlock' ? '' : action;
+      try {
+        await this.computerManager.updateComputer(computer.uuid, { preferredAddress: nextAddress });
+      } catch (err) {
+        const message = (err as Error).message || String(err);
+        ToastQueue.show({ message: `保存地址锁定失败: ${message}` });
+        return;
       }
+      computer.preferredAddress = nextAddress;
+      this.ui.syncViewModel();
+      ToastQueue.show({ message: nextAddress ? `已锁定: ${nextAddress}` : '已解除地址锁定' });
     }).catch(() => {
       // 用户取消
     });

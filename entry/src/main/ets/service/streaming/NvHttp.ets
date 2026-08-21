@@ -243,7 +243,7 @@ export class NvHttp {
    * 替代重复的 new NvHttp(selectBestAddress(c), c.serverCert, ctx, c.httpPort, c.httpsPort)
    */
   static fromComputer(computer: NvHttpHost, context?: common.UIAbilityContext): NvHttp {
-    return new NvHttp(selectBestAddress(computer), computer.serverCert || null, context, computer.httpPort, computer.httpsPort);
+    return NvHttp.fromAddress(selectBestAddress(computer), computer, context);
   }
 
   /**

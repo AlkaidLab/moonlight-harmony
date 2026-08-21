@@ -2,6 +2,8 @@
 
 本文档覆盖网络链路的最小冒烟集，用于每次修改网络发现、地址选择、配对、WOL、串流连接前后的快速验证。
 
+整体地址、状态和认证链路见 [Moonlight Harmony 网络模型](./NETWORK_MODEL.md)。
+
 ## 自动冒烟
 
 | ID | 用例 | 步骤 | 通过标准 |
@@ -41,7 +43,8 @@ npm run test:sunshine-mock
 - `serverinfo` 字段缺省值与 XML 转义解析。
 - `ComputerManager.mergeServerInfo` 对零 MAC、127.x 回环地址、配对状态、IPv6、HTTP/HTTPS 端口的合并守卫。
 - 轮询竞速优先 LAN，WAN 先返回时短暂等待 LAN。
-- `NvHttp.fromComputerWithAddress` 仅在 HTTP 端口匹配时复用缓存 HTTPS 端口，避免 LAN/FRP 切换时复用 stale 端口。
+- `NvHttp.fromComputer` / `fromAddress` 仅在目标与活动地址的 HTTP 端口匹配时复用缓存 HTTPS 端口，避免跨端口复用 stale 端口，同时支持同一 Sunshine 的多网络地址。
+- 视频问题推演场景：`serverinfo` 可达但 `applist` 不可达、网络诊断保持只读、锁定地址不限制状态轮询、锁定地址不可达时不借备用地址误报认证成功、缺失/错误 UUID 与已删除条目的陈旧结果被拒绝、未配对和未测试回环路由分别报告。
 - `PairingManager` 与 `NvHttp` 一致使用地址中的显式端口优先。
 - HTTPS-only 的 `applist`、`launch`、`resume`、`cancel` 和 HTTP `unpair` 请求路径。
 - `/bitrate` 仅接受明确成功响应，服务端 ABR 已接受时不重复下发，同时同步客户端目标码率；慢请求期间 tick 保持单飞。
