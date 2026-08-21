@@ -235,7 +235,7 @@ export class AudioVibrationService {
     switch (this.vibrationMode) {
       case '仅手柄': return false;
       case '仅设备':
-      case '同时': return true;
+      case '协同': return true;
       case '自动':
       default:
         // Automatic audio haptics may use the gamepad path only when this
@@ -249,7 +249,7 @@ export class AudioVibrationService {
   private shouldVibrateGamepad(): boolean {
     switch (this.vibrationMode) {
       case '仅手柄':
-      case '同时': return true;
+      case '协同': return true;
       case '仅设备': return false;
       case '自动':
       default:

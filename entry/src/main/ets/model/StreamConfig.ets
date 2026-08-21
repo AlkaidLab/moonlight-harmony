@@ -61,7 +61,7 @@ export interface StreamConfig {
   multiController: boolean;
   attachedGamepadMask: number;
   enableVibration: boolean;
-  vibrationMode: string;  // 震动模式：自动/仅手柄/仅设备/同时
+  vibrationMode: string;  // 震动模式：自动/仅手柄/仅设备/协同
   gameVibrationStrength: number;  // 串流游戏震动强度百分比（100=原始强度，100 以上为 app 侧放大）
   enableAudioVibration: boolean;  // 音频振动（低频驱动）
   audioVibrationStrength: number;  // 音频振动强度 (0-100)
