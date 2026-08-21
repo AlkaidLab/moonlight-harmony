@@ -28,7 +28,7 @@ flowchart TD
   subgraph Connection[连接平面：应用列表 / 配对 / 串流]
     SELECT{是否锁定地址}
     USE_PREFERRED[使用 preferredAddress]
-    USE_ACTIVE[使用 activeAddress<br/>否则按回退链选择]
+    USE_ACTIVE[使用 address（activeAddress）<br/>否则按固定回退链选择]
     PORT{HTTP 端口是否与活动地址一致}
     REUSE[复用缓存 HTTPS 端口]
     DISCOVER_PORT[重新探测 / 推算 HTTPS 端口]
@@ -71,6 +71,23 @@ flowchart TD
   BASE --> ACTUAL --> REPORT --> PIN
   PIN --> PREFERRED
 ```
+
+## 连接地址选择契约
+
+`selectBestAddress` 是应用列表、配对和串流的连接目标选择入口，顺序固定为：
+
+1. `preferredAddress`：用户锁定地址。
+2. `address`：最近一次状态轮询胜出的活动地址。
+3. `manualAddress`：用户手动输入的地址或域名。
+4. LAN IPv4：`localAddress` 中的局域网 IPv4。
+5. LAN IPv6：`ipv6Address` 中的局域网 IPv6。
+6. 非 LAN `localAddress`。
+7. 全局 `ipv6Address`。
+8. `remoteAddress`。
+
+只要 `preferredAddress` 存在，它就始终是实际认证和串流目标。锁定地址不可达时不会改用备用地址完成 `applist` 或串流认证；备用地址仍可参与状态轮询和只读网络诊断，以便分别报告“主机可达”和“锁定链路不可用”。
+
+`NvHttp.fromAddress` 只负责为已经选定的目标构造客户端，并根据目标与活动地址的 HTTP 端口是否一致决定能否复用缓存 HTTPS 端口；它不执行地址回退。`ConnectionPathService.pickTargetAddress` 只在目标主机完成 DNS 解析后选择与 LAN/WAN 路径分类匹配的解析结果，也不属于上述主机地址回退链。
 
 ## 不变量
 
