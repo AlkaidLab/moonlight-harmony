@@ -79,8 +79,9 @@ export class DualSenseController extends AbstractDualSenseController {
     listener: UsbDriverListener
   ) {
     super(device, pipe, deviceId, listener);
-    // DualSense 支持扳机震动
+    // DualSense 支持扳机震动与电池状态上报
     this.capabilities |= ControllerCapabilities.TRIGGER_RUMBLE;
+    this.capabilities |= ControllerCapabilities.BATTERY;
     this.deviceName = 'DualSense Controller';
   }
   
@@ -192,7 +193,7 @@ export class DualSenseController extends AbstractDualSenseController {
     this.setButtonFlag(ButtonFlags.TOUCHPAD_FLAG, b10 & 0x02);  // Touchpad click
     this.setButtonFlag(ButtonFlags.MISC_FLAG, b10 & 0x04);  // Mute
     
-    // 触摸板数据 (bytes 33-36: touch point 0)
+    // 触摸板数据 (bytes 33-36: touch point 0, bytes 37-40: touch point 1)
     // DualSense touchpad resolution: 1920 x 1080
     if (buffer.length >= 37) {
       const contactByte = buffer[33];
@@ -201,6 +202,40 @@ export class DualSenseController extends AbstractDualSenseController {
       if (isActive) {
         this.touchpadX = buffer[34] | ((buffer[35] & 0x0F) << 8);
         this.touchpadY = ((buffer[35] & 0xF0) >> 4) | (buffer[36] << 4);
+      }
+      this.notifyTouchPoint(0, isActive, isActive ? this.touchpadX : 0, isActive ? this.touchpadY : 0);
+    }
+    if (buffer.length >= 41) {
+      const isActive2 = (buffer[37] & 0x80) === 0;
+      this.touchPoint2Active = isActive2;
+      if (isActive2) {
+        this.touchPoint2X = buffer[38] | ((buffer[39] & 0x0F) << 8);
+        this.touchPoint2Y = ((buffer[39] & 0xF0) >> 4) | (buffer[40] << 4);
+      }
+      this.notifyTouchPoint(1, isActive2, isActive2 ? this.touchPoint2X : 0, isActive2 ? this.touchPoint2Y : 0);
+    }
+
+    // 电池状态 (byte 53 = status[0])，编码与内核 hid-playstation 一致：
+    // 低 4 位容量档位 (0-10，每档 10%)，高 4 位充电状态
+    // (0x0 放电 / 0x1 充电 / 0x2 满电 / 0xa 0xb 电压温度异常 / 其他 未知)
+    if (buffer.length >= 54) {
+      const status0 = buffer[53];
+      const level = status0 & 0x0F;
+      const chargingStatus = (status0 >> 4) & 0x0F;
+      // percent = -1 表示未知态（0xf 等），仍需上报让主机刷新为 UNKNOWN；
+      // 去重条件同时覆盖状态与百分比，未知态稳定后不会重复发送
+      let percent = -1;
+      if (chargingStatus === 0x0 || chargingStatus === 0x1) {
+        percent = Math.min(level * 10 + 5, 100);
+      } else if (chargingStatus === 0x2) {
+        percent = 100;
+      } else if (chargingStatus === 0xa || chargingStatus === 0xb) {
+        percent = 0;
+      }
+      if (chargingStatus !== this.batteryChargingStatus || percent !== this.batteryPercent) {
+        this.batteryChargingStatus = chargingStatus;
+        this.batteryPercent = percent;
+        this.notifyBatteryState(chargingStatus, percent);
       }
     }
     

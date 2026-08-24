@@ -68,6 +68,15 @@ export abstract class AbstractController {
   protected touchpadActive: boolean = false;  // 是否有手指触摸
   protected touchpadX: number = 0;            // 触摸 X (0-1919)
   protected touchpadY: number = 0;            // 触摸 Y (0-1079 DS5 / 0-942 DS4)
+
+  // 第二触点（DS5 双触点触摸板）；无手指时为 false
+  protected touchPoint2Active: boolean = false;
+  protected touchPoint2X: number = 0;
+  protected touchPoint2Y: number = 0;
+
+  // 电池状态；chargingStatus 为 DS5 status[0] 高 4 位原始值，-1 表示尚未上报
+  protected batteryChargingStatus: number = -1;
+  protected batteryPercent: number = -1;
   
   // 控制器属性
   protected capabilities: number = 0;
@@ -289,6 +298,24 @@ export abstract class AbstractController {
   protected notifyTouchpadInput(active: boolean, x: number, y: number): void {
     if (this.listener) {
       this.listener.reportTouchpadInput(this.deviceId, active, x, y);
+    }
+  }
+
+  /**
+   * 报告多触点触摸板数据
+   */
+  protected notifyTouchPoint(pointIndex: number, active: boolean, x: number, y: number): void {
+    if (this.listener) {
+      this.listener.reportTouchPoint(this.deviceId, pointIndex, active, x, y);
+    }
+  }
+
+  /**
+   * 报告电池状态
+   */
+  protected notifyBatteryState(chargingStatus: number, batteryPercent: number): void {
+    if (this.listener) {
+      this.listener.reportControllerBattery(this.deviceId, chargingStatus, batteryPercent);
     }
   }
   

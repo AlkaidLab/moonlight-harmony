@@ -73,6 +73,34 @@ export interface UsbDriverListener {
   ): void;
 
   /**
+   * 报告多触点触摸板数据（DS5 双触点）
+   * @param controllerId 控制器 ID
+   * @param pointIndex 触点索引 (0 或 1)
+   * @param active 该触点是否有手指
+   * @param x 触摸 X 坐标 (原始值)
+   * @param y 触摸 Y 坐标 (原始值)
+   */
+  reportTouchPoint(
+    controllerId: number,
+    pointIndex: number,
+    active: boolean,
+    x: number,
+    y: number
+  ): void;
+
+  /**
+   * 报告控制器电池状态（原始充电状态 + 百分比）
+   * @param controllerId 控制器 ID
+   * @param chargingStatus DS5 status[0] 高 4 位：0x0 放电 / 0x1 充电 / 0x2 满电 / 0xa 0xb 异常 / 其他 未知
+   * @param batteryPercent 电池百分比 (0-100)
+   */
+  reportControllerBattery(
+    controllerId: number,
+    chargingStatus: number,
+    batteryPercent: number
+  ): void;
+
+  /**
    * 设备移除回调
    * @param controller 被移除的控制器
    */
