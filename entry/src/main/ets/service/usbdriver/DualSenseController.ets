@@ -222,6 +222,8 @@ export class DualSenseController extends AbstractDualSenseController {
       const status0 = buffer[53];
       const level = status0 & 0x0F;
       const chargingStatus = (status0 >> 4) & 0x0F;
+      // percent = -1 表示未知态（0xf 等），仍需上报让主机刷新为 UNKNOWN；
+      // 去重条件同时覆盖状态与百分比，未知态稳定后不会重复发送
       let percent = -1;
       if (chargingStatus === 0x0 || chargingStatus === 0x1) {
         percent = Math.min(level * 10 + 5, 100);
@@ -230,8 +232,7 @@ export class DualSenseController extends AbstractDualSenseController {
       } else if (chargingStatus === 0xa || chargingStatus === 0xb) {
         percent = 0;
       }
-      if (percent >= 0 &&
-          (chargingStatus !== this.batteryChargingStatus || percent !== this.batteryPercent)) {
+      if (chargingStatus !== this.batteryChargingStatus || percent !== this.batteryPercent) {
         this.batteryChargingStatus = chargingStatus;
         this.batteryPercent = percent;
         this.notifyBatteryState(chargingStatus, percent);

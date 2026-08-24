@@ -742,6 +742,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   async stop(): Promise<void> {
     console.info('停止串流');
     this.userInitiatedStop = true;
+    // 必须在 isRunning 翻转前注销：回调闭包以 isRunning 守卫，
+    // 翻转后 CANCEL 无法发出，主机侧活动触点将悬死到断连
+    GamepadManager.getInstance().setControllerTouchCallback(null);
     this.isRunning = false;
     this.resetControllerState();
     GamepadManager.getInstance().stopAllSensors();
@@ -767,6 +770,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       }
     }
 
+    // 与 stop() 相同：在 isRunning 翻转前注销触点回调并发送 CANCEL
+    GamepadManager.getInstance().setControllerTouchCallback(null);
     this.isRunning = false;
     NetworkBoostService.getInstance().stop();
     await this.cleanup();

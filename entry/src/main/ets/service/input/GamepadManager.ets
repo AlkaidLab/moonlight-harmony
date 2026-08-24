@@ -24,7 +24,7 @@ import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from '
 import { MoonBridge, Ds5HapticsIrV2Frame, AdaptiveTriggersFrame,
   TOUCH_EVENT_DOWN, TOUCH_EVENT_MOVE, TOUCH_EVENT_UP, TOUCH_EVENT_CANCEL,
   LI_BATTERY_STATE_UNKNOWN, LI_BATTERY_STATE_DISCHARGING, LI_BATTERY_STATE_CHARGING,
-  LI_BATTERY_STATE_NOT_CHARGING, LI_BATTERY_STATE_FULL
+  LI_BATTERY_STATE_NOT_CHARGING, LI_BATTERY_STATE_FULL, LI_BATTERY_PERCENTAGE_UNKNOWN
 } from '../streaming/MoonBridge';
 import { MouseEmulationService, MouseEmulationCallback } from './MouseEmulationService';
 import { GamepadVibrationService } from './GamepadVibrationService';
@@ -2204,10 +2204,17 @@ export class GamepadManager implements UsbDriverListener {
    */
   setControllerTouchCallback(callback: ((controllerNumber: number, eventType: number,
     pointerId: number, x: number, y: number, pressure: number) => void) | null): void {
-    this.controllerTouchCallback = callback;
-    if (!callback) {
-      this.touchPointStates.clear();
+    // 会话停止/重启时注销回调：先经旧回调对活动触点发 CANCEL（回调闭包以
+    // isRunning 守卫，仅在会话仍存活时真正发出），再清空跨会话残留的触点缓存。
+    if (this.controllerTouchCallback && this.touchPointStates.size > 0) {
+      const slots: Set<number> = new Set<number>();
+      this.touchPointStates.forEach((_state, key) => slots.add(Math.floor(key / 2)));
+      for (const slot of slots) {
+        this.cancelActiveTouchPoints(slot);
+      }
     }
+    this.controllerTouchCallback = callback;
+    this.touchPointStates.clear();
   }
 
   /**
@@ -2319,7 +2326,11 @@ export class GamepadManager implements UsbDriverListener {
         batteryState = LI_BATTERY_STATE_UNKNOWN;
         break;
     }
-    this.controllerBatteryCallback(slot, batteryState, batteryPercent);
+    // 未知态（percent < 0）或异常值统一转为协议的 UNKNOWN 百分比标记
+    const reportedPercent = (batteryPercent >= 0 && batteryPercent <= 100)
+      ? batteryPercent
+      : LI_BATTERY_PERCENTAGE_UNKNOWN;
+    this.controllerBatteryCallback(slot, batteryState, reportedPercent);
   }
 
   /** 获取指定槽位 USB 驱动报告的触摸板/电池能力（用于 arrival 能力包）。 */
@@ -2588,6 +2599,8 @@ export class GamepadManager implements UsbDriverListener {
       this.deviceInfoMap.delete(controllerId);
       this.usbDeviceKeyToId.delete(deviceKey);
       this.controllerIdToDeviceKey.delete(controllerId);
+      // 槽位映射删除前先取消该槽位活动触点，避免主机侧触点悬死
+      this.cancelActiveTouchPoints(slot);
       this.usbControllerIdToSlot.delete(controllerId);
       this.releaseSlotForDevice(deviceKey);
       this.dpadAxisActive.delete(controllerId);
