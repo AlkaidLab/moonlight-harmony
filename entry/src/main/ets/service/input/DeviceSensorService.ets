@@ -31,6 +31,12 @@ export const LI_MOTION_TYPE_GYRO = 0x02;
 /** 弧度转角度系数 */
 const RAD_TO_DEG = 57.2957795;
 
+/** HarmonyOS Sensor Service Kit 的 interval 单位为纳秒 */
+const NANOSECONDS_PER_SECOND = 1000000000;
+
+/** 传感器最小上报间隔为 5 ms，对应最高 200 Hz */
+const MAX_SENSOR_REPORT_RATE_HZ = 200;
+
 /**
  * 传感器数据回调
  */
@@ -242,8 +248,10 @@ export class DeviceSensorService {
       return;
     }
 
-    // 计算采样间隔（微秒） 
-    const intervalUs = Math.floor(1000000 / Math.min(200, reportRateHz));
+    // Sensor Service Kit 的 interval 使用纳秒，且支持的最小间隔为 5 ms。
+    const intervalNs = Math.floor(
+      NANOSECONDS_PER_SECOND / Math.min(MAX_SENSOR_REPORT_RATE_HZ, reportRateHz)
+    );
 
     try {
       sensor.on(sensor.SensorId.GYROSCOPE, (data: sensor.GyroscopeResponse) => {
@@ -271,10 +279,10 @@ export class DeviceSensorService {
         if (this.dataCallback) {
           this.dataCallback(this.controllerNumber, LI_MOTION_TYPE_GYRO, cx, cy, cz);
         }
-      }, { interval: intervalUs });
+      }, { interval: intervalNs });
 
       this.gyroEnabled = true;
-      console.info(`[DeviceSensor] 陀螺仪已启用: rate=${reportRateHz}Hz, interval=${intervalUs}us`);
+      console.info(`[DeviceSensor] 陀螺仪已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
     } catch (err) {
       console.error(`[DeviceSensor] 启用陀螺仪失败: ${err}`);
       this.gyroAvailable = false;
@@ -302,7 +310,9 @@ export class DeviceSensorService {
       return;
     }
 
-    const intervalUs = Math.floor(1000000 / Math.min(200, reportRateHz));
+    const intervalNs = Math.floor(
+      NANOSECONDS_PER_SECOND / Math.min(MAX_SENSOR_REPORT_RATE_HZ, reportRateHz)
+    );
 
     try {
       sensor.on(sensor.SensorId.ACCELEROMETER, (data: sensor.AccelerometerResponse) => {
@@ -330,10 +340,10 @@ export class DeviceSensorService {
         if (this.dataCallback) {
           this.dataCallback(this.controllerNumber, LI_MOTION_TYPE_ACCEL, cx, cy, cz);
         }
-      }, { interval: intervalUs });
+      }, { interval: intervalNs });
 
       this.accelEnabled = true;
-      console.info(`[DeviceSensor] 加速度计已启用: rate=${reportRateHz}Hz, interval=${intervalUs}us`);
+      console.info(`[DeviceSensor] 加速度计已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
     } catch (err) {
       console.error(`[DeviceSensor] 启用加速度计失败: ${err}`);
       this.accelAvailable = false;
