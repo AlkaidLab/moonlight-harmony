@@ -93,6 +93,14 @@ class TestViewDriverListener implements UsbDriverListener {
     x: number, y: number): void {
   }
 
+  reportTouchPoint(controllerId: number, pointIndex: number,
+    active: boolean, x: number, y: number): void {
+  }
+
+  reportControllerBattery(controllerId: number,
+    chargingStatus: number, batteryPercent: number): void {
+  }
+
   deviceAdded(controller: AbstractController): void {
     this.view.onDeviceAdded(controller);
   }

@@ -117,6 +117,15 @@ export const LI_CCAP_GYRO = 0x20;
 export const LI_CCAP_BATTERY_STATE = 0x40;
 export const LI_CCAP_RGB_LED = 0x80;
 
+// 与 moonlight-common-c Limelight.h 的 LI_BATTERY_STATE_* 保持一致
+export const LI_BATTERY_STATE_UNKNOWN = 0x00;
+export const LI_BATTERY_STATE_NOT_PRESENT = 0x01;
+export const LI_BATTERY_STATE_DISCHARGING = 0x02;
+export const LI_BATTERY_STATE_CHARGING = 0x03;
+export const LI_BATTERY_STATE_NOT_CHARGING = 0x04;
+export const LI_BATTERY_STATE_FULL = 0x05;
+export const LI_BATTERY_PERCENTAGE_UNKNOWN = 0xFF;
+
 // DualSense adaptive trigger update flags and payload shape.
 export const DS_EFFECT_RIGHT_TRIGGER = 0x04;
 export const DS_EFFECT_LEFT_TRIGGER = 0x08;

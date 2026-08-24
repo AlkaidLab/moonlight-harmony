@@ -42,6 +42,7 @@ import {
   LI_CCAP_ANALOG_TRIGGERS,
   LI_CCAP_RUMBLE,
   LI_CCAP_TOUCHPAD,
+  LI_CCAP_BATTERY_STATE,
   LI_CCAP_ACCEL,
   LI_CCAP_GYRO,
   LI_FF_CONTROLLER_TOUCH_EVENTS,
@@ -233,6 +234,9 @@ interface NativeModule {
   sendClientSdrWhiteNits(nits: number): number;
   sendControllerMotionEvent(
     controllerNumber: number, motionType: number, x: number, y: number, z: number
+  ): number;
+  sendControllerBatteryEvent(
+    controllerNumber: number, batteryState: number, batteryPercentage: number
   ): number;
 }
 
@@ -1588,6 +1592,23 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       }
     );
 
+    // USB DS5 物理触摸板原生触点转发（主机需宣告 controller-touch 扩展）
+    GamepadManager.getInstance().setControllerTouchCallback(
+      (cn: number, eventType: number, pointerId: number, x: number, y: number, pressure: number): void => {
+        if (!this.isRunning || !this.isControllerTouchpadSupported()) return;
+        this.nativeModule.sendControllerTouchEvent(cn, eventType, pointerId, x, y, pressure);
+      }
+    );
+
+    // USB DS5 电池状态转发
+    GamepadManager.getInstance().setControllerBatteryCallback(
+      (cn: number, batteryState: number, batteryPercentage: number): void => {
+        if (this.isRunning) {
+          this.nativeModule.sendControllerBatteryEvent(cn, batteryState, batteryPercentage);
+        }
+      }
+    );
+
     this.nativeModule.init(callbacks);
   }
 
@@ -1926,8 +1947,14 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
     let capabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
     capabilities |= GamepadManager.getInstance().getSensorCapabilities(controllerIndex);
-    if (this.ds5TouchpadEnabled && controllerIndex === 0) {
+    // 物理触摸板/电池能力（USB DS5）；位值与 ControllerCapabilities 对齐
+    const physicalCaps = GamepadManager.getInstance().getPhysicalControllerCapabilities(controllerIndex);
+    const hasPhysicalTouchpad = (physicalCaps & LI_CCAP_TOUCHPAD) !== 0;
+    if (hasPhysicalTouchpad || (this.ds5TouchpadEnabled && controllerIndex === 0)) {
       capabilities |= LI_CCAP_TOUCHPAD;
+    }
+    if ((physicalCaps & LI_CCAP_BATTERY_STATE) !== 0) {
+      capabilities |= LI_CCAP_BATTERY_STATE;
     }
 
     let reportedType = controllerType;
@@ -1944,7 +1971,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     const ret = this.nativeModule.sendControllerArrivalEvent(
       controllerIndex, this.activeGamepadMask,
       reportedType,
-      this.ds5TouchpadEnabled && controllerIndex === 0
+      (hasPhysicalTouchpad || (this.ds5TouchpadEnabled && controllerIndex === 0))
         ? STANDARD_BUTTON_FLAGS | TOUCHPAD_FLAG
         : STANDARD_BUTTON_FLAGS,
       capabilities

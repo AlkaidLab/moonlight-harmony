@@ -954,6 +954,28 @@ export class UsbDriverService implements UsbDriverListener {
       this.listener.reportTouchpadInput(controllerId, active, x, y);
     }
   }
+
+  reportTouchPoint(
+    controllerId: number,
+    pointIndex: number,
+    active: boolean,
+    x: number,
+    y: number
+  ): void {
+    if (this.listener) {
+      this.listener.reportTouchPoint(controllerId, pointIndex, active, x, y);
+    }
+  }
+
+  reportControllerBattery(
+    controllerId: number,
+    chargingStatus: number,
+    batteryPercent: number
+  ): void {
+    if (this.listener) {
+      this.listener.reportControllerBattery(controllerId, chargingStatus, batteryPercent);
+    }
+  }
   
   deviceRemoved(controller: AbstractController): void {
     // 从列表中移除

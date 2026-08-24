@@ -21,7 +21,11 @@ import {
 import { SettingsService, SettingsKeys } from '../SettingsService';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
-import { MoonBridge, Ds5HapticsIrV2Frame, AdaptiveTriggersFrame } from '../streaming/MoonBridge';
+import { MoonBridge, Ds5HapticsIrV2Frame, AdaptiveTriggersFrame,
+  TOUCH_EVENT_DOWN, TOUCH_EVENT_MOVE, TOUCH_EVENT_UP, TOUCH_EVENT_CANCEL,
+  LI_BATTERY_STATE_UNKNOWN, LI_BATTERY_STATE_DISCHARGING, LI_BATTERY_STATE_CHARGING,
+  LI_BATTERY_STATE_NOT_CHARGING, LI_BATTERY_STATE_FULL
+} from '../streaming/MoonBridge';
 import { MouseEmulationService, MouseEmulationCallback } from './MouseEmulationService';
 import { GamepadVibrationService } from './GamepadVibrationService';
 import { AudioHapticFrameFlag } from '../AudioHapticFrame';
@@ -96,6 +100,15 @@ export class GamepadManager implements UsbDriverListener {
   
   // 传感器数据发送回调（由 StreamingSession 设置）
   private sensorDataCallback: ((controllerNumber: number, motionType: number, x: number, y: number, z: number) => void) | null = null;
+
+  /** 控制器触摸板原生触点回调（由 StreamingSession 设置，发送 SS_CONTROLLER_TOUCH） */
+  private controllerTouchCallback: ((controllerNumber: number, eventType: number,
+    pointerId: number, x: number, y: number, pressure: number) => void) | null = null;
+  /** 控制器电池状态回调（由 StreamingSession 设置，发送 SS_CONTROLLER_BATTERY） */
+  private controllerBatteryCallback: ((controllerNumber: number,
+    batteryState: number, batteryPercentage: number) => void) | null = null;
+  /** 触点状态缓存：key = slot*2+pointIndex → [active, x, y]，用于计算 down/move/up 转换 */
+  private touchPointStates = new Map<number, [boolean, number, number]>();
   /** 主机当前请求的物理手柄传感器，key 为 "controllerNumber:motionType"。 */
   private requestedPhysicalMotion = new Set<string>();
 
@@ -2186,6 +2199,141 @@ export class GamepadManager implements UsbDriverListener {
   }
 
   /**
+   * 设置控制器触摸板原生触点回调
+   * 由 StreamingSession 调用；主机能力门控（LI_FF_CONTROLLER_TOUCH_EVENTS）由回调内部处理
+   */
+  setControllerTouchCallback(callback: ((controllerNumber: number, eventType: number,
+    pointerId: number, x: number, y: number, pressure: number) => void) | null): void {
+    this.controllerTouchCallback = callback;
+    if (!callback) {
+      this.touchPointStates.clear();
+    }
+  }
+
+  /**
+   * 设置控制器电池状态回调
+   */
+  setControllerBatteryCallback(callback: ((controllerNumber: number,
+    batteryState: number, batteryPercentage: number) => void) | null): void {
+    this.controllerBatteryCallback = callback;
+  }
+
+  /** DS5 触摸板原始分辨率，用于归一化到协议的 0.0-1.0 */
+  private static readonly DS5_TOUCHPAD_WIDTH = 1920;
+  private static readonly DS5_TOUCHPAD_HEIGHT = 1080;
+
+  /**
+   * USB 控制器多触点触摸板数据报告（DS5 双触点）
+   * 计算触点状态转换（down/move/up）并归一化坐标后转发到串流；
+   * 触摸板鼠标模拟开启时让位（鼠标模式独占触摸板）。
+   */
+  reportTouchPoint(
+    controllerId: number,
+    pointIndex: number,
+    active: boolean,
+    x: number,
+    y: number
+  ): void {
+    if (this.touchpadMouseEnabled || !this.controllerTouchCallback) {
+      return;
+    }
+    const slot = this.usbControllerIdToSlot.get(controllerId);
+    if (slot === undefined) return;
+
+    const key = slot * 2 + pointIndex;
+    const prev = this.touchPointStates.get(key);
+    const wasActive = prev !== undefined && prev[0];
+    if (!wasActive && !active) {
+      // 两帧都无手指：不产生事件，也不留缓存
+      if (prev !== undefined) this.touchPointStates.delete(key);
+      return;
+    }
+
+    let eventType: number;
+    let sendX = x;
+    let sendY = y;
+    if (!wasActive && active) {
+      eventType = TOUCH_EVENT_DOWN;
+      this.touchPointStates.set(key, [true, x, y]);
+    } else if (wasActive && !active) {
+      eventType = TOUCH_EVENT_UP;
+      this.touchPointStates.delete(key);
+      sendX = prev![1];
+      sendY = prev![2];
+    } else {
+      // wasActive && active
+      if (prev![1] === x && prev![2] === y) {
+        return; // 坐标未变，避免按输入报告频率刷 MOVE
+      }
+      eventType = TOUCH_EVENT_MOVE;
+      this.touchPointStates.set(key, [true, x, y]);
+    }
+
+    const nx = Math.max(0, Math.min(1, sendX / GamepadManager.DS5_TOUCHPAD_WIDTH));
+    const ny = Math.max(0, Math.min(1, sendY / GamepadManager.DS5_TOUCHPAD_HEIGHT));
+    this.controllerTouchCallback(slot, eventType, pointIndex, nx, ny, 1.0);
+  }
+
+  /** 取消某槽位所有活动触点（设备移除/会话结束时发送 CANCEL） */
+  private cancelActiveTouchPoints(slot: number): void {
+    if (!this.controllerTouchCallback) return;
+    const keysToCancel: number[] = [];
+    this.touchPointStates.forEach((_state, key) => {
+      if (Math.floor(key / 2) === slot) keysToCancel.push(key);
+    });
+    for (const key of keysToCancel) {
+      this.touchPointStates.delete(key);
+      this.controllerTouchCallback(slot, TOUCH_EVENT_CANCEL, key % 2, 0, 0, 0);
+    }
+  }
+
+  /**
+   * USB 控制器电池状态报告
+   * 将 DS5 原始充电状态映射为 moonlight 协议的 LI_BATTERY_STATE_* 后转发。
+   */
+  reportControllerBattery(
+    controllerId: number,
+    chargingStatus: number,
+    batteryPercent: number
+  ): void {
+    if (!this.controllerBatteryCallback) return;
+    const slot = this.usbControllerIdToSlot.get(controllerId);
+    if (slot === undefined) return;
+
+    let batteryState: number;
+    switch (chargingStatus) {
+      case 0x0:
+        batteryState = LI_BATTERY_STATE_DISCHARGING;
+        break;
+      case 0x1:
+        batteryState = LI_BATTERY_STATE_CHARGING;
+        break;
+      case 0x2:
+        batteryState = LI_BATTERY_STATE_FULL;
+        break;
+      case 0xa:
+      case 0xb:
+        batteryState = LI_BATTERY_STATE_NOT_CHARGING;
+        break;
+      default:
+        batteryState = LI_BATTERY_STATE_UNKNOWN;
+        break;
+    }
+    this.controllerBatteryCallback(slot, batteryState, batteryPercent);
+  }
+
+  /** 获取指定槽位 USB 驱动报告的触摸板/电池能力（用于 arrival 能力包）。 */
+  getPhysicalControllerCapabilities(controllerNumber: number): number {
+    let capabilities = 0;
+    for (const controller of this.usbDriverService.getControllers()) {
+      if (this.getUsbControllerSlot(controller) !== controllerNumber) continue;
+      capabilities |= controller.getCapabilities() &
+        (ControllerCapabilities.TOUCHPAD | ControllerCapabilities.BATTERY);
+    }
+    return capabilities;
+  }
+
+  /**
    * 加载触摸板鼠标设置
    */
   async loadTouchpadMouseSetting(): Promise<void> {
@@ -2414,6 +2562,7 @@ export class GamepadManager implements UsbDriverListener {
       this.usbControllerIdToSlot.delete(controllerId);
       if (slot !== undefined) {
         this.vibrationService.clearControllerSource(slot);
+        this.cancelActiveTouchPoints(slot);
       }
       console.info(`[GAMEPAD-USB] 混合模式: 清理震动路由记录`);
       return;
