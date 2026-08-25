@@ -21,6 +21,23 @@ const args = process.argv.slice(2);
  * Find and execute hvigor
  */
 function findAndRunHvigor() {
+  // 0. Windows + DevEco Studio: delegate to its bundled hvigor wrapper.
+  //    Runs in a separate process so the IDE's hvigor/plugin pair stays a
+  //    single consistent instance (project-local copies would split it).
+  if (process.platform === 'win32') {
+    const devecoHvigorw = 'C:\\Program Files\\Huawei\\DevEco Studio\\tools\\hvigor\\bin\\hvigorw.js';
+    const devecoNode = 'C:\\Program Files\\Huawei\\DevEco Studio\\tools\\node\\node.exe';
+    if (fs.existsSync(devecoHvigorw) && fs.existsSync(devecoNode)) {
+      const child = spawn(devecoNode, [devecoHvigorw, ...args], { stdio: 'inherit', windowsHide: true });
+      child.on('exit', (code) => process.exit(code ?? 1));
+      child.on('error', (error) => {
+        console.error(`Error: Failed to start DevEco hvigor: ${error.message}`);
+        process.exit(1);
+      });
+      return;
+    }
+  }
+
   // 1. Check hvigor/node_modules
   const hvigorNodeModules = path.join(PROJECT_DIR, 'hvigor', 'node_modules', '@ohos', 'hvigor', 'bin', 'hvigor.js');
   if (fs.existsSync(hvigorNodeModules)) {

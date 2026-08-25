@@ -15,6 +15,15 @@ export NODE_OPTIONS="${NODE_OPTIONS:---max_old_space_size=4096}"
 # Run hvigor with all passed arguments
 cd "$PROJECT_DIR"
 
+# 0. Windows + DevEco Studio: delegate to its bundled hvigor wrapper so the
+#    IDE's hvigor/plugin pair stays one consistent instance. Paths only exist
+#    on a DevEco install, so CI/Linux falls through untouched.
+DEVECO_NODE="/c/Program Files/Huawei/DevEco Studio/tools/node/node.exe"
+DEVECO_HVIGORW="/c/Program Files/Huawei/DevEco Studio/tools/hvigor/bin/hvigorw.js"
+if [ -f "$DEVECO_NODE" ] && [ -f "$DEVECO_HVIGORW" ]; then
+    exec "$DEVECO_NODE" "$DEVECO_HVIGORW" "$@"
+fi
+
 # 1. Check if hvigor is in PATH (CI environment with global install)
 if command -v hvigor &> /dev/null; then
     exec hvigor "$@"
