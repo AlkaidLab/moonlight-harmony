@@ -319,6 +319,11 @@ export abstract class AbstractController {
     }
   }
   
+  /** 传输通道标识（供测试页/诊断展示），子类可覆写 */
+  getTransportInfo(): string {
+    return 'USB';
+  }
+
   /**
    * 启动控制器
    * @returns 是否启动成功

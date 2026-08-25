@@ -16,6 +16,7 @@ import { AppStateService } from '../service/AppStateService';
 import { UiSettings } from '../service/SettingsService';
 import { RcpSessionPool } from '../utils/RcpSessionPool';
 import { NetworkErrorClassifierSelfCheck } from '../utils/NetworkErrorClassifierSelfCheck';
+import { HidDdkProbe } from '../service/usbdriver/HidDdkProbe';
 
 const TAG = 'EntryAbility';
 const DOMAIN = 0x0000;
@@ -44,6 +45,11 @@ export default class EntryAbility extends UIAbility {
     
     // 注册应用前后台状态变化监听
     this.registerAppStateCallback();
+
+    // HID DDK 主进程可用性自检（无 USB 设备时用哑 deviceId 验证 Init 权限）
+    HidDdkProbe.startupCheck().catch(() => {
+      // 自检只打日志，失败无需处理
+    });
 
     // 网络契约自检（纯函数，零开销，仅日志）
     NetworkErrorClassifierSelfCheck.run();

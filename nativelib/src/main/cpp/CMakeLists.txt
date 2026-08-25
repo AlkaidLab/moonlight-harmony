@@ -98,6 +98,7 @@ set(SOURCE_FILES
     mouse_interceptor.cpp
     usb_helper.cpp
     usb_ddk_poller.cpp
+    hid_ddk_probe.cpp
     native_render.cpp
     presentation_scheduler.cpp
     two_step_presentation_scheduler.cpp

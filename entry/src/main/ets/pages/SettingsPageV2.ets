@@ -207,6 +207,7 @@ struct SettingsPageV2 {
   @State usbDriverEnabled: boolean = false;  // 默认关闭 USB 手柄驱动
   @State forceUsbDriverOnly: boolean = false;  // 强制纯 USB 驱动模式
   @State ddkHighSpeedPolling: boolean = false;  // USB 驱动高速轮询
+  @State hidDdkInputChannel: boolean = false;  // HID DDK 输入通道（实验）
   
   // 输入 - 屏幕控制器
   @State enableOnscreenControls: boolean = false;
@@ -563,6 +564,7 @@ struct SettingsPageV2 {
       this.usbDriverEnabled = await this.loadBoolean(SettingsKeys.USB_DRIVER_ENABLED, false);
       this.forceUsbDriverOnly = await this.loadBoolean(SettingsKeys.FORCE_USB_DRIVER_ONLY, false);
       this.ddkHighSpeedPolling = await this.loadBoolean(SettingsKeys.DDK_HIGH_SPEED_POLLING, false);
+      this.hidDdkInputChannel = await this.loadBoolean(SettingsKeys.HID_DDK_INPUT_CHANNEL, false);
       
       // 输入 - 屏幕控制器
       this.enableOnscreenControls = await this.loadBoolean(SettingsKeys.ENABLE_ONSCREEN_CONTROLS, false);
@@ -1721,6 +1723,21 @@ struct SettingsPageV2 {
                 action: () => {
                   this.ddkHighSpeedPolling = !this.ddkHighSpeedPolling;
                   this.saveSetting(SettingsKeys.DDK_HIGH_SPEED_POLLING, this.ddkHighSpeedPolling);
+                  ToastQueue.show({
+                    message: '下次串流时生效',
+                    duration: 2500
+                  });
+                }
+              },
+              {
+                title: 'HID DDK 输入通道（实验）',
+                subtitle: '通过内核 HID 接口直读手柄原始报文，免 USB 接口声明与内核驱动重绑定。需配合"强制 USB 驱动接管输入"使用，不可用时自动回退',
+                type: 'toggle',
+                value: this.hidDdkInputChannel,
+                visible: this.usbDriverEnabled,
+                action: () => {
+                  this.hidDdkInputChannel = !this.hidDdkInputChannel;
+                  this.saveSetting(SettingsKeys.HID_DDK_INPUT_CHANNEL, this.hidDdkInputChannel);
                   ToastQueue.show({
                     message: '下次串流时生效',
                     duration: 2500

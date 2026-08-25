@@ -26,6 +26,8 @@ import { Dualshock4Controller } from './Dualshock4Controller';
 import { DualSenseController } from './DualSenseController';
 import { SwitchProController } from './SwitchProController';
 import { NativeHidController } from './NativeHidController';
+import { HidDdkController } from './HidDdkController';
+import { HidDdkReader } from './HidDdkReader';
 import { SettingsService } from '../../service/SettingsService';
 import nativeLib from 'libmoonlight_nativelib.so';
 
@@ -143,7 +145,7 @@ export class UsbDriverService implements UsbDriverListener {
    */
   setControllerProtocolType(controllerId: number, protocolType: number): boolean {
     const controller = this.controllers.find(c => c.getControllerId() === controllerId);
-    if (controller && controller instanceof NativeHidController) {
+    if (controller && (controller instanceof NativeHidController || controller instanceof HidDdkController)) {
       controller.setForceProtocolType(protocolType);
       return true;
     }
@@ -743,7 +745,27 @@ export class UsbDriverService implements UsbDriverListener {
     if (!this.isLifecycleActive(requestGeneration)) {
       return;
     }
-    
+
+    // HID DDK 通道（实验）：不 open pipe、不 claim，直接走内核 hidraw；失败回退下方旧链路
+    if (inputSettings.hidDdkInputChannel && HidDdkReader.isAvailable()) {
+      const hidController = new HidDdkController(device, this.nextDeviceId++, this);
+      hidController.setDeviceLocation(device.busNum, device.devAddress, device.serial || '', device.name || '');
+
+      this.processedDevices.add(deviceKey);
+      this.controllers.push(hidController);
+
+      if (hidController.start()) {
+        this.pendingResetDeviceKeys.delete(deviceKey);
+        console.info(`${TAG} HID DDK 通道接管设备: ${device.name}, Key=${deviceKey}`);
+        return;
+      }
+
+      // 同步启动失败（权限/deviceId/打开失败），清理后回退旧链路
+      this.controllers.pop();
+      this.processedDevices.delete(deviceKey);
+      console.warn(`${TAG} HID DDK 通道启动失败，回退 USB 驱动链路: ${device.name}`);
+    }
+
     // 打开设备
     let pipe: usbManager.USBDevicePipe;
     try {

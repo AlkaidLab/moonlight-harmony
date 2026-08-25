@@ -15,6 +15,7 @@
 
 import { usbManager } from '@kit.BasicServicesKit';
 import { UsbDriverService, UsbDriverListener, ControllerType, AbstractController, ButtonFlags } from '../../service/usbdriver';
+import { HidDdkController } from '../../service/usbdriver/HidDdkController';
 import { GamepadManager } from '../../service/input/GamepadManager';
 import { AXIS_MAX } from '../../service/input/GamepadTypes';
 import { AppColors } from '../../common/Theme';
@@ -56,6 +57,7 @@ class DeviceInfo {
   vid: number = 0;
   pid: number = 0;
   type: number = 0;
+  transport: string = '';
 }
 
 // USB 驱动监听器实现类
@@ -127,6 +129,7 @@ export struct UsbControllerTestView {
   @State logMessages: string[] = [];
   @State pollRate: number = 0;
   @State pollCount: number = 0;
+  @State hidChannelInfo: string = '';
 
   private usbDriverService: UsbDriverService | null = null;
   private listener: TestViewDriverListener | null = null;
@@ -134,6 +137,7 @@ export struct UsbControllerTestView {
   private lastPollStatTime: number = 0;
   private pollRateTimer: number = -1;
   private uiRefreshTimer: number = -1;
+  private hidStatsTimer: number = -1;
   // 内部缓冲区：USB 轮询回调（高频，125-1000Hz）写入此变量，
   // 由 UI 刷新定时器同步到 @State 以正确触发 UI 重渲染
   private internalLastInputState: ControllerInputState | null = null;
@@ -143,12 +147,43 @@ export struct UsbControllerTestView {
     this.checkUsbDevices();
     this.startPollRateTimer();
     this.startUiRefreshTimer();
+    this.startHidStatsTimer();
   }
 
   aboutToDisappear(): void {
     this.stopUiRefreshTimer();
     this.stopPollRateTimer();
+    this.stopHidStatsTimer();
     this.stopDriver();
+  }
+
+  // 1 秒刷新 HID DDK 通道状态（iface/描述符/报文率/最近错误）
+  private startHidStatsTimer(): void {
+    this.hidStatsTimer = setInterval(() => {
+      try {
+        const controllers = UsbDriverService.getInstance().getControllers();
+        const hidController = controllers.find(c => c instanceof HidDdkController);
+        if (hidController instanceof HidDdkController) {
+          const stats = hidController.getReaderStats();
+          this.hidChannelInfo =
+            `接口 ${stats.iface} · 描述符 ${stats.descriptorLength}B · ` +
+            `${stats.reportsPerSec.toFixed(1)} Hz · 累计 ${stats.totalReports} 报文` +
+            (stats.lastError !== 0 ? ` · 错误 ${stats.lastError}` : '') +
+            (stats.running ? '' : ' · 已停止');
+        } else {
+          this.hidChannelInfo = '';
+        }
+      } catch (err) {
+        this.hidChannelInfo = '';
+      }
+    }, 1000);
+  }
+
+  private stopHidStatsTimer(): void {
+    if (this.hidStatsTimer !== -1) {
+      clearInterval(this.hidStatsTimer);
+      this.hidStatsTimer = -1;
+    }
   }
   
   private startPollRateTimer(): void {
@@ -228,6 +263,7 @@ export struct UsbControllerTestView {
     deviceInfo.vid = controller.getVendorId();
     deviceInfo.pid = controller.getProductId();
     deviceInfo.type = controller.getControllerType();
+    deviceInfo.transport = controller.getTransportInfo();
     this.connectedDevices = [...this.connectedDevices, deviceInfo];
   }
   
@@ -486,7 +522,7 @@ export struct UsbControllerTestView {
                     .fontSize(13)
                     .fontWeight(FontWeight.Medium)
                     .fontColor(AppColors.TextPrimary)
-                  Text(`${this.getControllerTypeName(device.type)} · VID:0x${device.vid.toString(16).toUpperCase()} PID:0x${device.pid.toString(16).toUpperCase()}`)
+                  Text(`${this.getControllerTypeName(device.type)}${device.transport !== '' ? ` · ${device.transport}` : ''} · VID:0x${device.vid.toString(16).toUpperCase()} PID:0x${device.pid.toString(16).toUpperCase()}`)
                     .fontSize(10)
                     .fontColor(AppColors.TextTertiary)
                 }
@@ -505,6 +541,29 @@ export struct UsbControllerTestView {
         .backgroundColor(AppColors.CardBackground)
         .borderRadius(12)
         .border({ width: 1, color: AppColors.CardBorder })
+
+        // ═══ HID DDK 通道状态卡（实验通道工作时显示） ═══
+        if (this.hidChannelInfo !== '') {
+          Row({ space: 8 }) {
+            Text('HID-DDK')
+              .fontSize(10)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColors.Success)
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .backgroundColor('#1A4CAF50')
+              .borderRadius(4)
+            Text(this.hidChannelInfo)
+              .fontSize(11)
+              .fontColor(AppColors.TextSecondary)
+              .fontFamily('monospace')
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+          .backgroundColor(AppColors.CardBackground)
+          .borderRadius(8)
+          .border({ width: 1, color: AppColors.CardBorder })
+        }
 
         // ═══ 输入可视化卡片 ═══
         if (this.hasInput) {
