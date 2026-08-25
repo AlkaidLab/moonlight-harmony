@@ -99,6 +99,8 @@ export class UsbDriverService implements UsbDriverListener {
   private pendingResetWait: Promise<void> | null = null;
   // Device keys awaiting kernel HID rebind after a controller release.
   private pendingResetDeviceKeys: Set<string> = new Set();
+  // HID DDK 通道接管的设备：从未 detach 内核 HID 驱动，停止时不得进入重绑队列
+  private hidDdkDeviceKeys: Set<string> = new Set();
   
   private constructor() {
     console.info(`${TAG} 创建 USB 驱动服务实例`);
@@ -449,8 +451,12 @@ export class UsbDriverService implements UsbDriverListener {
     // 取消订阅 USB 事件
     this.unsubscribeUsbEvents();
     
-    // 保存已处理设备的键值，用于后续内核驱动重绑定
+    // 保存已处理设备的键值，用于后续内核驱动重绑定。
+    // HID DDK 通道设备从未独占接口，排除出重绑队列。
     const releasedDeviceKeys = new Set(this.processedDevices);
+    this.hidDdkDeviceKeys.forEach((deviceKey: string): void => {
+      releasedDeviceKeys.delete(deviceKey);
+    });
     releasedDeviceKeys.forEach((deviceKey: string): void => {
       this.pendingResetDeviceKeys.add(deviceKey);
     });
@@ -746,8 +752,11 @@ export class UsbDriverService implements UsbDriverListener {
       return;
     }
 
-    // HID DDK 通道（实验）：不 open pipe、不 claim，直接走内核 hidraw；失败回退下方旧链路
-    if (inputSettings.hidDdkInputChannel && HidDdkReader.isAvailable()) {
+    // HID DDK 通道（实验）：不 open pipe、不 claim，直接走内核 hidraw；失败回退下方旧链路。
+    // 仅在强制 USB 驱动接管模式下启用——混合模式下 GCK 负责输入，USB 通道输入会被忽略，
+    // 且避免两条输入路径同时处理同一手柄。
+    if (inputSettings.hidDdkInputChannel && inputSettings.forceUsbDriverOnly &&
+      HidDdkReader.isAvailable()) {
       const hidController = new HidDdkController(device, this.nextDeviceId++, this);
       hidController.setDeviceLocation(device.busNum, device.devAddress, device.serial || '', device.name || '');
 
@@ -756,6 +765,7 @@ export class UsbDriverService implements UsbDriverListener {
 
       if (hidController.start()) {
         this.pendingResetDeviceKeys.delete(deviceKey);
+        this.hidDdkDeviceKeys.add(deviceKey);
         console.info(`${TAG} HID DDK 通道接管设备: ${device.name}, Key=${deviceKey}`);
         return;
       }

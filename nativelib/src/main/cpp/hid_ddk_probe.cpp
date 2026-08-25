@@ -559,6 +559,13 @@ struct HidReaderContext {
     uint64_t windowStartMs;
     double reportsPerSec;
 
+    // 入队去重 + 限速（与 UsbDdkPoller 同策略：内容未变不入队，
+    // 回调最小间隔 2ms，防止 JS 线程繁忙时无界 tsfn 队列增长）
+    uint8_t lastInputData[HID_READER_REPORT_MAX];
+    uint32_t lastInputLen;
+    bool lastInputValid;
+    uint64_t lastCallbackTimeMs;
+
     napi_threadsafe_function reportTsfn;
     napi_threadsafe_function errorTsfn;
 };
@@ -688,6 +695,24 @@ static void *hidReaderThread(void *arg) {
                 ctx->windowStartMs = now;
             }
 
+            // 去重：与上一帧完全相同则不入队（状态未变化）
+            if (ctx->lastInputValid && bytesRead == ctx->lastInputLen &&
+                memcmp(buf, ctx->lastInputData, bytesRead) == 0) {
+                continue;
+            }
+            // 限速：回调最小间隔 2ms（500Hz 上限），不更新去重缓存，
+            // 累积变化在下个间隔窗口发出
+            if (ctx->lastCallbackTimeMs > 0 && now - ctx->lastCallbackTimeMs < 2) {
+                continue;
+            }
+            ctx->lastCallbackTimeMs = now;
+
+            if (bytesRead <= sizeof(ctx->lastInputData)) {
+                memcpy(ctx->lastInputData, buf, bytesRead);
+                ctx->lastInputLen = bytesRead;
+                ctx->lastInputValid = true;
+            }
+
             HidReportEvent *ev = (HidReportEvent *)malloc(sizeof(HidReportEvent));
             if (ev) {
                 ev->readerId = readerId;
@@ -790,6 +815,9 @@ static napi_value HidReader_StartReader(napi_env env, napi_callback_info info) {
     ctx->windowReports = 0;
     ctx->windowStartMs = 0;
     ctx->reportsPerSec = 0;
+    ctx->lastInputLen = 0;
+    ctx->lastInputValid = false;
+    ctx->lastCallbackTimeMs = 0;
 
     // iface 扫描（同步）：首个 Open 成功且描述符非空者
     bool opened = false;

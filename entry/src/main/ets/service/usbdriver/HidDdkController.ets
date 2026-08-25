@@ -128,8 +128,10 @@ export class HidDdkController extends AbstractController {
     }
     this.running = false;
     this.markStopped();
-    this.notifyDeviceRemoved();
+    // 先停 reader（join 读线程），再通知移除——避免 tsfn 队列中的残留报文
+    // 在设备已通知移除后仍触发 processInputReport 上报
     this.reader.stop();
+    this.notifyDeviceRemoved();
     console.info(`${TAG} 控制器已停止: ${this.deviceName}`);
   }
 
@@ -183,6 +185,10 @@ export class HidDdkController extends AbstractController {
   }
 
   private processInputReport(data: Uint8Array): void {
+    // stop() 后 tsfn 队列可能仍投递残留报文，直接丢弃
+    if (!this.running) {
+      return;
+    }
     const state = HidReportParserUtil.parseToState(
       this.vendorId,
       this.productId,

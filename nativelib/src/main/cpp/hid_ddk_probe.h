@@ -33,7 +33,10 @@ void HidDdkProbe_Init(napi_env env, napi_value exports);
  * 注册到 exports.HidDdk 命名空间：
  *   - isAvailable(): boolean
  *   - startReader(deviceId, readTimeoutMs, onReport, onError): number — readerId(≥0)，
- *     同步打开设备，失败返回 -(HID_DDK 错误码) 供调用方回退
+ *     同步打开设备，失败返回 -(HID_DDK 错误码) 供调用方回退。
+ *     注意：打开（含 iface 0..4 扫描，每接口一次 HID 服务 IPC + 描述符读取）
+ *     在调用线程同步执行，典型耗时几毫秒，设备响应慢时最坏可达数百毫秒。
+ *     选择同步语义是为了让调用方（UsbDriverService）能确定性回退旧通道。
  *   - stopReader(readerId): void
  *   - writeOutput(readerId, data): number — OH_Hid_Write（震动等输出报告）
  *   - getReaderStats(readerId): object — iface/descLen/reports/reportsPerSec/lastError
