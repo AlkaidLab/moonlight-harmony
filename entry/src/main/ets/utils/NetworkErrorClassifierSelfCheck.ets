@@ -24,7 +24,7 @@ import {
   parseAddressAndPort,
   parseRtspSessionHost,
 } from './NetHelper';
-import { selectBestAddress } from '../model/ComputerInfo';
+import { formatDisplayAddress, selectBestAddress } from '../model/ComputerInfo';
 import { ConnectionPath, ConnectionPathService } from '../service/network/ConnectionPathService';
 
 const TAG = 'NetworkSelfCheck';
@@ -132,6 +132,7 @@ export class NetworkErrorClassifierSelfCheck {
     failed += NetworkErrorClassifierSelfCheck.runConnectionPathCases();
     failed += NetworkErrorClassifierSelfCheck.runWakeOnLanCases();
     failed += NetworkErrorClassifierSelfCheck.runAddressSelectionCases();
+    failed += NetworkErrorClassifierSelfCheck.runDisplayAddressCases();
 
     if (failed === 0) {
       hilog.info(DOMAIN, TAG, 'network self-check passed');
@@ -399,6 +400,81 @@ export class NetworkErrorClassifierSelfCheck {
       failed += NetworkErrorClassifierSelfCheck.expectEqual('selectBestAddress', c.name, c.actual, c.expected, c.reason);
     }
     NetworkErrorClassifierSelfCheck.logGroupResult('selectBestAddress', failed);
+    return failed;
+  }
+
+  private static runDisplayAddressCases(): number {
+    let failed = 0;
+    const cases: StringCase[] = [
+      {
+        name: 'custom port appended to manual address',
+        actual: formatDisplayAddress({
+          address: '192.168.1.5',
+          localAddress: '',
+          remoteAddress: '',
+          manualAddress: 'ddns.example.com',
+          serverCert: '',
+          httpPort: 47990,
+        }),
+        expected: 'ddns.example.com:47990',
+        reason: '自定义端口必须可见，否则用户以为端口没生效',
+      },
+      {
+        name: 'custom port appended to active address',
+        actual: formatDisplayAddress({
+          address: '192.168.1.5',
+          localAddress: '',
+          remoteAddress: '',
+          manualAddress: '',
+          serverCert: '',
+          httpPort: 30000,
+        }),
+        expected: '192.168.1.5:30000',
+        reason: '无手动地址时回落到活跃地址仍要带端口',
+      },
+      {
+        name: 'default port omitted',
+        actual: formatDisplayAddress({
+          address: '192.168.1.5',
+          localAddress: '',
+          remoteAddress: '',
+          manualAddress: '',
+          serverCert: '',
+          httpPort: 47989,
+        }),
+        expected: '192.168.1.5',
+        reason: '默认端口不显示，避免噪音',
+      },
+      {
+        name: 'no port',
+        actual: formatDisplayAddress({
+          address: 'sunshine.local',
+          localAddress: '',
+          remoteAddress: '',
+          manualAddress: '',
+          serverCert: '',
+        }),
+        expected: 'sunshine.local',
+        reason: '自动发现的主机没有自定义端口',
+      },
+      {
+        name: 'empty fallback',
+        actual: formatDisplayAddress({
+          address: '',
+          localAddress: '',
+          remoteAddress: '',
+          manualAddress: '',
+          serverCert: '',
+        }),
+        expected: '',
+        reason: '无任何地址时返回空字符串',
+      },
+    ];
+
+    for (const c of cases) {
+      failed += NetworkErrorClassifierSelfCheck.expectEqual('formatDisplayAddress', c.name, c.actual, c.expected, c.reason);
+    }
+    NetworkErrorClassifierSelfCheck.logGroupResult('formatDisplayAddress', failed);
     return failed;
   }
 

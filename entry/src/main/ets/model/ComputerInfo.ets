@@ -8,6 +8,7 @@
  * (at your option) any later version.
  */
 
+import { DEFAULT_HTTP_PORT } from '../common/NetworkConstants';
 import { isLanIPv4Address, isLanAddress, isIPv6Address, isPublicAddress, detectAddressType, AddressType, getAddressTypeLabel } from '../utils/NetHelper';
 
 /**
@@ -132,6 +133,19 @@ export function selectBestAddress(computer: AddressHolder): string {
  */
 export function getAddressNetworkLabel(address: string | undefined): string {
   return getAddressTypeLabel(address);
+}
+
+/**
+ * 展示用地址：自定义 HTTP 端口时附加 :port，默认端口（47989）不附加
+ * 端口实际存储在 httpPort 字段，地址字段只存主机名，直接展示会让用户
+ * 以为自定义端口没生效
+ */
+export function formatDisplayAddress(computer: NvHttpHost): string {
+  const host = computer.manualAddress || computer.address;
+  if (host && computer.httpPort && computer.httpPort !== DEFAULT_HTTP_PORT) {
+    return `${host}:${computer.httpPort}`;
+  }
+  return host;
 }
 
 /**

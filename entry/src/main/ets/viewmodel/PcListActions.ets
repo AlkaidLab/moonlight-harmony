@@ -610,7 +610,7 @@ export class PcListActions {
       `UUID: ${computer.uuid}`,
       ...addressLines,
       `MAC 地址: ${computer.macAddress || '未知'}`,
-      `HTTPS 端口: ${NvHttp.DEFAULT_HTTPS_PORT}`,
+      `HTTPS 端口: ${info.httpsPort || NvHttp.DEFAULT_HTTPS_PORT}`,
       `HTTP 端口: ${info.httpPort || NvHttp.DEFAULT_HTTP_PORT}`,
     ].join('\n');
 
