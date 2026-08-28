@@ -9,6 +9,7 @@
  */
 
 import { ObservableComputer } from '../viewmodel/ComputerViewModel';
+import { formatDisplayAddress } from '../model/ComputerInfo';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows, StatusColors } from '../common/Theme';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 
@@ -299,8 +300,8 @@ export struct ComputerCard {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
-      // 第二行：IP 地址（优先显示手动地址，保持稳定；否则显示轮询活跃地址）
-      Text(this.computer.manualAddress || this.computer.address)
+      // 第二行：IP 地址（优先显示手动地址，保持稳定；否则显示轮询活跃地址；自定义端口时附带 :port）
+      Text(formatDisplayAddress(this.computer))
         .fontSize(AppSizes.FontBody)
         .fontColor(AppColors.TextSecondary)
         .fontFamily('monospace')
