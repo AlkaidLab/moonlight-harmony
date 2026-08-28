@@ -8,8 +8,8 @@
  * (at your option) any later version.
  */
 
-import { DEFAULT_HTTP_PORT } from '../common/NetworkConstants';
-import { isLanIPv4Address, isLanAddress, isIPv6Address, isPublicAddress, detectAddressType, AddressType, getAddressTypeLabel } from '../utils/NetHelper';
+import { DEFAULT_HTTP_PORT, MAX_PORT } from '../common/NetworkConstants';
+import { isLanIPv4Address, isLanAddress, isIPv6Address, isPublicAddress, detectAddressType, AddressType, getAddressTypeLabel, parseAddressAndPort, formatAddressForUrl } from '../utils/NetHelper';
 
 /**
  * 电脑信息模型
@@ -141,11 +141,17 @@ export function getAddressNetworkLabel(address: string | undefined): string {
  * 以为自定义端口没生效
  */
 export function formatDisplayAddress(computer: NvHttpHost): string {
-  const host = computer.manualAddress || computer.address;
-  if (host && computer.httpPort && computer.httpPort !== DEFAULT_HTTP_PORT) {
-    return `${host}:${computer.httpPort}`;
+  const selected = parseAddressAndPort(computer.manualAddress || computer.address);
+  if (!selected.host) {
+    return '';
   }
-  return host;
+  // 与 NvHttp 构造器同一优先级：地址内嵌端口优先，其次 httpPort 字段
+  const port = selected.port || computer.httpPort;
+  if (port && port !== DEFAULT_HTTP_PORT && port > 0 && port <= MAX_PORT) {
+    // 裸 IPv6 附端口前必须加方括号，否则 "fe80::1:30000" 有歧义
+    return `${formatAddressForUrl(selected.host)}:${port}`;
+  }
+  return selected.host;
 }
 
 /**

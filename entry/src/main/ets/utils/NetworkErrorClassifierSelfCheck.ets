@@ -458,6 +458,45 @@ export class NetworkErrorClassifierSelfCheck {
         reason: '自动发现的主机没有自定义端口',
       },
       {
+        name: 'address embedded port wins over httpPort',
+        actual: formatDisplayAddress({
+          address: '192.168.1.5:30000',
+          localAddress: '',
+          remoteAddress: '',
+          manualAddress: '',
+          serverCert: '',
+          httpPort: 47990,
+        }),
+        expected: '192.168.1.5:30000',
+        reason: '对齐 NvHttp 构造器：地址内嵌端口优先，不重复拼接',
+      },
+      {
+        name: 'bare IPv6 host bracketed when port appended',
+        actual: formatDisplayAddress({
+          address: 'fe80::1',
+          localAddress: '',
+          remoteAddress: '',
+          manualAddress: '',
+          serverCert: '',
+          httpPort: 30000,
+        }),
+        expected: '[fe80::1]:30000',
+        reason: '裸 IPv6 附端口必须加方括号，避免歧义',
+      },
+      {
+        name: 'invalid port ignored',
+        actual: formatDisplayAddress({
+          address: '192.168.1.5',
+          localAddress: '',
+          remoteAddress: '',
+          manualAddress: '',
+          serverCert: '',
+          httpPort: 99999,
+        }),
+        expected: '192.168.1.5',
+        reason: '超出范围的端口不拼接',
+      },
+      {
         name: 'empty fallback',
         actual: formatDisplayAddress({
           address: '',
