@@ -1774,6 +1774,7 @@ napi_value MoonBridge_GetVideoStats(napi_env env, napi_callback_info info) {
     setNumber("renderedFps", stats.renderedFps);
     setNumber("bitrate", stats.currentBitrate);
     setNumber("hostLatency", stats.recentHostProcessingLatency);
+    setNumber("networkFrameLossPercent", LiGetEstimatedVideoFrameLossPercentage());
     setCounter("framesLost", stats.framesLost);
     setCounter("totalFrames", stats.totalFrames);
     setNumber("totalDecodeTimeMs", stats.totalDecodeTimeMs);

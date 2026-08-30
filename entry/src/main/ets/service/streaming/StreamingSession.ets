@@ -81,6 +81,7 @@ export interface StreamStats {
   hostLatency: number;     // 最近 1 秒主机处理延迟（编码时间）ms
   networkLatency: number;  // 网络延迟（RTT）ms
   packetLoss: number;      // %
+  networkFrameLossPercent: number; // common-c 网络重组层确认的帧丢失率（不含客户端丢帧）
   decodedFrames: number;
   codecOutputFrames: number;
   droppedFrames: number;
@@ -282,6 +283,7 @@ interface VideoStats {
   renderedFps: number;
   bitrate: number;
   hostLatency: number;
+  networkFrameLossPercent: number;
   totalDecodeTimeMs: number;
   validDecodeFrames: number;
   totalHostLatencyMs: number;
@@ -564,6 +566,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private stats: StreamStats = {
     fps: 0, codecOutputFps: 0, renderedFps: 0, bitrate: 0, latency: 0,
     hostLatency: 0, networkLatency: 0, packetLoss: 0,
+    networkFrameLossPercent: 0,
     decodedFrames: 0, codecOutputFrames: 0, droppedFrames: 0,
     hdrVivid: false,
     hostMaxLuminance: 0, hostMaxFullFrame: 0,
@@ -1159,6 +1162,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       this.stats.bitrate = vs.bitrate || 0;
       this.stats.latency = vs.avgDecodeTimeMs || 0;
       this.stats.hostLatency = vs.hostLatency || 0;
+      this.stats.networkFrameLossPercent = vs.networkFrameLossPercent || 0;
 
       // 滑动窗口丢包率（对齐 Android: ~2秒窗口 = lastWindow + activeWindow）
       const totalFrames = vs.totalFrames || 0;
@@ -1237,6 +1241,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       hostLatency: this.stats.hostLatency,
       networkLatency: this.stats.networkLatency,
       packetLoss: this.stats.packetLoss,
+      networkFrameLossPercent: this.stats.networkFrameLossPercent,
       decodedFrames: this.stats.decodedFrames,
       codecOutputFrames: this.stats.codecOutputFrames,
       droppedFrames: this.stats.droppedFrames,
