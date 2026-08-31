@@ -733,6 +733,19 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       this.isRunning = true;
       // Network Boost Kit: 声明实时游戏类业务，让系统优先调度
       NetworkBoostService.getInstance().start();
+      // Network Boost Kit: 注册串流 socket 流描述，获得 per-flow 调度优先级。
+      // startConnectionAsync 已返回，video/audio/control socket 均已建立。
+      try {
+        const sockets = MoonBridge.getStreamSocketFds();
+        if (sockets) {
+          console.info(`[StreamingSession] 串流 socket: video fd=${sockets.videoRtp.fd} port=${sockets.videoRtp.localPort}, ` +
+            `audio fd=${sockets.audioRtp.fd} port=${sockets.audioRtp.localPort}, ` +
+            `control fd=${sockets.control.fd} port=${sockets.control.localPort}`);
+          NetworkBoostService.getInstance().registerStreamingFlows(sockets);
+        }
+      } catch (err) {
+        console.warn(`[StreamingSession] 串流流描述注册失败(不影响串流): ${(err as Error).message}`);
+      }
     } catch (err) {
       await this.cleanup();
       throw new Error(`串流会话启动失败: ${(err as Error).message}`);

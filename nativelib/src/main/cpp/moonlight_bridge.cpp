@@ -1494,6 +1494,31 @@ napi_value MoonBridge_GetHostFeatureFlags(napi_env env, napi_callback_info info)
     return result;
 }
 
+napi_value MoonBridge_GetStreamSocketFds(napi_env env, napi_callback_info info) {
+    (void)info;
+
+    LI_STREAM_SOCKETS sockets;
+    LiGetStreamSockets(&sockets);
+
+    napi_value result;
+    napi_create_object(env, &result);
+
+    const char* fdKeys[] = { "videoRtpFd", "audioRtpFd", "controlFd" };
+    const int fdValues[] = { sockets.videoRtp.fd, sockets.audioRtp.fd, sockets.control.fd };
+    const char* portKeys[] = { "videoRtpPort", "audioRtpPort", "controlPort" };
+    const int portValues[] = { sockets.videoRtp.localPort, sockets.audioRtp.localPort, sockets.control.localPort };
+
+    for (int i = 0; i < 3; i++) {
+        napi_value value;
+        napi_create_int32(env, fdValues[i], &value);
+        napi_set_named_property(env, result, fdKeys[i], value);
+        napi_create_int32(env, portValues[i], &value);
+        napi_set_named_property(env, result, portKeys[i], value);
+    }
+
+    return result;
+}
+
 napi_value MoonBridge_SendClientSdrWhiteNits(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value args[1];

@@ -153,6 +153,7 @@ napi_value MoonBridge_GetPendingAudioDuration(napi_env env, napi_callback_info i
 napi_value MoonBridge_GetPendingVideoFrames(napi_env env, napi_callback_info info);
 napi_value MoonBridge_GetEstimatedRttInfo(napi_env env, napi_callback_info info);
 napi_value MoonBridge_GetHostFeatureFlags(napi_env env, napi_callback_info info);
+napi_value MoonBridge_GetStreamSocketFds(napi_env env, napi_callback_info info);
 napi_value MoonBridge_SendClientSdrWhiteNits(napi_env env, napi_callback_info info);
 napi_value MoonBridge_GetLaunchUrlQueryParameters(napi_env env, napi_callback_info info);
 
