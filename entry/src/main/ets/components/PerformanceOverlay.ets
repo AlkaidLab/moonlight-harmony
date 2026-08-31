@@ -222,7 +222,7 @@ export struct PerformanceOverlay {
       this.perfLatency = stats.latency;
       this.perfNetworkLatency = stats.networkLatency;
       this.perfHostLatency = stats.hostLatency;
-      this.perfPacketLoss = stats.packetLoss;
+      this.perfPacketLoss = stats.networkFrameLossPercent;
       this.perfHdrVivid = stats.hdrVivid;
       // 🎃 愚人节彩蛋：负延迟串流™
       if (isAprilFools()) {
