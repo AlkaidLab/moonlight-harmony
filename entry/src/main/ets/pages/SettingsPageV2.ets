@@ -244,7 +244,7 @@ struct SettingsPageV2 {
   @State enableSyncDecode: boolean = false;  // 同步解码模式，默认禁用
   @State enableVrr: boolean = false;  // VRR 可变刷新率，默认禁用
   @State enableVsync: boolean = false;
-  @State enableHostPacedPresentation: boolean = false;
+  @State enableHostPacedPresentation: boolean = true;
   @State enablePostProcess: boolean = false;  // 后处理滤镜（暗区抖动补偿）
   @State upscaleMode: number = 0;             // 超分辨率模式
   @State upscaleSharpness: number = 50;       // 超分锐度 (0-100)
@@ -601,7 +601,7 @@ struct SettingsPageV2 {
       this.enableVrr = await this.loadBoolean(SettingsKeys.ENABLE_VRR, false);  // VRR 默认禁用
       this.enableVsync = await this.loadBoolean(SettingsKeys.ENABLE_VSYNC, false);
       this.enableHostPacedPresentation = await this.loadBoolean(
-        SettingsKeys.ENABLE_HOST_PACED_PRESENTATION, false);
+        SettingsKeys.ENABLE_HOST_PACED_PRESENTATION, true);
       this.enablePostProcess = await this.loadBoolean(SettingsKeys.ENABLE_POST_PROCESS, false);
       this.upscaleMode = await PreferencesUtil.get<number>(SettingsKeys.UPSCALE_MODE, 0);
       this.upscaleSharpness = await PreferencesUtil.get<number>(SettingsKeys.UPSCALE_SHARPNESS, 50);

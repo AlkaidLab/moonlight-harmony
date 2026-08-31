@@ -1773,7 +1773,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.nativeModule.setDecoderSyncMode(this.config.enableSyncDecode);
     this.nativeModule.setVsyncEnabled(this.config.enableVsync);
     this.nativeModule.setHostPacedPresentationEnabled(
-      this.config.enableHostPacedPresentation ?? false);
+      this.config.enableHostPacedPresentation ?? true);
     this.nativeModule.setVrrEnabled(this.config.enableVrr);
     this.nativeModule.setPostProcessEnabled(this.config.enablePostProcess ?? false);
     this.nativeModule.setUpscaleMode(this.config.upscaleMode ?? 0, this.config.upscaleSharpness ?? 0.5);
@@ -1784,7 +1784,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     }
 
     console.info(`解码器: buffers=${this.config.decoderBufferCount}, sync=${this.config.enableSyncDecode}, ` +
-      `vsync=${this.config.enableVsync}, hostPaced=${this.config.enableHostPacedPresentation ?? false}, ` +
+      `vsync=${this.config.enableVsync}, hostPaced=${this.config.enableHostPacedPresentation ?? true}, ` +
       `vrr=${this.config.enableVrr}`);
 
     const callStart = async (address: string): Promise<number> => {

@@ -652,7 +652,7 @@ export class SettingsService {
     const enableVrr = await this.getBoolean(SettingsKeys.ENABLE_VRR, false);  // VRR 默认禁用
     const enableVsync = await this.getBoolean(SettingsKeys.ENABLE_VSYNC, false);
     const enableHostPacedPresentation = await this.getBoolean(
-      SettingsKeys.ENABLE_HOST_PACED_PRESENTATION, false);
+      SettingsKeys.ENABLE_HOST_PACED_PRESENTATION, true);
     const enablePostProcess = await this.getBoolean(SettingsKeys.ENABLE_POST_PROCESS, false);
     const upscaleMode = await this.getNumber(SettingsKeys.UPSCALE_MODE, 0);
     const upscaleSharpness = await this.getNumber(SettingsKeys.UPSCALE_SHARPNESS, 50) / 100.0;
