@@ -150,6 +150,35 @@ export interface RttInfo {
 }
 
 /**
+ * native getStreamSocketFds 返回的扁平结构
+ */
+interface NativeStreamSocketFds {
+  videoRtpFd: number;
+  videoRtpPort: number;
+  audioRtpFd: number;
+  audioRtpPort: number;
+  controlFd: number;
+  controlPort: number;
+}
+
+/**
+ * 串流 socket 信息（fd 为 -1 表示该流不可用）
+ */
+export interface StreamSocketInfo {
+  fd: number;
+  localPort: number;
+}
+
+/**
+ * 串流会话的活跃 socket 集合（仅在连接建立后有效）
+ */
+export interface StreamSocketFds {
+  videoRtp: StreamSocketInfo;
+  audioRtp: StreamSocketInfo;
+  control: StreamSocketInfo;
+}
+
+/**
  * Native 麦克风统计信息
  */
 export interface NativeMicStats {
@@ -725,6 +754,18 @@ class MoonBridgeClass {
 
   getHostFeatureFlags(): number {
     return nativeLib.getHostFeatureFlags();
+  }
+
+  getStreamSocketFds(): StreamSocketFds | null {
+    const raw = nativeLib.getStreamSocketFds() as NativeStreamSocketFds | null;
+    if (!raw) {
+      return null;
+    }
+    const video: StreamSocketInfo = { fd: raw.videoRtpFd, localPort: raw.videoRtpPort };
+    const audio: StreamSocketInfo = { fd: raw.audioRtpFd, localPort: raw.audioRtpPort };
+    const control: StreamSocketInfo = { fd: raw.controlFd, localPort: raw.controlPort };
+    const result: StreamSocketFds = { videoRtp: video, audioRtp: audio, control: control };
+    return result;
   }
 
   sendClientSdrWhiteNits(nits: number): number {

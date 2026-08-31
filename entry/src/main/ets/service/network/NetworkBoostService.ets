@@ -15,14 +15,17 @@
  *        本服务静默忽略。
  *
  * 后续步骤：
- *   Step 3: 订阅 'netSceneChange' 弱信号预测 → 主动降码率/提示用户
  *   Step 4: 引入 netHandover 多网切换（远程串流场景，需 LINKTURBO 受限权限）
  */
 
 import { netBoost, netQuality } from '@kit.NetworkBoostKit';
 import { Available, BusinessError, deviceInfo } from '@kit.BasicServicesKit';
+import { StreamSocketFds } from '../streaming/MoonBridge';
 
 const STREAMING_SERVICE_TYPE: netQuality.ServiceType = 'realtimeGame';
+
+/** setDataFlowDesc 起始 API 版本 */
+const DATA_FLOW_DESC_MIN_API = 26;
 
 type StreamQoeState = 'good' | 'poor';
 
@@ -73,43 +76,6 @@ export interface SystemNetScene {
 
 export type SystemNetSceneListener = (scene: SystemNetScene) => void;
 
-export type NetworkBoostTransportProtocol = 'udp' | 'tcp';
-export type NetworkBoostFlowPriority = 'normal' | 'high';
-
-export interface NetworkBoostEndpoint {
-  address: string;
-  port: number;
-}
-
-export interface NetworkBoostFlowExpectation {
-  /** 上行带宽，单位 Kbps */
-  uplinkBandwidthKbps?: number;
-  /** 下行带宽，单位 Kbps */
-  downlinkBandwidthKbps?: number;
-  /** 期望时延，单位毫秒 */
-  latencyMs?: number;
-  /** 请求/上传对象大小，单位 KB */
-  objectSizeKb?: number;
-  /** 流优先级 */
-  priority?: NetworkBoostFlowPriority;
-  /** 是否倾向低功耗传输 */
-  lowPowerMode?: boolean;
-}
-
-export interface NetworkBoostFiveTupleFlow {
-  flowType: 'fiveTuple';
-  protocol: NetworkBoostTransportProtocol;
-  local: NetworkBoostEndpoint;
-  remote: NetworkBoostEndpoint;
-  expectations?: NetworkBoostFlowExpectation;
-}
-
-export interface NetworkBoostSocketFlow {
-  flowType: 'socket';
-  socketFd: number;
-  expectations?: NetworkBoostFlowExpectation;
-}
-
 export class NetworkBoostService {
   private static instance: NetworkBoostService | null = null;
 
@@ -124,7 +90,8 @@ export class NetworkBoostService {
   private sceneCallback: ((list: Array<netQuality.NetworkScene>) => void) | null = null;
   private latestScene: SystemNetScene | null = null;
   private sceneListeners: Set<SystemNetSceneListener> = new Set();
-  private activeDataFlow: NetworkBoostFiveTupleFlow | NetworkBoostSocketFlow | null = null;
+  private registeredFlowFds: number[] = [];
+  private sceneEntered: boolean = false;
 
   static getInstance(): NetworkBoostService {
     if (!NetworkBoostService.instance) {
@@ -214,29 +181,84 @@ export class NetworkBoostService {
   }
 
   /**
-   * HarmonyOS 26.0.0: 为关键串流 socket 标记实时游戏流。
+   * HarmonyOS 26.0.0: 为关键串流 socket 注册系统级流描述,获得 per-flow 调度优先级。
    *
-   * 只有在调用方能提供 native socket fd 或完整五元组时才调用；
-   * 当前 ArkTS 层没有可靠本地端口/fd，因此先作为可选入口保留。
+   * fd 来自 native 层 getStreamSocketFds()。注册失败不影响串流;
+   * 会话结束或 socket 关闭前由 clearDataFlowDesc() 注销。
    */
-  setDataFlowDesc(flow: NetworkBoostFiveTupleFlow | NetworkBoostSocketFlow): boolean {
+  registerStreamingFlows(fds: StreamSocketFds): void {
     if (!this.supported || !this.active) {
-      return false;
+      return;
     }
+    if (deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API) {
+      console.info(`[NetworkBoost] API ${deviceInfo.sdkApiVersion} < ${DATA_FLOW_DESC_MIN_API},跳过流描述注册`);
+      return;
+    }
+
     try {
       netBoost.setSceneDesc({
         scene: STREAMING_SERVICE_TYPE,
         sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER
       });
-      if (flow.expectations?.lowPowerMode !== undefined && deviceInfo.sdkApiVersion >= 24) {
-        netBoost.setLowPowerMode(flow.expectations.lowPowerMode);
-      }
-      this.activeDataFlow = flow;
-      console.info('[NetworkBoost] setSceneDesc scene=realtimeGame event=enter');
-      return true;
+      this.sceneEntered = true;
     } catch (err) {
-      this.handleErr('setDataFlowDesc', err);
-      return false;
+      this.handleErr('registerStreamingFlows/setSceneDesc', err);
+      return;
+    }
+
+    this.registeredFlowFds = [];
+    this.registerOneFlow('videoRtp', fds.videoRtp.fd);
+    this.registerOneFlow('audioRtp', fds.audioRtp.fd);
+    this.registerOneFlow('control', fds.control.fd);
+  }
+
+  private registerOneFlow(name: string, fd: number): void {
+    if (fd < 0) {
+      console.info(`[NetworkBoost] ${name} fd 不可用,跳过注册`);
+      return;
+    }
+    try {
+      netBoost.setDataFlowDesc({
+        dataFlowInfo: fd,
+        scene: STREAMING_SERVICE_TYPE,
+        sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER,
+        expectations: { priority: netBoost.PriorityLevel.PRIO_HIGH }
+      });
+      this.registeredFlowFds.push(fd);
+      console.info(`[NetworkBoost] setDataFlowDesc ${name} fd=${fd} priority=HIGH`);
+    } catch (err) {
+      this.handleErr(`setDataFlowDesc(${name})`, err);
+    }
+  }
+
+  private clearDataFlowDesc(): void {
+    const fds = this.registeredFlowFds;
+    this.registeredFlowFds = [];
+    fds.forEach((fd) => {
+      try {
+        netBoost.setDataFlowDesc({
+          dataFlowInfo: fd,
+          scene: STREAMING_SERVICE_TYPE,
+          sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
+        });
+        console.info(`[NetworkBoost] setDataFlowDesc fd=${fd} event=leave`);
+      } catch (err) {
+        console.warn(`[NetworkBoost] setDataFlowDesc(fd=${fd}) leave 失败: ${(err as Error).message}`);
+      }
+    });
+    if (!this.sceneEntered) {
+      return;
+    }
+    this.sceneEntered = false;
+
+    try {
+      netBoost.setSceneDesc({
+        scene: STREAMING_SERVICE_TYPE,
+        sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
+      });
+      console.info('[NetworkBoost] setSceneDesc scene=realtimeGame event=leave');
+    } catch (err) {
+      console.warn(`[NetworkBoost] clearDataFlowDesc 失败: ${(err as Error).message}`);
     }
   }
 
@@ -378,23 +400,6 @@ export class NetworkBoostService {
       console.warn(`[NetworkBoost] off(netSceneChange) 失败: ${(err as Error).message}`);
     }
     this.sceneCallback = null;
-  }
-
-  private clearDataFlowDesc(): void {
-    if (!this.activeDataFlow) {
-      this.activeDataFlow = null;
-      return;
-    }
-    try {
-      netBoost.setSceneDesc({
-        scene: STREAMING_SERVICE_TYPE,
-        sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
-      });
-      console.info('[NetworkBoost] setSceneDesc scene=realtimeGame event=leave');
-    } catch (err) {
-      console.warn(`[NetworkBoost] clearDataFlowDesc 澶辫触: ${(err as Error).message}`);
-    }
-    this.activeDataFlow = null;
   }
 
   private handleErr(api: string, err: object): void {
