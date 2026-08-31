@@ -2155,19 +2155,13 @@ struct SettingsPageV2 {
               },
               {
                 title: '相位调谐 (实验性)',
-                subtitle: this.developerMode
-                  ? '配合 Foundation Sunshine 主机的帧律感知；不是更快，只是每一帧都很会挑时机'
-                  : '开发者模式解锁后才让你碰',
+                subtitle: '配合 Foundation Sunshine 主机的帧律感知；不是更快，只是每一帧都很会挑时机',
                 type: 'toggle',
                 value: this.enableHostPacedPresentation,
-                isPro: true,
-                disabled: !this.developerMode,
                 action: () => {
-                  if (this.developerMode) {
-                    this.enableHostPacedPresentation = !this.enableHostPacedPresentation;
-                    this.saveSetting(SettingsKeys.ENABLE_HOST_PACED_PRESENTATION,
-                      this.enableHostPacedPresentation);
-                  }
+                  this.enableHostPacedPresentation = !this.enableHostPacedPresentation;
+                  this.saveSetting(SettingsKeys.ENABLE_HOST_PACED_PRESENTATION,
+                    this.enableHostPacedPresentation);
                 }
               },
               {

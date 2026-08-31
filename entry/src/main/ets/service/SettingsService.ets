@@ -651,8 +651,8 @@ export class SettingsService {
     const enableSyncDecode = await this.getBoolean(SettingsKeys.ENABLE_SYNC_DECODE, false);  // 默认禁用
     const enableVrr = await this.getBoolean(SettingsKeys.ENABLE_VRR, false);  // VRR 默认禁用
     const enableVsync = await this.getBoolean(SettingsKeys.ENABLE_VSYNC, false);
-    const enableHostPacedPresentation = developerMode && await this.getBoolean(
-      SettingsKeys.ENABLE_HOST_PACED_PRESENTATION, false);  // 非开发者模式下强制禁用
+    const enableHostPacedPresentation = await this.getBoolean(
+      SettingsKeys.ENABLE_HOST_PACED_PRESENTATION, false);
     const enablePostProcess = await this.getBoolean(SettingsKeys.ENABLE_POST_PROCESS, false);
     const upscaleMode = await this.getNumber(SettingsKeys.UPSCALE_MODE, 0);
     const upscaleSharpness = await this.getNumber(SettingsKeys.UPSCALE_SHARPNESS, 50) / 100.0;
