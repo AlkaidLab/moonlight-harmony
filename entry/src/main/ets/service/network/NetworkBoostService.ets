@@ -91,6 +91,7 @@ export class NetworkBoostService {
   private latestScene: SystemNetScene | null = null;
   private sceneListeners: Set<SystemNetSceneListener> = new Set();
   private registeredFlowFds: number[] = [];
+  private sceneEntered: boolean = false;
 
   static getInstance(): NetworkBoostService {
     if (!NetworkBoostService.instance) {
@@ -199,6 +200,7 @@ export class NetworkBoostService {
         scene: STREAMING_SERVICE_TYPE,
         sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER
       });
+      this.sceneEntered = true;
     } catch (err) {
       this.handleErr('registerStreamingFlows/setSceneDesc', err);
       return;
@@ -244,9 +246,10 @@ export class NetworkBoostService {
         console.warn(`[NetworkBoost] setDataFlowDesc(fd=${fd}) leave 失败: ${(err as Error).message}`);
       }
     });
-    if (fds.length === 0) {
+    if (!this.sceneEntered) {
       return;
     }
+    this.sceneEntered = false;
 
     try {
       netBoost.setSceneDesc({
