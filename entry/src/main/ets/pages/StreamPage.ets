@@ -2146,8 +2146,17 @@ struct StreamPage {
     if (result === ThreeFingerImeGestureResult.TRIGGERED) {
       this.touchInputHandler.cancelActiveInput();
       this.panZoomHandler.cancelActiveGesture();
-      this.showVirtualKeyboard = false;
-      this.imeManager.show();
+      if (this.imeManager.isVisible) {
+        // 三指再次触发时主动关闭；hide() 会同步解除锁定。
+        this.imeManager.hide();
+      } else {
+        this.showVirtualKeyboard = false;
+        // 三指呼出的 IME 默认锁定：画面失焦事件只能触发重新显示，
+        // 仅再次三指或工具条关闭按钮可以主动关闭。
+        this.imePanelLocked = true;
+        this.imeManager.setLocked(true);
+        this.imeManager.show();
+      }
     }
     return result !== ThreeFingerImeGestureResult.PASS_THROUGH;
   }
