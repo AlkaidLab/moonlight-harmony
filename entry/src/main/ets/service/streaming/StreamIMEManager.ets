@@ -33,6 +33,7 @@ export class StreamIMEManager {
   // ── 输入法控制器 ──
   private imeController: inputMethod.InputMethodController | null = null;
   private showInProgress: boolean = false;
+  private showRequestId: number = 0;
   private imeReadyTime: number = 0;
   /** 锁定模式：开启后点击其他区域不会收起 IME / IME bar，HIDE 事件会被拦截并重新唤起软键盘 */
   private locked: boolean = false;
@@ -62,18 +63,6 @@ export class StreamIMEManager {
   }
 
   /**
-   * 当前 IME 是否正在显示
-   */
-  get isVisible(): boolean {
-    return this.imeController !== null;
-  }
-
-  /** 当前是否正在异步显示 IME */
-  get isOpening(): boolean {
-    return this.showInProgress;
-  }
-
-  /**
    * 当前是否处于锁定模式
    */
   get isLocked(): boolean {
@@ -96,17 +85,20 @@ export class StreamIMEManager {
     const session = this.viewModel?.getSession();
     if (!session || this.showInProgress || this.imeController) return;
 
+    const requestId = ++this.showRequestId;
     this.showInProgress = true;
+    let win: window.Window | null = null;
+    let controller: inputMethod.InputMethodController | null = null;
 
     try {
       // 监听键盘高度变化
-      const win = await window.getLastWindow(this.context);
+      win = await window.getLastWindow(this.context);
+      if (requestId !== this.showRequestId) return;
       win.on('keyboardHeightChange', (height: number) => {
         this.callbacks?.onKeyboardHeightChanged(px2vp(height));
       });
 
-      const controller = inputMethod.getController();
-      this.imeController = controller;
+      controller = inputMethod.getController();
 
       // 先绑定输入法（必须先 attach 才能注册回调）
       const textConfig: inputMethod.TextConfig = {
@@ -116,6 +108,11 @@ export class StreamIMEManager {
         }
       };
       await controller.attach(true, textConfig);
+      if (requestId !== this.showRequestId) {
+        controller.detach();
+        win.off('keyboardHeightChange');
+        return;
+      }
 
       // attach 成功后注册输入回调
       controller.on('insertText', (text: string) => {
@@ -151,10 +148,30 @@ export class StreamIMEManager {
         }
       });
 
+      // 完成 attach 和全部回调注册后再发布 controller，避免暴露半初始化状态。
+      this.imeController = controller;
       this.callbacks?.onKeyboardVisibilityChanged(true);
       this.imeReadyTime = Date.now();
     } catch (err) {
       console.error(`[StreamPage] Failed to show IME: ${JSON.stringify(err)}`);
+      if (controller) {
+        try {
+          controller.detach();
+        } catch (cleanupErr) {
+          console.warn(`[StreamIME] Failed to detach after show error: ${JSON.stringify(cleanupErr)}`);
+        }
+      }
+      if (win) {
+        try {
+          win.off('keyboardHeightChange');
+        } catch (cleanupErr) {
+          console.warn(`[StreamIME] Failed to remove height listener: ${JSON.stringify(cleanupErr)}`);
+        }
+      }
+      this.imeController = null;
+      this.locked = false;
+      this.callbacks?.onKeyboardVisibilityChanged(false);
+      this.callbacks?.onKeyboardHeightChanged(0);
     } finally {
       this.showInProgress = false;
     }
@@ -165,6 +182,7 @@ export class StreamIMEManager {
    */
   hide(): void {
     // 主动 hide 时释放锁定状态，避免下次 show 时锁定误传递
+    this.showRequestId++;
     this.locked = false;
     try {
       if (this.imeController) {

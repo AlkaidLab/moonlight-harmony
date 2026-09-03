@@ -2149,7 +2149,7 @@ struct StreamPage {
       if (this.showKeyboardPanel) {
         // 三指再次触发时主动关闭；hide() 会同步解除锁定。
         this.imeManager.hide();
-      } else if (!this.imeManager.isOpening && !this.imeManager.isVisible) {
+      } else {
         this.showVirtualKeyboard = false;
         // 三指呼出的 IME 默认锁定：画面失焦事件只能触发重新显示，
         // 仅再次三指或工具条关闭按钮可以主动关闭。
