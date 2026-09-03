@@ -32,6 +32,7 @@ export interface IMECallbacks {
 export class StreamIMEManager {
   // ── 输入法控制器 ──
   private imeController: inputMethod.InputMethodController | null = null;
+  private showInProgress: boolean = false;
   private imeReadyTime: number = 0;
   /** 锁定模式：开启后点击其他区域不会收起 IME / IME bar，HIDE 事件会被拦截并重新唤起软键盘 */
   private locked: boolean = false;
@@ -67,6 +68,11 @@ export class StreamIMEManager {
     return this.imeController !== null;
   }
 
+  /** 当前是否正在异步显示 IME */
+  get isOpening(): boolean {
+    return this.showInProgress;
+  }
+
   /**
    * 当前是否处于锁定模式
    */
@@ -88,7 +94,9 @@ export class StreamIMEManager {
    */
   async show(): Promise<void> {
     const session = this.viewModel?.getSession();
-    if (!session) return;
+    if (!session || this.showInProgress || this.imeController) return;
+
+    this.showInProgress = true;
 
     try {
       // 监听键盘高度变化
@@ -147,6 +155,8 @@ export class StreamIMEManager {
       this.imeReadyTime = Date.now();
     } catch (err) {
       console.error(`[StreamPage] Failed to show IME: ${JSON.stringify(err)}`);
+    } finally {
+      this.showInProgress = false;
     }
   }
 
