@@ -99,6 +99,7 @@ export class SettingsKeys {
   static readonly USB_DRIVER_ENABLED: string = 'settings_usb_driver_enabled';  // 默认启用 USB 手柄驱动
   static readonly FORCE_USB_DRIVER_ONLY: string = 'settings_force_usb_driver_only';  // 强制纯 USB 驱动模式（禁用 GCK）
   static readonly DDK_HIGH_SPEED_POLLING: string = 'settings_ddk_high_speed_polling';  // USB 驱动高速轮询（DDK）
+  static readonly HID_DDK_INPUT_CHANNEL: string = 'settings_hid_ddk_input_channel';  // HID DDK 输入通道（实验，hidraw 直读）
 
   // 输入 - 屏幕控制器
   static readonly ENABLE_ONSCREEN_CONTROLS: string = 'settings_enable_onscreen_controls';
@@ -209,6 +210,7 @@ export interface InputSettings {
   usbDriverEnabled: boolean;  // 默认启用 USB 手柄驱动
   forceUsbDriverOnly: boolean;  // 强制纯 USB 驱动模式
   ddkHighSpeedPolling: boolean;  // USB 驱动高速轮询（DDK）
+  hidDdkInputChannel: boolean;  // HID DDK 输入通道（实验）
 
   // 体感助手
   gyroAssistEnabled: boolean;
@@ -795,6 +797,7 @@ export class SettingsService {
       usbDriverEnabled: await this.getBoolean(SettingsKeys.USB_DRIVER_ENABLED, false),
       forceUsbDriverOnly: await this.getBoolean(SettingsKeys.FORCE_USB_DRIVER_ONLY, false),
       ddkHighSpeedPolling: await this.getBoolean(SettingsKeys.DDK_HIGH_SPEED_POLLING, false),
+      hidDdkInputChannel: await this.getBoolean(SettingsKeys.HID_DDK_INPUT_CHANNEL, false),
 
       // 体感助手
       gyroAssistEnabled: await this.getBoolean(SettingsKeys.GYRO_ASSIST_ENABLED, false),

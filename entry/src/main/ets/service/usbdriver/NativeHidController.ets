@@ -19,8 +19,8 @@ import { usbManager } from '@kit.BasicServicesKit';
 import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, UsbClass, ControllerType, ControllerCapabilities } from './ControllerConstants';
-import { AXIS_MAX, TRIGGER_MAX } from '../input/GamepadTypes';
-import { NativeHidParserService, NativeGamepadState, NativeGamepadType, NativeButtonFlags } from './NativeHidParserService';
+import { NativeHidParserService, NativeGamepadType } from './NativeHidParserService';
+import { HidReportParserUtil } from './HidReportParserUtil';
 import { createUsbError, UsbError } from './UsbErrorCodes';
 
 const TAG = '[USB-NativeHID]';
@@ -478,11 +478,10 @@ export class NativeHidController extends AbstractController {
   }
 
   /**
-   * 使用原生层处理 HID 报告
+   * 使用原生层处理 HID 报告（解析逻辑在 HidReportParserUtil，与 HID DDK 通道共享）
    */
   private processInputReport(data: Uint8Array): void {
-    // 调用原生解析器，传入强制协议类型
-    const state = this.nativeParser.parseHidReport(
+    const state = HidReportParserUtil.parseToState(
       this.vendorId,
       this.productId,
       data,
@@ -490,173 +489,18 @@ export class NativeHidController extends AbstractController {
     );
 
     if (!state) {
-      // 原生解析失败，使用 TypeScript 后备解析器
-      const hexStr = Array.from(data.slice(0, Math.min(data.length, 16)))
-        .map(b => b.toString(16).padStart(2, '0')).join(' ');
-      this.fallbackParseHidReport(data, hexStr);
       return;
     }
 
-    // 转换原生按钮标志到 Moonlight 格式
-    this.buttonFlags = this.convertNativeButtons(state.buttons);
+    this.buttonFlags = state.buttonFlags;
+    this.leftStickX = state.leftStickX;
+    this.leftStickY = state.leftStickY;
+    this.rightStickX = state.rightStickX;
+    this.rightStickY = state.rightStickY;
+    this.leftTrigger = state.leftTrigger;
+    this.rightTrigger = state.rightTrigger;
 
-    // 转换摇杆值（原生层返回 -32768 到 32767，需要转换为 -1.0 到 1.0）
-    this.leftStickX = state.leftStickX / AXIS_MAX;
-    this.leftStickY = state.leftStickY / AXIS_MAX;
-    this.rightStickX = state.rightStickX / AXIS_MAX;
-    this.rightStickY = state.rightStickY / AXIS_MAX;
-
-    // 转换扣机值（原生层返回 0-255，需要转换为 0.0 到 1.0）
-    this.leftTrigger = state.leftTrigger / TRIGGER_MAX;
-    this.rightTrigger = state.rightTrigger / TRIGGER_MAX;
-
-    // 报告输入
     this.reportInput();
-  }
-
-  /**
-   * TypeScript 后备 HID 解析器
-   * 用于原生解析器不可用时的通用 HID 手柄解析
-   *
-   * 通用手柄格式 (10字节):
-   * [0] = Report ID (通常是 0x01)
-   * [1] = Left Stick X (0x00-0xFF, 0x80 = center)
-   * [2] = Left Stick Y (0x00-0xFF, 0x80 = center)
-   * [3] = Right Stick X (0x00-0xFF, 0x80 = center)
-   * [4] = Right Stick Y (0x00-0xFF, 0x80 = center)
-   * [5] = Triggers/misc (varies)
-   * [6] = HAT/D-Pad (0x0F = center, 0-7 = directions)
-   * [7] = Buttons byte 1 (function buttons: Start, Select, LS, RS, etc.)
-   * [8] = Buttons byte 2 (face buttons: A, B, X, Y, LB, RB)
-   * [9] = Reserved
-   */
-  private fallbackParseHidReport(data: Uint8Array, hexStr: string): void {
-    if (data.length < 9) {
-      console.warn(`${TAG} HID 数据太短: ${data.length}`);
-      return;
-    }
-
-    // 解析摇杆 (字节 1-4, 0x00-0xFF, 0x80=中心)
-    // 转换为 -1.0 到 1.0
-    this.leftStickX = (data[1] - 128) / 127.0;
-    this.leftStickY = (data[2] - 128) / 127.0;
-    this.rightStickX = (data[3] - 128) / 127.0;
-    this.rightStickY = (data[4] - 128) / 127.0;
-
-    // 限制范围
-    this.leftStickX = Math.max(-1.0, Math.min(1.0, this.leftStickX));
-    this.leftStickY = Math.max(-1.0, Math.min(1.0, this.leftStickY));
-    this.rightStickX = Math.max(-1.0, Math.min(1.0, this.rightStickX));
-    this.rightStickY = Math.max(-1.0, Math.min(1.0, this.rightStickY));
-
-    // 解析 HAT/D-Pad (字节 6)
-    // HAT 值: 0=Up, 1=UpRight, 2=Right, 3=DownRight, 4=Down, 5=DownLeft, 6=Left, 7=UpLeft, 0x0F=Center
-    let flags = 0;
-    const hat = data[6] & 0x0F;
-    switch (hat) {
-      case 0: // Up
-        flags |= ButtonFlags.UP_FLAG;
-        break;
-      case 1: // Up-Right
-        flags |= ButtonFlags.UP_FLAG | ButtonFlags.RIGHT_FLAG;
-        break;
-      case 2: // Right
-        flags |= ButtonFlags.RIGHT_FLAG;
-        break;
-      case 3: // Down-Right
-        flags |= ButtonFlags.DOWN_FLAG | ButtonFlags.RIGHT_FLAG;
-        break;
-      case 4: // Down
-        flags |= ButtonFlags.DOWN_FLAG;
-        break;
-      case 5: // Down-Left
-        flags |= ButtonFlags.DOWN_FLAG | ButtonFlags.LEFT_FLAG;
-        break;
-      case 6: // Left
-        flags |= ButtonFlags.LEFT_FLAG;
-        break;
-      case 7: // Up-Left
-        flags |= ButtonFlags.UP_FLAG | ButtonFlags.LEFT_FLAG;
-        break;
-      default: // 0x0F = center, no direction
-        break;
-    }
-
-    // 解析按钮字节
-    const btn1 = data[7]; // 功能按钮
-    const btn2 = data[8]; // 面板按钮
-
-    // VID 0x413D 手柄的按钮映射 (通用 HID 手柄格式):
-    // 字节 7 (功能按钮):
-    //   bit 0 = Select/Back
-    //   bit 1 = Start
-    //   bit 2 = Home/Guide
-    //   bit 3 = Left Stick Click
-    //   bit 4 = Right Stick Click
-    //   bit 5 = LB
-    //   bit 6 = RB
-    //   bit 7 = LT (digital)
-    //
-    // 字节 8 (面板按钮):
-    //   bit 0 = A
-    //   bit 1 = B
-    //   bit 2 = X
-    //   bit 3 = Y
-
-    // 功能按钮 (字节 7)
-    if (btn1 & 0x01) flags |= ButtonFlags.BACK_FLAG;      // Select/Back
-    if (btn1 & 0x02) flags |= ButtonFlags.PLAY_FLAG;      // Start
-    if (btn1 & 0x04) flags |= ButtonFlags.SPECIAL_BUTTON_FLAG; // Home/Guide
-    if (btn1 & 0x08) flags |= ButtonFlags.LS_CLK_FLAG;    // Left Stick Click
-    if (btn1 & 0x10) flags |= ButtonFlags.RS_CLK_FLAG;    // Right Stick Click
-    if (btn1 & 0x20) flags |= ButtonFlags.LB_FLAG;        // LB
-    if (btn1 & 0x40) flags |= ButtonFlags.RB_FLAG;        // RB
-
-    // 面板按钮 (字节 8)
-    if (btn2 & 0x01) flags |= ButtonFlags.A_FLAG;   // A
-    if (btn2 & 0x02) flags |= ButtonFlags.B_FLAG;   // B
-    if (btn2 & 0x04) flags |= ButtonFlags.X_FLAG;   // X
-    if (btn2 & 0x08) flags |= ButtonFlags.Y_FLAG;   // Y
-
-    // 更新按钮标志
-    this.buttonFlags = flags;
-
-    // 报告输入
-    this.reportInput();
-  }
-
-  /**
-   * 转换原生按钮标志到 Moonlight 格式
-   */
-  private convertNativeButtons(nativeButtons: number): number {
-    let flags = 0;
-
-    // 方向键
-    if (nativeButtons & NativeButtonFlags.UP) flags |= ButtonFlags.UP_FLAG;
-    if (nativeButtons & NativeButtonFlags.DOWN) flags |= ButtonFlags.DOWN_FLAG;
-    if (nativeButtons & NativeButtonFlags.LEFT) flags |= ButtonFlags.LEFT_FLAG;
-    if (nativeButtons & NativeButtonFlags.RIGHT) flags |= ButtonFlags.RIGHT_FLAG;
-
-    // 功能键
-    if (nativeButtons & NativeButtonFlags.START) flags |= ButtonFlags.PLAY_FLAG;
-    if (nativeButtons & NativeButtonFlags.BACK) flags |= ButtonFlags.BACK_FLAG;
-    if (nativeButtons & NativeButtonFlags.LS_CLK) flags |= ButtonFlags.LS_CLK_FLAG;
-    if (nativeButtons & NativeButtonFlags.RS_CLK) flags |= ButtonFlags.RS_CLK_FLAG;
-
-    // 肩键
-    if (nativeButtons & NativeButtonFlags.LB) flags |= ButtonFlags.LB_FLAG;
-    if (nativeButtons & NativeButtonFlags.RB) flags |= ButtonFlags.RB_FLAG;
-
-    // 面板按钮
-    if (nativeButtons & NativeButtonFlags.A) flags |= ButtonFlags.A_FLAG;
-    if (nativeButtons & NativeButtonFlags.B) flags |= ButtonFlags.B_FLAG;
-    if (nativeButtons & NativeButtonFlags.X) flags |= ButtonFlags.X_FLAG;
-    if (nativeButtons & NativeButtonFlags.Y) flags |= ButtonFlags.Y_FLAG;
-
-    // 特殊按钮
-    if (nativeButtons & NativeButtonFlags.HOME) flags |= ButtonFlags.SPECIAL_BUTTON_FLAG;
-
-    return flags;
   }
 
   rumble(lowFreqMotor: number, highFreqMotor: number): void {
