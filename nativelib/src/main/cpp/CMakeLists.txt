@@ -125,6 +125,7 @@ set(MOONLIGHT_COMMON_SOURCES
     ${MOONLIGHT_COMMON_PATH}/src/RtpVideoQueue.c
     ${MOONLIGHT_COMMON_PATH}/src/RtpAudioQueue.c
     ${MOONLIGHT_COMMON_PATH}/src/VideoDepacketizer.c
+    ${MOONLIGHT_COMMON_PATH}/src/RemoteTextContextStream.c
     ${MOONLIGHT_COMMON_PATH}/src/Misc.c
     ${MOONLIGHT_COMMON_PATH}/src/LinkedBlockingQueue.c
     ${MOONLIGHT_COMMON_PATH}/src/Platform.c

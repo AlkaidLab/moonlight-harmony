@@ -2224,23 +2224,43 @@ typedef int32_t (*PFN_GetNodeHandleFromNapiValue)(napi_env, napi_value, void** /
 typedef void* (*PFN_GetNativeXComponent)(void* /* ArkUI_NodeHandle */);
 typedef int32_t (*PFN_XCSetFrameRateOld)(void* /* OH_NativeXComponent* */, XCFrameRateRange* /* range* */);
 typedef int32_t (*PFN_XCSetFrameRateNew)(void* /* ArkUI_NodeHandle */, XCFrameRateRange /* range */);
+// 每帧回调（官方要求与 SetExpectedFrameRateRange 成对使用，API 11/20）
+typedef void (*XCOnFrameCallbackNode)(void* /* ArkUI_NodeHandle */, uint64_t /*timestamp*/, uint64_t /*targetTimestamp*/);
+typedef void (*XCOnFrameCallbackXc)(void* /* OH_NativeXComponent* */, uint64_t /*timestamp*/, uint64_t /*targetTimestamp*/);
+typedef int32_t (*PFN_XCRegisterOnFrameNew)(void* /* ArkUI_NodeHandle */, XCOnFrameCallbackNode);
+typedef int32_t (*PFN_XCUnregisterOnFrameNew)(void* /* ArkUI_NodeHandle */);
+typedef int32_t (*PFN_XCRegisterOnFrameOld)(void* /* OH_NativeXComponent* */, XCOnFrameCallbackXc);
+typedef int32_t (*PFN_XCUnregisterOnFrameOld)(void* /* OH_NativeXComponent* */);
 
 static PFN_GetNodeHandleFromNapiValue g_pfnGetNodeHandle = nullptr;
 static PFN_GetNativeXComponent g_pfnGetNativeXC = nullptr;
 static PFN_XCSetFrameRateOld g_pfnXCSetFrameRateOld = nullptr;
 static PFN_XCSetFrameRateNew g_pfnXCSetFrameRateNew = nullptr;
+static PFN_XCRegisterOnFrameNew g_pfnXCRegisterOnFrameNew = nullptr;
+static PFN_XCUnregisterOnFrameNew g_pfnXCUnregisterOnFrameNew = nullptr;
+static PFN_XCRegisterOnFrameOld g_pfnXCRegisterOnFrameOld = nullptr;
+static PFN_XCUnregisterOnFrameOld g_pfnXCUnregisterOnFrameOld = nullptr;
 static bool g_xcFrameRateChecked = false;
+
+// 空回调：仅向 ArkUI/控帧系统保持持续的帧节奏信号，不做任何工作
+// （回调运行在 UI 主线程，必须保持轻量）
+static void EmptyXCOnFrameCallbackNode(void* /*node*/, uint64_t /*timestamp*/, uint64_t /*targetTimestamp*/) {}
+static void EmptyXCOnFrameCallbackXc(void* /*component*/, uint64_t /*timestamp*/, uint64_t /*targetTimestamp*/) {}
+
+static void* OpenAceNdk() {
+    return dlopen("libace_ndk.z.so", RTLD_NOW);
+}
 
 static void CheckAndLoadXCFrameRateApis() {
     if (g_xcFrameRateChecked) return;
     g_xcFrameRateChecked = true;
-    
+
     // OH_ArkUI_GetNodeHandleFromNapiValue (API 12) — libace_ndk.z.so
-    g_pfnGetNodeHandle = (PFN_GetNodeHandleFromNapiValue)dlsym(RTLD_DEFAULT, 
+    g_pfnGetNodeHandle = (PFN_GetNodeHandleFromNapiValue)dlsym(RTLD_DEFAULT,
         "OH_ArkUI_GetNodeHandleFromNapiValue");
     if (!g_pfnGetNodeHandle) {
         // RTLD_DEFAULT 可能在某些设备上找不到，回退到显式 dlopen
-        void* aceHandle = dlopen("libace_ndk.z.so", RTLD_NOW);
+        void* aceHandle = OpenAceNdk();
         if (aceHandle) {
             g_pfnGetNodeHandle = (PFN_GetNodeHandleFromNapiValue)dlsym(aceHandle,
                 "OH_ArkUI_GetNodeHandleFromNapiValue");
@@ -2250,30 +2270,37 @@ static void CheckAndLoadXCFrameRateApis() {
         OH_LOG_WARN(LOG_APP, "XCFrameRate: OH_ArkUI_GetNodeHandleFromNapiValue not found (need API 12+)");
         return;
     }
-    
+
     // 方式1 (API 20): OH_ArkUI_XComponent_SetExpectedFrameRateRange — 直接通过 NodeHandle
-    g_pfnXCSetFrameRateNew = (PFN_XCSetFrameRateNew)dlsym(RTLD_DEFAULT, 
+    g_pfnXCSetFrameRateNew = (PFN_XCSetFrameRateNew)dlsym(RTLD_DEFAULT,
         "OH_ArkUI_XComponent_SetExpectedFrameRateRange");
     if (!g_pfnXCSetFrameRateNew) {
-        void* aceHandle = dlopen("libace_ndk.z.so", RTLD_NOW);
+        void* aceHandle = OpenAceNdk();
         if (aceHandle) {
             g_pfnXCSetFrameRateNew = (PFN_XCSetFrameRateNew)dlsym(aceHandle,
                 "OH_ArkUI_XComponent_SetExpectedFrameRateRange");
         }
     }
-    if (g_pfnXCSetFrameRateNew) {
-        OH_LOG_INFO(LOG_APP, "XCFrameRate: API 20 OH_ArkUI_XComponent_SetExpectedFrameRateRange available");
-        return;  // 优先方式，不需要继续查找
-    }
-    
+    // API 20 每帧回调（同样走 NodeHandle）
+    g_pfnXCRegisterOnFrameNew = (PFN_XCRegisterOnFrameNew)dlsym(RTLD_DEFAULT,
+        "OH_ArkUI_XComponent_RegisterOnFrameCallback");
+    g_pfnXCUnregisterOnFrameNew = (PFN_XCUnregisterOnFrameNew)dlsym(RTLD_DEFAULT,
+        "OH_ArkUI_XComponent_UnregisterOnFrameCallback");
+
     // 方式2 (API 12+11): OH_NativeXComponent_GetNativeXComponent + SetExpectedFrameRateRange
-    g_pfnGetNativeXC = (PFN_GetNativeXComponent)dlsym(RTLD_DEFAULT, 
+    // 注意：无论 API 20 是否可用都要加载——每帧回调回退与注销都依赖这些符号
+    g_pfnGetNativeXC = (PFN_GetNativeXComponent)dlsym(RTLD_DEFAULT,
         "OH_NativeXComponent_GetNativeXComponent");
-    g_pfnXCSetFrameRateOld = (PFN_XCSetFrameRateOld)dlsym(RTLD_DEFAULT, 
+    g_pfnXCSetFrameRateOld = (PFN_XCSetFrameRateOld)dlsym(RTLD_DEFAULT,
         "OH_NativeXComponent_SetExpectedFrameRateRange");
+    g_pfnXCRegisterOnFrameOld = (PFN_XCRegisterOnFrameOld)dlsym(RTLD_DEFAULT,
+        "OH_NativeXComponent_RegisterOnFrameCallback");
+    g_pfnXCUnregisterOnFrameOld = (PFN_XCUnregisterOnFrameOld)dlsym(RTLD_DEFAULT,
+        "OH_NativeXComponent_UnregisterOnFrameCallback");
     // 回退 dlopen
-    if (!g_pfnGetNativeXC || !g_pfnXCSetFrameRateOld) {
-        void* aceHandle = dlopen("libace_ndk.z.so", RTLD_NOW);
+    if (!g_pfnGetNativeXC || !g_pfnXCSetFrameRateOld || !g_pfnXCRegisterOnFrameOld ||
+        !g_pfnXCUnregisterOnFrameOld) {
+        void* aceHandle = OpenAceNdk();
         if (aceHandle) {
             if (!g_pfnGetNativeXC)
                 g_pfnGetNativeXC = (PFN_GetNativeXComponent)dlsym(aceHandle,
@@ -2281,11 +2308,20 @@ static void CheckAndLoadXCFrameRateApis() {
             if (!g_pfnXCSetFrameRateOld)
                 g_pfnXCSetFrameRateOld = (PFN_XCSetFrameRateOld)dlsym(aceHandle,
                     "OH_NativeXComponent_SetExpectedFrameRateRange");
+            if (!g_pfnXCRegisterOnFrameOld)
+                g_pfnXCRegisterOnFrameOld = (PFN_XCRegisterOnFrameOld)dlsym(aceHandle,
+                    "OH_NativeXComponent_RegisterOnFrameCallback");
+            if (!g_pfnXCUnregisterOnFrameOld)
+                g_pfnXCUnregisterOnFrameOld = (PFN_XCUnregisterOnFrameOld)dlsym(aceHandle,
+                    "OH_NativeXComponent_UnregisterOnFrameCallback");
         }
     }
-    
-    if (g_pfnGetNativeXC && g_pfnXCSetFrameRateOld) {
-        OH_LOG_INFO(LOG_APP, "XCFrameRate: API 12 GetNativeXComponent + API 11 SetExpectedFrameRateRange available");
+
+    if (g_pfnXCSetFrameRateNew || (g_pfnGetNativeXC && g_pfnXCSetFrameRateOld)) {
+        OH_LOG_INFO(LOG_APP,
+            "XCFrameRate available: new=%{public}d old=%{public}d onFrameNew=%{public}d onFrameOld=%{public}d",
+            g_pfnXCSetFrameRateNew != nullptr, g_pfnXCSetFrameRateOld != nullptr,
+            g_pfnXCRegisterOnFrameNew != nullptr, g_pfnXCRegisterOnFrameOld != nullptr);
     } else {
         OH_LOG_WARN(LOG_APP, "XCFrameRate: No XComponent frame rate API available");
     }
@@ -2295,23 +2331,23 @@ napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info in
     size_t argc = 2;
     napi_value argv[2];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
-    
+
     if (argc < 2) {
         OH_LOG_ERROR(LOG_APP, "SetXComponentFrameRate: need 2 args (frameNode, fps)");
         return GetUndefined(env);
     }
-    
+
     int32_t fps = 60;
     napi_get_value_int32(env, argv[1], &fps);
-    
+
     // 加载 API
     CheckAndLoadXCFrameRateApis();
-    
+
     if (!g_pfnGetNodeHandle) {
         OH_LOG_WARN(LOG_APP, "SetXComponentFrameRate: API not available (need API 12+)");
         return GetUndefined(env);
     }
-    
+
     // FrameNode → ArkUI_NodeHandle
     void* nodeHandle = nullptr;
     int32_t ret = g_pfnGetNodeHandle(env, argv[0], &nodeHandle);
@@ -2319,30 +2355,98 @@ napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info in
         OH_LOG_ERROR(LOG_APP, "SetXComponentFrameRate: GetNodeHandle failed: ret=%{public}d", ret);
         return GetUndefined(env);
     }
-    
-    // 方式1 (API 20): 直接通过 ArkUI_NodeHandle 设置
-    if (g_pfnXCSetFrameRateNew) {
-        XCFrameRateRange range = { fps, fps, fps };
-        int32_t xcRet = g_pfnXCSetFrameRateNew(nodeHandle, range);
-        OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via ArkUI_NodeHandle (API 20): ret=%{public}d",
-                    fps, xcRet);
+
+    if (fps <= 60) {
+        // 复位：注销每帧回调并把期望帧率恢复为 60 默认，防高刷请求残留
+        if (g_pfnXCUnregisterOnFrameNew) {
+            g_pfnXCUnregisterOnFrameNew(nodeHandle);
+        }
+        void* xComp = g_pfnGetNativeXC ? g_pfnGetNativeXC(nodeHandle) : nullptr;
+        if (xComp && g_pfnXCUnregisterOnFrameOld) {
+            g_pfnXCUnregisterOnFrameOld(xComp);
+        }
+        XCFrameRateRange resetRange = { 0, 120, 60 };
+        if (g_pfnXCSetFrameRateNew) {
+            g_pfnXCSetFrameRateNew(nodeHandle, resetRange);
+        }
+        if (xComp && g_pfnXCSetFrameRateOld) {
+            g_pfnXCSetFrameRateOld(xComp, &resetRange);
+        }
+        OH_LOG_INFO(LOG_APP, "XComponent frame rate reset to default 60, onFrame callback unregistered");
         return GetUndefined(env);
     }
-    
-    // 方式2 (API 12+11): NodeHandle → OH_NativeXComponent → SetExpectedFrameRateRange
-    if (g_pfnGetNativeXC && g_pfnXCSetFrameRateOld) {
+
+    // 官方要求 SetExpectedFrameRateRange 与每帧回调成对使用：先注册空回调，
+    // 让控帧系统看到持续活跃的帧节奏请求（API 18+ 仅组件上树期间触发回调）
+    bool onFrameRegistered = false;
+    if (g_pfnXCRegisterOnFrameNew) {
+        onFrameRegistered = g_pfnXCRegisterOnFrameNew(nodeHandle, EmptyXCOnFrameCallbackNode) == 0;
+    }
+    if (!onFrameRegistered && g_pfnGetNativeXC && g_pfnXCRegisterOnFrameOld) {
         void* xComp = g_pfnGetNativeXC(nodeHandle);
         if (xComp) {
-            XCFrameRateRange range = { fps, fps, fps };
-            int32_t xcRet = g_pfnXCSetFrameRateOld(xComp, &range);
-            OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via NativeXComponent (API 12+11): ret=%{public}d",
-                        fps, xcRet);
-        } else {
-            OH_LOG_ERROR(LOG_APP, "SetXComponentFrameRate: GetNativeXComponent returned null");
+            onFrameRegistered = g_pfnXCRegisterOnFrameOld(xComp, EmptyXCOnFrameCallbackXc) == 0;
         }
+    }
+    if (onFrameRegistered) {
+        OH_LOG_INFO(LOG_APP, "XComponent onFrame callback registered (keepalive signal)");
+    } else {
+        OH_LOG_WARN(LOG_APP, "XComponent onFrame callback registration failed; hint may be ignored by HGM");
+    }
+
+    // 方式1 (API 20): 直接通过 ArkUI_NodeHandle 设置；仅成功才返回，
+    // 失败继续走回退链（部分新系统上该调用可能返回失败）
+    void* xComp = g_pfnGetNativeXC ? g_pfnGetNativeXC(nodeHandle) : nullptr;
+    bool rateSet = false;
+    if (g_pfnXCSetFrameRateNew) {
+        XCFrameRateRange range = { 0, 120, fps };
+        int32_t xcRet = g_pfnXCSetFrameRateNew(nodeHandle, range);
+        if (xcRet == 0) {
+            OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via ArkUI_NodeHandle (API 20)",
+                        fps);
+            rateSet = true;
+        } else {
+            OH_LOG_WARN(LOG_APP, "XComponent API 20 SetExpectedFrameRateRange failed: ret=%{public}d, trying fallback",
+                        xcRet);
+        }
+    }
+
+    // 方式2 (API 12+11): NodeHandle → OH_NativeXComponent → SetExpectedFrameRateRange
+    if (!rateSet && xComp && g_pfnXCSetFrameRateOld) {
+        XCFrameRateRange range = { 0, 120, fps };
+        int32_t xcRet = g_pfnXCSetFrameRateOld(xComp, &range);
+        OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via NativeXComponent (API 12+11): ret=%{public}d",
+                    fps, xcRet);
+        rateSet = (xcRet == 0);
+    }
+
+    if (!rateSet) {
+        // 帧率设置全部失败：注销刚注册的每帧回调，避免留下孤儿回调
+        if (g_pfnXCUnregisterOnFrameNew) {
+            g_pfnXCUnregisterOnFrameNew(nodeHandle);
+        }
+        if (xComp && g_pfnXCUnregisterOnFrameOld) {
+            g_pfnXCUnregisterOnFrameOld(xComp);
+        }
+        OH_LOG_WARN(LOG_APP, "SetXComponentFrameRate: no path succeeded for fps=%{public}d, onFrame callback unregistered",
+                    fps);
+    }
+    return GetUndefined(env);
+}
+
+napi_value MoonBridge_SetFrameRateKeepAlive(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    if (argc < 1) {
+        OH_LOG_ERROR(LOG_APP, "SetFrameRateKeepAlive: need 1 arg (enabled)");
         return GetUndefined(env);
     }
-    
-    OH_LOG_WARN(LOG_APP, "SetXComponentFrameRate: No API path available for fps=%{public}d", fps);
+
+    bool enabled = false;
+    napi_get_value_bool(env, argv[0], &enabled);
+
+    NativeRender::GetInstance()->SetFrameRateKeepAlive(enabled);
     return GetUndefined(env);
 }

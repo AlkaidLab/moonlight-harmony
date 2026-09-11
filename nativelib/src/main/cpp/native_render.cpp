@@ -59,43 +59,84 @@ static PFN_RenderOutputBufferAtTime GetRenderAtTimeFunc() {
 }
 
 // =============================================================================
-// 动态加载 API 20 函数（用于向后兼容）
+// DisplaySoloist 帧率保活（API 12+，dlsym 动态加载）
 // =============================================================================
+// 官方为"游戏、自绘制 UI 框架"指定的独立线程帧率控制通道。
+// 空回调即可让 DisplaySoloist 按期望帧率持续请求 vsync——该持续请求
+// 替代触摸成为控帧系统（HGM）维持高刷新率的信号，对抗无触摸降频。
 
-// OH_NativeVSync_SetExpectedFrameRateRange 函数指针类型
-typedef int (*PFN_OH_NativeVSync_SetExpectedFrameRateRange)(
-    OH_NativeVSync* nativeVsync, OH_NativeVSync_ExpectedRateRange* range);
+typedef struct DisplaySoloist_ExpectedRateRange {
+    int32_t min;
+    int32_t max;
+    int32_t expected;
+} DisplaySoloist_ExpectedRateRange;
 
-// 全局函数指针（懒加载）
-static PFN_OH_NativeVSync_SetExpectedFrameRateRange g_pfnSetExpectedFrameRateRange = nullptr;
-static bool g_api20Checked = false;
-static bool g_api20Available = false;
+typedef void* (*PFN_OH_DisplaySoloist_Create)(bool useExclusiveThread);
+typedef int32_t (*PFN_OH_DisplaySoloist_Destroy)(void* displaySoloist);
+typedef int32_t (*PFN_OH_DisplaySoloist_Start)(
+    void* displaySoloist, void (*callback)(long long, long long, void*), void* data);
+typedef int32_t (*PFN_OH_DisplaySoloist_Stop)(void* displaySoloist);
+typedef int32_t (*PFN_OH_DisplaySoloist_SetExpectedFrameRateRange)(
+    void* displaySoloist, DisplaySoloist_ExpectedRateRange* range);
 
-// 检查并加载 API 20 函数
-static bool CheckAndLoadApi20() {
-    if (g_api20Checked) {
-        return g_api20Available;
+static PFN_OH_DisplaySoloist_Create g_pfnSoloistCreate = nullptr;
+static PFN_OH_DisplaySoloist_Destroy g_pfnSoloistDestroy = nullptr;
+static PFN_OH_DisplaySoloist_Start g_pfnSoloistStart = nullptr;
+static PFN_OH_DisplaySoloist_Stop g_pfnSoloistStop = nullptr;
+static PFN_OH_DisplaySoloist_SetExpectedFrameRateRange g_pfnSoloistSetRange = nullptr;
+static bool g_soloistChecked = false;
+
+static bool CheckAndLoadSoloistApis() {
+    if (g_soloistChecked) {
+        return g_pfnSoloistCreate != nullptr;
     }
-    g_api20Checked = true;
-    
-    // 尝试动态加载函数
-    void* handle = dlopen("libnative_vsync.so", RTLD_NOW);
-    if (handle != nullptr) {
-        g_pfnSetExpectedFrameRateRange = (PFN_OH_NativeVSync_SetExpectedFrameRateRange)
-            dlsym(handle, "OH_NativeVSync_SetExpectedFrameRateRange");
-        if (g_pfnSetExpectedFrameRateRange != nullptr) {
-            g_api20Available = true;
-            OH_LOG_INFO(LOG_APP, "API 20 OH_NativeVSync_SetExpectedFrameRateRange available");
-        } else {
-            OH_LOG_WARN(LOG_APP, "API 20 OH_NativeVSync_SetExpectedFrameRateRange not found");
+    g_soloistChecked = true;
+
+    g_pfnSoloistCreate = (PFN_OH_DisplaySoloist_Create)dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_Create");
+    g_pfnSoloistDestroy = (PFN_OH_DisplaySoloist_Destroy)dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_Destroy");
+    g_pfnSoloistStart = (PFN_OH_DisplaySoloist_Start)dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_Start");
+    g_pfnSoloistStop = (PFN_OH_DisplaySoloist_Stop)dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_Stop");
+    g_pfnSoloistSetRange = (PFN_OH_DisplaySoloist_SetExpectedFrameRateRange)
+        dlsym(RTLD_DEFAULT, "OH_DisplaySoloist_SetExpectedFrameRateRange");
+
+    if (!g_pfnSoloistCreate || !g_pfnSoloistDestroy || !g_pfnSoloistStart ||
+        !g_pfnSoloistStop || !g_pfnSoloistSetRange) {
+        // 回退到显式 dlopen（部分运行时 RTLD_DEFAULT 找不到）
+        const char* candidates[] = {"libnative_display_soloist.so", "libnative_display_soloist.z.so"};
+        for (const char* lib : candidates) {
+            void* handle = dlopen(lib, RTLD_NOW);
+            if (handle == nullptr) continue;
+            if (!g_pfnSoloistCreate)
+                g_pfnSoloistCreate = (PFN_OH_DisplaySoloist_Create)dlsym(handle, "OH_DisplaySoloist_Create");
+            if (!g_pfnSoloistDestroy)
+                g_pfnSoloistDestroy = (PFN_OH_DisplaySoloist_Destroy)dlsym(handle, "OH_DisplaySoloist_Destroy");
+            if (!g_pfnSoloistStart)
+                g_pfnSoloistStart = (PFN_OH_DisplaySoloist_Start)dlsym(handle, "OH_DisplaySoloist_Start");
+            if (!g_pfnSoloistStop)
+                g_pfnSoloistStop = (PFN_OH_DisplaySoloist_Stop)dlsym(handle, "OH_DisplaySoloist_Stop");
+            if (!g_pfnSoloistSetRange)
+                g_pfnSoloistSetRange = (PFN_OH_DisplaySoloist_SetExpectedFrameRateRange)
+                    dlsym(handle, "OH_DisplaySoloist_SetExpectedFrameRateRange");
+            if (g_pfnSoloistCreate && g_pfnSoloistDestroy && g_pfnSoloistStart &&
+                g_pfnSoloistStop && g_pfnSoloistSetRange) {
+                break;
+            }
         }
-        // 注意：不要 dlclose，保持库加载
-    } else {
-        OH_LOG_WARN(LOG_APP, "Failed to load libnative_vsync.so: %{public}s", dlerror());
     }
-    
-    return g_api20Available;
+
+    if (g_pfnSoloistCreate && g_pfnSoloistDestroy && g_pfnSoloistStart &&
+        g_pfnSoloistStop && g_pfnSoloistSetRange) {
+        OH_LOG_INFO(LOG_APP, "DisplaySoloist APIs available (frame-rate keepalive enabled)");
+    } else {
+        OH_LOG_WARN(LOG_APP, "DisplaySoloist APIs not available; keepalive limited to hint layers");
+    }
+    return g_pfnSoloistCreate != nullptr && g_pfnSoloistDestroy != nullptr &&
+           g_pfnSoloistStart != nullptr && g_pfnSoloistStop != nullptr &&
+           g_pfnSoloistSetRange != nullptr;
 }
+
+// DisplaySoloist 空回调：仅维持按期望帧率的持续 vsync 请求，不做任何绘制
+static void EmptySoloistFrameCallback(long long /*timestamp*/, long long /*targetTimestamp*/, void* /*data*/) {}
 
 // =============================================================================
 // 静态成员初始化
@@ -130,39 +171,16 @@ NativeRender::NativeRender() {
 
 NativeRender::~NativeRender() {
     OH_LOG_INFO(LOG_APP, "NativeRender destroyed");
-    ReleaseNativeVSync();
-    window_ = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(frameRateMutex_);
+        if (displaySoloist_ != nullptr && g_pfnSoloistStop && g_pfnSoloistDestroy) {
+            g_pfnSoloistStop(displaySoloist_);
+            g_pfnSoloistDestroy(displaySoloist_);
+            displaySoloist_ = nullptr;
+        }
+        window_ = nullptr;
+    }
     surfaceReady_ = false;
-}
-
-// =============================================================================
-// NativeVSync 管理
-// =============================================================================
-
-void NativeRender::InitNativeVSync() {
-    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
-    if (nativeVSync_ != nullptr) {
-        return;
-    }
-
-    const char* name = "moonlight_render";
-    nativeVSync_ = OH_NativeVSync_Create(name, strlen(name));
-    if (nativeVSync_ != nullptr) {
-        OH_LOG_INFO(LOG_APP, "NativeVSync created successfully");
-    } else {
-        OH_LOG_WARN(LOG_APP, "Failed to create NativeVSync");
-    }
-}
-
-void NativeRender::ReleaseNativeVSync() {
-    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
-    if (nativeVSync_ == nullptr) {
-        return;
-    }
-
-    OH_NativeVSync_Destroy(nativeVSync_);
-    nativeVSync_ = nullptr;
-    OH_LOG_INFO(LOG_APP, "NativeVSync destroyed");
 }
 
 // =============================================================================
@@ -171,29 +189,30 @@ void NativeRender::ReleaseNativeVSync() {
 
 void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint64_t height) {
     ResetPresentationClock();
-    window_ = window;
     surfaceWidth_ = width;
     surfaceHeight_ = height;
-    
+
     if (window != nullptr) {
-        // 配置 NativeWindow
-        ConfigureNativeWindow();
-        
-        // 初始化 NativeVSync
-        InitNativeVSync();
-        
-        // 如果帧率已配置，立即应用帧率范围
-        // 这处理 SetConfiguredFps 在 SetNativeWindow 之前调用的情况
-        if (configuredFps_.load() > 0) {
-            ApplyFrameRateRange();
+        {
+            // window_ 的写入必须与解码线程 RefreshFrameRateHints 内的读取互斥
+            std::lock_guard<std::mutex> lock(frameRateMutex_);
+            window_ = window;
         }
-        
+        // 配置 NativeWindow（同一线程，紧随赋值）
+        ConfigureNativeWindow();
+
+        // Surface 绑定/重建会冲掉系统侧已采信的帧率决策，立即重申全部 hint
+        RefreshFrameRateHints(true);
+
         surfaceReady_ = true;
-        OH_LOG_INFO(LOG_APP, "NativeWindow set: %{public}p, size: %{public}lux%{public}lu", 
+        OH_LOG_INFO(LOG_APP, "NativeWindow set: %{public}p, size: %{public}lux%{public}lu",
                     static_cast<void*>(window), width, height);
     } else {
         surfaceReady_ = false;
-        ReleaseNativeVSync();
+        // 先在 window_ 仍有效时复位各层请求，再清指针
+        ResetFrameRateHintsToDefault();
+        std::lock_guard<std::mutex> lock(frameRateMutex_);
+        window_ = nullptr;
         OH_LOG_INFO(LOG_APP, "NativeWindow cleared");
     }
 }
@@ -206,12 +225,9 @@ void NativeRender::SetConfiguredFps(double fps) {
         ResetPresentationClockLocked();
     }
     OH_LOG_INFO(LOG_APP, "Configured FPS set to: %.3f", fps);
-    
-    // 应用帧率范围（NativeVSync 层）
-    ApplyFrameRateRange();
-    
-    // 应用帧率范围（NativeWindow/Surface 层）
-    ApplyNativeWindowFrameRate();
+
+    // 帧率变化：立即重申 NativeWindow hint 并同步 DisplaySoloist 节奏
+    RefreshFrameRateHints(true);
 }
 
 void NativeRender::SetVsyncEnabled(bool enable) {
@@ -290,11 +306,8 @@ void NativeRender::ConfigureNativeWindow() {
     if (ret == 0) {
         OH_LOG_INFO(LOG_APP, "ScalingModeV2 set to SCALE_TO_WINDOW_V2");
     }
-    
-    // 如果帧率已配置，立即在 NativeWindow 层设置帧率偏好
-    if (configuredFps_.load() > 60) {
-        ApplyNativeWindowFrameRate();
-    }
+    // 帧率偏好由 SetNativeWindow 随后的 RefreshFrameRateHints(true) 统一应用，
+    // 避免 window_ 在锁外被帧率路径读取
 }
 
 // =============================================================================
@@ -342,46 +355,121 @@ void NativeRender::ApplyNativeWindowFrameRate() {
     if (window_ == nullptr || configuredFps <= 60) {
         return;
     }
-    
+
     if (!CheckAndLoadNWFrameRateApi()) {
         return;
     }
-    
-    // strategy = 0 (DEFAULT): 让系统根据能力选择最佳刷新率
+
+    // 注意：该符号不在公开 NDK 头文件中（仅 dlsym），strategy 语义无官方文档，
+    // 社区用法 0=DEFAULT / 1=EXACT。DEFAULT 已证实在鸿蒙7 智能帧率下被降档，
+    // 高帧率串流时改用 EXACT 明确请求固定刷新率；range 按 LTPO 官方建议留出
+    // 协商区间（min<max），避免 min=max=expected 的官方反模式。
     const int fps = static_cast<int>(configuredFps + 0.5);
-    int32_t ret = g_pfnNWSetFrameRateRange(window_, fps, fps, fps, 0);
+    int32_t ret = g_pfnNWSetFrameRateRange(window_, 0, 120, fps, 1);
     if (ret == 0) {
-        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to %{public}d fps (Surface level)", fps);
+        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange set to expected %{public}d fps EXACT (Surface level)", fps);
     } else {
-        OH_LOG_WARN(LOG_APP, "NativeWindow SetFrameRateRange failed: ret=%{public}d, fps=%{public}d", 
+        OH_LOG_WARN(LOG_APP, "NativeWindow SetFrameRateRange failed: ret=%{public}d, fps=%{public}d",
                     ret, fps);
     }
 }
 
-void NativeRender::ApplyFrameRateRange() {
-    // NativeVSync SetExpectedFrameRateRange (API 20+)
-    // 设置 VSync 回调的期望帧率，影响 VSync 信号频率
-    // 注意：XComponent 帧率提示由 MoonBridge_SetXComponentFrameRate 通过 ArkUI_NodeHandle 独立设置
-    std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
-    if (nativeVSync_ == nullptr) {
+void NativeRender::EnsureDisplaySoloistLocked() {
+    const double configuredFps = configuredFps_.load();
+    const bool shouldRun = frameRateKeepAlive_.load() && configuredFps > 60;
+
+    if (!shouldRun) {
+        if (displaySoloist_ != nullptr && g_pfnSoloistStop && g_pfnSoloistDestroy) {
+            g_pfnSoloistStop(displaySoloist_);
+            g_pfnSoloistDestroy(displaySoloist_);
+            displaySoloist_ = nullptr;
+            OH_LOG_INFO(LOG_APP, "DisplaySoloist keepalive stopped");
+        }
         return;
     }
 
-    if (CheckAndLoadApi20()) {
-        OH_NativeVSync_ExpectedRateRange range;
-        const int fps = static_cast<int>(configuredFps_.load() + 0.5);
-        range.min = fps;
-        range.max = fps;
-        range.expected = fps;
-        
-        int32_t ret = g_pfnSetExpectedFrameRateRange(nativeVSync_, &range);
-        if (ret == 0) {
-            OH_LOG_INFO(LOG_APP, "NativeVSync FrameRateRange set to fixed %{public}d fps",
-                        fps);
-        } else {
-            OH_LOG_WARN(LOG_APP, "Failed to set NativeVSync FrameRateRange to %{public}d: ret=%{public}d", 
-                        fps, ret);
+    if (!CheckAndLoadSoloistApis()) {
+        return;
+    }
+
+    bool freshlyCreated = false;
+    if (displaySoloist_ == nullptr) {
+        displaySoloist_ = static_cast<OH_DisplaySoloist*>(g_pfnSoloistCreate(true));
+        if (displaySoloist_ == nullptr) {
+            OH_LOG_WARN(LOG_APP, "OH_DisplaySoloist_Create failed");
+            return;
         }
+        freshlyCreated = true;
+    }
+
+    // range 留出协商区间（min<max），expected 锁定串流帧率；
+    // 按官方示例顺序 Create → SetExpectedFrameRateRange → Start
+    DisplaySoloist_ExpectedRateRange range;
+    range.min = 0;
+    range.max = 120;
+    range.expected = static_cast<int32_t>(configuredFps + 0.5);
+    int32_t ret = g_pfnSoloistSetRange(displaySoloist_, &range);
+    if (ret != 0) {
+        OH_LOG_WARN(LOG_APP, "DisplaySoloist SetExpectedFrameRateRange failed: ret=%{public}d", ret);
+        // 销毁失败实例，让下一次 RefreshFrameRateHints 重新创建
+        g_pfnSoloistDestroy(displaySoloist_);
+        displaySoloist_ = nullptr;
+        return;
+    }
+
+    if (freshlyCreated) {
+        // 空回调即可让 Soloist 按期望帧率持续请求 vsync；已运行的实例只更新 range
+        if (g_pfnSoloistStart(displaySoloist_, EmptySoloistFrameCallback, nullptr) == 0) {
+            OH_LOG_INFO(LOG_APP, "DisplaySoloist keepalive running (exclusive thread, expected %{public}d fps)",
+                        range.expected);
+        } else {
+            OH_LOG_WARN(LOG_APP, "DisplaySoloist Start failed; destroying for retry");
+            g_pfnSoloistDestroy(displaySoloist_);
+            displaySoloist_ = nullptr;
+        }
+    }
+}
+
+void NativeRender::RefreshFrameRateHints(bool force) {
+    // SubmitFrame 每帧调用：节流检查只碰原子量，2 秒内直接返回
+    const int64_t nowNs = GetMonotonicTimeNs();
+    int64_t lastNs = lastHintRefreshNs_.load();
+    if (!force && nowNs - lastNs < 2000000000LL) {
+        return;
+    }
+    if (!lastHintRefreshNs_.compare_exchange_strong(lastNs, nowNs)) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(frameRateMutex_);
+    ApplyNativeWindowFrameRate();
+    EnsureDisplaySoloistLocked();
+}
+
+void NativeRender::SetFrameRateKeepAlive(bool enabled) {
+    frameRateKeepAlive_.store(enabled);
+    OH_LOG_INFO(LOG_APP, "Frame-rate keepalive %{public}s", enabled ? "enabled" : "disabled");
+    if (enabled) {
+        RefreshFrameRateHints(true);
+    } else {
+        ResetFrameRateHintsToDefault();
+    }
+}
+
+void NativeRender::ResetFrameRateHintsToDefault() {
+    std::lock_guard<std::mutex> lock(frameRateMutex_);
+
+    if (displaySoloist_ != nullptr && g_pfnSoloistStop && g_pfnSoloistDestroy) {
+        g_pfnSoloistStop(displaySoloist_);
+        g_pfnSoloistDestroy(displaySoloist_);
+        displaySoloist_ = nullptr;
+        OH_LOG_INFO(LOG_APP, "DisplaySoloist destroyed");
+    }
+
+    // 复位为 60fps 默认请求，避免高刷 hint 在流结束后残留耗电
+    if (window_ != nullptr && CheckAndLoadNWFrameRateApi()) {
+        int32_t ret = g_pfnNWSetFrameRateRange(window_, 0, 120, 60, 0);
+        OH_LOG_INFO(LOG_APP, "NativeWindow FrameRateRange reset to default 60: ret=%{public}d", ret);
     }
 }
 
@@ -469,6 +557,11 @@ int64_t NativeRender::CalculateLegacyPresentTargetLocked(int64_t pts, int64_t no
 // =============================================================================
 
 NativeRender::FrameSubmitResult NativeRender::SubmitFrame(const DecodedFrame& frame) {
+    // 渲染期间持续重申帧率 hint（2 秒节流）：帧率请求是"一次设置会被
+    // Surface/布局变化或系统策略冲掉"的易失状态，必须持续重申才能在
+    // 无触摸时维持高刷新率。空帧间隔时无解码帧到达，不会有更频繁的调用。
+    RefreshFrameRateHints(false);
+
     bool bufferConsumed = false;
     bool framePresented = false;
     auto renderImmediately = [&frame, &bufferConsumed, &framePresented]() {

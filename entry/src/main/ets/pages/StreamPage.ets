@@ -278,6 +278,9 @@ struct StreamPage {
   private streamReportAiRequestId: number = 0;
   // AI 可用性探测的延时定时器，aboutToDisappear 时需清理
   private aiProbeTimer: number | null = null;
+  // 页面已销毁标志：startStreaming 异步链路在销毁后恢复时据此放弃启动，
+  // 防止已销毁页面重新产生高刷请求
+  private pageDisposed: boolean = false;
   private ds5TouchFadeTimers: Map<number, number> = new Map();
   
   // 页面参数
@@ -781,6 +784,11 @@ struct StreamPage {
   
   aboutToDisappear(): void {
     console.info('StreamPage aboutToDisappear - cleaning up');
+
+    // 标记销毁：阻止异步启动链路在销毁后重新启用帧率保活
+    this.pageDisposed = true;
+    // 兜底复位帧率请求（含注销 XComponent 每帧回调），防高刷请求残留
+    this.resetStreamFrameHints();
 
     // 取消 AI 可用性延时探测，避免页面销毁后回调触发 Toast / 网络请求
     if (this.aiProbeTimer !== null) {
@@ -1416,12 +1424,24 @@ struct StreamPage {
    * 设置 XComponent 帧率 + 获取 surfaceId + 启动串流
    */
   private async launchStream(): Promise<void> {
+    // 页面已销毁时（异步启动链路在 aboutToDisappear 后恢复）放弃启动，
+    // 避免对已销毁页面重新产生高刷请求
+    if (this.pageDisposed) {
+      console.warn('launchStream: 页面已销毁，跳过串流启动');
+      return;
+    }
+
     const surfaceId = this.xComponentController.getXComponentSurfaceId();
 
     // 设置 XComponent 期望帧率（通过 FrameNode → ArkUI_NodeHandle）
-    // 解决 MatePad 等设备渲染帧率被锁定在 60fps 的问题
+    // 并启用 native 帧率保活（DisplaySoloist 持续 vsync 请求），
+    // 对抗鸿蒙7 无触摸时系统把刷新率降到 60Hz 的策略
     const streamConfig = this.viewModel.streamConfig;
     if (streamConfig && streamConfig.fps > 60) {
+      if (this.pageDisposed) {
+        console.warn('launchStream: 页面已销毁，跳过帧率保活启用');
+        return;
+      }
       try {
         const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
         if (frameNode) {
@@ -1430,6 +1450,11 @@ struct StreamPage {
         }
       } catch (e) {
         console.warn(`设置 XComponent 帧率失败: ${e}`);
+      }
+      try {
+        MoonBridge.setFrameRateKeepAlive(true);
+      } catch (e) {
+        console.warn(`启用帧率保活失败: ${e}`);
       }
     }
 
@@ -1572,6 +1597,8 @@ struct StreamPage {
       
     } catch (err) {
       console.error('开始串流失败:', err);
+      // 启动失败时 launchStream 可能已启用帧率保活，这里幂等复位
+      this.resetStreamFrameHints();
     }
   }
   
@@ -1714,11 +1741,29 @@ struct StreamPage {
   /**
    * 立即停止当前页面上的交互输入，确保战报能先接管界面。
    */
+  /**
+   * 复位串流期间的帧率请求（幂等）：停用 DisplaySoloist 保活、
+   * 注销 XComponent 每帧回调并恢复默认帧率，避免高刷请求残留耗电。
+   * 供串流结束、启动失败与页面销毁路径复用。
+   */
+  private resetStreamFrameHints(): void {
+    try {
+      MoonBridge.setFrameRateKeepAlive(false);
+    } catch (_) {}
+    try {
+      const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
+      if (frameNode) {
+        MoonBridge.setXComponentFrameRate(frameNode, 60);
+      }
+    } catch (_) {}
+  }
+
   private prepareStreamEndUiImmediate(): void {
     this.cancelUnhandledUsbDetection();
     this.inputHandler.resetState();
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
+    this.resetStreamFrameHints();
     try {
       pointer.setPointerVisibleSync(true);
     } catch (_) {}

@@ -350,10 +350,18 @@ napi_value MoonBridge_SetAudioHapticsConfig(napi_env env, napi_callback_info inf
 /**
  * 设置 XComponent 期望帧率范围（通过 FrameNode → ArkUI_NodeHandle）
  * 无需在 XComponent 上设置 libraryname，避免触摸事件丢失
+ * fps > 60 时注册每帧回调保持帧节奏信号；fps <= 60 时复位为默认并注销回调
  * @param frameNode FrameNode 对象（从 ArkTS getFrameNodeById 获取）
  * @param fps number 期望帧率
  */
 napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info info);
+
+/**
+ * 启用/禁用帧率保活（DisplaySoloist 持续 vsync 请求 + NativeWindow hint 重申）
+ * 串流期间启用，流结束禁用（内部会复位各层帧率请求避免残留耗电）
+ * @param enabled boolean 是否启用
+ */
+napi_value MoonBridge_SetFrameRateKeepAlive(napi_env env, napi_callback_info info);
 
 // =============================================================================
 // 常量定义
