@@ -155,6 +155,9 @@ private:
     // Accepted connection owned by the accept thread; published so Stop()
     // can shutdown() it and unblock any read the handler is stuck in.
     std::atomic<int> clientFd_{-1};
+    // Serializes Stop()'s teardown against the accept thread's gate/publish
+    // of a new client, so Stop never joins a connection it failed to wake.
+    std::mutex lifecycleMutex_;
     std::thread acceptThread_;
     mutable std::mutex devicesMutex_;
     std::vector<DeviceInfo> devices_;

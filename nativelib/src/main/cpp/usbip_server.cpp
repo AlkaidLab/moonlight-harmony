@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -232,9 +233,17 @@ std::shared_ptr<DdkApi> LoadDdk() {
     api->DestroyDeviceMemMap =
         reinterpret_cast<void (*)(UsbDeviceMemMap *)>(load("OH_Usb_DestroyDeviceMemMap"));
 
+    // The server drives control transfers and walks config descriptors, so
+    // those entry points are load-bearing. GetConfigDescriptor and
+    // FreeConfigDescriptor form a pair: a torn table (exactly one present)
+    // would crash at first use, reject it outright.
+    const bool configPairOk =
+        (api->GetConfigDescriptor == nullptr) == (api->FreeConfigDescriptor == nullptr);
     if (api->GetDeviceDescriptor == nullptr || api->ClaimInterface == nullptr ||
-        api->SendPipeRequest == nullptr || api->CreateDeviceMemMap == nullptr) {
-        LOGE("[%{public}s] USB DDK core functions missing", LOG_TAG);
+        api->SendPipeRequest == nullptr || api->CreateDeviceMemMap == nullptr ||
+        api->DestroyDeviceMemMap == nullptr || api->SendControlReadRequest == nullptr ||
+        api->SendControlWriteRequest == nullptr || !configPairOk) {
+        LOGE("[%{public}s] USB DDK function table incomplete", LOG_TAG);
         dlclose(api->handle);
         return nullptr;
     }
@@ -336,17 +345,25 @@ int Server::Start(std::string *error) {
 
 void Server::Stop() noexcept {
     if (!running_.exchange(false)) return;
-    if (listenFd_ >= 0) {
-        ::shutdown(listenFd_, SHUT_RDWR);
-        ::close(listenFd_);
-        listenFd_ = -1;
+    {
+        // Lifecycle lock: whoever holds it either tears the listener down or
+        // publishes the accepted client. If AcceptLoop is past the gate it
+        // has already published clientFd_, so the exchange below sees it.
+        std::lock_guard<std::mutex> lock(lifecycleMutex_);
+        if (listenFd_ >= 0) {
+            ::shutdown(listenFd_, SHUT_RDWR);
+            ::close(listenFd_);
+            listenFd_ = -1;
+        }
+        // Unblock the handler thread: it may be parked in a blocking read on
+        // the accepted connection (half a PDU from a stalled remote peer).
+        const int client = clientFd_.exchange(-1);
+        if (client >= 0) {
+            ::shutdown(client, SHUT_RDWR);
+        }
     }
-    // Unblock the handler thread: it may be parked in a blocking read on
-    // the accepted connection (half a PDU from a stalled remote peer).
-    const int client = clientFd_.exchange(-1);
-    if (client >= 0) {
-        ::shutdown(client, SHUT_RDWR);
-    }
+    // join outside the lock: the accept thread takes it only around the
+    // gate/publish points, never around accept() or HandleConnection().
     if (acceptThread_.joinable()) {
         acceptThread_.join();
     }
@@ -471,11 +488,22 @@ void Server::AcceptLoop() {
             ::close(fd);
             continue;
         }
-        authorizedPort_.store(-1); // one shot: this connection is the tunnel
 
-        // Publish so Stop() can shutdown() the socket out from under a
-        // blocking read; retract before close to avoid fd-reuse races.
-        clientFd_.store(fd);
+        // Publish under the lifecycle lock, paired with Stop(): if teardown
+        // already began, close the fd here instead of handing it a stale
+        // clientFd_ that Stop's exchange would miss (join would then hang
+        // until the connection ends on its own).
+        {
+            std::lock_guard<std::mutex> lock(lifecycleMutex_);
+            if (!running_.load()) {
+                ::close(fd);
+                break;
+            }
+            authorizedPort_.store(-1); // one shot: this connection is the tunnel
+            // Publish so Stop() can shutdown() the socket out from under a
+            // blocking read; retract before close to avoid fd-reuse races.
+            clientFd_.store(fd);
+        }
         HandleConnection(fd);
         clientFd_.store(-1);
         ::close(fd);
@@ -655,7 +683,9 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
                                    const uint8_t *data = nullptr) {
         // usbip_header: command[0] seqnum[4] ... status[20] actual_length[24]
         // start_frame[28] number_of_packets[32] error_count[36]; rest zero.
-        std::vector<uint8_t> ret(kPduHeaderSize + (actual > 0 ? actual : 0), 0);
+        // The header reports actual_length regardless; payload bytes exist
+        // only when data is provided (OUT replies carry no payload).
+        std::vector<uint8_t> ret(kPduHeaderSize + (actual > 0 && data != nullptr ? actual : 0), 0);
         storeU32(ret.data(), kCmdOffset, kRetSubmit);
         storeU32(ret.data(), kSeqnumOffset, seqnum);
         storeI32(ret.data(), kFlagsOrUnlinkTargetOffset, status);
@@ -716,19 +746,32 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
                 // yield to whatever else the host queued.
                 if (waitReadable(clientFd, 0)) {
                     uint8_t peek[kPduHeaderSize];
-                    if (::recv(clientFd, peek, sizeof(peek), MSG_PEEK) <
-                        static_cast<ssize_t>(sizeof(peek))) {
-                        return Drive::Closed;
+                    const ssize_t peeked = ::recv(clientFd, peek, sizeof(peek), MSG_PEEK);
+                    if (peeked == 0) {
+                        return Drive::Closed; // orderly EOF
                     }
-                    if (readU32(peek + kCmdOffset) == kCmdUnlink &&
-                        readU32(peek + kFlagsOrUnlinkTargetOffset) == p.seqnum) {
-                        uint8_t pdu[kPduHeaderSize];
-                        if (!readAll(clientFd, pdu, sizeof(pdu))) return Drive::Closed;
-                        return sendRetUnlink(readU32(pdu + kSeqnumOffset), 0)
-                                   ? Drive::Completed
-                                   : Drive::Closed;
+                    if (peeked == static_cast<ssize_t>(sizeof(peek))) {
+                        if (readU32(peek + kCmdOffset) == kCmdUnlink &&
+                            readU32(peek + kFlagsOrUnlinkTargetOffset) == p.seqnum) {
+                            uint8_t pdu[kPduHeaderSize];
+                            if (!readAll(clientFd, pdu, sizeof(pdu))) return Drive::Closed;
+                            return sendRetUnlink(readU32(pdu + kSeqnumOffset), 0)
+                                       ? Drive::Completed
+                                       : Drive::Closed;
+                        }
+                        return Drive::Suspended; // some other full PDU queued
                     }
-                    return Drive::Suspended;
+                    if (peeked > 0) {
+                        // TCP delivered only part of the header; a live peer
+                        // is mid-PDU. Hand off to the main loop's blocking
+                        // readAll, which completes it (and is unbounded only
+                        // until Stop() shuts the socket down).
+                        return Drive::Suspended;
+                    }
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        continue; // spurious readability: keep waiting
+                    }
+                    return Drive::Closed; // hard socket error
                 }
                 continue; // no news from the host: keep waiting on the device
             }
