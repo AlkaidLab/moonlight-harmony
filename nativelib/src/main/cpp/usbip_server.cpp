@@ -112,6 +112,18 @@ int32_t readI32(const uint8_t *p) {
     return static_cast<int32_t>(readU32(p));
 }
 
+// Big-endian store at a fixed offset. PDU reply headers are pre-sized
+// buffers; appendU32 would push fields past the end of the header.
+void storeU32(uint8_t *p, int off, uint32_t v) {
+    p[off] = (v >> 24) & 0xFF;
+    p[off + 1] = (v >> 16) & 0xFF;
+    p[off + 2] = (v >> 8) & 0xFF;
+    p[off + 3] = v & 0xFF;
+}
+void storeI32(uint8_t *p, int off, int32_t v) {
+    storeU32(p, off, static_cast<uint32_t>(v));
+}
+
 bool writeAll(int fd, const uint8_t *data, size_t len) {
     size_t off = 0;
     while (off < len) {
@@ -327,6 +339,12 @@ void Server::Stop() noexcept {
         ::close(listenFd_);
         listenFd_ = -1;
     }
+    // Unblock the handler thread: it may be parked in a blocking read on
+    // the accepted connection (half a PDU from a stalled remote peer).
+    const int client = clientFd_.exchange(-1);
+    if (client >= 0) {
+        ::shutdown(client, SHUT_RDWR);
+    }
     if (acceptThread_.joinable()) {
         acceptThread_.join();
     }
@@ -453,7 +471,11 @@ void Server::AcceptLoop() {
         }
         authorizedPort_.store(-1); // one shot: this connection is the tunnel
 
+        // Publish so Stop() can shutdown() the socket out from under a
+        // blocking read; retract before close to avoid fd-reuse races.
+        clientFd_.store(fd);
         HandleConnection(fd);
+        clientFd_.store(-1);
         ::close(fd);
     }
 }
@@ -629,14 +651,16 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
 
     const auto sendRetSubmit = [&](uint32_t seqnum, int32_t status, int32_t actual,
                                    const uint8_t *data = nullptr) {
+        // usbip_header: command[0] seqnum[4] ... status[20] actual_length[24]
+        // start_frame[28] number_of_packets[32] error_count[36]; rest zero.
         std::vector<uint8_t> ret(kPduHeaderSize + (actual > 0 ? actual : 0), 0);
-        appendU32(ret, kRetSubmit);
-        appendU32(ret, seqnum);
-        appendI32(ret, status); // [20]
-        appendI32(ret, actual); // [24] actual_length
-        appendI32(ret, 0);      // [28] start_frame
-        appendI32(ret, -1);     // [32] number_of_packets (not isochronous)
-        appendI32(ret, 0);      // [36] error_count
+        storeU32(ret.data(), kCmdOffset, kRetSubmit);
+        storeU32(ret.data(), kSeqnumOffset, seqnum);
+        storeI32(ret.data(), kFlagsOrUnlinkTargetOffset, status);
+        storeI32(ret.data(), kLenOrActualOffset, actual);
+        storeI32(ret.data(), kStartFrameOffset, 0);
+        storeI32(ret.data(), kNumPacketsOrErrorOffset, -1); // not isochronous
+        storeI32(ret.data(), kErrorCountOffset, 0);
         if (actual > 0 && data != nullptr) {
             std::memcpy(ret.data() + kPduHeaderSize, data, static_cast<size_t>(actual));
         }
@@ -644,9 +668,9 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
     };
     const auto sendRetUnlink = [&](uint32_t seqnum, int32_t status) {
         std::vector<uint8_t> ret(kPduHeaderSize, 0);
-        appendU32(ret, kRetUnlink);
-        appendU32(ret, seqnum);
-        appendI32(ret, status); // [20]
+        storeU32(ret.data(), kCmdOffset, kRetUnlink);
+        storeU32(ret.data(), kSeqnumOffset, seqnum);
+        storeI32(ret.data(), kFlagsOrUnlinkTargetOffset, status);
         return writeVec(clientFd, ret);
     };
 

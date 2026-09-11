@@ -49,6 +49,10 @@ std::shared_ptr<DdkApi> g_ddk;
 std::unique_ptr<Server> g_server;
 std::unique_ptr<Tunnel> g_tunnel;
 napi_threadsafe_function g_tunnelTsfn = nullptr;
+// Written from the tunnel thread, read from JS threads querying status.
+// Guarded by its own lock: g_mutex may be held while joining the tunnel
+// thread (Stop*), so taking it from the callback would deadlock.
+std::mutex g_stateMutex;
 TunnelState g_tunnelState = TunnelState::kIdle;
 std::string g_tunnelMessage;
 
@@ -144,8 +148,11 @@ napi_value StopServer(napi_env env, napi_callback_info info) {
         napi_release_threadsafe_function(g_tunnelTsfn, napi_tsfn_release);
         g_tunnelTsfn = nullptr;
     }
-    g_tunnelState = TunnelState::kIdle;
-    g_tunnelMessage.clear();
+    {
+        std::lock_guard<std::mutex> stateLock(g_stateMutex);
+        g_tunnelState = TunnelState::kIdle;
+        g_tunnelMessage.clear();
+    }
     if (g_server) {
         g_server->Stop();
         g_server.reset();
@@ -295,29 +302,36 @@ napi_value StartTunnel(napi_env env, napi_callback_info info) {
     Server *server = g_server.get();
     config.onLocalBound = [server](uint16_t port) { server->AuthorizePort(port); };
 
-    g_tunnelState = TunnelState::kConnecting;
-    g_tunnelMessage.clear();
+    {
+        std::lock_guard<std::mutex> stateLock(g_stateMutex);
+        g_tunnelState = TunnelState::kConnecting;
+        g_tunnelMessage.clear();
+    }
     g_tunnel = std::make_unique<Tunnel>(std::move(config));
     g_tunnel->Start([](const char *state, const char *message) {
         // Runs on the tunnel thread: update the pollable snapshot and
         // forward to JS.
-        if (strcmp(state, "connecting") == 0) g_tunnelState = TunnelState::kConnecting;
-        else if (strcmp(state, "ready") == 0) g_tunnelState = TunnelState::kReady;
-        else if (strcmp(state, "closed") == 0) g_tunnelState = TunnelState::kClosed;
-        else g_tunnelState = TunnelState::kError;
-        g_tunnelMessage = message ? message : "";
+        std::string messageCopy = message ? message : "";
+        {
+            std::lock_guard<std::mutex> stateLock(g_stateMutex);
+            if (strcmp(state, "connecting") == 0) g_tunnelState = TunnelState::kConnecting;
+            else if (strcmp(state, "ready") == 0) g_tunnelState = TunnelState::kReady;
+            else if (strcmp(state, "closed") == 0) g_tunnelState = TunnelState::kClosed;
+            else g_tunnelState = TunnelState::kError;
+            g_tunnelMessage = messageCopy;
+        }
 
         auto *event = new (std::nothrow) TunnelEvent{};
         if (event == nullptr) return;
         strncpy(event->state, state, sizeof(event->state) - 1);
-        const size_t len = g_tunnelMessage.size();
-        event->message = static_cast<char *>(malloc(len + 1));
+        event->message = static_cast<char *>(malloc(messageCopy.size() + 1));
         if (event->message != nullptr) {
-            memcpy(event->message, g_tunnelMessage.c_str(), len + 1);
+            memcpy(event->message, messageCopy.c_str(), messageCopy.size() + 1);
         }
-        if (g_tunnelTsfn != nullptr) {
-            napi_call_threadsafe_function(g_tunnelTsfn, event, napi_tsfn_nonblocking);
-        } else {
+        // On queue-full/closing the call fails and ownership of the data
+        // stays with us.
+        if (g_tunnelTsfn == nullptr ||
+            napi_call_threadsafe_function(g_tunnelTsfn, event, napi_tsfn_nonblocking) != napi_ok) {
             if (event->message) free(event->message);
             delete event;
         }
@@ -332,15 +346,18 @@ napi_value StopTunnel(napi_env env, napi_callback_info info) {
     napi_create_object(env, &result);
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_tunnel) {
-        g_tunnel->Stop();
+        g_tunnel->Stop(); // joins the tunnel thread, which may report state
         g_tunnel.reset();
     }
     if (g_tunnelTsfn != nullptr) {
         napi_release_threadsafe_function(g_tunnelTsfn, napi_tsfn_release);
         g_tunnelTsfn = nullptr;
     }
-    g_tunnelState = TunnelState::kIdle;
-    g_tunnelMessage.clear();
+    {
+        std::lock_guard<std::mutex> stateLock(g_stateMutex);
+        g_tunnelState = TunnelState::kIdle;
+        g_tunnelMessage.clear();
+    }
     setFieldInt(env, result, "code", 0);
     return result;
 }
@@ -348,7 +365,7 @@ napi_value StopTunnel(napi_env env, napi_callback_info info) {
 napi_value TunnelStateQuery(napi_env env, napi_callback_info info) {
     napi_value result;
     napi_create_object(env, &result);
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::mutex> stateLock(g_stateMutex);
     setFieldStr(env, result, "state", tunnelStateName(g_tunnelState));
     setFieldStr(env, result, "message", g_tunnelMessage.c_str());
     return result;

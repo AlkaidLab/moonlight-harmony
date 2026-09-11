@@ -152,6 +152,9 @@ private:
     int boundPort_ = 0;
     std::atomic<bool> running_{false};
     std::atomic<int> authorizedPort_{-1};
+    // Accepted connection owned by the accept thread; published so Stop()
+    // can shutdown() it and unblock any read the handler is stuck in.
+    std::atomic<int> clientFd_{-1};
     std::thread acceptThread_;
     mutable std::mutex devicesMutex_;
     std::vector<DeviceInfo> devices_;

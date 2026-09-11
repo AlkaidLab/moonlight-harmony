@@ -207,6 +207,13 @@ export class UsbForwardingService {
         return;
       }
 
+      // 入口统一回收上一轮资源：上一轮 begin 可能仍停在 await（权限弹窗、
+      // capability 查询），其代数守卫返回时不会自行 teardown，这里补齐，
+      // 避免旧 USBDevicePipe/native server 泄漏或被新一轮覆盖。
+      if (this.active || this.activeDeviceKey !== '' || this.heldPipe !== null) {
+        this.teardown(false);
+      }
+
       // 挑选转发目标：第一个未被本地驱动占用的已知手柄
       const activeKeys = UsbDriverService.getInstance().getActiveDeviceKeys();
       let target: usbManager.USBDevice | null = null;

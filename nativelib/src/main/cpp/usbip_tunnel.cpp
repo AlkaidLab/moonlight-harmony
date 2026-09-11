@@ -8,11 +8,13 @@
 #include "usbip_tunnel.h"
 
 #include <cstring>
+#include <cstdio>
 #include <thread>
 
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <hilog/log.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -58,42 +60,52 @@ bool ReadAllPlain(int fd, uint8_t *buf, size_t len) {
     return true;
 }
 
+// Resolves hostnames and IPv4/IPv6 literals, then connects with a timeout.
+// Tries each resolved address until one connects.
 int ConnectTcp(const std::string &host, uint16_t port, int timeoutSec) {
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
+    char portStr[8] = {};
+    snprintf(portStr, sizeof(portStr), "%u", static_cast<unsigned>(port));
 
-    // Non-blocking connect with timeout.
-    const int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = inet_addr(host.c_str());
-
-    const int rc = ::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
-    if (rc < 0 && errno != EINPROGRESS) {
-        ::close(fd);
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo *list = nullptr;
+    if (getaddrinfo(host.c_str(), portStr, &hints, &list) != 0 || list == nullptr) {
         return -1;
     }
-    if (rc != 0) {
-        pollfd pfd{fd, POLLOUT, 0};
-        if (::poll(&pfd, 1, timeoutSec * 1000) <= 0) {
-            ::close(fd);
-            return -1;
-        }
-        int err = 0;
-        socklen_t errLen = sizeof(err);
-        getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errLen);
-        if (err != 0) {
-            ::close(fd);
-            return -1;
-        }
-    }
-    fcntl(fd, F_SETFL, flags); // back to blocking
 
-    int nodelay = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+    int fd = -1;
+    for (addrinfo *ai = list; ai != nullptr; ai = ai->ai_next) {
+        fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0) continue;
+
+        const int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+        const int rc = ::connect(fd, ai->ai_addr, ai->ai_addrlen);
+        bool connected = false;
+        if (rc == 0) {
+            connected = true;
+        } else if (errno == EINPROGRESS) {
+            pollfd pfd{fd, POLLOUT, 0};
+            if (::poll(&pfd, 1, timeoutSec * 1000) > 0) {
+                int err = 0;
+                socklen_t errLen = sizeof(err);
+                getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errLen);
+                connected = (err == 0);
+            }
+        }
+
+        if (connected) {
+            fcntl(fd, F_SETFL, flags); // back to blocking
+            int nodelay = 1;
+            setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+            break;
+        }
+        ::close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(list);
     return fd;
 }
 
@@ -181,8 +193,8 @@ void Tunnel::Run() {
         bindAddr.sin_port = 0;
         if (::bind(localFd, reinterpret_cast<sockaddr *>(&bindAddr), sizeof(bindAddr)) < 0) {
             Fail("local bind failed");
-            ::close(localFd);
             localFd_.store(-1);
+            ::close(localFd);
             return;
         }
         sockaddr_in bound{};
@@ -196,8 +208,8 @@ void Tunnel::Run() {
     const int remoteFd = ConnectTcp(config_.host, config_.port, kConnectTimeoutSec);
     if (remoteFd < 0) {
         Fail("Sunshine connect failed: " + config_.host + ":" + std::to_string(config_.port));
-        ::close(localFd);
         localFd_.store(-1);
+        ::close(localFd);
         return;
     }
     remoteFd_.store(remoteFd);
@@ -209,10 +221,10 @@ void Tunnel::Run() {
     SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
     if (ctx == nullptr) {
         Fail("SSL_CTX_new failed");
-        ::close(localFd);
-        ::close(remoteFd);
         localFd_.store(-1);
         remoteFd_.store(-1);
+        ::close(localFd);
+        ::close(remoteFd);
         return;
     }
     sslCtx_ = ctx;
@@ -233,10 +245,10 @@ void Tunnel::Run() {
             if (certBio) BIO_free(certBio);
             if (keyBio) BIO_free(keyBio);
             Fail("failed to load paired client certificate/key");
-            ::close(localFd);
-            ::close(remoteFd);
             localFd_.store(-1);
             remoteFd_.store(-1);
+            ::close(localFd);
+            ::close(remoteFd);
             return;
         }
         X509_free(cert);
@@ -259,10 +271,10 @@ void Tunnel::Run() {
     }
     if (pinned == nullptr) {
         Fail("failed to load pinned server certificate");
-        ::close(localFd);
-        ::close(remoteFd);
         localFd_.store(-1);
         remoteFd_.store(-1);
+        ::close(localFd);
+        ::close(remoteFd);
         return;
     }
 
@@ -292,10 +304,10 @@ void Tunnel::Run() {
     X509_free(pinned);
     if (!ok) {
         SSL_free(ssl);
-        ::close(localFd);
-        ::close(remoteFd);
         localFd_.store(-1);
         remoteFd_.store(-1);
+        ::close(localFd);
+        ::close(remoteFd);
         return;
     }
     LOGI("[%{public}s] TLS established with %{public}s:%{public}u", LOG_TAG,
@@ -308,10 +320,10 @@ void Tunnel::Run() {
         if (SSL_write(ssl, line.data(), static_cast<int>(line.size())) <= 0) {
             Fail("failed to send the USB tunnel handshake");
             SSL_free(ssl);
-            ::close(localFd);
-            ::close(remoteFd);
             localFd_.store(-1);
             remoteFd_.store(-1);
+            ::close(localFd);
+            ::close(remoteFd);
             return;
         }
     }
@@ -324,10 +336,10 @@ void Tunnel::Run() {
             if (n <= 0) {
                 Fail("tunnel closed during handshake");
                 SSL_free(ssl);
-                ::close(localFd);
-                ::close(remoteFd);
                 localFd_.store(-1);
                 remoteFd_.store(-1);
+                ::close(localFd);
+                ::close(remoteFd);
                 return;
             }
             if (c == '\n') break;
@@ -339,10 +351,10 @@ void Tunnel::Run() {
             buf.find("\"op\": \"ready\"") == std::string::npos) {
             Fail("Sunshine refused: " + extractReason(buf));
             SSL_free(ssl);
-            ::close(localFd);
-            ::close(remoteFd);
             localFd_.store(-1);
             remoteFd_.store(-1);
+            ::close(localFd);
+            ::close(remoteFd);
             return;
         }
     }
@@ -356,10 +368,10 @@ void Tunnel::Run() {
         if (::connect(localFd, reinterpret_cast<sockaddr *>(&localAddr), sizeof(localAddr)) < 0) {
             Fail("local USB/IP server connect failed");
             SSL_free(ssl);
-            ::close(localFd);
-            ::close(remoteFd);
             localFd_.store(-1);
             remoteFd_.store(-1);
+            ::close(localFd);
+            ::close(remoteFd);
             return;
         }
     }
@@ -375,10 +387,10 @@ void Tunnel::Run() {
 
     SSL_shutdown(ssl);
     SSL_free(ssl);
-    ::close(localFd);
-    ::close(remoteFd);
     localFd_.store(-1);
     remoteFd_.store(-1);
+    ::close(localFd);
+    ::close(remoteFd);
     if (!finished_.exchange(true) && onState_) {
         onState_("closed", "");
     }
