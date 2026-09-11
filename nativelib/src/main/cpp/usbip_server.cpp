@@ -77,14 +77,19 @@ constexpr int kConfigValueOffset = 0x135;
 constexpr int kNumConfigsOffset = 0x136;
 constexpr int kNumInterfacesOffset = 0x137;
 
-// 48-byte PDU header offsets
+// 48-byte PDU header offsets. The payload is a union per direction:
+// [20] transfer_flags / status / unlink target, [24] transfer_buffer_length
+// / actual_length, [36] interval / error_count.
 constexpr int kCmdOffset = 0;
 constexpr int kSeqnumOffset = 4;
 constexpr int kDirectionOffset = 12;
 constexpr int kEpOffset = 16;
 constexpr int kFlagsOrUnlinkTargetOffset = 20;
 constexpr int kLenOrActualOffset = 24;
+constexpr int kStartFrameOffset = 28;
+constexpr int kNumPacketsOrErrorOffset = 32;
 constexpr int kIntervalOffset = 36;
+constexpr int kErrorCountOffset = 36;
 constexpr int kSetupOffset = 40;         // setup[8]
 
 void appendU16(std::vector<uint8_t> &out, uint16_t v) {
@@ -96,9 +101,6 @@ void appendU32(std::vector<uint8_t> &out, uint32_t v) {
     out.push_back((v >> 16) & 0xFF);
     out.push_back((v >> 8) & 0xFF);
     out.push_back(v & 0xFF);
-}
-void appendI32(std::vector<uint8_t> &out, int32_t v) {
-    appendU32(out, static_cast<uint32_t>(v));
 }
 
 uint16_t readU16(const uint8_t *p) {
