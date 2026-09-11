@@ -25,6 +25,7 @@ import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.Abil
 import { display } from '@kit.ArkUI';
 import { GamepadManager } from '../input/GamepadManager';
 import { MoonlightButton } from '../input/GamepadTypes';
+import { UsbForwardingService } from '../usbdriver/UsbForwardingService';
 import { MicrophoneStream } from '../microphone/MicrophoneStream';
 import { AudioHapticFrame } from '../AudioHapticFrame';
 import { AudioVibrationService } from '../AudioVibrationService';
@@ -704,6 +705,18 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
     try {
       await this.resolveComputer(computerId, context);
+      // USB/IP 反向隧道：OTG 手柄直通主机。必须先于本地 USB 驱动标记排除，
+      // 异步进行（含权限弹窗与主机能力查询），不阻塞会话启动
+      if (this.computer && this.nvHttp) {
+        const fwdComputer = this.computer;
+        const fwdHttp = this.nvHttp;
+        const fwdHost = this.connectionAddress;
+        UsbForwardingService.getInstance()
+          .beginStreamForwarding(fwdComputer, fwdHost, fwdHttp, context)
+          .catch((err: Error) => {
+            console.warn(`StreamingSession: USB 转发启动异常: ${err.message}`);
+          });
+      }
       await this.applyInitialBitratePolicy();
       this.generateInputKey();
       // 并行执行：网络请求（fetchServerInfo）与本地 native 初始化没有依赖，
@@ -2270,6 +2283,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     console.info('清理串流资源');
     this.isRunning = false;
     this.stopBrightnessUpdates();
+    // USB/IP 反向隧道随会话回收（stop/quit/启动失败共用此路径）
+    UsbForwardingService.getInstance().endStreamForwarding();
     // LiStopConnection() suppresses connectionTerminated for an explicit stop,
     // so clear controller output here as well as in the termination callback.
     GamepadManager.getInstance().stopAllVibration();

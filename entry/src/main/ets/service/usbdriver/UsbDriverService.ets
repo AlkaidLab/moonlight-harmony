@@ -97,6 +97,9 @@ export class UsbDriverService implements UsbDriverListener {
   private pendingResetWait: Promise<void> | null = null;
   // Device keys awaiting kernel HID rebind after a controller release.
   private pendingResetDeviceKeys: Set<string> = new Set();
+  // 由 UsbForwardingService 接管、经 USB/IP 反向隧道转发给主机的设备。
+  // 这些设备不允许本地驱动 claim，避免与 DDK 接口独占冲突及主机双重输入。
+  private forwardedDeviceKeys: Set<string> = new Set();
   
   private constructor() {
     console.info(`${TAG} 创建 USB 驱动服务实例`);
@@ -817,9 +820,29 @@ export class UsbDriverService implements UsbDriverListener {
   }
   
   /**
+   * 设置由 USB/IP 转发接管的设备 key 集合
+   * 这些设备在本地驱动枚举时被跳过；清空集合后 refreshDevices() 可重新接管
+   */
+  setForwardedDeviceKeys(keys: Set<string>): void {
+    this.forwardedDeviceKeys = new Set(keys);
+    let listed = '';
+    keys.forEach((key: string): void => {
+      listed = listed === '' ? key : `${listed}, ${key}`;
+    });
+    console.info(`${TAG} 转发排除列表更新: ${listed === '' ? '(空)' : listed}`);
+  }
+
+  /**
    * 检查是否应该驱动该设备
    */
   private shouldClaimDevice(device: usbManager.USBDevice): boolean {
+    if (this.forwardedDeviceKeys.size > 0) {
+      const deviceKey = `${device.vendorId}:${device.productId}:${device.busNum}:${device.devAddress}`;
+      if (this.forwardedDeviceKeys.has(deviceKey)) {
+        console.info(`${TAG} 设备 ${deviceKey} 已由 USB/IP 转发接管，跳过本地驱动`);
+        return false;
+      }
+    }
     return UsbDriverService.identifyKnownGamepad(device) !== null;
   }
 

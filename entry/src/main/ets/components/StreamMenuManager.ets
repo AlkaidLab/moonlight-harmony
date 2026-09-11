@@ -19,6 +19,7 @@ import { StreamingSession } from '../service/streaming/StreamingSession';
 import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { OptionPickerDialogConfig, OptionItem } from './dialogs/OptionPickerDialog';
 import { ToastQueue } from '../utils/ToastQueue';
+import { UsbForwardingService } from '../service/usbdriver/UsbForwardingService';
 
 // VirtualKey 统一定义在 CustomKeyTypes 中，此处 re-export 保持向后兼容
 import { VirtualKey } from '../service/customkey/CustomKeyTypes';
@@ -100,6 +101,55 @@ export class StreamMenuManager {
   }
 
   /**
+   * 获取 USB 直通状态行（串流菜单展示）
+   */
+  getUsbForwardingStatusLine(): string {
+    const status = UsbForwardingService.getInstance().getStatus();
+    switch (status.phase) {
+      case 'disabled':
+        return '未启用，点按开启并转发 OTG 手柄';
+      case 'no-device':
+        return '未检测到 OTG 手柄，点按重试';
+      case 'starting':
+        return `连接中: ${status.deviceName}`;
+      case 'ready':
+        return `已直通: ${status.deviceName}，点按停止`;
+      case 'error': {
+        const brief = status.message.length > 36
+          ? `${status.message.substring(0, 36)}…` : status.message;
+        return `失败: ${brief}，点按重试`;
+      }
+      default:
+        return '未转发，点按开始';
+    }
+  }
+
+  /**
+   * 处理 USB 直通菜单动作（ready→停止，其余→开启/重试）
+   */
+  private handleUsbForwardingAction(): void {
+    const service = UsbForwardingService.getInstance();
+    const phase = service.getStatus().phase;
+    if (phase === 'starting') {
+      this.showToast('USB 直通连接中，请稍候');
+      return;
+    }
+    if (phase === 'ready') {
+      service.stopForwardingFromMenu();
+      this.showToast('已停止 USB 直通，手柄交还本地处理');
+      return;
+    }
+    const enableSetting = phase === 'disabled';
+    service.startForwardingFromMenu(enableSetting)
+      .then((): void => {
+        this.showToast(enableSetting ? '已开启 USB 直通，正在转发' : '正在重试 USB 直通');
+      })
+      .catch((err: Error): void => {
+        console.warn(`USB 直通菜单操作失败: ${err.message}`);
+      });
+  }
+
+  /**
    * 获取主串流菜单配置
    */
   getStreamMenuConfig(): OptionPickerDialogConfig {
@@ -143,6 +193,11 @@ export class StreamMenuManager {
         title: this.viewModel.showController ? '🎮 隐藏虚拟按键' : '🎮 显示虚拟按键',
         subtitle: '切换屏幕虚拟控制器',
         value: 'toggle_controller'
+      },
+      {
+        title: '🔌 USB 直通主机',
+        subtitle: this.getUsbForwardingStatusLine(),
+        value: 'usb_forwarding'
       },
       {
         title: '🔌 断开连接',
@@ -201,6 +256,9 @@ export class StreamMenuManager {
         break;
       case 'toggle_controller':
         this.viewModel.toggleController();
+        break;
+      case 'usb_forwarding':
+        this.handleUsbForwardingAction();
         break;
       case 'disconnect':
         this.callbacks.onDisconnect();
