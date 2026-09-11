@@ -178,8 +178,8 @@ NativeRender::~NativeRender() {
             g_pfnSoloistDestroy(displaySoloist_);
             displaySoloist_ = nullptr;
         }
+        window_ = nullptr;
     }
-    window_ = nullptr;
     surfaceReady_ = false;
 }
 
@@ -189,12 +189,16 @@ NativeRender::~NativeRender() {
 
 void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint64_t height) {
     ResetPresentationClock();
-    window_ = window;
     surfaceWidth_ = width;
     surfaceHeight_ = height;
 
     if (window != nullptr) {
-        // 配置 NativeWindow
+        {
+            // window_ 的写入必须与解码线程 RefreshFrameRateHints 内的读取互斥
+            std::lock_guard<std::mutex> lock(frameRateMutex_);
+            window_ = window;
+        }
+        // 配置 NativeWindow（同一线程，紧随赋值）
         ConfigureNativeWindow();
 
         // Surface 绑定/重建会冲掉系统侧已采信的帧率决策，立即重申全部 hint
@@ -205,7 +209,10 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
                     static_cast<void*>(window), width, height);
     } else {
         surfaceReady_ = false;
+        // 先在 window_ 仍有效时复位各层请求，再清指针
         ResetFrameRateHintsToDefault();
+        std::lock_guard<std::mutex> lock(frameRateMutex_);
+        window_ = nullptr;
         OH_LOG_INFO(LOG_APP, "NativeWindow cleared");
     }
 }
@@ -299,11 +306,8 @@ void NativeRender::ConfigureNativeWindow() {
     if (ret == 0) {
         OH_LOG_INFO(LOG_APP, "ScalingModeV2 set to SCALE_TO_WINDOW_V2");
     }
-    
-    // 如果帧率已配置，立即在 NativeWindow 层设置帧率偏好
-    if (configuredFps_.load() > 60) {
-        ApplyNativeWindowFrameRate();
-    }
+    // 帧率偏好由 SetNativeWindow 随后的 RefreshFrameRateHints(true) 统一应用，
+    // 避免 window_ 在锁外被帧率路径读取
 }
 
 // =============================================================================
@@ -407,6 +411,9 @@ void NativeRender::EnsureDisplaySoloistLocked() {
     int32_t ret = g_pfnSoloistSetRange(displaySoloist_, &range);
     if (ret != 0) {
         OH_LOG_WARN(LOG_APP, "DisplaySoloist SetExpectedFrameRateRange failed: ret=%{public}d", ret);
+        // 销毁失败实例，让下一次 RefreshFrameRateHints 重新创建
+        g_pfnSoloistDestroy(displaySoloist_);
+        displaySoloist_ = nullptr;
         return;
     }
 
@@ -416,7 +423,9 @@ void NativeRender::EnsureDisplaySoloistLocked() {
             OH_LOG_INFO(LOG_APP, "DisplaySoloist keepalive running (exclusive thread, expected %{public}d fps)",
                         range.expected);
         } else {
-            OH_LOG_WARN(LOG_APP, "DisplaySoloist Start failed");
+            OH_LOG_WARN(LOG_APP, "DisplaySoloist Start failed; destroying for retry");
+            g_pfnSoloistDestroy(displaySoloist_);
+            displaySoloist_ = nullptr;
         }
     }
 }

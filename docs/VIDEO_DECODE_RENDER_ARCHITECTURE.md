@@ -158,17 +158,20 @@ graph TB
         NWRate["NativeWindow<br/>SetFrameRateRange EXACT<br/>(非公开 API，dlsym)"]
     end
 
+    REFRESH["RefreshFrameRateHints (native)<br/>SubmitFrame 每 2 秒重申<br/>+ Surface 绑定/帧率变化时 force"]
     DS --> REFRESH
-    ONFRAME --> XCRate
-    REFRESH["RefreshFrameRateHints<br/>SubmitFrame 每 2 秒重申<br/>+ Surface 绑定/帧率变化时 force"]
-
-    REFRESH --> XCRATE2["ArkTS launchStream 设置<br/>prepareStreamEndUiImmediate 复位"]
     REFRESH --> NWRate
 
-    RESET["流结束/页面销毁：<br/>复位 60fps + 注销回调 + 停 Soloist<br/>（防高刷请求残留耗电）"]
-    RESET -.-> NWRate
+    ONFRAME --> XCRate
+
+    ARKTS["ArkTS launchStream<br/>setXComponentFrameRate(fps)<br/>setFrameRateKeepAlive(true)"]
+    ARKTS --> XCRate
+    ARKTS --> DS
+
+    RESET["ArkTS resetStreamFrameHints<br/>(流结束/启动失败/页面销毁，幂等)<br/>复位 60fps + 注销回调 + 停 Soloist"]
     RESET -.-> XCRate
     RESET -.-> DS
+    RESET -.-> NWRate
 ```
 
 注意：旧的 NativeVSync `SetExpectedFrameRateRange` 层已删除——渲染走解码

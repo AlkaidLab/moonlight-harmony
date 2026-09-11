@@ -2396,33 +2396,41 @@ napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info in
 
     // 方式1 (API 20): 直接通过 ArkUI_NodeHandle 设置；仅成功才返回，
     // 失败继续走回退链（部分新系统上该调用可能返回失败）
+    void* xComp = g_pfnGetNativeXC ? g_pfnGetNativeXC(nodeHandle) : nullptr;
+    bool rateSet = false;
     if (g_pfnXCSetFrameRateNew) {
         XCFrameRateRange range = { 0, 120, fps };
         int32_t xcRet = g_pfnXCSetFrameRateNew(nodeHandle, range);
         if (xcRet == 0) {
             OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via ArkUI_NodeHandle (API 20)",
                         fps);
-            return GetUndefined(env);
+            rateSet = true;
+        } else {
+            OH_LOG_WARN(LOG_APP, "XComponent API 20 SetExpectedFrameRateRange failed: ret=%{public}d, trying fallback",
+                        xcRet);
         }
-        OH_LOG_WARN(LOG_APP, "XComponent API 20 SetExpectedFrameRateRange failed: ret=%{public}d, trying fallback",
-                    xcRet);
     }
 
     // 方式2 (API 12+11): NodeHandle → OH_NativeXComponent → SetExpectedFrameRateRange
-    if (g_pfnGetNativeXC && g_pfnXCSetFrameRateOld) {
-        void* xComp = g_pfnGetNativeXC(nodeHandle);
-        if (xComp) {
-            XCFrameRateRange range = { 0, 120, fps };
-            int32_t xcRet = g_pfnXCSetFrameRateOld(xComp, &range);
-            OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via NativeXComponent (API 12+11): ret=%{public}d",
-                        fps, xcRet);
-        } else {
-            OH_LOG_ERROR(LOG_APP, "SetXComponentFrameRate: GetNativeXComponent returned null");
-        }
-        return GetUndefined(env);
+    if (!rateSet && xComp && g_pfnXCSetFrameRateOld) {
+        XCFrameRateRange range = { 0, 120, fps };
+        int32_t xcRet = g_pfnXCSetFrameRateOld(xComp, &range);
+        OH_LOG_INFO(LOG_APP, "XComponent FrameRate set to %{public}d fps via NativeXComponent (API 12+11): ret=%{public}d",
+                    fps, xcRet);
+        rateSet = (xcRet == 0);
     }
 
-    OH_LOG_WARN(LOG_APP, "SetXComponentFrameRate: No API path available for fps=%{public}d", fps);
+    if (!rateSet) {
+        // 帧率设置全部失败：注销刚注册的每帧回调，避免留下孤儿回调
+        if (g_pfnXCUnregisterOnFrameNew) {
+            g_pfnXCUnregisterOnFrameNew(nodeHandle);
+        }
+        if (xComp && g_pfnXCUnregisterOnFrameOld) {
+            g_pfnXCUnregisterOnFrameOld(xComp);
+        }
+        OH_LOG_WARN(LOG_APP, "SetXComponentFrameRate: no path succeeded for fps=%{public}d, onFrame callback unregistered",
+                    fps);
+    }
     return GetUndefined(env);
 }
 
