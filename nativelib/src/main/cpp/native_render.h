@@ -11,22 +11,24 @@
 /**
  * @file native_render.h
  * @brief NativeWindow 渲染器头文件
- * 
+ *
  * 提供基本的 NativeWindow 管理功能：
  * - 保存 NativeWindow 引用供解码器使用
  * - 直接渲染模式（低延迟）
  * - VSync 渲染模式（使用 RenderOutputBufferAtTime）
- * - 高帧率优化：
- *   1. NativeVSync SetExpectedFrameRateRange（VSync 回调频率，API 20+）
- *   2. NativeWindow SetFrameRateRange（Surface buffer queue 帧率偏好，API 12+）
- *   3. XComponent SetExpectedFrameRateRange（ArkUI 框架层，由 MoonBridge 独立设置）
+ * - 高帧率保持（针对鸿蒙7 无触摸降刷新率策略）：
+ *   1. DisplaySoloist 空回调持续请求 vsync（API 12+，官方游戏/自绘通道）
+ *   2. NativeWindow SetFrameRateRange（Surface buffer queue 帧率偏好，非公开 API）
+ *   3. XComponent SetExpectedFrameRateRange + RegisterOnFrameCallback
+ *      （ArkUI 框架层成对使用，由 MoonBridge 独立设置）
+ *   帧率 hint 由 RefreshFrameRateHints 在渲染期间持续重申（2 秒节流），
+ *   避免 Surface/布局变化或系统策略冲掉后失效。
  */
 
 #ifndef NATIVE_RENDER_H
 #define NATIVE_RENDER_H
 
 #include <native_window/external_window.h>
-#include <native_vsync/native_vsync.h>
 #include <multimedia/player_framework/native_avcodec_videodecoder.h>
 #include <hilog/log.h>
 
@@ -35,6 +37,10 @@
 #include <cstdint>
 #include <mutex>
 #include <atomic>
+
+// DisplaySoloist 完整声明在 native_display_soloist.h；此处仅前向声明，
+// 实现通过 dlsym 动态加载符号，不引入头文件硬依赖
+typedef struct OH_DisplaySoloist OH_DisplaySoloist;
 
 /**
  * NativeRender 类
@@ -67,6 +73,19 @@ public:
      * @param fps 期望帧率
      */
     void SetConfiguredFps(double fps);
+
+    /**
+     * 启用/禁用帧率保活（DisplaySoloist 持续 vsync 请求 + 各层帧率 hint）。
+     * 禁用时停止 Soloist 并把 NativeWindow 帧率偏好复位为默认，
+     * 避免高刷请求在流结束后残留耗电。
+     */
+    void SetFrameRateKeepAlive(bool enabled);
+
+    /**
+     * 重申当前帧率 hint（NativeWindow + DisplaySoloist）。
+     * @param force true 跳过节流立即重申；false 按 2 秒节流
+     */
+    void RefreshFrameRateHints(bool force);
     
     /**
      * 启用/禁用 VSync 渲染模式
@@ -128,18 +147,15 @@ private:
     
     // 配置 NativeWindow
     void ConfigureNativeWindow();
-    
-    // 应用帧率范围（通过 NativeVSync，API 20+）
-    void ApplyFrameRateRange();
 
-    // 应用 NativeWindow 帧率（Surface buffer queue 级别，API 12+）
+    // 应用 NativeWindow 帧率（Surface buffer queue 级别，非公开 API，dlsym 加载）
     void ApplyNativeWindowFrameRate();
-    
-    // 初始化 NativeVSync
-    void InitNativeVSync();
-    
-    // 释放 NativeVSync
-    void ReleaseNativeVSync();
+
+    // 按 keepAlive_ 与 configuredFps_ 状态启动/更新/停止 DisplaySoloist（须持有 frameRateMutex_）
+    void EnsureDisplaySoloistLocked();
+
+    // 流结束/禁用保活时的复位（NativeWindow → 默认，停止 Soloist）
+    void ResetFrameRateHintsToDefault();
 
     // 已持有 presentationMutex_ 时使用
     int64_t CalculateLegacyPresentTargetLocked(int64_t pts, int64_t nowNs);
@@ -179,10 +195,13 @@ private:
     int64_t vsyncFrameCount_ = 0;
     int64_t vsyncLateFrameCount_ = 0;
     int64_t vsyncResyncCount_ = 0;
-    // NativeVSync（用于设置期望帧率范围，API 20+）
-    std::mutex nativeVsyncMutex_;
-    OH_NativeVSync* nativeVSync_ = nullptr;
-    
+
+    // 帧率保活状态（DisplaySoloist + 各层 hint 重申）
+    // 序列化 NativeWindow/Soloist 操作；SubmitFrame 热路径只读原子量
+    std::mutex frameRateMutex_;
+    std::atomic<bool> frameRateKeepAlive_{false};
+    std::atomic<int64_t> lastHintRefreshNs_{0};
+    OH_DisplaySoloist* displaySoloist_ = nullptr;
 };
 
 #endif // NATIVE_RENDER_H

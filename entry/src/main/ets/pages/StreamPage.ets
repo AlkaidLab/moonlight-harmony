@@ -782,6 +782,11 @@ struct StreamPage {
   aboutToDisappear(): void {
     console.info('StreamPage aboutToDisappear - cleaning up');
 
+    // 兜底：页面销毁时（含连接中途退出）停用帧率保活，防高刷请求残留
+    try {
+      MoonBridge.setFrameRateKeepAlive(false);
+    } catch (_) {}
+
     // 取消 AI 可用性延时探测，避免页面销毁后回调触发 Toast / 网络请求
     if (this.aiProbeTimer !== null) {
       clearTimeout(this.aiProbeTimer);
@@ -1419,7 +1424,8 @@ struct StreamPage {
     const surfaceId = this.xComponentController.getXComponentSurfaceId();
 
     // 设置 XComponent 期望帧率（通过 FrameNode → ArkUI_NodeHandle）
-    // 解决 MatePad 等设备渲染帧率被锁定在 60fps 的问题
+    // 并启用 native 帧率保活（DisplaySoloist 持续 vsync 请求），
+    // 对抗鸿蒙7 无触摸时系统把刷新率降到 60Hz 的策略
     const streamConfig = this.viewModel.streamConfig;
     if (streamConfig && streamConfig.fps > 60) {
       try {
@@ -1430,6 +1436,11 @@ struct StreamPage {
         }
       } catch (e) {
         console.warn(`设置 XComponent 帧率失败: ${e}`);
+      }
+      try {
+        MoonBridge.setFrameRateKeepAlive(true);
+      } catch (e) {
+        console.warn(`启用帧率保活失败: ${e}`);
       }
     }
 
@@ -1719,6 +1730,16 @@ struct StreamPage {
     this.inputHandler.resetState();
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
+    // 停止帧率保活并复位各层帧率请求，避免高刷 hint 残留耗电
+    try {
+      MoonBridge.setFrameRateKeepAlive(false);
+    } catch (_) {}
+    try {
+      const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
+      if (frameNode) {
+        MoonBridge.setXComponentFrameRate(frameNode, 60);
+      }
+    } catch (_) {}
     try {
       pointer.setPointerVisibleSync(true);
     } catch (_) {}

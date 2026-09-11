@@ -141,33 +141,39 @@ flowchart TD
     PASS1 --> UPSCALE
 ```
 
-## 帧率优化三层机制
+## 高帧率保持机制（帧率保活）
+
+背景：鸿蒙7 起，系统控帧（HGM）在无触摸时会把刷新率降回 60Hz，且会冲掉
+应用一次性的帧率 hint。因此帧率请求必须是"持续活跃的信号"而非"一次设置"。
 
 ```mermaid
 graph TB
-    subgraph L1 ["Layer 1 · ArkUI 框架层"]
-        XCRate["XComponent<br/>SetExpectedFrameRateRange<br/>(FrameNode API)"]
+    subgraph KA ["保活信号层"]
+        DS["DisplaySoloist 空回调<br/>持续按期望帧率请求 vsync<br/>(API 12+，官方游戏/自绘通道)"]
+        ONFRAME["XComponent onFrame 空回调<br/>与 SetExpectedFrameRateRange 成对<br/>(官方配对要求)"]
     end
 
-    subgraph L2 ["Layer 2 · Surface 层"]
-        NWRate["NativeWindow<br/>SetFrameRateRange<br/>(API 12+)"]
+    subgraph HINTS ["帧率 hint 层（被冲掉后由重申机制恢复）"]
+        XCRate["XComponent<br/>SetExpectedFrameRateRange<br/>{min:0, max:120, expected:fps}"]
+        NWRate["NativeWindow<br/>SetFrameRateRange EXACT<br/>(非公开 API，dlsym)"]
     end
 
-    subgraph L3 ["Layer 3 · VSync 层"]
-        VSRate["NativeVSync<br/>SetExpectedFrameRateRange<br/>(API 20+)"]
-    end
+    DS --> REFRESH
+    ONFRAME --> XCRate
+    REFRESH["RefreshFrameRateHints<br/>SubmitFrame 每 2 秒重申<br/>+ Surface 绑定/帧率变化时 force"]
 
-    L1 --> L2 --> L3
+    REFRESH --> XCRATE2["ArkTS launchStream 设置<br/>prepareStreamEndUiImmediate 复位"]
+    REFRESH --> NWRate
 
-    Note1["解锁 MatePad 等设备<br/>被锁定 60fps 的问题"]
-    L1 -.-> Note1
-
-    Note2["Surface buffer queue<br/>帧率偏好"]
-    L2 -.-> Note2
-
-    Note3["VSync 回调频率<br/>精确帧节奏"]
-    L3 -.-> Note3
+    RESET["流结束/页面销毁：<br/>复位 60fps + 注销回调 + 停 Soloist<br/>（防高刷请求残留耗电）"]
+    RESET -.-> NWRate
+    RESET -.-> XCRate
+    RESET -.-> DS
 ```
+
+注意：旧的 NativeVSync `SetExpectedFrameRateRange` 层已删除——渲染走解码
+线程直送，从未调用 `OH_NativeVSync_RequestFrame`，对该实例设置期望帧率是
+无效的死代码。
 
 ## 丢帧分级机制
 

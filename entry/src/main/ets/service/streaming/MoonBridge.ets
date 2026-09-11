@@ -698,11 +698,21 @@ class MoonBridgeClass {
   /**
    * 设置 XComponent 期望帧率（通过 FrameNode → ArkUI_NodeHandle）
    * 无需在 XComponent 上设置 libraryname，避免触摸事件丢失
+   * fps > 60 时注册每帧回调保持帧节奏信号；fps <= 60 时复位为默认并注销回调
    * @param frameNode XComponent 的 FrameNode 对象
    * @param fps 期望帧率
    */
   setXComponentFrameRate(frameNode: object, fps: number): void {
     nativeLib.setXComponentFrameRate(frameNode, fps);
+  }
+
+  /**
+   * 启用/禁用帧率保活（native DisplaySoloist 持续 vsync 请求 + 各层帧率 hint 重申）。
+   * 对抗鸿蒙7 无触摸时系统降刷新率的策略；流结束时禁用以免高刷请求残留耗电。
+   * @param enabled 是否启用
+   */
+  setFrameRateKeepAlive(enabled: boolean): void {
+    nativeLib.setFrameRateKeepAlive(enabled);
   }
 
   // ==========================================================================
