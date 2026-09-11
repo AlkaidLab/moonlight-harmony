@@ -57,6 +57,7 @@ constexpr uint32_t kRetUnlink = 0x00000004;
 
 constexpr int32_t kUsbErrIo = -5;        // -EIO
 constexpr int32_t kUsbErrNoent = -2;     // -ENOENT
+constexpr int32_t kUsbErrConnreset = -104; // -ECONNRESET (URB canceled before completion)
 constexpr int32_t kUsbErrOverflow = -75; // -EOVERFLOW
 constexpr int32_t kUsbErrTimedout = -110;// -ETIMEDOUT
 
@@ -755,7 +756,10 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
                             readU32(peek + kFlagsOrUnlinkTargetOffset) == p.seqnum) {
                             uint8_t pdu[kPduHeaderSize];
                             if (!readAll(clientFd, pdu, sizeof(pdu))) return Drive::Closed;
-                            return sendRetUnlink(readU32(pdu + kSeqnumOffset), 0)
+                            // Head URB is still pending (no RET_SUBMIT yet):
+                            // report it as canceled, like a real unlinked URB.
+                            return sendRetUnlink(readU32(pdu + kSeqnumOffset),
+                                                 kUsbErrConnreset)
                                        ? Drive::Completed
                                        : Drive::Closed;
                         }
@@ -904,9 +908,10 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
             const uint32_t target = readU32(pdu + kFlagsOrUnlinkTargetOffset);
             for (auto it = pendingIn.begin(); it != pendingIn.end(); ++it) {
                 if (it->seqnum == target) {
-                    // Safe to touch here: we only run between DDK slices.
+                    // Still pending (no RET_SUBMIT sent): report it as
+                    // canceled, mirroring a real unlinked URB's status.
                     pendingIn.erase(it);
-                    return sendRetUnlink(seqnum, 0);
+                    return sendRetUnlink(seqnum, kUsbErrConnreset);
                 }
             }
             // Already completed: ENOENT, mirroring the kernel stub.
