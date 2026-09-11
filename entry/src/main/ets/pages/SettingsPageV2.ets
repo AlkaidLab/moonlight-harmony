@@ -207,6 +207,7 @@ struct SettingsPageV2 {
   @State usbDriverEnabled: boolean = false;  // 默认关闭 USB 手柄驱动
   @State forceUsbDriverOnly: boolean = false;  // 强制纯 USB 驱动模式
   @State ddkHighSpeedPolling: boolean = false;  // USB 驱动高速轮询
+  @State usbForwardingEnabled: boolean = false;  // USB/IP 反向隧道转发
   
   // 输入 - 屏幕控制器
   @State enableOnscreenControls: boolean = false;
@@ -563,6 +564,7 @@ struct SettingsPageV2 {
       this.usbDriverEnabled = await this.loadBoolean(SettingsKeys.USB_DRIVER_ENABLED, false);
       this.forceUsbDriverOnly = await this.loadBoolean(SettingsKeys.FORCE_USB_DRIVER_ONLY, false);
       this.ddkHighSpeedPolling = await this.loadBoolean(SettingsKeys.DDK_HIGH_SPEED_POLLING, false);
+      this.usbForwardingEnabled = await this.loadBoolean(SettingsKeys.USB_FORWARDING_ENABLED, false);
       
       // 输入 - 屏幕控制器
       this.enableOnscreenControls = await this.loadBoolean(SettingsKeys.ENABLE_ONSCREEN_CONTROLS, false);
@@ -1721,6 +1723,20 @@ struct SettingsPageV2 {
                 action: () => {
                   this.ddkHighSpeedPolling = !this.ddkHighSpeedPolling;
                   this.saveSetting(SettingsKeys.DDK_HIGH_SPEED_POLLING, this.ddkHighSpeedPolling);
+                  ToastQueue.show({
+                    message: '下次串流时生效',
+                    duration: 2500
+                  });
+                }
+              },
+              {
+                title: 'USB 直通主机（实验）',
+                subtitle: '通过 OTG 连接的手柄经 USB/IP 反向隧道直通到 Sunshine 主机，作为原生 USB 设备工作（陀螺仪、触控板完整支持）。需 Sunshine 开启 USB 转发并安装 usbip-win2 驱动，每次串流转发一个手柄',
+                type: 'toggle',
+                value: this.usbForwardingEnabled,
+                action: () => {
+                  this.usbForwardingEnabled = !this.usbForwardingEnabled;
+                  this.saveSetting(SettingsKeys.USB_FORWARDING_ENABLED, this.usbForwardingEnabled);
                   ToastQueue.show({
                     message: '下次串流时生效',
                     duration: 2500

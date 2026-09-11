@@ -192,6 +192,27 @@ export class NetworkProbeSession {
   }
 }
 
+/**
+ * Sunshine USB 转发能力（/api/v1/usb-forwarding）
+ * available 为 true 时 port/token 用于建立反向隧道
+ */
+export interface UsbForwardingCapability {
+  available: boolean;
+  reason: string;
+  port: number;
+  token: string;
+}
+
+/** /api/v1/usb-forwarding 的原始 JSON 结构 */
+interface UsbForwardingCapabilityResponse {
+  version?: number;
+  enabled?: boolean;
+  available?: boolean;
+  reason?: string;
+  port?: number;
+  token?: string;
+}
+
 export class NvHttp {
   private address: string;
   private serverCert: string | null;
@@ -302,6 +323,50 @@ export class NvHttp {
     } catch (err) {
       return false;
     }
+  }
+
+  /**
+   * 查询 Sunshine USB 转发能力（反向隧道端口与一次性令牌）
+   * 对应 Sunshine 的 GET /api/v1/usb-forwarding，需要已配对的客户端证书
+   */
+  async getUsbForwardingCapability(): Promise<UsbForwardingCapability> {
+    const baseUrl = await this.getHttpsBaseUrl();
+    const url = `${baseUrl}/api/v1/usb-forwarding`;
+    const response = await this.doRequest(url, {
+      useClientCert: true,
+      connectTimeout: 5000,
+      transferTimeout: 5000
+    });
+    return NvHttp.parseUsbForwardingCapability(response);
+  }
+
+  /**
+   * 解析 USB 转发能力响应（与 moonlight-qt UsbForwarding::Capability 对齐）
+   * {version:1, enabled:bool, available:bool, reason?:string, port?:number, token?:string(64hex)}
+   */
+  static parseUsbForwardingCapability(body: string): UsbForwardingCapability {
+    const parsed = JSON.parse(body) as UsbForwardingCapabilityResponse;
+    if (parsed.version !== 1) {
+      throw new Error('USB 转发能力响应版本不受支持');
+    }
+    const enabled = !!parsed.enabled;
+    const available = enabled && !!parsed.available;
+    const result: UsbForwardingCapability = {
+      available: available,
+      reason: parsed.reason ?? '',
+      port: 0,
+      token: ''
+    };
+    if (available) {
+      const port = parsed.port ?? 0;
+      const token = parsed.token ?? '';
+      if (!Number.isInteger(port) || port < 1 || port > 65535 || !/^[0-9a-fA-F]{64}$/.test(token)) {
+        throw new Error('USB 转发能力响应格式无效');
+      }
+      result.port = port;
+      result.token = token;
+    }
+    return result;
   }
 
   /**

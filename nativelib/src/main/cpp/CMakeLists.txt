@@ -98,6 +98,9 @@ set(SOURCE_FILES
     mouse_interceptor.cpp
     usb_helper.cpp
     usb_ddk_poller.cpp
+    usbip_server.cpp
+    usbip_tunnel.cpp
+    usbip_napi.cpp
     native_render.cpp
     presentation_scheduler.cpp
     two_step_presentation_scheduler.cpp
@@ -131,6 +134,7 @@ set(MOONLIGHT_COMMON_SOURCES
     ${MOONLIGHT_COMMON_PATH}/src/SimpleStun.c
     ${MOONLIGHT_COMMON_PATH}/src/ConnectionTester.c
     ${MOONLIGHT_COMMON_PATH}/src/MicrophoneStream.c
+    ${MOONLIGHT_COMMON_PATH}/src/RemoteTextContextStream.c
     ${MOONLIGHT_COMMON_PATH}/src/FakeCallbacks.c
     ${MOONLIGHT_COMMON_PATH}/nanors/rs.c
     ${MOONLIGHT_COMMON_PATH}/nanors/deps/obl/oblas_common.c
