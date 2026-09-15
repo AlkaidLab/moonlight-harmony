@@ -13,6 +13,7 @@ import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { common, Want, bundleManager } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
+import { getSupportedDisplayRates } from '../utils/DisplayFrameRate';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { StreamingSession, DecoderCapabilities } from '../service/streaming/StreamingSession';
@@ -3346,14 +3347,9 @@ struct SettingsPageV2 {
   }
 
   private showFpsPicker(): void {
-    // 检测设备屏幕刷新率
-    let deviceRefreshRate = 60;
-    try {
-      const displayInfo = display.getDefaultDisplaySync();
-      deviceRefreshRate = Math.round(displayInfo.refreshRate || 60);
-    } catch (e) {
-      // 检测失败，使用默认值
-    }
+    const supportedRates = getSupportedDisplayRates();
+    // Older systems may not expose capabilities. Keep standard choices available.
+    const deviceRefreshRate = supportedRates.length > 0 ? Math.max(...supportedRates) : 144;
 
     // 基础帧率选项（所有设备通用）
     const presetOptions: PickerOption[] = [
@@ -3405,7 +3401,7 @@ struct SettingsPageV2 {
     
     const config: PickerConfig = {
       title: '选择帧率',
-      subtitle: `设备屏幕 ${deviceRefreshRate}Hz · 更高帧率需要更多带宽`,
+      subtitle: supportedRates.length > 0 ? `屏幕最高 ${deviceRefreshRate}Hz · 更高帧率需要更多带宽` : '屏幕最高刷新率未知 · 请按设备能力选择',
       selectedValue: this.fps,
       options: options,
       onSelect: (option: PickerOption) => {
