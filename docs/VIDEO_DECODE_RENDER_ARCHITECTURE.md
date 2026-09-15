@@ -159,8 +159,9 @@ display_sync 和 ace_component 请求。接口成功不等于实际显示达到�
   其 UI 帧请求，不再另开鼠标 DisplaySync。
 - DisplaySoloist 的公开参数上限为 120。仅在 Surface 存在、请求启用且
   60 < 显示目标 <= 120 时运行；更高显示目标由 ArkUI 请求，不能宣称 Soloist 支持 144Hz。
-  使用 SDK 类型声明和运行时符号检测。每 2 秒检查失败重试和诊断；运行中的相同
-  range 不重复提交。不使用私有 NativeWindow 控帧 API。
+  使用 SDK 类型声明和运行时符号检测。由 SubmitFrame 触发的检查按约 2 秒间隔执行
+  失败重试和诊断采样；没有解码输出时不触发周期检查，已有对象长期零回调时也不会
+  自动重建。运行中的相同 range 不重复提交。不使用私有 NativeWindow 控帧 API。
 - 串流结束、启动失败、页面销毁时清理 DisplaySync、诊断定时器、XComponent 回调
   和 DisplaySoloist；Surface 清除时停止 Soloist，重新绑定后按请求状态恢复。
 

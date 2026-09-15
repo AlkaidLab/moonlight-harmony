@@ -1436,6 +1436,8 @@ struct StreamPage {
       return;
     }
 
+    // Reconnects reuse this page; release the previous request before any new attempt.
+    this.resetStreamFrameHints();
     const surfaceId = this.xComponentController.getXComponentSurfaceId();
 
     const streamConfig = this.viewModel.streamConfig;
@@ -1770,7 +1772,10 @@ struct StreamPage {
       let screenHz = 0;
       try { screenHz = display.getDefaultDisplaySync().refreshRate; } catch (_) {}
       const stats = this.viewModel.performanceStats;
-      console.info(`FrameRateDiagnostics: rxFps=${stats.fps.toFixed(1)} submittedFps=${stats.renderedFps.toFixed(1)} decodeMs=${stats.globalAvgDecodeLatency.toFixed(1)} drops=${stats.droppedFrames} requestedHz=${displayHz} screenHz=${screenHz} ${this.xComponentFrameRequestActive ? 'path=XComponent' : 'path=DisplaySync'} displaySyncActive=${this.streamDisplaySync !== null} displaySyncCallbackHz=${(this.streamDisplayCallbacks / seconds).toFixed(1)}`);
+      const path = this.xComponentFrameRequestActive
+        ? 'XComponent'
+        : this.streamDisplaySync !== null ? 'DisplaySync' : 'none';
+      console.info(`FrameRateDiagnostics: rxFps=${stats.fps.toFixed(1)} submittedFps=${stats.renderedFps.toFixed(1)} decodeMs=${stats.globalAvgDecodeLatency.toFixed(1)} drops=${stats.droppedFrames} requestedHz=${displayHz} screenHz=${screenHz} path=${path} displaySyncActive=${this.streamDisplaySync !== null} displaySyncCallbackHz=${(this.streamDisplayCallbacks / seconds).toFixed(1)}`);
       this.streamDisplayCallbacks = 0;
       lastTime = now;
     }, 5000);
@@ -2064,6 +2069,7 @@ struct StreamPage {
 
       ToastQueue.show({ message: '已重新连接' });
     } catch (err) {
+      this.resetStreamFrameHints();
       console.error('[StreamPage] 重连串流失败:', err);
       ToastQueue.show({ message: '重连失败，请手动重试' });
     }

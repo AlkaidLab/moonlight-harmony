@@ -7,7 +7,9 @@ export function getSupportedDisplayRates(): number[] {
     if (rates) {
       return rates.filter((rate: number) => Number.isFinite(rate) && rate > 0);
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn(`[DisplayFrameRate] 读取 supportedRefreshRates 失败: ${err}`);
+  }
   return [];
 }
 
