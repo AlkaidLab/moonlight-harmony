@@ -201,7 +201,7 @@ export class HttpClient {
     } catch (err) {
       const error = err as Error;
       if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
-        RcpSessionPool.invalidate(key);
+        RcpSessionPool.invalidate(session);
       }
       if (HttpClient.isTimeoutError(error.message)) {
         Logger.warn('HttpClient', `HttpClient: 请求超时 - ${url}`);
@@ -218,10 +218,14 @@ export class HttpClient {
    * 判断是否连接级错误（应 invalidate session）
    * 协议级错误（401/4xx/5xx）不应丢 session，因为连接本身是好的
    *
-   * timeout 也 invalidate：session 内缓存过期 DNS / 死连接时，同一 host
-   * 会反复 connect timeout，只有换新 session 才能拿到新解析。真机案例：
-   * AAAA-only DDNS 域名换 IP 后手动添加反复失败，直到重装应用（杀进程）
-   * 才恢复——旧实现恰恰不淘汰 timeout。
+   * timeout 也 invalidate：最可能的根因（待真机换 IP 验证）是 session 内
+   * 缓存过期 DNS / 死连接，同一 host 反复 connect timeout，只有换新
+   * session 才能拿到新解析。真机案例：AAAA-only DDNS 域名换 IP 后手动
+   * 添加反复失败，直到重装应用（杀进程）才恢复——旧实现恰恰不淘汰
+   * timeout；安卓端每次重新解析所以无此现象。
+   *
+   * invalidate 按实例确认（传发生错误的 session）：并发下同 key 可能
+   * 已重建出新 session，旧 session 的迟到错误不会误伤新 session。
    *
    * invalidate 是安全的：RcpSessionPool 只把 session 摘出池子并等在途
    * 请求自然结束才 close，不会级联取消同 session 上其他 in-flight 请求
@@ -310,7 +314,7 @@ export class HttpClient {
     } catch (err) {
       const error = err as Error;
       if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
-        RcpSessionPool.invalidate(key);
+        RcpSessionPool.invalidate(session);
       }
       Logger.error('HttpClient', `HttpClient: RAW 请求失败 - ${error.message}`);
       throw new Error(`HTTP 请求失败: ${error.message}`);
@@ -377,7 +381,7 @@ export class HttpClient {
     } catch (err) {
       const error = err as Error;
       if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
-        RcpSessionPool.invalidate(key);
+        RcpSessionPool.invalidate(session);
       }
       Logger.error('HttpClient', `HttpClient: 二进制请求失败 - ${error.message}`);
       throw new Error(`HTTP 请求失败: ${error.message}`);
@@ -443,7 +447,7 @@ export class HttpClient {
     } catch (err) {
       const error = err as Error;
       if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
-        RcpSessionPool.invalidate(key);
+        RcpSessionPool.invalidate(session);
       }
       Logger.error('HttpClient', `HttpClient: POST 请求失败 - ${error.message}`);
       throw new Error(`HTTP POST 请求失败: ${error.message}`);
@@ -486,7 +490,7 @@ export class HttpClient {
     } catch (err) {
       const error = err as Error;
       if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
-        RcpSessionPool.invalidate(key);
+        RcpSessionPool.invalidate(session);
       }
       Logger.error('HttpClient', `HttpClient: POST(binary) 请求失败 - ${error.message}`);
       throw new Error(`HTTP POST 请求失败: ${error.message}`);
