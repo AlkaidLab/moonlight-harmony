@@ -142,8 +142,14 @@ export default class EntryAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     Logger.info(TAG, 'Ability onWindowStageCreate');
 
-    // 注入全局 UIContext（供 service 等非组件代码使用作用域 API，替代全局 px2vp/animateTo）
-    UI.init(windowStage.getMainWindowSync().getUIContext());
+    // 注入全局 UIContext（供 service 等非组件代码使用作用域 API，替代全局 px2vp/animateTo）。
+    // 部分设备/模拟器（实测 API 24 模拟器）此时窗口 UIContent 尚未就绪，getUIContext()
+    // 会抛 "Uicontent is nullptr"，失败则等待 loadContent 完成后在回调里重试。
+    try {
+      UI.init(windowStage.getMainWindowSync().getUIContext());
+    } catch (e) {
+      Logger.warn(TAG, 'Early UI.init unavailable, will retry after loadContent:', e);
+    }
 
     // 加载主页面
     windowStage.loadContent('pages/Index', (err) => {
@@ -152,6 +158,14 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       Logger.info(TAG, 'Succeeded in loading content.');
+      if (!UI.isReady()) {
+        try {
+          UI.init(windowStage.getMainWindowSync().getUIContext());
+          Logger.info(TAG, 'UI.init ready after loadContent');
+        } catch (e) {
+          Logger.error(TAG, 'UI.init failed after loadContent:', e);
+        }
+      }
     });
 
     // 设置窗口属性

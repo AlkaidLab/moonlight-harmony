@@ -19,9 +19,14 @@ import { UIContext } from '@kit.ArkUI';
 export class UI {
   private static ctx: UIContext | undefined = undefined;
 
-  /** EntryAbility.onWindowStageCreate 中调用，早于任何页面加载 */
+  /** EntryAbility 中调用：onWindowStageCreate 时尽早注入（部分设备此时抛错），
+   *  loadContent 完成后重试。幂等，重复调用安全 */
   static init(ctx: UIContext): void {
     UI.ctx = ctx;
+  }
+
+  static isReady(): boolean {
+    return UI.ctx !== undefined;
   }
 
   static get(): UIContext {
