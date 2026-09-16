@@ -75,6 +75,7 @@ scripts/*
 !scripts/archive-native-symbols.js
 !scripts/check-repository.js
 !scripts/check-open-source-licenses.js
+!scripts/test-display-frame-rate.cjs
 
 # Local release artifacts
 release-symbols/

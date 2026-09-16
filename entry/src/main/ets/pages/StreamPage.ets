@@ -15,6 +15,7 @@
  */
 import { router, LengthMetrics } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
+import { getDisplayRequestHz } from '../utils/DisplayFrameRate';
 import { promptAction } from '@kit.ArkUI';
 import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 import { displaySync } from '@kit.ArkGraphics2D';
@@ -234,6 +235,10 @@ struct StreamPage {
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
   // 解决无触摸时 ArkUI .onMouse 降至 ~30Hz 的问题
   private mouseDisplaySync: displaySync.DisplaySync | null = null;
+  private streamDisplaySync: displaySync.DisplaySync | null = null;
+  private streamFrameDiagnosticTimer: number | null = null;
+  private streamDisplayCallbacks: number = 0;
+  private xComponentFrameRequestActive: boolean = false;
   private mouseInputSuspended: boolean = false;
   
   // ── 解耦的处理器/管理器 ──
@@ -1214,25 +1219,26 @@ struct StreamPage {
    * 仅在 C++ Mouse Monitor 不可用时使用。
    */
   private startMouseKeepAlive(): void {
-    if (this.mouseDisplaySync) return;
+    // The stream fallback already keeps this UI pipeline requesting frames.
+    if (this.pageDisposed || this.mouseDisplaySync || this.streamDisplaySync) return;
     try {
-      let deviceRefreshRate = 120;
-      try {
-        const displayInfo = display.getDefaultDisplaySync();
-        deviceRefreshRate = Math.max(Math.round(displayInfo.refreshRate || 120), 60);
-      } catch (_) {}
-
+      const deviceRefreshRate = getDisplayRequestHz(Math.max(60, this.viewModel.streamConfig?.fps ?? 60));
       this.mouseDisplaySync = displaySync.create();
       this.mouseDisplaySync.setExpectedFrameRateRange({
-        min: 60,
+        min: 0,
         max: deviceRefreshRate,
         expected: deviceRefreshRate,
       });
-      this.mouseDisplaySync.start();
-      console.info(`StreamPage: DisplaySync 已启动（请求 60-${deviceRefreshRate}Hz 高刷新率）`);
+      this.mouseDisplaySync.on('frame', () => {});
+      this.getUIContext().runScopedTask(() => { this.mouseDisplaySync?.start(); });
+      console.info(`StreamPage: DisplaySync 已启动（期望 ${deviceRefreshRate}Hz）`);
     } catch (e) {
       console.warn('StreamPage: DisplaySync 创建失败:', JSON.stringify(e));
-      this.mouseDisplaySync = null;
+      if (this.mouseDisplaySync) {
+        try { this.mouseDisplaySync.stop(); } catch (_) {}
+        try { this.mouseDisplaySync.off('frame'); } catch (_) {}
+        this.mouseDisplaySync = null;
+      }
     }
   }
 
@@ -1241,9 +1247,8 @@ struct StreamPage {
    */
   private stopMouseKeepAlive(): void {
     if (this.mouseDisplaySync) {
-      try {
-        this.mouseDisplaySync.stop();
-      } catch (_) {}
+      try { this.mouseDisplaySync.stop(); } catch (_) {}
+      try { this.mouseDisplaySync.off('frame'); } catch (_) {}
       this.mouseDisplaySync = null;
       console.info('StreamPage: DisplaySync 已停止');
     }
@@ -1431,31 +1436,29 @@ struct StreamPage {
       return;
     }
 
+    // Reconnects reuse this page; release the previous request before any new attempt.
+    this.resetStreamFrameHints();
     const surfaceId = this.xComponentController.getXComponentSurfaceId();
 
-    // 设置 XComponent 期望帧率（通过 FrameNode → ArkUI_NodeHandle）
-    // 并启用 native 帧率保活（DisplaySoloist 持续 vsync 请求），
-    // 对抗鸿蒙7 无触摸时系统把刷新率降到 60Hz 的策略
     const streamConfig = this.viewModel.streamConfig;
     if (streamConfig && streamConfig.fps > 60) {
-      if (this.pageDisposed) {
-        console.warn('launchStream: 页面已销毁，跳过帧率保活启用');
-        return;
-      }
+      const displayHz = getDisplayRequestHz(streamConfig.fps);
       try {
         const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
-        if (frameNode) {
-          MoonBridge.setXComponentFrameRate(frameNode, streamConfig.fps);
-          console.info(`XComponent 帧率已设置为 ${streamConfig.fps} fps`);
-        }
+        this.xComponentFrameRequestActive = frameNode !== null && frameNode !== undefined &&
+          MoonBridge.setXComponentFrameRate(frameNode, displayHz);
       } catch (e) {
-        console.warn(`设置 XComponent 帧率失败: ${e}`);
+        console.warn(`XComponent 帧率请求不可用: ${e}`);
+      }
+      if (!this.xComponentFrameRequestActive && displayHz > 60) {
+        this.startStreamDisplaySync(displayHz);
       }
       try {
-        MoonBridge.setFrameRateKeepAlive(true);
+        MoonBridge.setFrameRateKeepAlive(true, displayHz);
       } catch (e) {
-        console.warn(`启用帧率保活失败: ${e}`);
+        console.warn(`启用帧率请求失败: ${e}`);
       }
+      this.startStreamFrameDiagnostics(displayHz);
     }
 
     await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
@@ -1738,24 +1741,67 @@ struct StreamPage {
     });
   }
 
-  /**
-   * 立即停止当前页面上的交互输入，确保战报能先接管界面。
-   */
-  /**
-   * 复位串流期间的帧率请求（幂等）：停用 DisplaySoloist 保活、
-   * 注销 XComponent 每帧回调并恢复默认帧率，避免高刷请求残留耗电。
-   * 供串流结束、启动失败与页面销毁路径复用。
-   */
+  // Public ArkUI fallback for legacy XComponent construction and older APIs.
+  private startStreamDisplaySync(displayHz: number): void {
+    if (this.pageDisposed || this.streamDisplaySync) return;
+    try {
+      this.streamDisplaySync = displaySync.create();
+      this.streamDisplaySync.setExpectedFrameRateRange({ min: 0, max: displayHz, expected: displayHz });
+      this.streamDisplaySync.on('frame', () => { this.streamDisplayCallbacks++; });
+      // launchStream resumes after awaits: explicitly bind start to this window.
+      this.getUIContext().runScopedTask(() => { this.streamDisplaySync?.start(); });
+      this.stopMouseKeepAlive();
+      console.info(`FrameRateRequest: path=DisplaySync expected=${displayHz}`);
+    } catch (e) {
+      if (this.streamDisplaySync) {
+        try { this.streamDisplaySync.stop(); } catch (_) {}
+        try { this.streamDisplaySync.off('frame'); } catch (_) {}
+        this.streamDisplaySync = null;
+      }
+      console.warn(`DisplaySync 帧率请求失败: ${e}`);
+    }
+  }
+
+  private startStreamFrameDiagnostics(displayHz: number): void {
+    if (this.streamFrameDiagnosticTimer !== null) clearInterval(this.streamFrameDiagnosticTimer);
+    this.streamDisplayCallbacks = 0;
+    let lastTime = Date.now();
+    this.streamFrameDiagnosticTimer = setInterval(() => {
+      const now = Date.now();
+      const seconds = Math.max(0.001, (now - lastTime) / 1000);
+      let screenHz = 0;
+      try { screenHz = display.getDefaultDisplaySync().refreshRate; } catch (_) {}
+      const stats = this.viewModel.performanceStats;
+      const path = this.xComponentFrameRequestActive
+        ? 'XComponent'
+        : this.streamDisplaySync !== null ? 'DisplaySync' : 'none';
+      console.info(`FrameRateDiagnostics: rxFps=${stats.fps.toFixed(1)} submittedFps=${stats.renderedFps.toFixed(1)} decodeMs=${stats.globalAvgDecodeLatency.toFixed(1)} drops=${stats.droppedFrames} requestedHz=${displayHz} screenHz=${screenHz} path=${path} displaySyncActive=${this.streamDisplaySync !== null} displaySyncCallbackHz=${(this.streamDisplayCallbacks / seconds).toFixed(1)}`);
+      this.streamDisplayCallbacks = 0;
+      lastTime = now;
+    }, 5000);
+  }
+
+  // Idempotent cleanup for stream end, startup failure and page destruction.
   private resetStreamFrameHints(): void {
+    if (this.streamFrameDiagnosticTimer !== null) {
+      clearInterval(this.streamFrameDiagnosticTimer);
+      this.streamFrameDiagnosticTimer = null;
+    }
+    if (this.streamDisplaySync) {
+      try { this.streamDisplaySync.stop(); } catch (_) {}
+      try { this.streamDisplaySync.off('frame'); } catch (_) {}
+      this.streamDisplaySync = null;
+    }
     try {
       MoonBridge.setFrameRateKeepAlive(false);
     } catch (_) {}
     try {
-      const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
+      const frameNode = this.xComponentFrameRequestActive ? this.getUIContext().getFrameNodeById('streamSurface') : null;
       if (frameNode) {
         MoonBridge.setXComponentFrameRate(frameNode, 60);
       }
     } catch (_) {}
+    this.xComponentFrameRequestActive = false;
   }
 
   private prepareStreamEndUiImmediate(): void {
@@ -2023,6 +2069,7 @@ struct StreamPage {
 
       ToastQueue.show({ message: '已重新连接' });
     } catch (err) {
+      this.resetStreamFrameHints();
       console.error('[StreamPage] 重连串流失败:', err);
       ToastQueue.show({ message: '重连失败，请手动重试' });
     }
