@@ -35,6 +35,7 @@ import {
   GAME_VIBRATION_STRENGTH_ORIGINAL,
   normalizeGameVibrationStrength
 } from '../../model/StreamConfig';
+import { Logger } from '../../common/Logger';
 
 interface MotorPair {
   low: number;
@@ -188,7 +189,7 @@ export class GamepadVibrationService {
       this.lastRumbleControllerNumber = controllerNumber;
       this.rumbleWatchdogTimer = setTimeout(() => {
         this.rumbleWatchdogTimer = -1;
-        console.warn('[Vibration] watchdog: 3s 无回调, 强制停止振动');
+        Logger.warn('GamepadVibrationService', '[Vibration] watchdog: 3s 无回调, 强制停止振动');
         this.handleRumble(this.lastRumbleControllerNumber, 0, 0);
       }, GamepadVibrationService.RUMBLE_WATCHDOG_MS);
     }
@@ -224,7 +225,7 @@ export class GamepadVibrationService {
     }
 
     if (!this.isValidControllerNumber(frame.controllerNumber)) {
-      console.warn('[Vibration] ignoring DS5 IR frame with invalid controller number');
+      Logger.warn('GamepadVibrationService', '[Vibration] ignoring DS5 IR frame with invalid controller number');
       return;
     }
     const controllerNumber = Math.floor(frame.controllerNumber);
@@ -292,7 +293,7 @@ export class GamepadVibrationService {
   /** Forward Sunshine's raw adaptive trigger state to the matching USB slot. */
   handleAdaptiveTriggers(frame: AdaptiveTriggersFrame): void {
     if (!this.isValidControllerNumber(frame.controllerNumber)) {
-      console.warn('[Vibration] ignoring adaptive trigger frame with invalid controller number');
+      Logger.warn('GamepadVibrationService', '[Vibration] ignoring adaptive trigger frame with invalid controller number');
       return;
     }
 
@@ -309,7 +310,7 @@ export class GamepadVibrationService {
 
     if (frame.leftEffect.length !== DS_EFFECT_PAYLOAD_SIZE ||
         frame.rightEffect.length !== DS_EFFECT_PAYLOAD_SIZE) {
-      console.warn('[Vibration] ignoring adaptive trigger frame with invalid payload size');
+      Logger.warn('GamepadVibrationService', '[Vibration] ignoring adaptive trigger frame with invalid payload size');
       return;
     }
 
@@ -580,7 +581,7 @@ export class GamepadVibrationService {
       const current = this.irStreamStates.get(controllerNumber);
       if (!current || current.watchdogTimer !== timerId) return;
       current.watchdogTimer = -1;
-      console.warn('[Vibration] DS5 IR watchdog: stream stalled, clearing IR source');
+      Logger.warn('GamepadVibrationService', '[Vibration] DS5 IR watchdog: stream stalled, clearing IR source');
       this.clearIrSource(controllerNumber, true);
     }, GamepadVibrationService.IR_WATCHDOG_MS);
     state.watchdogTimer = timerId;
@@ -1079,7 +1080,7 @@ export class GamepadVibrationService {
       }
       this.isVibrating = true;
     } catch (err) {
-      console.warn(`[VIBRATION] 设备震动异常: ${err}`);
+      Logger.warn('GamepadVibrationService', `[VIBRATION] 设备震动异常: ${err}`);
       this.triggerMixedTimeFallback(
         mixedContinuous, mixedTransient, effectiveAudioTransient, renderEpoch);
     }

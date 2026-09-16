@@ -18,6 +18,7 @@ import { HttpClient } from '../../utils/HttpClient';
 import { XmlUtil } from '../../utils/XmlUtil';
 import { NvHttp } from '../streaming/NvHttp';
 import { parseAddressAndPort, formatAddressForUrl } from '../../utils/NetHelper';
+import { Logger } from '../../common/Logger';
 
 /**
  * 配对状态
@@ -106,7 +107,7 @@ export class PairingManager {
       PairingManager.cachedClientName = name;
       return name;
     } catch (err) {
-      console.warn(`PairingManager: 无法获取设备名称: ${err}`);
+      Logger.warn('PairingManager', `PairingManager: 无法获取设备名称: ${err}`);
       PairingManager.cachedClientName = 'Moonlight-HarmonyOS';
       return 'Moonlight-HarmonyOS';
     }
@@ -131,7 +132,7 @@ export class PairingManager {
         const keyExists = fileIo.accessSync(this.keyFilePath);
         
         if (certExists && keyExists) {
-          console.info('PairingManager: 发现已存在的证书文件，尝试加载...');
+          Logger.info('PairingManager', 'PairingManager: 发现已存在的证书文件，尝试加载...');
           
           // 读取私钥文件
           const keyFile = await fileIo.open(this.keyFilePath, fileIo.OpenMode.READ_ONLY);
@@ -168,30 +169,30 @@ export class PairingManager {
           const base64Helper = new util.Base64Helper();
           this.clientCertDer = base64Helper.decodeSync(certBase64);
           
-          console.info(`PairingManager: 成功加载已存在的证书，PEM长度=${this.clientCertPem.length}, DER长度=${this.clientCertDer.length}`);
+          Logger.info('PairingManager', `PairingManager: 成功加载已存在的证书，PEM长度=${this.clientCertPem.length}, DER长度=${this.clientCertDer.length}`);
           return;
         }
       } catch (err) {
-        console.warn(`PairingManager: 加载已存在证书失败: ${err}, 将生成新的密钥对`);
+        Logger.warn('PairingManager', `PairingManager: 加载已存在证书失败: ${err}, 将生成新的密钥对`);
         // 继续生成新的密钥对
       }
     }
 
     // 生成新的密钥对和证书
-    console.info('PairingManager: 生成新的 RSA 密钥对...');
+    Logger.info('PairingManager', 'PairingManager: 生成新的 RSA 密钥对...');
     this.keyPair = await CryptoUtil.generateRsaKeyPair();
-    console.info('PairingManager: RSA 密钥对生成完成');
+    Logger.info('PairingManager', 'PairingManager: RSA 密钥对生成完成');
     
     this.clientCertDer = await CryptoUtil.generateSelfSignedCert(this.keyPair);
-    console.info(`PairingManager: 证书 DER 生成完成，长度 = ${this.clientCertDer.length}`);
+    Logger.info('PairingManager', `PairingManager: 证书 DER 生成完成，长度 = ${this.clientCertDer.length}`);
     
     this.clientCertPem = CryptoUtil.getPemCertBytes(this.clientCertDer);
-    console.info(`PairingManager: 证书 PEM 生成完成，长度 = ${this.clientCertPem.length}`);
+    Logger.info('PairingManager', `PairingManager: 证书 PEM 生成完成，长度 = ${this.clientCertPem.length}`);
     
     // 保存证书和私钥到文件（供 HTTPS 请求使用）
     await this.saveCertificatesToFile();
     
-    console.info('PairingManager: 密钥对和证书生成完成');
+    Logger.info('PairingManager', 'PairingManager: 密钥对和证书生成完成');
   }
 
   /**
@@ -199,7 +200,7 @@ export class PairingManager {
    */
   private async saveCertificatesToFile(): Promise<void> {
     if (!this.certFilePath || !this.keyFilePath || !this.keyPair || !this.clientCertPem) {
-      console.warn('PairingManager: 无法保存证书（路径或数据不完整）');
+      Logger.warn('PairingManager', 'PairingManager: 无法保存证书（路径或数据不完整）');
       return;
     }
 
@@ -210,16 +211,16 @@ export class PairingManager {
       const certFile = await fileIo.open(this.certFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       await fileIo.write(certFile.fd, certContent);
       await fileIo.close(certFile);
-      console.info(`PairingManager: 证书已保存到 ${this.certFilePath}`);
+      Logger.info('PairingManager', `PairingManager: 证书已保存到 ${this.certFilePath}`);
 
       // 保存私钥
       const priKeyBlob = this.keyPair.priKey.getEncodedPem('PKCS8');
       const keyFile = await fileIo.open(this.keyFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       await fileIo.write(keyFile.fd, priKeyBlob);
       await fileIo.close(keyFile);
-      console.info(`PairingManager: 私钥已保存到 ${this.keyFilePath}`);
+      Logger.info('PairingManager', `PairingManager: 私钥已保存到 ${this.keyFilePath}`);
     } catch (err) {
-      console.error(`PairingManager: 保存证书失败: ${err}`);
+      Logger.error('PairingManager', `PairingManager: 保存证书失败: ${err}`);
     }
   }
 
@@ -258,8 +259,8 @@ export class PairingManager {
    * @param useClientCert 是否使用客户端证书（HTTPS 请求需要）
    */
   private async doRequest(url: string, timeout: number = 7000, useClientCert: boolean = false): Promise<string> {
-    console.info(`PairingManager: 请求 ${url}`);
-    console.info(`PairingManager: 超时设置 = ${timeout > 0 ? timeout : '无限制'}, 使用客户端证书 = ${useClientCert}`);
+    Logger.info('PairingManager', `PairingManager: 请求 ${url}`);
+    Logger.info('PairingManager', `PairingManager: 超时设置 = ${timeout > 0 ? timeout : '无限制'}, 使用客户端证书 = ${useClientCert}`);
 
     if (useClientCert && this.certFilePath && this.keyFilePath) {
       return HttpClient.getWithClientCert(url, this.certFilePath, this.keyFilePath, {
@@ -300,11 +301,11 @@ export class PairingManager {
       pemString += String.fromCharCode(pemBytes[i]);
     }
     
-    console.info(`PairingManager: 服务器证书 PEM 前80字符 = ${pemString.substring(0, 80)}`);
+    Logger.info('PairingManager', `PairingManager: 服务器证书 PEM 前80字符 = ${pemString.substring(0, 80)}`);
     
     // 从 PEM 提取 DER
     const derBytes = CryptoUtil.pemToDer(pemString);
-    console.info(`PairingManager: 服务器证书 DER 长度 = ${derBytes.length}`);
+    Logger.info('PairingManager', `PairingManager: 服务器证书 DER 长度 = ${derBytes.length}`);
     
     return derBytes;
   }
@@ -353,13 +354,13 @@ export class PairingManager {
         if (parts.length > 0) {
           const major = parseInt(parts[0]);
           if (!isNaN(major)) {
-            console.info(`PairingManager: 检测到服务器主版本号 = ${major}`);
+            Logger.info('PairingManager', `PairingManager: 检测到服务器主版本号 = ${major}`);
             return major;
           }
         }
       }
     } catch (err) {
-      console.warn(`PairingManager: 获取服务器版本失败: ${err}, 使用默认值 7`);
+      Logger.warn('PairingManager', `PairingManager: 获取服务器版本失败: ${err}, 使用默认值 7`);
     }
     return 7;
   }
@@ -375,16 +376,16 @@ export class PairingManager {
       if (httpsPortStr) {
         const httpsPort = parseInt(httpsPortStr);
         if (httpsPort > 0) {
-          console.info(`PairingManager: 从 serverinfo 获取 HTTPS 端口: ${httpsPort}`);
+          Logger.info('PairingManager', `PairingManager: 从 serverinfo 获取 HTTPS 端口: ${httpsPort}`);
           return `https://${this.formattedHost}:${httpsPort}`;
         }
       }
     } catch (err) {
-      console.warn(`PairingManager: 获取 HTTPS 端口失败: ${err}`);
+      Logger.warn('PairingManager', `PairingManager: 获取 HTTPS 端口失败: ${err}`);
     }
     // 兜底：httpPort - 5
     const fallbackPort = PairingManager.DEFAULT_HTTPS_PORT;
-    console.info(`PairingManager: 使用默认 HTTPS 端口: ${fallbackPort}`);
+    Logger.info('PairingManager', `PairingManager: 使用默认 HTTPS 端口: ${fallbackPort}`);
     return `https://${this.formattedHost}:${fallbackPort}`;
   }
 
@@ -400,35 +401,35 @@ export class PairingManager {
     // 自动检测服务器版本号（Gen 7+ 使用 SHA-256，之前使用 SHA-1）
     const serverMajorVersion = await this.fetchServerMajorVersion();
     const useSha256 = serverMajorVersion >= 7;
-    console.info(`PairingManager: 服务器版本 ${serverMajorVersion}, 使用 ${useSha256 ? 'SHA-256' : 'SHA-1'} 哈希算法`);
+    Logger.info('PairingManager', `PairingManager: 服务器版本 ${serverMajorVersion}, 使用 ${useSha256 ? 'SHA-256' : 'SHA-1'} 哈希算法`);
 
     try {
       // ============ 步骤 1: 发送 salt 和客户端证书，获取服务器证书 ============
-      console.info('PairingManager: 步骤1 - 发送 salt 和客户端证书');
-      console.info(`PairingManager: PIN = ${pin}`);
+      Logger.info('PairingManager', 'PairingManager: 步骤1 - 发送 salt 和客户端证书');
+      Logger.info('PairingManager', `PairingManager: PIN = ${pin}`);
 
       const salt = CryptoUtil.generateRandomBytes(16);
       const saltedPin = CryptoUtil.saltPin(salt, pin);
       const saltedPinHash = await this.hashData(saltedPin, useSha256);
       const aesKey = CryptoUtil.generateAesKeyFromHash(saltedPinHash);
 
-      console.info(`PairingManager: salt = ${CryptoUtil.bytesToHex(salt)}`);
-      console.info(`PairingManager: clientCert长度 = ${this.getClientCertHex().length}`);
+      Logger.info('PairingManager', `PairingManager: salt = ${CryptoUtil.bytesToHex(salt)}`);
+      Logger.info('PairingManager', `PairingManager: clientCert长度 = ${this.getClientCertHex().length}`);
 
       const step1Url = this.buildPairUrl(
         `devicename=roth&updateState=1&phrase=getservercert` +
         `&salt=${CryptoUtil.bytesToHex(salt)}&clientcert=${this.getClientCertHex()}`
       );
 
-      console.info('PairingManager: 等待服务器响应（用户需要在服务器上输入 PIN）...');
+      Logger.info('PairingManager', 'PairingManager: 等待服务器响应（用户需要在服务器上输入 PIN）...');
 
       // 使用 rcp 发送请求，设置 5 分钟超时（等待用户在主机上输入 PIN）
       const step1Response = await this.doRequest(step1Url, 300000);
 
-      console.info(`PairingManager: 步骤1响应 = ${step1Response.substring(0, 200)}...`);
+      Logger.info('PairingManager', `PairingManager: 步骤1响应 = ${step1Response.substring(0, 200)}...`);
 
       if (XmlUtil.getValue(step1Response, 'paired') !== '1') {
-        console.error('PairingManager: 步骤1失败 - paired != 1');
+        Logger.error('PairingManager', 'PairingManager: 步骤1失败 - paired != 1');
         return { state: PairState.FAILED };
       }
 
@@ -442,7 +443,7 @@ export class PairingManager {
       }
 
       // ============ 步骤 2: 发送加密的客户端挑战 ============
-      console.info('PairingManager: 步骤2 - 发送客户端挑战');
+      Logger.info('PairingManager', 'PairingManager: 步骤2 - 发送客户端挑战');
 
       const randomChallenge = CryptoUtil.generateRandomBytes(16);
       const encryptedChallenge = await CryptoUtil.aesEncrypt(randomChallenge, aesKey);
@@ -470,7 +471,7 @@ export class PairingManager {
       const serverChallenge = decServerChallengeResponse.slice(hashLength, hashLength + 16);
 
       // ============ 步骤 3: 发送服务器挑战响应 ============
-      console.info('PairingManager: 步骤3 - 发送服务器挑战响应');
+      Logger.info('PairingManager', 'PairingManager: 步骤3 - 发送服务器挑战响应');
 
       const clientSecret = CryptoUtil.generateRandomBytes(16);
 
@@ -506,11 +507,11 @@ export class PairingManager {
       // 验证服务器签名（防止 MITM 攻击）
       const serverSignatureValid = await CryptoUtil.verifyWithCert(serverSecret, serverSignature, this.serverCertDer!);
       if (!serverSignatureValid) {
-        console.error('PairingManager: 服务器签名验证失败，可能存在中间人攻击');
+        Logger.error('PairingManager', 'PairingManager: 服务器签名验证失败，可能存在中间人攻击');
         await this.unpair();
         return { state: PairState.FAILED, pairName };
       }
-      console.info('PairingManager: 服务器签名验证通过');
+      Logger.info('PairingManager', 'PairingManager: 服务器签名验证通过');
 
       // 验证 PIN 是否正确
       // 使用服务器证书签名（参考 Android 实现：serverCert.getSignature()）
@@ -529,14 +530,14 @@ export class PairingManager {
       }
 
       // ============ 步骤 4: 发送客户端签名的 secret ============
-      console.info('PairingManager: 步骤4 - 发送客户端 secret');
+      Logger.info('PairingManager', 'PairingManager: 步骤4 - 发送客户端 secret');
 
       // 签名 clientSecret
-      console.info(`PairingManager: clientSecret 长度 = ${clientSecret.length}`);
+      Logger.info('PairingManager', `PairingManager: clientSecret 长度 = ${clientSecret.length}`);
       const clientSignature = await CryptoUtil.rsaSign(clientSecret, this.keyPair!.priKey);
-      console.info(`PairingManager: clientSignature 长度 = ${clientSignature.length}`);
+      Logger.info('PairingManager', `PairingManager: clientSignature 长度 = ${clientSignature.length}`);
       const clientPairingSecret = CryptoUtil.concatBytes(clientSecret, clientSignature);
-      console.info(`PairingManager: clientPairingSecret 长度 = ${clientPairingSecret.length}`);
+      Logger.info('PairingManager', `PairingManager: clientPairingSecret 长度 = ${clientPairingSecret.length}`);
 
       const step4Url = this.buildPairUrl(
         `devicename=roth&updateState=1` +
@@ -551,7 +552,7 @@ export class PairingManager {
       }
 
       // ============ 步骤 5: 执行配对挑战（完成配对） ============
-      console.info('PairingManager: 步骤5 - 完成配对');
+      Logger.info('PairingManager', 'PairingManager: 步骤5 - 完成配对');
 
       // 动态获取 HTTPS URL（匹配 Android executePairingChallenge → getHttpsUrl 行为）
       const httpsUrl = await this.getHttpsUrl();
@@ -566,7 +567,7 @@ export class PairingManager {
         return { state: PairState.FAILED, pairName };
       }
 
-      console.info('PairingManager: 配对成功!');
+      Logger.info('PairingManager', 'PairingManager: 配对成功!');
       return {
         state: PairState.PAIRED,
         serverCert: this.serverCertDer,
@@ -574,7 +575,7 @@ export class PairingManager {
       };
 
     } catch (err) {
-      console.error('PairingManager: 配对失败', err);
+      Logger.error('PairingManager', 'PairingManager: 配对失败', err);
       return { state: PairState.FAILED };
     }
   }
@@ -587,7 +588,7 @@ export class PairingManager {
       const url = `${this.baseUrl}/unpair?uniqueid=${this.uniqueId}`;
       await this.doRequest(url);
     } catch (err) {
-      console.warn('PairingManager: 取消配对失败', err);
+      Logger.warn('PairingManager', 'PairingManager: 取消配对失败', err);
     }
   }
 

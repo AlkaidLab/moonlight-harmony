@@ -38,6 +38,7 @@ import {
 } from './MoonBridge';
 import { KeyboardTranslator } from '../input/KeyboardTranslator';
 import { InputInterceptorService, MouseInterceptorService } from '../input/InputInterceptorService';
+import { Logger } from '../../common/Logger';
 
 export class StreamInputHandler {
   // ── 键盘修饰键状态追踪（位掩码：Shift=0x01, Ctrl=0x02, Alt=0x04, Meta=0x08）──
@@ -249,7 +250,7 @@ export class StreamInputHandler {
     }
     this.releasedVkKeys.clear();
     if (resynced > 0) {
-      console.info(`[INPUT] 焦点恢复对账: ${resynced} 个按键状态已重新同步`);
+      Logger.info('StreamInputHandler', `[INPUT] 焦点恢复对账: ${resynced} 个按键状态已重新同步`);
     }
   }
 
@@ -301,11 +302,11 @@ export class StreamInputHandler {
       const lockResult = mouseInterceptor.lockCursor(windowId, !relativeMode);
       cursorLocked = lockResult === 0;
       if (!cursorLocked) {
-        console.info(`StreamInputHandler: 光标锁定不可用 (${lockResult})，保留原有鼠标处理`);
+        Logger.info('StreamInputHandler', `StreamInputHandler: 光标锁定不可用 (${lockResult})，保留原有鼠标处理`);
       }
     }
     if (relativeMode && cursorLocked) {
-      console.info('StreamInputHandler: 游戏鼠标模式已锁定光标，使用 ArkUI rawDelta');
+      Logger.info('StreamInputHandler', 'StreamInputHandler: 游戏鼠标模式已锁定光标，使用 ArkUI rawDelta');
       return false;
     }
 
@@ -317,7 +318,7 @@ export class StreamInputHandler {
     if (result === 0) {
       this.mouseInterceptorActive = true;
       const modeLabel = relativeMode ? '相对/游戏' : '绝对/桌面';
-      console.info(`StreamInputHandler: C++ 鼠标 Monitor 已启动 (${screenWidthPx}x${screenHeightPx}px, ${modeLabel})`);
+      Logger.info('StreamInputHandler', `StreamInputHandler: C++ 鼠标 Monitor 已启动 (${screenWidthPx}x${screenHeightPx}px, ${modeLabel})`);
 
       // 异步获取实际窗口矩形（窗口模式下与屏幕尺寸不同）
       this.fetchAndUpdateWindowRect();
@@ -325,7 +326,7 @@ export class StreamInputHandler {
     }
 
     this.mouseInterceptorActive = false;
-    console.info(`StreamInputHandler: C++ Monitor 不可用 (${result})，将使用 keepalive 动画保持 .onMouse 全速`);
+    Logger.info('StreamInputHandler', `StreamInputHandler: C++ Monitor 不可用 (${result})，将使用 keepalive 动画保持 .onMouse 全速`);
     return false;
   }
 
@@ -365,10 +366,10 @@ export class StreamInputHandler {
             rect.left, rect.top, rect.width, rect.height,
             this.screenWidthPx, this.screenHeightPx, relativeMode
           );
-          console.info(`StreamInputHandler: 窗口矩形已更新 (${rect.left},${rect.top},${rect.width}x${rect.height})`);
+          Logger.info('StreamInputHandler', `StreamInputHandler: 窗口矩形已更新 (${rect.left},${rect.top},${rect.width}x${rect.height})`);
         }
       }).catch((err: Error) => {
-        console.warn(`StreamInputHandler: 获取窗口矩形失败: ${err?.message}`);
+        Logger.warn('StreamInputHandler', `StreamInputHandler: 获取窗口矩形失败: ${err?.message}`);
       });
     } catch (_) {}
   }
@@ -639,7 +640,7 @@ export class StreamInputHandler {
       }
     });
     if (result !== 0) {
-      console.warn(`StreamPage: 按键拦截器启动失败 (${result})，手柄 Home 键可能被系统劫持`);
+      Logger.warn('StreamInputHandler', `StreamPage: 按键拦截器启动失败 (${result})，手柄 Home 键可能被系统劫持`);
       ToastQueue.show({
         message: '按键反劫持启动失败：蓝牙手柄 Home 键可能导致退出（需系统级签名）',
         duration: 3500

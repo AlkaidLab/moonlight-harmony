@@ -20,6 +20,7 @@ import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { ToastQueue } from './ToastQueue';
+import { Logger } from '../common/Logger';
 
 const BACKGROUND_IMAGE_URL_KEY = 'settings_background_image_url';
 const BACKGROUND_IMAGE_TYPE_KEY = 'settings_background_image_type';
@@ -198,7 +199,7 @@ export class BackgroundImageUtil {
           // 检查缓存是否过期（超过24小时则重新下载）
           const cacheAge = Date.now() - stat.mtime * 1000;
           if (cacheAge > BACKGROUND_CACHE_EXPIRE_MS) {
-            console.info('BackgroundImageUtil: 缓存已过期，将下载新图片');
+            Logger.info('BackgroundImageUtil', 'BackgroundImageUtil: 缓存已过期，将下载新图片');
             // 重置 refreshTimestamp 以获取新图片 URL
             this.refreshTimestamp = Date.now();
           } else {
@@ -207,13 +208,13 @@ export class BackgroundImageUtil {
             this.cachedImageData = new ArrayBuffer(stat.size);
             fileIo.readSync(file.fd, this.cachedImageData);
             fileIo.closeSync(file.fd);
-            console.info(`BackgroundImageUtil: 使用 ${this.cachedOrientation} 方向缓存`);
+            Logger.info('BackgroundImageUtil', `BackgroundImageUtil: 使用 ${this.cachedOrientation} 方向缓存`);
             return this.localCachePath;
           }
         }
       } catch (error) {
         // 文件不存在，继续下载
-        console.debug(`BackgroundImageUtil: ${this.cachedOrientation} 方向缓存不存在，将下载新图片`);
+        Logger.debug('BackgroundImageUtil', `BackgroundImageUtil: ${this.cachedOrientation} 方向缓存不存在，将下载新图片`);
       }
     }
     
@@ -237,7 +238,7 @@ export class BackgroundImageUtil {
       
       return this.localCachePath;
     } catch (err) {
-      console.error('BackgroundImageUtil: 保存本地缓存失败', err);
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存本地缓存失败', err);
       return '';
     }
   }
@@ -289,7 +290,7 @@ export class BackgroundImageUtil {
       this.isLoaded = true;
       return this.cachedUrl;
     } catch (err) {
-      console.error('BackgroundImageUtil: 加载背景图设置失败', err);
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 加载背景图设置失败', err);
       return this.getPipwApiUrl();
     }
   }
@@ -385,7 +386,7 @@ export class BackgroundImageUtil {
         }
       }
     } catch (err) {
-      console.error('BackgroundImageUtil: 保存背景图类型失败', err);
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存背景图类型失败', err);
     }
   }
 
@@ -408,7 +409,7 @@ export class BackgroundImageUtil {
     try {
       await PreferencesUtil.put(BACKGROUND_DISCLAIMER_ACCEPTED_KEY, true);
     } catch (err) {
-      console.error('BackgroundImageUtil: 保存免责声明状态失败', err);
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存免责声明状态失败', err);
     }
   }
 
@@ -441,7 +442,7 @@ export class BackgroundImageUtil {
       
       this.isLoaded = true;
     } catch (err) {
-      console.error('BackgroundImageUtil: 保存背景图设置失败', err);
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存背景图设置失败', err);
     }
   }
 
@@ -476,7 +477,7 @@ export class BackgroundImageUtil {
         try {
           await fileIo.access(cachePath);
           await fileIo.unlink(cachePath);
-          console.info(`BackgroundImageUtil: 已清除缓存文件 ${cachePath}`);
+          Logger.info('BackgroundImageUtil', `BackgroundImageUtil: 已清除缓存文件 ${cachePath}`);
         } catch (err) {
           // 文件不存在或删除失败，忽略
         }
@@ -600,7 +601,7 @@ export class BackgroundImageUtil {
             return imageData;
           }
         } catch (e) {
-          console.warn('BackgroundImageUtil: 读取本地文件失败');
+          Logger.warn('BackgroundImageUtil', 'BackgroundImageUtil: 读取本地文件失败');
         }
       }
       
@@ -612,7 +613,7 @@ export class BackgroundImageUtil {
       // 重新下载
       return await this.downloadImage(imageUrl);
     } catch (err) {
-      console.error('BackgroundImageUtil: 下载图片数据失败', err);
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 下载图片数据失败', err);
       return null;
     }
   }
@@ -681,7 +682,7 @@ export class BackgroundImageUtil {
       ToastQueue.show({ message: '图片已保存到相册' });
       return true;
     } catch (err) {
-      console.error('BackgroundImageUtil: 保存本地缓存到相册失败', err);
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存本地缓存到相册失败', err);
       const error = err as Error;
       if (error.message?.includes('permission')) {
         ToastQueue.show({ message: '没有保存图片的权限，请在设置中授权' });
@@ -719,10 +720,10 @@ export class BackgroundImageUtil {
             imageData = new ArrayBuffer(stat.size);
             fileIo.readSync(file.fd, imageData);
             fileIo.closeSync(file.fd);
-            console.info('BackgroundImageUtil: 从本地文件读取图片数据');
+            Logger.info('BackgroundImageUtil', 'BackgroundImageUtil: 从本地文件读取图片数据');
           }
         } catch (e) {
-          console.warn('BackgroundImageUtil: 读取本地文件失败，尝试使用缓存数据');
+          Logger.warn('BackgroundImageUtil', 'BackgroundImageUtil: 读取本地文件失败，尝试使用缓存数据');
         }
       }
       
@@ -765,7 +766,7 @@ export class BackgroundImageUtil {
       ToastQueue.show({ message: '图片已保存到相册' });
       return true;
     } catch (err) {
-      console.error('BackgroundImageUtil: 保存图片失败', err);
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存图片失败', err);
       const error = err as Error;
       if (error.message?.includes('permission')) {
         ToastQueue.show({ message: '没有保存图片的权限，请在设置中授权' });
@@ -805,7 +806,7 @@ export class BackgroundImageUtil {
               httpRequest.destroy();
               
               if (err) {
-                console.error('BackgroundImageUtil: 下载图片请求失败', err);
+                Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 下载图片请求失败', err);
                 const errorResult: DownloadResult = { code: 0, data: null, redirectUrl: '' };
                 resolve(errorResult);
                 return;
@@ -826,7 +827,7 @@ export class BackgroundImageUtil {
                 const successResult: DownloadResult = { code: data.responseCode, data: data.result as ArrayBuffer, redirectUrl: '' };
                 resolve(successResult);
               } else {
-                console.error('BackgroundImageUtil: 下载图片响应错误', data.responseCode);
+                Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 下载图片响应错误', data.responseCode);
                 const failResult: DownloadResult = { code: data.responseCode, data: null, redirectUrl: '' };
                 resolve(failResult);
               }
@@ -839,7 +840,7 @@ export class BackgroundImageUtil {
         }
         
         if (result.redirectUrl) {
-          console.info(`BackgroundImageUtil: 重定向到 ${result.redirectUrl}`);
+          Logger.info('BackgroundImageUtil', `BackgroundImageUtil: 重定向到 ${result.redirectUrl}`);
           cleanUrl = result.redirectUrl;
           redirectCount++;
           continue;
@@ -849,10 +850,10 @@ export class BackgroundImageUtil {
         return null;
       }
       
-      console.error('BackgroundImageUtil: 重定向次数超限');
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 重定向次数超限');
       return null;
     } catch (err) {
-      console.error('BackgroundImageUtil: 下载图片失败', err);
+      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 下载图片失败', err);
       return null;
     }
   }

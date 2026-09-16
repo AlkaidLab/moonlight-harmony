@@ -7,6 +7,7 @@
 
 import nativeLib from 'libmoonlight_nativelib.so'
 import { ClipboardSyncListener } from '../clipboard/ClipboardSyncConfig'
+import { Logger } from '../../common/Logger';
 
 /**
  * Clipboard-related native bindings and constants.
@@ -94,7 +95,7 @@ export namespace MoonBridge {
       try {
         clipboardListener.onClipboardData(kind, token, payload)
       } catch (error) {
-        console.error(`ClipboardSyncListener.onClipboardData threw: ${error}`)
+        Logger.error('ClipboardBridge', `ClipboardSyncListener.onClipboardData threw: ${error}`)
       }
     }
   }

@@ -19,6 +19,7 @@ import { AbstractDualSenseController } from './AbstractDualSenseController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, DualSense, DPadDirection, ControllerCapabilities } from './ControllerConstants';
 import { readShortLE, TRIGGER_MAX } from '../input/GamepadTypes';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[USB-DS5]';
 
@@ -106,7 +107,7 @@ export class DualSenseController extends AbstractDualSenseController {
       return false;
     }
     
-    console.info(`${TAG} 检测到 DualSense 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+    Logger.info('DualSenseController', `${TAG} 检测到 DualSense 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
     return true;
   }
   
@@ -129,7 +130,7 @@ export class DualSenseController extends AbstractDualSenseController {
    */
   protected handleRead(buffer: Uint8Array): boolean {
     if (buffer.length < 10) {
-      console.warn(`${TAG} 数据太短: ${buffer.length}`);
+      Logger.warn('DualSenseController', `${TAG} 数据太短: ${buffer.length}`);
       return false;
     }
     
@@ -280,7 +281,7 @@ export class DualSenseController extends AbstractDualSenseController {
    * 初始化
    */
   protected doInit(): boolean {
-    console.info(`${TAG} 初始化 DualSense 控制器`);
+    Logger.info('DualSenseController', `${TAG} 初始化 DualSense 控制器`);
     const initData = this.getInitData();
     if (initData.length > 0) {
       this.sendCommand(initData);
@@ -475,11 +476,11 @@ export class DualSenseController extends AbstractDualSenseController {
           const result = await this.bulkWrite(report, OUTPUT_WRITE_TIMEOUT_MS);
           writeSucceeded = result === report.length;
           if (!writeSucceeded) {
-            console.warn(TAG + ' output report failed: expected=' +
+            Logger.warn('DualSenseController', TAG + ' output report failed: expected=' +
               report.length.toString() + ', actual=' + result.toString());
           }
         } catch (writeErr) {
-          console.error(TAG + ' output report exception: ' + String(writeErr));
+          Logger.error('DualSenseController', TAG + ' output report exception: ' + String(writeErr));
         }
         if (!writeSucceeded && stoppingReport &&
             this.outputStopRetriesRemaining > 0) {
@@ -488,7 +489,7 @@ export class DualSenseController extends AbstractDualSenseController {
         }
       }
     } catch (err) {
-      console.error(TAG + ' output report exception: ' + String(err));
+      Logger.error('DualSenseController', TAG + ' output report exception: ' + String(err));
     } finally {
       this.outputWriteInFlight = false;
       this.outputDrainPromise = null;

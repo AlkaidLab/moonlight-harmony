@@ -16,6 +16,7 @@ import { AppStateService } from '../service/AppStateService';
 import { UiSettings } from '../service/SettingsService';
 import { RcpSessionPool } from '../utils/RcpSessionPool';
 import { NetworkErrorClassifierSelfCheck } from '../utils/NetworkErrorClassifierSelfCheck';
+import { UI } from '../common/UI';
 
 const TAG = 'EntryAbility';
 const DOMAIN = 0x0000;
@@ -141,6 +142,9 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onWindowStageCreate');
+
+    // 注入全局 UIContext（供 service 等非组件代码使用作用域 API，替代全局 px2vp/animateTo）
+    UI.init(windowStage.getMainWindowSync().getUIContext());
 
     // 加载主页面
     windowStage.loadContent('pages/Index', (err) => {

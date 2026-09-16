@@ -21,6 +21,7 @@
 
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { display } from '@kit.ArkUI';
+import { UI } from '../../common/UI';
 import { SettingsBackupService } from '../SettingsBackupService';
 import {
   CustomKeyProfile,
@@ -30,6 +31,7 @@ import {
   generateKeyId,
   KeyAction,
 } from './CustomKeyTypes';
+import { Logger } from '../../common/Logger';
 
 /** 导出数据格式 */
 interface ExportData {
@@ -85,7 +87,7 @@ export class CustomKeyStore {
       // 数据迁移：旧的绝对坐标 (x,y vp) → 百分比坐标 (xPercent,yPercent)
       if (CustomKeyStore.migrateAbsoluteToPercent()) {
         await CustomKeyStore.save();
-        console.info('[CustomKeyStore] 坐标迁移完成: absolute vp → percent');
+        Logger.info('CustomKeyStore', '[CustomKeyStore] 坐标迁移完成: absolute vp → percent');
       }
 
       // 加载游戏→配置映射
@@ -96,7 +98,7 @@ export class CustomKeyStore {
         CustomKeyStore.gameProfiles = {};
       }
     } catch (e) {
-      console.error('[CustomKeyStore] init failed:', JSON.stringify(e));
+      Logger.error('CustomKeyStore', '[CustomKeyStore] init failed:', JSON.stringify(e));
       CustomKeyStore.profiles = [createDefaultProfile('默认')];
       CustomKeyStore.activeProfileName = '默认';
     }
@@ -128,8 +130,8 @@ export class CustomKeyStore {
 
     // 获取当前屏幕尺寸作为参考（假设旧数据是在当前设备上保存的）
     const displayInfo = display.getDefaultDisplaySync();
-    const screenWVp = px2vp(displayInfo.width);
-    const screenHVp = px2vp(displayInfo.height);
+    const screenWVp = UI.get().px2vp(displayInfo.width);
+    const screenHVp = UI.get().px2vp(displayInfo.height);
     if (screenWVp <= 0 || screenHVp <= 0) return false;
 
     let migrated = false;
@@ -147,8 +149,8 @@ export class CustomKeyStore {
    */
   private static migrateProfileKeys(profile: CustomKeyProfile): boolean {
     const displayInfo = display.getDefaultDisplaySync();
-    const screenWVp = px2vp(displayInfo.width);
-    const screenHVp = px2vp(displayInfo.height);
+    const screenWVp = UI.get().px2vp(displayInfo.width);
+    const screenHVp = UI.get().px2vp(displayInfo.height);
     if (screenWVp <= 0 || screenHVp <= 0) return false;
 
     let migrated = false;
@@ -347,7 +349,7 @@ export class CustomKeyStore {
       await CustomKeyStore.save();
       return true;
     } catch (e) {
-      console.error('[CustomKeyStore] import failed:', JSON.stringify(e));
+      Logger.error('CustomKeyStore', '[CustomKeyStore] import failed:', JSON.stringify(e));
       return false;
     }
   }
@@ -378,7 +380,7 @@ export class CustomKeyStore {
       await CustomKeyStore.save();
       return count;
     } catch (e) {
-      console.error('[CustomKeyStore] merge import failed:', JSON.stringify(e));
+      Logger.error('CustomKeyStore', '[CustomKeyStore] merge import failed:', JSON.stringify(e));
       return -1;
     }
   }

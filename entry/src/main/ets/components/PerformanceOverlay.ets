@@ -158,7 +158,7 @@ export struct PerformanceOverlay {
   
   private dismissGuide(): void {
     if (this.showGuide) {
-      animateTo({ duration: 200, curve: Curve.EaseIn }, () => {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseIn }, () => {
         this.showGuide = false;
       });
     }
@@ -361,11 +361,11 @@ export struct PerformanceOverlay {
         this.lockFlashBorderOpacity = 0;
         return;
       }
-      animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
         this.lockFlashBorderOpacity = 0.8;
       });
       setTimeout(() => {
-        animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
+        this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
           this.lockFlashBorderOpacity = 0;
         });
         count++;

@@ -15,6 +15,7 @@
  */
 import { window, display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
+import { Logger } from '../../common/Logger';
 
 /**
  * 显示尺寸信息
@@ -106,9 +107,9 @@ export class StreamWindowManager {
       this.screenWidth = displayInfo.width / displayInfo.densityPixels;
       this.screenHeight = displayInfo.height / displayInfo.densityPixels;
       
-      console.info(`StreamWindowManager: 屏幕尺寸 ${this.screenWidth}x${this.screenHeight}`);
+      Logger.info('StreamWindowManager', `StreamWindowManager: 屏幕尺寸 ${this.screenWidth}x${this.screenHeight}`);
     } catch (err) {
-      console.error('获取屏幕尺寸失败:', err);
+      Logger.error('StreamWindowManager', '获取屏幕尺寸失败:', err);
     }
     
     return this.getScreenSize();
@@ -135,9 +136,9 @@ export class StreamWindowManager {
       }
 
       this._isFullscreen = true;
-      console.info('StreamWindowManager: 已配置窗口基本设置（全屏+沉浸式+装饰栏隐藏）');
+      Logger.info('StreamWindowManager', 'StreamWindowManager: 已配置窗口基本设置（全屏+沉浸式+装饰栏隐藏）');
     } catch (err) {
-      console.error('配置窗口失败:', err);
+      Logger.error('StreamWindowManager', '配置窗口失败:', err);
     }
   }
   
@@ -163,9 +164,9 @@ export class StreamWindowManager {
 
       this._isFullscreen = false;
       this.mainWindowId = -1;
-      console.info('StreamWindowManager: 已恢复窗口设置');
+      Logger.info('StreamWindowManager', 'StreamWindowManager: 已恢复窗口设置');
     } catch (err) {
-      console.error('恢复窗口设置失败:', err);
+      Logger.error('StreamWindowManager', '恢复窗口设置失败:', err);
     }
   }
 
@@ -186,21 +187,21 @@ export class StreamWindowManager {
         try {
           await win.recover();
         } catch (_e) {
-          console.info('StreamWindowManager: recover() 不可用，保持最大化');
+          Logger.info('StreamWindowManager', 'StreamWindowManager: recover() 不可用，保持最大化');
         }
         this._isFullscreen = false;
         this.notifyWindowSizeChanged();
-        console.info('StreamWindowManager: 已切换到窗口模式');
+        Logger.info('StreamWindowManager', 'StreamWindowManager: 已切换到窗口模式');
       } else {
         // 取消窗口大小变化监听
         this.unregisterWindowSizeListener(win);
         await this.enterImmersiveFullscreen(win);
         this._isFullscreen = true;
         this.notifyWindowSizeChanged();
-        console.info('StreamWindowManager: 已切换到全屏模式');
+        Logger.info('StreamWindowManager', 'StreamWindowManager: 已切换到全屏模式');
       }
     } catch (err) {
-      console.error('StreamWindowManager: 窗口模式切换失败:', err);
+      Logger.error('StreamWindowManager', 'StreamWindowManager: 窗口模式切换失败:', err);
     }
   }
 
@@ -292,7 +293,7 @@ export class StreamWindowManager {
         height: rect.height / density
       };
     } catch (err) {
-      console.warn('StreamWindowManager: 获取窗口内容区尺寸失败:', err);
+      Logger.warn('StreamWindowManager', 'StreamWindowManager: 获取窗口内容区尺寸失败:', err);
       return this.getScreenSize();
     }
   }
@@ -396,16 +397,16 @@ export class StreamWindowManager {
 
       if (this.streamWidth > this.streamHeight) {
         await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_LANDSCAPE);
-        console.info(`StreamWindowManager: 设置横屏模式 (${this.streamWidth}x${this.streamHeight})`);
+        Logger.info('StreamWindowManager', `StreamWindowManager: 设置横屏模式 (${this.streamWidth}x${this.streamHeight})`);
       } else if (this.streamHeight > this.streamWidth) {
         await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_PORTRAIT);
-        console.info(`StreamWindowManager: 设置竖屏模式 (${this.streamWidth}x${this.streamHeight})`);
+        Logger.info('StreamWindowManager', `StreamWindowManager: 设置竖屏模式 (${this.streamWidth}x${this.streamHeight})`);
       } else {
         await win.setPreferredOrientation(window.Orientation.AUTO_ROTATION);
-        console.info(`StreamWindowManager: 设置自动旋转模式 (${this.streamWidth}x${this.streamHeight})`);
+        Logger.info('StreamWindowManager', `StreamWindowManager: 设置自动旋转模式 (${this.streamWidth}x${this.streamHeight})`);
       }
     } catch (err) {
-      console.error('设置屏幕方向失败:', err);
+      Logger.error('StreamWindowManager', '设置屏幕方向失败:', err);
     }
   }
 
@@ -425,9 +426,9 @@ export class StreamWindowManager {
         this.screenHeight = Math.max(displayInfo.width, displayInfo.height) / displayInfo.densityPixels;
       }
 
-      console.info(`StreamWindowManager: 更新屏幕尺寸 ${this.screenWidth}x${this.screenHeight}`);
+      Logger.info('StreamWindowManager', `StreamWindowManager: 更新屏幕尺寸 ${this.screenWidth}x${this.screenHeight}`);
     } catch (err) {
-      console.error('更新屏幕尺寸失败:', err);
+      Logger.error('StreamWindowManager', '更新屏幕尺寸失败:', err);
     }
     return this.getScreenSize();
   }
@@ -447,14 +448,14 @@ export class StreamWindowManager {
       if (enableHdr && hdrHighBrightness) {
         // HDR 高亮度模式：将屏幕亮度调至最大 (1.0)
         win.setWindowBrightness(1.0);
-        console.info('StreamWindowManager: HDR 高亮度模式已启用 (brightness=1.0)');
+        Logger.info('StreamWindowManager', 'StreamWindowManager: HDR 高亮度模式已启用 (brightness=1.0)');
       } else {
         // 使用系统默认亮度 (-1)
         win.setWindowBrightness(-1);
-        console.info('StreamWindowManager: 使用系统默认屏幕亮度');
+        Logger.info('StreamWindowManager', 'StreamWindowManager: 使用系统默认屏幕亮度');
       }
     } catch (err) {
-      console.warn('StreamWindowManager: 设置 HDR 亮度失败:', JSON.stringify(err));
+      Logger.warn('StreamWindowManager', 'StreamWindowManager: 设置 HDR 亮度失败:', JSON.stringify(err));
     }
   }
   
@@ -495,12 +496,12 @@ export class StreamWindowManager {
       const widthVp = measuredWidth / density;
       const heightVp = measuredHeight / density;
 
-      console.info(`StreamWindowManager: 视频尺寸计算 - 屏幕=${screenWidth}x${screenHeight}px, ` +
+      Logger.info('StreamWindowManager', `StreamWindowManager: 视频尺寸计算 - 屏幕=${screenWidth}x${screenHeight}px, ` +
         `视频=${this.streamWidth}x${this.streamHeight}, XComponent=${widthVp.toFixed(1)}x${heightVp.toFixed(1)}vp`);
 
       return { width: widthVp, height: heightVp };
     } catch (err) {
-      console.error('计算视频尺寸失败:', err);
+      Logger.error('StreamWindowManager', '计算视频尺寸失败:', err);
       return { width: '100%', height: '100%' };
     }
   }
@@ -531,7 +532,7 @@ export class StreamWindowManager {
       measuredHeight = Math.floor(measuredWidth / videoAspectRatio);
     }
 
-    console.info('StreamWindowManager: 视口视频尺寸计算 - 视口=' +
+    Logger.info('StreamWindowManager', 'StreamWindowManager: 视口视频尺寸计算 - 视口=' +
       viewportWidth.toFixed(1) + 'x' + viewportHeight.toFixed(1) + 'vp, 视频=' +
       this.streamWidth.toString() + 'x' + this.streamHeight.toString() + ', XComponent=' +
       measuredWidth.toFixed(1) + 'x' + measuredHeight.toFixed(1) + 'vp');

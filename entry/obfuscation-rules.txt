@@ -1,0 +1,23 @@
+# Release 混淆规则（首次启用采用保守策略，详见下方注释）
+# -enable-toplevel-obfuscation: 混淆模块顶层标识符（类/函数/变量名）
+-enable-toplevel-obfuscation
+# -enable-export-obfuscation: 混淆导出名称（工程无动态 import/runtimeOnly，arkg 会统一重命名引用方）
+-enable-export-obfuscation
+# -remove-comments: 移除注释
+-remove-comments
+
+# 系统路由表（route_map.json）按名称在运行时反射加载页面 Builder，必须保留原名
+-keep-function-name
+  PcListPageV2Builder
+  AppListPageV2Builder
+  StreamPageBuilder
+  HostWebUiPageBuilder
+  AddPcPageV2Builder
+  SettingsPageV2Builder
+  ControllerTestPageBuilder
+
+# 后续增强项（需真机回归验证后再开启）：
+# -enable-property-obfuscation
+#   nativelib 通过 NAPI 按属性名调用 native 方法，开启前需 -keep-property-name 全量登记跨语言属性
+# -enable-filename-obfuscation
+#   route_map.json 的 pageSourceFile 按源码路径加载页面文件

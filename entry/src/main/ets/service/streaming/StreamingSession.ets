@@ -65,6 +65,7 @@ import {
   AdaptiveTriggersFrame
 } from './MoonBridge';
 import nativeLib from 'libmoonlight_nativelib.so';
+import { Logger } from '../../common/Logger';
 
 // =============================================================================
 // 类型定义
@@ -415,7 +416,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     ];
 
     if (!effectiveHdr) {
-      console.info('[Brightness] 非 HDR 会话,使用静态 profile: ' +
+      Logger.info('StreamingSession', '[Brightness] 非 HDR 会话,使用静态 profile: ' +
         `min=${staticProfile[0]}, max=${staticProfile[1]}, avg=${staticProfile[2]} nits`);
       return staticProfile;
     }
@@ -438,13 +439,13 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         this.brightnessSource = 'measured';
       }
     } else {
-      console.warn('[Brightness] 无采样结果');
+      Logger.warn('StreamingSession', '[Brightness] 无采样结果');
     }
 
     if (this.config?.hdrBrightnessOverride) {
       this.brightnessSource = 'manual-override';
       const overridden = StreamingSession.applyBrightnessOverride(staticProfile, this.config.hdrPeakBrightnessNits);
-      console.info('[Brightness] HDR 手动覆盖: min=' + overridden[0].toString() +
+      Logger.info('StreamingSession', '[Brightness] HDR 手动覆盖: min=' + overridden[0].toString() +
         ', max=' + overridden[1].toString() +
         ', avg=' + overridden[2].toString() +
         ', sdr=' + this.lastMeasuredSdrNits.toString() + ' nits');
@@ -452,12 +453,12 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     }
 
     if (measured) {
-      console.info('[Brightness] 实测 profile: sdr=' + measured.sdrNits.toString() +
+      Logger.info('StreamingSession', '[Brightness] 实测 profile: sdr=' + measured.sdrNits.toString() +
         ', max=' + measured.maxBrightness.toString() +
         ', avg=' + measured.maxAverageBrightness.toString() + ' nits');
       return [DEFAULT_HDR_MIN_BRIGHTNESS_NITS, measured.maxBrightness, measured.maxAverageBrightness];
     }
-    console.warn('[Brightness] 采样超时或未通过校验,回退静态 profile');
+    Logger.warn('StreamingSession', '[Brightness] 采样超时或未通过校验,回退静态 profile');
     return staticProfile;
   }
 
@@ -696,11 +697,11 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.brightnessSamplePromise = sampleDisplayBrightness(0).catch(() => null);
     this.registerBrightnessProbe();
 
-    console.info(`开始串流: computer=${computerId}, app=${appId}`);
-    console.info(`配置: ${config.width}x${config.height}@${config.fps}fps, ${config.bitrate}kbps, ${config.codec}`);
-    console.info(`HDR: hdr=${config.hdr}, hdrMode=${config.hdrMode}, colorRange=${config.colorRange}`);
+    Logger.info('StreamingSession', `开始串流: computer=${computerId}, app=${appId}`);
+    Logger.info('StreamingSession', `配置: ${config.width}x${config.height}@${config.fps}fps, ${config.bitrate}kbps, ${config.codec}`);
+    Logger.info('StreamingSession', `HDR: hdr=${config.hdr}, hdrMode=${config.hdrMode}, colorRange=${config.colorRange}`);
     if (this.displayGuid || this.useVdd) {
-      console.info(`显示器: displayGuid=${this.displayGuid}, useVdd=${this.useVdd}`);
+      Logger.info('StreamingSession', `显示器: displayGuid=${this.displayGuid}, useVdd=${this.useVdd}`);
     }
 
     try {
@@ -714,7 +715,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         UsbForwardingService.getInstance()
           .beginStreamForwarding(fwdComputer, fwdHost, fwdHttp, context)
           .catch((err: Error) => {
-            console.warn(`StreamingSession: USB 转发启动异常: ${err.message}`);
+            Logger.warn('StreamingSession', `StreamingSession: USB 转发启动异常: ${err.message}`);
           });
       }
       await this.applyInitialBitratePolicy();
@@ -751,13 +752,13 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       try {
         const sockets = MoonBridge.getStreamSocketFds();
         if (sockets) {
-          console.info(`[StreamingSession] 串流 socket: video fd=${sockets.videoRtp.fd} port=${sockets.videoRtp.localPort}, ` +
+          Logger.info('StreamingSession', `[StreamingSession] 串流 socket: video fd=${sockets.videoRtp.fd} port=${sockets.videoRtp.localPort}, ` +
             `audio fd=${sockets.audioRtp.fd} port=${sockets.audioRtp.localPort}, ` +
             `control fd=${sockets.control.fd} port=${sockets.control.localPort}`);
           NetworkBoostService.getInstance().registerStreamingFlows(sockets);
         }
       } catch (err) {
-        console.warn(`[StreamingSession] 串流流描述注册失败(不影响串流): ${(err as Error).message}`);
+        Logger.warn('StreamingSession', `[StreamingSession] 串流流描述注册失败(不影响串流): ${(err as Error).message}`);
       }
     } catch (err) {
       await this.cleanup();
@@ -769,7 +770,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
    * 停止串流会话
    */
   async stop(): Promise<void> {
-    console.info('停止串流');
+    Logger.info('StreamingSession', '停止串流');
     this.userInitiatedStop = true;
     // 必须在 isRunning 翻转前注销：回调闭包以 isRunning 守卫，
     // 翻转后 CANCEL 无法发出，主机侧活动触点将悬死到断连
@@ -786,16 +787,16 @@ export class StreamingSession implements Ds5TouchpadInputSink {
    * 退出远程应用并停止串流
    */
   async quitApp(): Promise<boolean> {
-    console.info('退出远程应用');
+    Logger.info('StreamingSession', '退出远程应用');
     this.userInitiatedStop = true;
     let quitSuccess = false;
 
     if (this.nvHttp) {
       try {
         quitSuccess = await this.nvHttp.quitApp();
-        console.info(quitSuccess ? '远程应用已退出' : '退出远程应用失败');
+        Logger.info('StreamingSession', quitSuccess ? '远程应用已退出' : '退出远程应用失败');
       } catch (err) {
-        console.error('退出远程应用出错:', err);
+        Logger.error('StreamingSession', '退出远程应用出错:', err);
       }
     }
 
@@ -812,14 +813,14 @@ export class StreamingSession implements Ds5TouchpadInputSink {
    */
   resumeDecoder(): void {
     if (!this.isRunning) {
-      console.warn('[StreamingSession] 串流已停止，无需恢复解码器');
+      Logger.warn('StreamingSession', '[StreamingSession] 串流已停止，无需恢复解码器');
       return;
     }
     try {
       (nativeLib as NativeModule).resumeDecoder();
-      console.info('[StreamingSession] 解码器恢复命令已发送');
+      Logger.info('StreamingSession', '[StreamingSession] 解码器恢复命令已发送');
     } catch (err) {
-      console.error('[StreamingSession] 恢复解码器失败:', err);
+      Logger.error('StreamingSession', '[StreamingSession] 恢复解码器失败:', err);
     }
   }
 
@@ -947,13 +948,13 @@ export class StreamingSession implements Ds5TouchpadInputSink {
    */
   async rotateDisplay(angle: number, displayName?: string): Promise<boolean> {
     if (!this.nvHttp) {
-      console.warn('StreamingSession: rotateDisplay 失败 - nvHttp 未初始化');
+      Logger.warn('StreamingSession', 'StreamingSession: rotateDisplay 失败 - nvHttp 未初始化');
       return false;
     }
     try {
       return await this.nvHttp.rotateDisplay(angle, displayName);
     } catch (err) {
-      console.warn(`StreamingSession: rotateDisplay 失败: ${err}`);
+      Logger.warn('StreamingSession', `StreamingSession: rotateDisplay 失败: ${err}`);
       return false;
     }
   }
@@ -1131,7 +1132,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     if (!this.isRunning) return;
 
     if (controllerIndex < 0 || controllerIndex > 3) {
-      console.warn(`[Gamepad] controllerIndex 越界: ${controllerIndex}, 钳位到 0`);
+      Logger.warn('StreamingSession', `[Gamepad] controllerIndex 越界: ${controllerIndex}, 钳位到 0`);
       controllerIndex = 0;
     }
 
@@ -1348,7 +1349,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.selectedAddress = selectedAddress;
     // NvHttp 允许地址中携带自定义 HTTP 端口；原生 LiStartConnection 需要纯 host。
     this.connectionAddress = parseAddressAndPort(selectedAddress).host;
-    console.info(`串流连接地址: selected=${selectedAddress}, nativeHost=${this.connectionAddress}`);
+    Logger.info('StreamingSession', `串流连接地址: selected=${selectedAddress}, nativeHost=${this.connectionAddress}`);
     this.nvHttp = NvHttp.fromAddress(selectedAddress, this.computer, context);
   }
 
@@ -1360,12 +1361,12 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       const decision = await BandwidthProbeService.getInstance().resolveInitialBitrate(
         this.computerId, this.selectedAddress, this.config.bitrate, this.nvHttp);
       this.config.bitrate = decision.bitrateKbps;
-      console.info('StreamingSession: 初始码率路径=' + decision.path + ', userLimit=' +
+      Logger.info('StreamingSession', 'StreamingSession: 初始码率路径=' + decision.path + ', userLimit=' +
         decision.userLimitKbps.toString() + 'kbps, effective=' + decision.bitrateKbps.toString() +
         'kbps, probeApplied=' + decision.probeApplied.toString() + ', measured=' +
         Math.round(decision.measuredKbps).toString() + 'kbps');
     } catch (err) {
-      console.warn('StreamingSession: 初始码率策略回退到原配置: ' + String(err));
+      Logger.warn('StreamingSession', 'StreamingSession: 初始码率策略回退到原配置: ' + String(err));
     }
   }
 
@@ -1380,7 +1381,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       this.serverGfeVersion = cached.gfeVersion || '';
       this.serverCodecModeSupport = cached.serverCodecModeSupport || 0;
       this.cachedCurrentGame = cached.currentGame || 0;
-      console.info(`串流: 命中 ServerInfo 缓存, currentGame=${this.cachedCurrentGame}, codecSupport=${this.serverCodecModeSupport}`);
+      Logger.info('StreamingSession', `串流: 命中 ServerInfo 缓存, currentGame=${this.cachedCurrentGame}, codecSupport=${this.serverCodecModeSupport}`);
       if (this.stageProgressCallback) {
         this.stageProgressCallback(0, '正在初始化...');
       }
@@ -1404,7 +1405,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.serverGfeVersion = serverInfo.gfeVersion || '';
     this.serverCodecModeSupport = serverInfo.serverCodecModeSupport || 0;
     this.cachedCurrentGame = serverInfo.currentGame || 0;
-    console.info(`服务器版本: app=${this.serverAppVersion}, gfe=${this.serverGfeVersion}, ` +
+    Logger.info('StreamingSession', `服务器版本: app=${this.serverAppVersion}, gfe=${this.serverGfeVersion}, ` +
       `codecSupport=${this.serverCodecModeSupport}, currentGame=${this.cachedCurrentGame}`);
 
     // 写回缓存供后续短期内复用（场景：连接失败后用户立即重试）
@@ -1427,15 +1428,15 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private applyPreConnectionSettings(config: StreamConfig): void {
     this.nativeModule.setSpatialAudioEnabled(config.enableSpatializer);
     if (config.enableSpatializer) {
-      console.info('空间音频已启用');
+      Logger.info('StreamingSession', '空间音频已启用');
     }
     this.nativeModule.setAudioCompatMode(config.audioCompatMode);
     if (config.audioCompatMode) {
-      console.info('音频兼容模式已启用');
+      Logger.info('StreamingSession', '音频兼容模式已启用');
     }
     if (config.performanceMode) {
       this.nativeModule.setPerformanceModeEnabled(true);
-      console.info('性能模式已启用');
+      Logger.info('StreamingSession', '性能模式已启用');
     }
     this.audioVibrationService.setSettings(
       config.enableAudioVibration, config.audioVibrationStrength, config.vibrationMode,
@@ -1452,7 +1453,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       config.audioVibrationSceneMode
     );
     if (config.enableAudioVibration) {
-      console.info(`音频振动已启用, 强度=${config.audioVibrationStrength}, 模式=${config.vibrationMode}, 场景=${config.audioVibrationSceneMode}`);
+      Logger.info('StreamingSession', `音频振动已启用, 强度=${config.audioVibrationStrength}, 模式=${config.vibrationMode}, 场景=${config.audioVibrationSceneMode}`);
     }
   }
 
@@ -1461,7 +1462,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   // ---------------------------------------------------------------------------
 
   private async initializeNative(): Promise<void> {
-    console.info('初始化 Native 模块');
+    Logger.info('StreamingSession', '初始化 Native 模块');
     // Capture the registration generation in each callback closure. Reading the
     // mutable member here would let an old closure observe the next session's
     // generation and accept a delayed HDR notification.
@@ -1471,54 +1472,54 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       drSetup: (videoFormat: number, width: number, height: number, redrawRate: number): void => {
         const actualCodec = StreamingSession.detectCodec(videoFormat);
         const actualHdr = (videoFormat & VIDEO_FORMAT_MASK_10BIT) !== 0;
-        console.info(`视频设置: format=0x${videoFormat.toString(16)}, ${width}x${height}@${redrawRate}, ` +
+        Logger.info('StreamingSession', `视频设置: format=0x${videoFormat.toString(16)}, ${width}x${height}@${redrawRate}, ` +
           `codec=${actualCodec}, HDR=${actualHdr}`);
 
         if (this.config && this.config.hdr !== actualHdr) {
-          console.info(`HDR 状态更新: ${this.config.hdr} -> ${actualHdr}`);
+          Logger.info('StreamingSession', `HDR 状态更新: ${this.config.hdr} -> ${actualHdr}`);
           this.config.hdr = actualHdr;
         }
         if (this.codecStateCallback) this.codecStateCallback(actualCodec);
         if (this.hdrStateCallback) this.hdrStateCallback(actualHdr);
       },
       drStart: (): void => {
-        console.info('视频解码器启动');
+        Logger.info('StreamingSession', '视频解码器启动');
         // 隔离外部回调异常，避免冒泡进 native 回调链导致连接流程不稳定
         if (this.decoderStartedCallback) {
           try {
             this.decoderStartedCallback();
           } catch (err) {
-            console.error(`[StreamingSession] decoderStartedCallback 执行失败: ${err}`);
+            Logger.error('StreamingSession', `[StreamingSession] decoderStartedCallback 执行失败: ${err}`);
           }
         }
       },
-      drStop: (): void => { console.info('视频解码器停止'); },
-      drCleanup: (): void => { console.info('视频解码器清理'); },
+      drStop: (): void => { Logger.info('StreamingSession', '视频解码器停止'); },
+      drCleanup: (): void => { Logger.info('StreamingSession', '视频解码器清理'); },
       arInit: (audioConfiguration: number, sampleRate: number, samplesPerFrame: number): void => {
-        console.info(`音频初始化: config=${audioConfiguration}, rate=${sampleRate}, samples=${samplesPerFrame}`);
+        Logger.info('StreamingSession', `音频初始化: config=${audioConfiguration}, rate=${sampleRate}, samples=${samplesPerFrame}`);
       },
-      arStart: (): void => { console.info('音频渲染器启动'); },
+      arStart: (): void => { Logger.info('StreamingSession', '音频渲染器启动'); },
       arStop: (): void => {
-        console.info('音频渲染器停止');
+        Logger.info('StreamingSession', '音频渲染器停止');
         this.audioVibrationService.stop();
       },
       arCleanup: (): void => {
-        console.info('音频渲染器清理');
+        Logger.info('StreamingSession', '音频渲染器清理');
         this.audioVibrationService.stop();
       },
       stageStarting: (stage: number): void => {
         const name = STAGE_NAMES[stage] || `阶段 ${stage}`;
-        console.info(`连接阶段开始: ${stage} (${name})`);
+        Logger.info('StreamingSession', `连接阶段开始: ${stage} (${name})`);
         if (this.stageProgressCallback) this.stageProgressCallback(stage, name);
       },
-      stageComplete: (stage: number): void => { console.info(`连接阶段完成: ${stage}`); },
+      stageComplete: (stage: number): void => { Logger.info('StreamingSession', `连接阶段完成: ${stage}`); },
       stageFailed: (stage: number, errorCode: number): void => {
         const name = STAGE_NAMES[stage] || `阶段 ${stage}`;
         this.lastFailedStage = stage;
-        console.error(`连接阶段失败: stage=${stage} (${name}), error=${errorCode}`);
+        Logger.error('StreamingSession', `连接阶段失败: stage=${stage} (${name}), error=${errorCode}`);
       },
       connectionStarted: (): void => {
-        console.info('连接已建立');
+        Logger.info('StreamingSession', '连接已建立');
         this.isRunning = true;
         this.readHostFeatureFlags();
         if (this.lastMeasuredSdrNits > 0) {
@@ -1528,12 +1529,12 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         }
         if (this.ds5TouchpadEnabled) {
           const supported = this.isControllerTouchpadSupported();
-          console.info(`DS5 屏幕触控板: 主机 controller-touch=${supported}`);
+          Logger.info('StreamingSession', `DS5 屏幕触控板: 主机 controller-touch=${supported}`);
         }
         this.startMicrophoneIfNeeded();
       },
       connectionTerminated: (errorCode: number): void => {
-        console.info(`连接已终止: ${errorCode}, userInitiated=${this.userInitiatedStop}`);
+        Logger.info('StreamingSession', `连接已终止: ${errorCode}, userInitiated=${this.userInitiatedStop}`);
         this.isRunning = false;
         this.stopBrightnessUpdates();
         this.hostFeatureFlags = 0;
@@ -1550,7 +1551,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         }
       },
       connectionStatusUpdate: (status: number): void => {
-        console.info(`连接状态更新: ${status}`);
+        Logger.info('StreamingSession', `连接状态更新: ${status}`);
         // 反馈给系统 Network Boost Kit，触发网络加速调度
         NetworkBoostService.getInstance().reportConnectionStatus(status === 1 /* CONN_STATUS_POOR */);
         if (this.connectionStatusCallback) {
@@ -1574,7 +1575,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
           maxFrameAverageLightLevel,
           maxFullFrameLuminance
         } : null;
-        console.info(`HDR 模式变化通知: ${enabled}` +
+        Logger.info('StreamingSession', `HDR 模式变化通知: ${enabled}` +
           (metadata ? `, hostMaxLum=${metadata.maxDisplayLuminance}, hostFullFrame=${metadata.maxFullFrameLuminance}` : ''));
         this.lastHostHdrMetadata = metadata;
         if (this.config && this.config.hdr !== enabled) {
@@ -1606,14 +1607,14 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         GamepadManager.getInstance().handleRumbleTriggers(cn, lt, rt);
       },
       setMotionEventState: (cn: number, motionType: number, rateHz: number): void => {
-        console.info(`传感器状态: controller=${cn}, type=${motionType}, rate=${rateHz}`);
+        Logger.info('StreamingSession', `传感器状态: controller=${cn}, type=${motionType}, rate=${rateHz}`);
         GamepadManager.getInstance().handleSetMotionEventState(cn, motionType, rateHz);
       },
       setControllerLED: (cn: number, r: number, g: number, b: number): void => {
-        console.info(`LED: controller=${cn}, rgb=(${r},${g},${b})`);
+        Logger.info('StreamingSession', `LED: controller=${cn}, rgb=(${r},${g},${b})`);
       },
       resolutionChanged: (width: number, height: number): void => {
-        console.info(`分辨率变化: ${width}x${height}`);
+        Logger.info('StreamingSession', `分辨率变化: ${width}x${height}`);
         if (this.resolutionChangedCallback) this.resolutionChangedCallback(width, height);
       },
       audioHapticFrame: (frame: AudioHapticFrame): void => {
@@ -1653,7 +1654,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   // ---------------------------------------------------------------------------
 
   private async setupVideoSurface(): Promise<void> {
-    console.info(`设置视频 Surface: ${this.surfaceId}`);
+    Logger.info('StreamingSession', `设置视频 Surface: ${this.surfaceId}`);
     if (!this.nativeModule.setVideoSurface(this.surfaceId)) {
       throw new Error('设置视频 Surface 失败');
     }
@@ -1668,7 +1669,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       throw new Error('启动应用前提条件不满足');
     }
 
-    console.info(`启动应用: appId=${this.appId}`);
+    Logger.info('StreamingSession', `启动应用: appId=${this.appId}`);
 
     const riKeyHex = Array.from(new Uint8Array(this.riKey))
       .map(b => b.toString(16).padStart(2, '0'))
@@ -1680,16 +1681,16 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       try {
         const caps = StreamingSession.getDecoderCapabilities();
         if (!caps.supportsHEVC && !caps.supportsAV1) {
-          console.warn('设备不支持 HEVC/AV1，自动禁用 HDR');
+          Logger.warn('StreamingSession', '设备不支持 HEVC/AV1，自动禁用 HDR');
           effectiveHdr = false;
         }
       } catch {
-        console.warn('获取解码器能力失败，禁用 HDR');
+        Logger.warn('StreamingSession', '获取解码器能力失败，禁用 HDR');
         effectiveHdr = false;
       }
     }
     if (this.config.hdr !== effectiveHdr) {
-      console.info(`HDR 状态已调整: ${this.config.hdr} -> ${effectiveHdr}`);
+      Logger.info('StreamingSession', `HDR 状态已调整: ${this.config.hdr} -> ${effectiveHdr}`);
       this.config.hdr = effectiveHdr;
     }
 
@@ -1729,24 +1730,24 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     try {
       if (cachedCurrentGame !== 0) {
         if (cachedCurrentGame === this.appId) {
-          console.info('同一应用正在运行，尝试恢复会话...');
+          Logger.info('StreamingSession', '同一应用正在运行，尝试恢复会话...');
           try {
             this.rtspSessionUrl = await this.nvHttp.resumeApp(launchConfig);
-            console.info(`恢复会话成功, sessionUrl=${this.rtspSessionUrl}`);
+            Logger.info('StreamingSession', `恢复会话成功, sessionUrl=${this.rtspSessionUrl}`);
             return;
           } catch (resumeErr) {
-            console.warn(`恢复失败: ${(resumeErr as Error).message}，尝试重新启动...`);
+            Logger.warn('StreamingSession', `恢复失败: ${(resumeErr as Error).message}，尝试重新启动...`);
           }
         }
 
-        console.info('正在退出当前运行的应用...');
+        Logger.info('StreamingSession', '正在退出当前运行的应用...');
         if (!(await this.nvHttp.quitApp())) {
           throw new Error('无法退出当前运行的应用，请在 PC 上手动退出');
         }
       }
 
       this.rtspSessionUrl = await this.nvHttp.launchApp(this.appId, launchConfig);
-      console.info(`应用启动成功, sessionUrl=${this.rtspSessionUrl}`);
+      Logger.info('StreamingSession', `应用启动成功, sessionUrl=${this.rtspSessionUrl}`);
     } catch (err) {
       throw new Error(`启动应用失败: ${(err as Error).message}`);
     }
@@ -1767,7 +1768,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
     try {
       const caps = StreamingSession.getDecoderCapabilities();
-      console.info(`解码器: H264=${caps.supportsH264}, HEVC=${caps.supportsHEVC}, AV1=${caps.supportsAV1}, ` +
+      Logger.info('StreamingSession', `解码器: H264=${caps.supportsH264}, HEVC=${caps.supportsHEVC}, AV1=${caps.supportsAV1}, ` +
         `max=${caps.maxWidth}x${caps.maxHeight}@${caps.maxFps}`);
 
       if (caps.supportsHEVC) {
@@ -1779,16 +1780,16 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         if (this.config.hdr) supportedVideoFormats |= 0x2000;
       }
       if (this.config.codec === 'HEVC' && !caps.supportsHEVC) {
-        console.warn('设备不支持 HEVC，降级到 H.264');
+        Logger.warn('StreamingSession', '设备不支持 HEVC，降级到 H.264');
         actualCodec = 'H.264';
       }
     } catch (err) {
-      console.warn(`获取解码器能力失败: ${(err as Error).message}`);
+      Logger.warn('StreamingSession', `获取解码器能力失败: ${(err as Error).message}`);
       actualCodec = 'H.264';
       supportedVideoFormats = 0x0001;
     }
 
-    console.info(`编解码器: ${actualCodec}, formats=0x${supportedVideoFormats.toString(16)}`);
+    Logger.info('StreamingSession', `编解码器: ${actualCodec}, formats=0x${supportedVideoFormats.toString(16)}`);
 
     // 生成 IV: 前4字节 = riKeyId (big-endian), 后12字节 = 0
     const riAesIv = new ArrayBuffer(16);
@@ -1806,10 +1807,10 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     try {
       this.nativeModule.setSdrToHdr(this.config.sdrToHdr ?? false, this.config.sdrToHdrPeakNits ?? 500, this.config.sdrToHdrSaturation ?? 1.3, this.config.sdrToHdrContrast ?? 1.0);
     } catch (e) {
-      console.error(`SDR→HDR: call FAILED: ${e}`);
+      Logger.error('StreamingSession', `SDR→HDR: call FAILED: ${e}`);
     }
 
-    console.info(`解码器: buffers=${this.config.decoderBufferCount}, sync=${this.config.enableSyncDecode}, ` +
+    Logger.info('StreamingSession', `解码器: buffers=${this.config.decoderBufferCount}, sync=${this.config.enableSyncDecode}, ` +
       `vsync=${this.config.enableVsync}, hostPaced=${this.config.enableHostPacedPresentation ?? true}, ` +
       `vrr=${this.config.enableVrr}`);
 
@@ -1817,7 +1818,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       this.isStartingConnection = true;
       this.lastFailedStage = 0;
       try {
-        console.info(`StreamingSession: native connection address=${address}`);
+        Logger.info('StreamingSession', `StreamingSession: native connection address=${address}`);
         const pendingStart: Promise<number> = this.nativeModule.startConnectionAsync(
           address,
           this.serverAppVersion,
@@ -1863,12 +1864,12 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       if (this.userInitiatedStop) {
         return;
       }
-      console.warn(`StreamingSession: 名称解析失败，改用 sessionUrl0 主机 ${rtspSessionHost} 重试`);
+      Logger.warn('StreamingSession', `StreamingSession: 名称解析失败，改用 sessionUrl0 主机 ${rtspSessionHost} 重试`);
       this.nativeModule.stopConnection();
       activeConnectionAddress = rtspSessionHost;
       result = await callStart(activeConnectionAddress);
       if (result === 0) {
-        console.info('StreamingSession: sessionUrl0 主机回退成功');
+        Logger.info('StreamingSession', 'StreamingSession: sessionUrl0 主机回退成功');
       }
     }
 
@@ -1881,7 +1882,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       if (this.userInitiatedStop) {
         return;
       }
-      console.warn(`StreamingSession: startConnection 返回瞬态错误 ${result}，1.5s 后重试一次`);
+      Logger.warn('StreamingSession', `StreamingSession: startConnection 返回瞬态错误 ${result}，1.5s 后重试一次`);
       if (!this.userInitiatedStop) {
         this.nativeModule.stopConnection();
       }
@@ -1892,7 +1893,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       }
       result = await callStart(activeConnectionAddress);
       if (result === 0) {
-        console.info('StreamingSession: 重试成功');
+        Logger.info('StreamingSession', 'StreamingSession: 重试成功');
       }
     }
 
@@ -1962,9 +1963,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
     if (ret >= 0) {
       this.virtualControllerArrived = true;
-      console.info(`[VirtualCtrl] arrival sent, index=${controllerIndex}, mask=0x${this.activeGamepadMask.toString(16)}`);
+      Logger.info('StreamingSession', `[VirtualCtrl] arrival sent, index=${controllerIndex}, mask=0x${this.activeGamepadMask.toString(16)}`);
     } else {
-      console.warn(`[VirtualCtrl] arrival failed (ret=${ret}), will retry`);
+      Logger.warn('StreamingSession', `[VirtualCtrl] arrival failed (ret=${ret}), will retry`);
     }
   }
 
@@ -1977,7 +1978,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     if (this.virtualControllerArrived && controllerIndex === 0) {
       this.physicalControllerArrived.add(controllerIndex);
       this.physicalControllerTypes.set(controllerIndex, controllerType);
-      console.info(`[Gamepad] reusing virtual arrival for physical slot ${controllerIndex}`);
+      Logger.info('StreamingSession', `[Gamepad] reusing virtual arrival for physical slot ${controllerIndex}`);
       return;
     }
 
@@ -2016,7 +2017,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     if (ret >= 0) {
       this.physicalControllerArrived.add(controllerIndex);
       this.physicalControllerTypes.set(controllerIndex, controllerType);
-      console.info(`[Gamepad] arrival: index=${controllerIndex}, type=${reportedType}(orig=${controllerType}), ` +
+      Logger.info('StreamingSession', `[Gamepad] arrival: index=${controllerIndex}, type=${reportedType}(orig=${controllerType}), ` +
         `caps=0x${capabilities.toString(16)}, mask=0x${this.activeGamepadMask.toString(16)}`);
     }
   }
@@ -2104,11 +2105,11 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private startMicrophoneIfNeeded(): void {
     if (!this.config?.microphoneEnabled) return;
     if (!MoonBridge.isMicrophoneRequested()) {
-      console.info('主机未请求麦克风');
+      Logger.info('StreamingSession', '主机未请求麦克风');
       return;
     }
 
-    console.info('启动麦克风...');
+    Logger.info('StreamingSession', '启动麦克风...');
     this.ensureMicPermissionAndStart();
   }
 
@@ -2128,7 +2129,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
 
       if (!granted && this.abilityContext) {
-        console.info('请求麦克风权限...');
+        Logger.info('StreamingSession', '请求麦克风权限...');
         const result = await atManager.requestPermissionsFromUser(
           this.abilityContext, [permission]
         );
@@ -2136,27 +2137,27 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       }
 
       if (!granted) {
-        console.error('麦克风权限被拒绝');
+        Logger.error('StreamingSession', '麦克风权限被拒绝');
         return;
       }
 
       this.microphoneStream = new MicrophoneStream(MoonBridge);
       const success = await this.microphoneStream.start();
       if (!success) {
-        console.error('麦克风启动失败');
+        Logger.error('StreamingSession', '麦克风启动失败');
         this.microphoneStream = null;
       }
     } catch (error) {
-      console.error(`麦克风启动异常: ${(error as Error).message}`);
+      Logger.error('StreamingSession', `麦克风启动异常: ${(error as Error).message}`);
       this.microphoneStream = null;
     }
   }
 
   private stopMicrophone(): void {
     if (!this.microphoneStream) return;
-    console.info('停止麦克风...');
+    Logger.info('StreamingSession', '停止麦克风...');
     this.microphoneStream.stop().catch((error: Error) => {
-      console.warn(`停止麦克风出错: ${error.message}`);
+      Logger.warn('StreamingSession', `停止麦克风出错: ${error.message}`);
     });
     this.microphoneStream = null;
   }
@@ -2186,7 +2187,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private registerBrightnessProbe(): void {
     try {
       this.brightnessProbeHandler = (displayId: number, info: display.BrightnessInfo): void => {
-        console.info(`[BrightnessProbe] display=${displayId}, sdrNits=${info.sdrNits}, ` +
+        Logger.info('StreamingSession', `[BrightnessProbe] display=${displayId}, sdrNits=${info.sdrNits}, ` +
           `currentHeadroom=${info.currentHeadroom}, maxHeadroom=${info.maxHeadroom}`);
         if (displayId === 0) {
           this.scheduleBrightnessResample(SDR_WHITE_DEBOUNCE_MS);
@@ -2195,7 +2196,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       display.on('brightnessInfoChange', this.brightnessProbeHandler);
     } catch (err) {
       this.brightnessProbeHandler = null;
-      console.warn(`[BrightnessProbe] brightnessInfoChange 不可用: ${err}`);
+      Logger.warn('StreamingSession', `[BrightnessProbe] brightnessInfoChange 不可用: ${err}`);
     }
   }
 
@@ -2217,9 +2218,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     if (result === 0) {
       this.lastSentSdrWhiteNits = nits;
       this.lastMeasuredSdrNits = nits;
-      console.info(`[Brightness] 动态 SDR white 已更新: ${nits} nits`);
+      Logger.info('StreamingSession', `[Brightness] 动态 SDR white 已更新: ${nits} nits`);
     } else {
-      console.warn(`[Brightness] 动态 SDR white 发送失败: nits=${nits}, error=${result}`);
+      Logger.warn('StreamingSession', `[Brightness] 动态 SDR white 发送失败: nits=${nits}, error=${result}`);
     }
   }
 
@@ -2248,7 +2249,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         this.sendDynamicSdrWhite(measured.sdrNits);
       }
     } catch (err) {
-      console.warn(`[Brightness] 动态重采样失败: ${err}`);
+      Logger.warn('StreamingSession', `[Brightness] 动态重采样失败: ${err}`);
     } finally {
       if (generation !== this.brightnessUpdateGeneration) return;
       this.brightnessSampleInFlight = false;
@@ -2280,7 +2281,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   }
 
   private async cleanup(): Promise<void> {
-    console.info('清理串流资源');
+    Logger.info('StreamingSession', '清理串流资源');
     this.isRunning = false;
     this.stopBrightnessUpdates();
     // USB/IP 反向隧道随会话回收（stop/quit/启动失败共用此路径）
@@ -2299,14 +2300,14 @@ export class StreamingSession implements Ds5TouchpadInputSink {
           try {
             await pendingStart;
           } catch (err) {
-            console.warn(`等待启动中断完成失败: ${err}`);
+            Logger.warn('StreamingSession', `等待启动中断完成失败: ${err}`);
           }
         }
       }
       this.nativeModule.stopConnection();
       this.nativeModule.releaseVideoSurface();
     } catch (err) {
-      console.error('清理资源失败:', err);
+      Logger.error('StreamingSession', '清理资源失败:', err);
     }
   }
 

@@ -18,6 +18,7 @@ import { UsbDriverService, UsbDriverListener, ControllerType, AbstractController
 import { GamepadManager } from '../../service/input/GamepadManager';
 import { AXIS_MAX } from '../../service/input/GamepadTypes';
 import { AppColors } from '../../common/Theme';
+import { Logger } from '../../common/Logger';
 
 // 手柄状态类
 class ControllerInputState {
@@ -307,9 +308,9 @@ export struct UsbControllerTestView {
       const gamepadManager = GamepadManager.getInstance();
       // 仅恢复 listener，不启动驱动
       UsbDriverService.getInstance().setListener(gamepadManager);
-      console.info('[UsbControllerTest] 已恢复 GamepadManager listener（未重启驱动）');
+      Logger.info('UsbControllerTestView', '[UsbControllerTest] 已恢复 GamepadManager listener（未重启驱动）');
     } catch (err) {
-      console.error('[UsbControllerTest] 恢复 GamepadManager listener 失败:', err);
+      Logger.error('UsbControllerTestView', '[UsbControllerTest] 恢复 GamepadManager listener 失败:', err);
     }
   }
 

@@ -20,6 +20,7 @@ import { CryptoUtil } from '../../utils/CryptoUtil';
 import { DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT } from '../../common/NetworkConstants';
 import { parseAddressAndPort, formatAddressForUrl } from '../../utils/NetHelper';
 import { selectBestAddress, NvHttpHost } from '../../model/ComputerInfo';
+import { Logger } from '../../common/Logger';
 
 // HarmonyOS BrightnessInfo exposes peak/headroom but not the panel black level.
 // Match Sunshine's unknown-display fallback instead of inventing a raised black floor.
@@ -393,12 +394,12 @@ export class NvHttp {
           const savedId = textDecoder.decodeToString(new Uint8Array(buffer)).trim();
           if (savedId.length === 16) {
             NvHttp.cachedUniqueId = savedId;
-            console.info(`NvHttp: 从文件加载 uniqueId: ${savedId}`);
+            Logger.info('NvHttp', `NvHttp: 从文件加载 uniqueId: ${savedId}`);
             return savedId;
           }
         }
       } catch (err) {
-        console.warn(`NvHttp: 无法读取 uniqueId 文件: ${err}`);
+        Logger.warn('NvHttp', `NvHttp: 无法读取 uniqueId 文件: ${err}`);
       }
     }
 
@@ -406,7 +407,7 @@ export class NvHttp {
     const randomBytes = CryptoUtil.generateRandomBytes(8);
     const result = CryptoUtil.bytesToHex(randomBytes).toLowerCase();
     NvHttp.cachedUniqueId = result;
-    console.info(`NvHttp: 生成新 uniqueId: ${result}`);
+    Logger.info('NvHttp', `NvHttp: 生成新 uniqueId: ${result}`);
 
     // 4. 保存到文件
     if (context) {
@@ -417,9 +418,9 @@ export class NvHttp {
         const encoded = textEncoder.encodeInto(result);
         fileIo.writeSync(file.fd, encoded.buffer);
         fileIo.closeSync(file);
-        console.info(`NvHttp: uniqueId 已保存到文件`);
+        Logger.info('NvHttp', `NvHttp: uniqueId 已保存到文件`);
       } catch (err) {
-        console.error(`NvHttp: 无法保存 uniqueId: ${err}`);
+        Logger.error('NvHttp', `NvHttp: 无法保存 uniqueId: ${err}`);
       }
     }
 
@@ -442,10 +443,10 @@ export class NvHttp {
       // 如果没有，则使用 productModel（如 "ALN-AL00"）
       const name = deviceInfo.marketName || deviceInfo.productModel || 'Moonlight-HarmonyOS';
       NvHttp.cachedClientName = name;
-      console.info(`NvHttp: 客户端名称: ${name}`);
+      Logger.info('NvHttp', `NvHttp: 客户端名称: ${name}`);
       return name;
     } catch (err) {
-      console.warn(`NvHttp: 无法获取设备名称: ${err}`);
+      Logger.warn('NvHttp', `NvHttp: 无法获取设备名称: ${err}`);
       NvHttp.cachedClientName = 'Moonlight-HarmonyOS';
       return 'Moonlight-HarmonyOS';
     }
@@ -475,7 +476,7 @@ export class NvHttp {
     // 自定义端口（frp / 端口转发）→ Sunshine 规则直接推算，跳过 HTTP 探测避免 3s 超时
     if (this.httpPort !== NvHttp.DEFAULT_HTTP_PORT) {
       const port = this.httpPort - 5;
-      console.info(`NvHttp: 自定义端口场景，推算 HTTPS 端口 ${port} (httpPort=${this.httpPort} - 5)`);
+      Logger.info('NvHttp', `NvHttp: 自定义端口场景，推算 HTTPS 端口 ${port} (httpPort=${this.httpPort} - 5)`);
       return `https://${formatAddressForUrl(this.address)}:${port}`;
     }
 
@@ -486,15 +487,15 @@ export class NvHttp {
       const port = XmlUtil.getIntValue(response, 'HttpsPort', 0);
       if (port > 0) {
         this.httpsPort = port;
-        console.info(`NvHttp: 自动解析 HTTPS 端口: ${port}`);
+        Logger.info('NvHttp', `NvHttp: 自动解析 HTTPS 端口: ${port}`);
         return `https://${formatAddressForUrl(this.address)}:${port}`;
       }
     } catch (err) {
-      console.warn(`NvHttp: 自动解析 HTTPS 端口失败: ${err}`);
+      Logger.warn('NvHttp', `NvHttp: 自动解析 HTTPS 端口失败: ${err}`);
     }
 
     // 最终兜底：默认 HTTPS 端口
-    console.info(`NvHttp: 使用默认 HTTPS 端口 ${NvHttp.DEFAULT_HTTPS_PORT}`);
+    Logger.info('NvHttp', `NvHttp: 使用默认 HTTPS 端口 ${NvHttp.DEFAULT_HTTPS_PORT}`);
     return `https://${formatAddressForUrl(this.address)}:${NvHttp.DEFAULT_HTTPS_PORT}`;
   }
 
@@ -525,7 +526,7 @@ export class NvHttp {
     const transferTimeout = options?.transferTimeout ?? NvHttp.READ_TIMEOUT;
     const connectTimeout = options?.connectTimeout ?? NvHttp.CONNECTION_TIMEOUT;
     const useClientCert = options?.useClientCert ?? false;
-    console.debug(`NvHttp: 请求 ${url}`);
+    Logger.debug('NvHttp', `NvHttp: 请求 ${url}`);
 
     if (useClientCert && this.certFilePath && this.keyFilePath) {
       return HttpClient.getWithClientCert(url, this.certFilePath, this.keyFilePath, {
@@ -639,12 +640,12 @@ export class NvHttp {
         throw err instanceof Error ? err : new Error(errMsg);
       }
 
-      console.info(`NvHttp: ${path} HTTPS 超时，尝试推算端口 ${guessedPort} (httpPort=${this.httpPort} - 5)`);
+      Logger.info('NvHttp', `NvHttp: ${path} HTTPS 超时，尝试推算端口 ${guessedPort} (httpPort=${this.httpPort} - 5)`);
       const retryBaseUrl = `https://${formatAddressForUrl(this.address)}:${guessedPort}`;
       const retryUrl = this.buildUrl(retryBaseUrl, path, query);
       const response = await request(retryUrl);
       this.httpsPort = guessedPort;
-      console.info(`NvHttp: ${path} 推算 HTTPS 端口 ${guessedPort} 连接成功，已缓存`);
+      Logger.info('NvHttp', `NvHttp: ${path} 推算 HTTPS 端口 ${guessedPort} 连接成功，已缓存`);
       return response;
     }
   }
@@ -690,12 +691,12 @@ export class NvHttp {
       if (probe.version !== 1 || !probe.endpoint || !probe.endpoint.startsWith('/') ||
         probe.endpoint.includes('://') || probe.endpoint.includes('?') || probe.endpoint.includes('#') ||
         probe.minBytes < 1 || probe.maxBytes < probe.minBytes || probe.cooldownMs < 0) {
-        console.warn('NvHttp: Sunshine 返回了无效的 bandwidth probe capability');
+        Logger.warn('NvHttp', 'NvHttp: Sunshine 返回了无效的 bandwidth probe capability');
         return null;
       }
       return probe;
     } catch (err) {
-      console.info('NvHttp: Sunshine 不支持启动前带宽探测: ' + String(err));
+      Logger.info('NvHttp', 'NvHttp: Sunshine 不支持启动前带宽探测: ' + String(err));
       return null;
     }
   }
@@ -751,7 +752,7 @@ export class NvHttp {
       try {
         const result = await request();
         if (attempt > 1) {
-          console.info(`NvHttp: clipboard blob ${label} 第 ${attempt} 次尝试成功`);
+          Logger.info('NvHttp', `NvHttp: clipboard blob ${label} 第 ${attempt} 次尝试成功`);
         }
         return result;
       } catch (err) {
@@ -760,7 +761,7 @@ export class NvHttp {
           throw lastErr;
         }
 
-        console.warn(`NvHttp: clipboard blob ${label} 第 ${attempt}/${NvHttp.CLIPBOARD_BLOB_MAX_ATTEMPTS} 次失败，${NvHttp.CLIPBOARD_BLOB_RETRY_DELAY_MS}ms 后重试: ${lastErr.message}`);
+        Logger.warn('NvHttp', `NvHttp: clipboard blob ${label} 第 ${attempt}/${NvHttp.CLIPBOARD_BLOB_MAX_ATTEMPTS} 次失败，${NvHttp.CLIPBOARD_BLOB_RETRY_DELAY_MS}ms 后重试: ${lastErr.message}`);
         await new Promise<void>((resolve: () => void): void => {
           setTimeout(resolve, NvHttp.CLIPBOARD_BLOB_RETRY_DELAY_MS);
         });
@@ -831,7 +832,7 @@ export class NvHttp {
       // 如果有服务器证书且客户端证书文件存在（已配对），尝试 HTTPS 并使用客户端证书
       if (this.serverCert && this.hasCertificateFiles()) {
         try {
-          console.debug(`NvHttp: getServerInfo 尝试 HTTPS + 客户端证书（含 frp 重试）`);
+          Logger.debug('NvHttp', `NvHttp: getServerInfo 尝试 HTTPS + 客户端证书（含 frp 重试）`);
           // 复用通用 helper：超时 + 自定义端口会按 Sunshine 规则 (httpPort - 5) 重试
           response = await this.doHttpsRequestWithFrpRetry('serverinfo', { connectTimeout: connectTimeout });
         } catch (err) {
@@ -846,17 +847,17 @@ export class NvHttp {
             /\bcode[=: ]+2305/.test(errMsg));  // HarmonyOS TLS 证书错误码系列
 
           if (isCertError) {
-            console.warn(`NvHttp: HTTPS serverinfo 证书错误: ${err}, 降级到 HTTP`);
+            Logger.warn('NvHttp', `NvHttp: HTTPS serverinfo 证书错误: ${err}, 降级到 HTTP`);
             const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
             response = await this.doRequest(url, { connectTimeout: connectTimeout });
           } else {
-            console.warn(`NvHttp: HTTPS serverinfo 失败 (非证书错误，不降级): ${err}`);
+            Logger.warn('NvHttp', `NvHttp: HTTPS serverinfo 失败 (非证书错误，不降级): ${err}`);
             throw new Error(`HTTPS serverinfo 失败: ${err}`);
           }
         }
       } else {
         // 未配对，使用 HTTP
-        console.debug(`NvHttp: getServerInfo 使用 HTTP (serverCert=${!!this.serverCert}, hasCertFiles=${this.hasCertificateFiles()})`);
+        Logger.debug('NvHttp', `NvHttp: getServerInfo 使用 HTTP (serverCert=${!!this.serverCert}, hasCertFiles=${this.hasCertificateFiles()})`);
         const url = this.buildUrl(this.getHttpBaseUrl(), 'serverinfo');
         response = await this.doRequest(url, { connectTimeout: connectTimeout });
       }
@@ -865,7 +866,7 @@ export class NvHttp {
     }
 
     const serverInfo = this.parseServerInfo(response);
-    console.debug(`NvHttp: serverInfo - hostname=${serverInfo.hostname}, paired=${serverInfo.paired}, mac=${serverInfo.macAddress}`);
+    Logger.debug('NvHttp', `NvHttp: serverInfo - hostname=${serverInfo.hostname}, paired=${serverInfo.paired}, mac=${serverInfo.macAddress}`);
 
     // 缓存 HTTPS 端口
     if (serverInfo.httpsPort > 0) {
@@ -902,7 +903,7 @@ export class NvHttp {
       try {
         const result = await this.getServerInfo();
         if (attempt > 1) {
-          console.info(`NvHttp.getServerInfoRobust: 第 ${attempt} 次尝试成功`);
+          Logger.info('NvHttp', `NvHttp.getServerInfoRobust: 第 ${attempt} 次尝试成功`);
         }
         return result;
       } catch (err) {
@@ -916,7 +917,7 @@ export class NvHttp {
         if (!transient || attempt === maxAttempts) {
           throw lastErr;
         }
-        console.warn(`NvHttp.getServerInfoRobust: 第 ${attempt}/${maxAttempts} 次失败（瞬时错误），${delayMs}ms 后重试: ${lastErr.message}`);
+        Logger.warn('NvHttp', `NvHttp.getServerInfoRobust: 第 ${attempt}/${maxAttempts} 次失败（瞬时错误），${delayMs}ms 后重试: ${lastErr.message}`);
         if (onRetry) {
           onRetry(attempt, maxAttempts, lastErr);
         }
@@ -936,10 +937,10 @@ export class NvHttp {
    * HTTPS 端口通过 getHttpsBaseUrl() 自动解析；超时时按 frp 规则重试
    */
   async getAppList(): Promise<AppEntry[]> {
-    console.info(`NvHttp.getAppList: serverCert=${this.serverCert ? '有(长度' + this.serverCert.length + ')' : '无'}, hasCertFiles=${this.hasCertificateFiles()}`);
+    Logger.info('NvHttp', `NvHttp.getAppList: serverCert=${this.serverCert ? '有(长度' + this.serverCert.length + ')' : '无'}, hasCertFiles=${this.hasCertificateFiles()}`);
     // 与 Android 一致：只使用 HTTPS + 客户端证书，不 fallback 到 HTTP
     const response = await this.doHttpsRequestWithFrpRetry('applist');
-    console.info(`NvHttp.getAppList: HTTPS 请求成功`);
+    Logger.info('NvHttp', `NvHttp.getAppList: HTTPS 请求成功`);
     return this.parseAppList(response);
   }
 
@@ -962,7 +963,7 @@ export class NvHttp {
 
     // 启动可能需要较长时间，使用客户端证书
     const response = await this.doRequest(url, { transferTimeout: 60000, useClientCert: true });
-    console.info(`NvHttp: launchApp 响应: ${response}`);
+    Logger.info('NvHttp', `NvHttp: launchApp 响应: ${response}`);
 
     // 检查是否成功
     const gamesession = XmlUtil.getValue(response, 'gamesession');
@@ -971,7 +972,7 @@ export class NvHttp {
     }
 
     const sessionUrl = XmlUtil.getValue(response, 'sessionUrl0') || '';
-    console.info(`NvHttp: launchApp gamesession=${gamesession}, sessionUrl0=${sessionUrl}`);
+    Logger.info('NvHttp', `NvHttp: launchApp gamesession=${gamesession}, sessionUrl0=${sessionUrl}`);
     return sessionUrl;
   }
 
@@ -984,7 +985,7 @@ export class NvHttp {
     const query = this.buildLaunchQuery(config.appId, config, 'resume');
     const url = this.buildUrl(await this.getHttpsBaseUrl(), 'resume', query);
 
-    console.info(`NvHttp: resumeApp URL: ${url}`);
+    Logger.info('NvHttp', `NvHttp: resumeApp URL: ${url}`);
 
     // 使用客户端证书
     const response = await this.doRequest(url, { transferTimeout: 60000, useClientCert: true });
@@ -1053,7 +1054,7 @@ export class NvHttp {
       const result = XmlUtil.getValue(response, 'pcsleep');
       return result !== '0';
     } catch (err) {
-      console.warn('NvHttp: 休眠主机失败', err);
+      Logger.warn('NvHttp', 'NvHttp: 休眠主机失败', err);
       return false;
     }
   }
@@ -1085,14 +1086,14 @@ export class NvHttp {
       
       if (statusCode !== 200 || !success) {
         const errorMsg = json.status_message ?? '未知错误';
-        console.warn(`NvHttp: 旋转显示失败: ${errorMsg}`);
+        Logger.warn('NvHttp', `NvHttp: 旋转显示失败: ${errorMsg}`);
         return false;
       }
       
-      console.info(`NvHttp: 显示旋转成功，角度=${angle}`);
+      Logger.info('NvHttp', `NvHttp: 显示旋转成功，角度=${angle}`);
       return true;
     } catch (err) {
-      console.warn(`NvHttp: 旋转显示请求失败: ${err}`);
+      Logger.warn('NvHttp', `NvHttp: 旋转显示请求失败: ${err}`);
       return false;
     }
   }
@@ -1126,7 +1127,7 @@ export class NvHttp {
       }
     }
     
-    console.info(`NvHttp: 获取到 ${displays.length} 个显示器`);
+    Logger.info('NvHttp', `NvHttp: 获取到 ${displays.length} 个显示器`);
     return displays;
   }
 
@@ -1139,7 +1140,7 @@ export class NvHttp {
       `appid=${appId}&AssetType=2&AssetIdx=0`);
 
     try {
-      console.info(`NvHttp: 获取应用图标 appId=${appId}, url=${url}`);
+      Logger.info('NvHttp', `NvHttp: 获取应用图标 appId=${appId}, url=${url}`);
       let data: ArrayBuffer;
 
       if (this.hasCertificateFiles()) {
@@ -1162,10 +1163,10 @@ export class NvHttp {
         });
       }
 
-      console.info(`NvHttp: 获取应用图标成功 appId=${appId}, 大小=${data.byteLength} 字节`);
+      Logger.info('NvHttp', `NvHttp: 获取应用图标成功 appId=${appId}, 大小=${data.byteLength} 字节`);
       return data;
     } catch (err) {
-      console.warn(`NvHttp: 获取应用图标失败 appId=${appId}`, err);
+      Logger.warn('NvHttp', `NvHttp: 获取应用图标失败 appId=${appId}`, err);
     }
     return null;
   }
@@ -1177,7 +1178,7 @@ export class NvHttp {
    */
   async getAppAssetCached(appId: number): Promise<string | null> {
     if (!this.context) {
-      console.warn('NvHttp: 无法缓存图标，context 未设置');
+      Logger.warn('NvHttp', 'NvHttp: 无法缓存图标，context 未设置');
       return null;
     }
 
@@ -1190,7 +1191,7 @@ export class NvHttp {
     // 检查是否已缓存
     try {
       if (fileIo.accessSync(cachedPath)) {
-        console.info(`NvHttp: 使用缓存的图标 ${cachedPath}`);
+        Logger.info('NvHttp', `NvHttp: 使用缓存的图标 ${cachedPath}`);
         return cachedPath;
       }
     } catch (err) {
@@ -1200,7 +1201,7 @@ export class NvHttp {
     // 下载图标
     const data = await this.getAppAsset(appId);
     if (!data || data.byteLength < 100) {
-      console.warn(`NvHttp: 图标数据无效 appId=${appId}, size=${data?.byteLength}`);
+      Logger.warn('NvHttp', `NvHttp: 图标数据无效 appId=${appId}, size=${data?.byteLength}`);
       return null;
     }
 
@@ -1213,7 +1214,7 @@ export class NvHttp {
       try {
         fileIo.mkdirSync(cacheDir);
       } catch (mkdirErr) {
-        console.warn(`NvHttp: 创建缓存目录失败`, mkdirErr);
+        Logger.warn('NvHttp', `NvHttp: 创建缓存目录失败`, mkdirErr);
       }
     }
 
@@ -1223,10 +1224,10 @@ export class NvHttp {
         fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       fileIo.writeSync(file.fd, data);
       fileIo.closeSync(file);
-      console.info(`NvHttp: 图标已缓存到 ${cachedPath}`);
+      Logger.info('NvHttp', `NvHttp: 图标已缓存到 ${cachedPath}`);
       return cachedPath;
     } catch (err) {
-      console.error(`NvHttp: 缓存图标失败`, err);
+      Logger.error('NvHttp', `NvHttp: 缓存图标失败`, err);
       return null;
     }
   }
@@ -1268,7 +1269,7 @@ export class NvHttp {
     // 添加 Sunshine 显示器选择参数
     if (config.displayGuid && config.displayGuid.length > 0) {
       params.push(`display_name=${encodeURIComponent(config.displayGuid)}`);
-      console.info(`NvHttp: 使用指定显示器: ${config.displayGuid}`);
+      Logger.info('NvHttp', `NvHttp: 使用指定显示器: ${config.displayGuid}`);
     }
 
     if (config.enableHdr) {
@@ -1301,7 +1302,7 @@ export class NvHttp {
       params.push(`customScreenMode=${config.screenCombinationMode}`);
     }
 
-    console.info(`NvHttp: buildLaunchQuery: ${params.join('&')}`);
+    Logger.info('NvHttp', `NvHttp: buildLaunchQuery: ${params.join('&')}`);
     return params.join('&');
   }
 

@@ -19,6 +19,7 @@ import { AbstractDualSenseController } from './AbstractDualSenseController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, DualShock4, DPadDirection, UsbClass } from './ControllerConstants';
 import { readShortLE, TRIGGER_MAX } from '../input/GamepadTypes';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[USB-DS4]';
 
@@ -55,7 +56,7 @@ export class Dualshock4Controller extends AbstractDualSenseController {
       return false;
     }
     
-    console.info(`${TAG} 检测到 DualShock 4 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+    Logger.info('Dualshock4Controller', `${TAG} 检测到 DualShock 4 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
     return true;
   }
   
@@ -79,7 +80,7 @@ export class Dualshock4Controller extends AbstractDualSenseController {
    */
   protected handleRead(buffer: Uint8Array): boolean {
     if (buffer.length < 64) {
-      console.warn(`${TAG} 数据太短: ${buffer.length}`);
+      Logger.warn('Dualshock4Controller', `${TAG} 数据太短: ${buffer.length}`);
       return false;
     }
     
@@ -181,7 +182,7 @@ const gyrox = readShortLE(buffer, 13);
    * 初始化
    */
   protected doInit(): boolean {
-    console.info(`${TAG} 初始化 DualShock 4 控制器`);
+    Logger.info('Dualshock4Controller', `${TAG} 初始化 DualShock 4 控制器`);
     const initData = this.getInitData();
     if (initData.length > 0) {
       this.sendCommand(initData);

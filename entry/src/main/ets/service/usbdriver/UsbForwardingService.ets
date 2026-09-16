@@ -35,6 +35,7 @@ import { NvHttp } from '../streaming/NvHttp';
 import { ToastQueue } from '../../utils/ToastQueue';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import nativeLib from 'libmoonlight_nativelib.so';
+import { Logger } from '../../common/Logger';
 
 /**
  * USB 转发对外状态（串流菜单展示用，同步可查）
@@ -193,17 +194,17 @@ export class UsbForwardingService {
         return;
       }
       if (!usbIp) {
-        console.warn(`${TAG} native UsbIp 模块不可用，跳过 USB 转发`);
+        Logger.warn('UsbForwardingService', `${TAG} native UsbIp 模块不可用，跳过 USB 转发`);
         this.phase = 'error';
         this.lastMessage = 'native UsbIp 模块不可用';
         return;
       }
       if (!context) {
-        console.warn(`${TAG} 缺少 UIAbilityContext，跳过 USB 转发`);
+        Logger.warn('UsbForwardingService', `${TAG} 缺少 UIAbilityContext，跳过 USB 转发`);
         return;
       }
       if (!host) {
-        console.warn(`${TAG} 缺少主机地址，跳过 USB 转发`);
+        Logger.warn('UsbForwardingService', `${TAG} 缺少主机地址，跳过 USB 转发`);
         return;
       }
 
@@ -221,7 +222,7 @@ export class UsbForwardingService {
       try {
         devices = usbManager.getDevices() ?? [];
       } catch (err) {
-        console.warn(`${TAG} usbManager.getDevices 失败: ${err}`);
+        Logger.warn('UsbForwardingService', `${TAG} usbManager.getDevices 失败: ${err}`);
       }
       for (let i = 0; i < devices.length; i++) {
         const device = devices[i];
@@ -235,7 +236,7 @@ export class UsbForwardingService {
         }
       }
       if (!target) {
-        console.info(`${TAG} 没有可转发的 OTG 手柄`);
+        Logger.info('UsbForwardingService', `${TAG} 没有可转发的 OTG 手柄`);
         this.phase = 'no-device';
         return;
       }
@@ -247,7 +248,7 @@ export class UsbForwardingService {
       // 标记排除必须先于任何 await：本地驱动的枚举/重扫描不得抢占该设备
       UsbDriverService.getInstance().setForwardedDeviceKeys(new Set<string>([deviceKey]));
       this.activeDeviceKey = deviceKey;
-      console.info(`${TAG} 转发目标: ${deviceName} (${deviceKey})`);
+      Logger.info('UsbForwardingService', `${TAG} 转发目标: ${deviceName} (${deviceKey})`);
 
       // 启动 native USB/IP 服务
       const started = usbIp.startServer();
@@ -258,7 +259,7 @@ export class UsbForwardingService {
 
       // USB 权限（首次使用弹系统授权框）
       if (!usbManager.hasRight(target.name)) {
-        console.info(`${TAG} 请求 USB 设备权限: ${target.name}`);
+        Logger.info('UsbForwardingService', `${TAG} 请求 USB 设备权限: ${target.name}`);
         const granted = await usbManager.requestRight(target.name);
         if (gen !== this.generation) {
           return;
@@ -285,7 +286,7 @@ export class UsbForwardingService {
       }
       this.activeBusId = added.busId ?? '';
       if ((added.hasIsochronous ?? 0) !== 0) {
-        console.warn(`${TAG} 设备含同步端点（如音频），主机侧该部分功能不可用`);
+        Logger.warn('UsbForwardingService', `${TAG} 设备含同步端点（如音频），主机侧该部分功能不可用`);
       }
       this.active = true;
 
@@ -329,7 +330,7 @@ export class UsbForwardingService {
         this.failForwarding(gen, `反向隧道启动失败: ${tunnelResult.error ?? '未知错误'}`, true);
         return;
       }
-      console.info(`${TAG} 隧道建立中: ${host}:${capability.port} busid=${this.activeBusId}`);
+      Logger.info('UsbForwardingService', `${TAG} 隧道建立中: ${host}:${capability.port} busid=${this.activeBusId}`);
     } catch (err) {
       // 含 capability 查询抛出的网络/解析错误
       const message = err instanceof Error ? err.message : String(err);
@@ -343,7 +344,7 @@ export class UsbForwardingService {
     if (!this.active && this.activeDeviceKey === '' && this.heldPipe === null) {
       return;
     }
-    console.info(`${TAG} 结束 USB 转发`);
+    Logger.info('UsbForwardingService', `${TAG} 结束 USB 转发`);
     this.teardown(false);
     this.phase = 'idle';
   }
@@ -382,7 +383,7 @@ export class UsbForwardingService {
         await PreferencesUtil.put(SettingsKeys.USB_FORWARDING_ENABLED, true);
         this.settingEnabled = true;
       } catch (err) {
-        console.warn(`${TAG} 保存设置失败: ${err}`);
+        Logger.warn('UsbForwardingService', `${TAG} 保存设置失败: ${err}`);
       }
     }
     // 若上一轮仍在活动中（例如重试），先回收避免 DDK 接口冲突
@@ -404,7 +405,7 @@ export class UsbForwardingService {
     if (state === 'ready') {
       this.lastMessage = '';
       this.phase = 'ready';
-      console.info(`${TAG} USB 直通已建立，主机端手柄已挂载`);
+      Logger.info('UsbForwardingService', `${TAG} USB 直通已建立，主机端手柄已挂载`);
       ToastQueue.show({ message: 'USB 手柄已直通主机', duration: 2500 });
     } else if (state === 'error') {
       this.failForwarding(gen, message || 'USB 隧道中断', true);
@@ -419,7 +420,7 @@ export class UsbForwardingService {
     if (gen !== this.generation) {
       return;
     }
-    console.error(`${TAG} ${message}`);
+    Logger.error('UsbForwardingService', `${TAG} ${message}`);
     this.lastMessage = message;
     this.phase = 'error';
     this.teardown(releaseToLocalDriver);
@@ -431,19 +432,19 @@ export class UsbForwardingService {
       try {
         usbIp.stopTunnel();
       } catch (err) {
-        console.warn(`${TAG} stopTunnel 异常: ${err}`);
+        Logger.warn('UsbForwardingService', `${TAG} stopTunnel 异常: ${err}`);
       }
       if (this.activeBusId) {
         try {
           usbIp.removeDevice(this.activeBusId);
         } catch (err) {
-          console.warn(`${TAG} removeDevice 异常: ${err}`);
+          Logger.warn('UsbForwardingService', `${TAG} removeDevice 异常: ${err}`);
         }
       }
       try {
         usbIp.stopServer();
       } catch (err) {
-        console.warn(`${TAG} stopServer 异常: ${err}`);
+        Logger.warn('UsbForwardingService', `${TAG} stopServer 异常: ${err}`);
       }
     }
     this.activeBusId = '';
@@ -453,7 +454,7 @@ export class UsbForwardingService {
       try {
         usbManager.closePipe(this.heldPipe);
       } catch (err) {
-        console.warn(`${TAG} closePipe 异常: ${err}`);
+        Logger.warn('UsbForwardingService', `${TAG} closePipe 异常: ${err}`);
       }
       this.heldPipe = null;
     }
@@ -484,7 +485,7 @@ export class UsbForwardingService {
         await fileIo.close(file);
       }
     } catch (err) {
-      console.warn(`${TAG} 读取 ${path} 失败: ${err}`);
+      Logger.warn('UsbForwardingService', `${TAG} 读取 ${path} 失败: ${err}`);
       return '';
     }
   }

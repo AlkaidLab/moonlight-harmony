@@ -28,6 +28,7 @@ import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { image } from '@kit.ImageKit';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[BackgroundStreamService]';
 const BACKGROUND_PLAY_MODE_ENABLE = 0; // avSession.BackgroundPlayMode.ENABLE_BACKGROUND_PLAY (API 24+)
@@ -72,7 +73,7 @@ export class BackgroundStreamService {
    */
   async start(context: common.UIAbilityContext, gameName?: string, callbacks?: BroadcastControlCallbacks): Promise<void> {
     if (this.isRunning) {
-      console.info(`${TAG} 已在运行，跳过重复启动`);
+      Logger.info('BackgroundStreamService', `${TAG} 已在运行，跳过重复启动`);
       return;
     }
 
@@ -91,9 +92,9 @@ export class BackgroundStreamService {
       await this.startContinuousTask();
 
       this.isRunning = true;
-      console.info(`${TAG} 后台保活已启动`);
+      Logger.info('BackgroundStreamService', `${TAG} 后台保活已启动`);
     } catch (err) {
-      console.error(`${TAG} 启动后台保活失败:`, err);
+      Logger.error('BackgroundStreamService', `${TAG} 启动后台保活失败:`, err);
       // 清理可能部分创建的资源
       await this.cleanup();
     }
@@ -108,10 +109,10 @@ export class BackgroundStreamService {
       return;
     }
 
-    console.info(`${TAG} 正在停止后台保活...`);
+    Logger.info('BackgroundStreamService', `${TAG} 正在停止后台保活...`);
     await this.cleanup();
     this.isRunning = false;
-    console.info(`${TAG} 后台保活已停止`);
+    Logger.info('BackgroundStreamService', `${TAG} 后台保活已停止`);
   }
 
   /**
@@ -130,10 +131,10 @@ export class BackgroundStreamService {
   private registerCancelListener(): void {
     try {
       backgroundTaskManager.on('continuousTaskCancel', (info) => {
-        console.error(`${TAG} ⚠️ 长时任务被系统取消! info=${JSON.stringify(info)}`);
+        Logger.error('BackgroundStreamService', `${TAG} ⚠️ 长时任务被系统取消! info=${JSON.stringify(info)}`);
       });
     } catch (err) {
-      console.warn(`${TAG} 注册取消监听失败:`, err);
+      Logger.warn('BackgroundStreamService', `${TAG} 注册取消监听失败:`, err);
     }
   }
 
@@ -160,7 +161,7 @@ export class BackgroundStreamService {
         'MoonlightStreaming',
         'audio'
       );
-      console.info(`${TAG} AVSession 已创建, sessionId=${this.session.sessionId}`);
+      Logger.info('BackgroundStreamService', `${TAG} AVSession 已创建, sessionId=${this.session.sessionId}`);
       await this.enableBackgroundPlaybackIfSupported();
 
       // 加载应用图标作为封面 (800x800 方形，符合播控中心规范)
@@ -174,7 +175,7 @@ export class BackgroundStreamService {
         });
         imageSource.release();
       } catch (imgErr) {
-        console.warn(`${TAG} 加载封面图片失败:`, imgErr);
+        Logger.warn('BackgroundStreamService', `${TAG} 加载封面图片失败:`, imgErr);
       }
 
       // 设置元数据（标题 + 副标题 + 封面）
@@ -189,17 +190,17 @@ export class BackgroundStreamService {
       // 注册播控命令（不注册的命令在播控中心自动置灰）
       // play: 串流持续运行，仅切换播控状态指示
       this.session.on('play', () => {
-        console.info(`${TAG} 播控中心: play`);
+        Logger.info('BackgroundStreamService', `${TAG} 播控中心: play`);
         this.setPlaybackState(AVSessionManager.PlaybackState.PLAYBACK_STATE_PLAY);
       });
       // pause: 切换播控状态，实际串流不暂停（游戏无法暂停）
       this.session.on('pause', () => {
-        console.info(`${TAG} 播控中心: pause`);
+        Logger.info('BackgroundStreamService', `${TAG} 播控中心: pause`);
         this.setPlaybackState(AVSessionManager.PlaybackState.PLAYBACK_STATE_PAUSE);
       });
       // stop: 断开串流
       this.session.on('stop', () => {
-        console.info(`${TAG} 播控中心: stop → 断开串流`);
+        Logger.info('BackgroundStreamService', `${TAG} 播控中心: stop → 断开串流`);
         if (this.controlCallbacks?.onStop) {
           this.controlCallbacks.onStop();
         }
@@ -210,10 +211,10 @@ export class BackgroundStreamService {
 
       // 激活 AVSession（必须在元数据和控制命令注册后）
       await this.session.activate();
-      console.info(`${TAG} AVSession 已激活`);
+      Logger.info('BackgroundStreamService', `${TAG} AVSession 已激活`);
     } catch (err) {
       const error = err as BusinessError;
-      console.error(`${TAG} 创建 AVSession 失败: code=${error.code}, msg=${error.message}`);
+      Logger.error('BackgroundStreamService', `${TAG} 创建 AVSession 失败: code=${error.code}, msg=${error.message}`);
       throw new Error(`创建 AVSession 失败: ${error.message}`);
     }
   }
@@ -227,15 +228,15 @@ export class BackgroundStreamService {
 
     const session = this.session as BackgroundPlayableAVSession;
     if (typeof session.setBackgroundPlayMode !== 'function') {
-      console.info(`${TAG} 当前 SDK/设备不支持 setBackgroundPlayMode，沿用系统默认后台播放策略`);
+      Logger.info('BackgroundStreamService', `${TAG} 当前 SDK/设备不支持 setBackgroundPlayMode，沿用系统默认后台播放策略`);
       return;
     }
 
     try {
       await session.setBackgroundPlayMode(BACKGROUND_PLAY_MODE_ENABLE);
-      console.info(`${TAG} 已显式启用 AVSession 后台播放模式`);
+      Logger.info('BackgroundStreamService', `${TAG} 已显式启用 AVSession 后台播放模式`);
     } catch (err) {
-      console.warn(`${TAG} 设置 AVSession 后台播放模式失败，沿用系统默认策略:`, err);
+      Logger.warn('BackgroundStreamService', `${TAG} 设置 AVSession 后台播放模式失败，沿用系统默认策略:`, err);
     }
   }
 
@@ -251,7 +252,7 @@ export class BackgroundStreamService {
       };
       await this.session.setAVPlaybackState(playbackState);
     } catch (err) {
-      console.warn(`${TAG} 设置播放状态失败:`, err);
+      Logger.warn('BackgroundStreamService', `${TAG} 设置播放状态失败:`, err);
     }
   }
 
@@ -283,13 +284,13 @@ export class BackgroundStreamService {
         agent
       );
       this.notificationId = result.notificationId;
-      console.info(`${TAG} 长时任务已启动 (dataTransfer+audioPlayback), notificationId=${this.notificationId}`);
+      Logger.info('BackgroundStreamService', `${TAG} 长时任务已启动 (dataTransfer+audioPlayback), notificationId=${this.notificationId}`);
 
       // 更新通知内容，显示游戏名称
       await this.updateNotification();
     } catch (err) {
       const error = err as BusinessError;
-      console.error(`${TAG} 启动长时任务失败: code=${error.code}, msg=${error.message}`);
+      Logger.error('BackgroundStreamService', `${TAG} 启动长时任务失败: code=${error.code}, msg=${error.message}`);
       throw new Error(`启动长时任务失败: ${error.message}`);
     }
   }
@@ -313,9 +314,9 @@ export class BackgroundStreamService {
         },
       };
       await notificationManager.publish(request);
-      console.info(`${TAG} 通知已更新: ${this.gameName}`);
+      Logger.info('BackgroundStreamService', `${TAG} 通知已更新: ${this.gameName}`);
     } catch (err) {
-      console.warn(`${TAG} 更新通知失败:`, err);
+      Logger.warn('BackgroundStreamService', `${TAG} 更新通知失败:`, err);
     }
   }
 
@@ -330,10 +331,10 @@ export class BackgroundStreamService {
     try {
       if (this.context) {
         await backgroundTaskManager.stopBackgroundRunning(this.context);
-        console.info(`${TAG} 长时任务已停止`);
+        Logger.info('BackgroundStreamService', `${TAG} 长时任务已停止`);
       }
     } catch (err) {
-      console.warn(`${TAG} 停止长时任务失败:`, err);
+      Logger.warn('BackgroundStreamService', `${TAG} 停止长时任务失败:`, err);
     }
 
     // 销毁 AVSession
@@ -346,9 +347,9 @@ export class BackgroundStreamService {
         // 反激活并销毁
         await this.session.deactivate();
         await this.session.destroy();
-        console.info(`${TAG} AVSession 已销毁`);
+        Logger.info('BackgroundStreamService', `${TAG} AVSession 已销毁`);
       } catch (err) {
-        console.warn(`${TAG} 销毁 AVSession 失败:`, err);
+        Logger.warn('BackgroundStreamService', `${TAG} 销毁 AVSession 失败:`, err);
       }
       this.session = null;
     }

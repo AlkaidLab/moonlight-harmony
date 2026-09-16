@@ -10,6 +10,7 @@
 
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
+import { Logger } from '../common/Logger';
 
 /**
  * ASN.1 元素信息
@@ -214,7 +215,7 @@ export class CryptoUtil {
       // 从 DER 证书中提取 SubjectPublicKeyInfo
       const pubKeyDer = CryptoUtil.extractSubjectPublicKeyInfo(certDer);
       if (!pubKeyDer) {
-        console.error('CryptoUtil: 无法从证书中提取公钥');
+        Logger.error('CryptoUtil', 'CryptoUtil: 无法从证书中提取公钥');
         return false;
       }
 
@@ -225,7 +226,7 @@ export class CryptoUtil {
       // 验证签名
       return await CryptoUtil.rsaVerify(data, signature, keyPair.pubKey);
     } catch (err) {
-      console.error('CryptoUtil: verifyWithCert 失败', err);
+      Logger.error('CryptoUtil', 'CryptoUtil: verifyWithCert 失败', err);
       return false;
     }
   }
@@ -289,10 +290,10 @@ export class CryptoUtil {
       const spkiResult = CryptoUtil.readAsn1Element(certDer, pos);
       if (!spkiResult) return null;
 
-      console.info(`CryptoUtil: 提取 SubjectPublicKeyInfo 成功，长度 = ${spkiResult.length}`);
+      Logger.info('CryptoUtil', `CryptoUtil: 提取 SubjectPublicKeyInfo 成功，长度 = ${spkiResult.length}`);
       return certDer.slice(pos, pos + spkiResult.totalLength);
     } catch (err) {
-      console.error('CryptoUtil: extractSubjectPublicKeyInfo 失败', err);
+      Logger.error('CryptoUtil', 'CryptoUtil: extractSubjectPublicKeyInfo 失败', err);
       return null;
     }
   }
@@ -608,7 +609,7 @@ export class CryptoUtil {
     try {
       // 解析外层 SEQUENCE
       if (certDer[0] !== 0x30) {
-        console.error('CryptoUtil: 证书不是以 SEQUENCE 开始');
+        Logger.error('CryptoUtil', 'CryptoUtil: 证书不是以 SEQUENCE 开始');
         return certDer;
       }
 
@@ -632,7 +633,7 @@ export class CryptoUtil {
       // 现在 pos 指向 SEQUENCE 内容的开始
       // 跳过 TBSCertificate (SEQUENCE)
       if (certDer[pos] !== 0x30) {
-        console.error('CryptoUtil: TBSCertificate 不是 SEQUENCE');
+        Logger.error('CryptoUtil', 'CryptoUtil: TBSCertificate 不是 SEQUENCE');
         return certDer;
       }
       pos++; // 跳过 tag
@@ -655,7 +656,7 @@ export class CryptoUtil {
 
       // 跳过 signatureAlgorithm (SEQUENCE)
       if (certDer[pos] !== 0x30) {
-        console.error('CryptoUtil: signatureAlgorithm 不是 SEQUENCE');
+        Logger.error('CryptoUtil', 'CryptoUtil: signatureAlgorithm 不是 SEQUENCE');
         return certDer;
       }
       pos++; // 跳过 tag
@@ -678,7 +679,7 @@ export class CryptoUtil {
 
       // 现在应该是 BIT STRING (signatureValue)
       if (certDer[pos] !== 0x03) {
-        console.error('CryptoUtil: signatureValue 不是 BIT STRING');
+        Logger.error('CryptoUtil', 'CryptoUtil: signatureValue 不是 BIT STRING');
         return certDer;
       }
       pos++; // 跳过 tag
@@ -704,10 +705,10 @@ export class CryptoUtil {
 
       // 提取签名
       const signature = certDer.slice(pos, pos + bitStringLen);
-      console.info(`CryptoUtil: 提取签名成功，长度 = ${signature.length}`);
+      Logger.info('CryptoUtil', `CryptoUtil: 提取签名成功，长度 = ${signature.length}`);
       return signature;
     } catch (err) {
-      console.error('CryptoUtil: 提取签名失败', err);
+      Logger.error('CryptoUtil', 'CryptoUtil: 提取签名失败', err);
       return certDer;
     }
   }

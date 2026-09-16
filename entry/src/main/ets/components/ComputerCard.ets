@@ -141,7 +141,7 @@ export struct ComputerCard {
     this.onlineTextOffset = 6;
     this.onlineTextOpacity = 0;
 
-    animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
       this.onlineDotScale = 1.42;
       this.onlineTextOffset = 0;
       this.onlineTextOpacity = 1;
@@ -149,12 +149,12 @@ export struct ComputerCard {
 
     this.onlineDotSettleTimer = setTimeout(() => {
       this.onlineDotSettleTimer = -1;
-      animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
         this.onlineDotScale = 1;
       });
     }, 260);
 
-    animateTo({ duration: 1150, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 1150, curve: Curve.EaseOut }, () => {
       this.onlinePulseScale = 3.4;
       this.onlinePulseOpacity = 0;
     });

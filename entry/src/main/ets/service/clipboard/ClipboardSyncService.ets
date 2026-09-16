@@ -11,6 +11,7 @@ import {
   ClipboardSyncListener,
   CLIPBOARD_BLOB_MAX_BYTES
 } from './ClipboardSyncConfig'
+import { Logger } from '../../common/Logger';
 
 const TAG = 'ClipboardSyncService'
 const MAX_CLIPBOARD_FRAME_BYTES = 65500 - ClipboardWireFrame.HEADER_SIZE
@@ -31,15 +32,15 @@ export interface ClipboardSyncObserver {
 }
 
 function logInfo(message: string): void {
-  console.info(`[${TAG}] ${message}`)
+  Logger.info('ClipboardSyncService', `[${TAG}] ${message}`)
 }
 
 function logWarn(message: string): void {
-  console.warn(`[${TAG}] ${message}`)
+  Logger.warn('ClipboardSyncService', `[${TAG}] ${message}`)
 }
 
 function logError(message: string): void {
-  console.error(`[${TAG}] ${message}`)
+  Logger.error('ClipboardSyncService', `[${TAG}] ${message}`)
 }
 
 function formatError(err: Object): string {

@@ -14,6 +14,7 @@
  */
 import { audio } from '@kit.AudioKit';
 import { MicrophoneConfig, MicrophoneState } from './MicrophoneConfig';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[MicCapturer]';
 
@@ -74,7 +75,7 @@ export class MicrophoneCapturer {
    */
   async start(): Promise<boolean> {
     if (this.running) {
-      console.info(TAG, '麦克风捕获已在运行');
+      Logger.info('MicrophoneCapturer', TAG, '麦克风捕获已在运行');
       return true;
     }
     
@@ -100,13 +101,13 @@ export class MicrophoneCapturer {
         capturerInfo: audioCapturerInfo
       };
       
-      console.info(TAG, `创建 AudioCapturer: 采样率=${MicrophoneConfig.SAMPLE_RATE}, 通道=${MicrophoneConfig.CHANNELS}`);
+      Logger.info('MicrophoneCapturer', TAG, `创建 AudioCapturer: 采样率=${MicrophoneConfig.SAMPLE_RATE}, 通道=${MicrophoneConfig.CHANNELS}`);
       
       // 创建 AudioCapturer
       this.audioCapturer = await audio.createAudioCapturer(audioCapturerOptions);
       
       if (!this.audioCapturer) {
-        console.error(TAG, '创建 AudioCapturer 失败');
+        Logger.error('MicrophoneCapturer', TAG, '创建 AudioCapturer 失败');
         this.state = MicrophoneState.ERROR;
         return false;
       }
@@ -118,7 +119,7 @@ export class MicrophoneCapturer {
       
       // 监听状态变化
       this.audioCapturer.on('stateChange', (state: audio.AudioState) => {
-        console.info(TAG, `AudioCapturer 状态变化: ${state}`);
+        Logger.info('MicrophoneCapturer', TAG, `AudioCapturer 状态变化: ${state}`);
       });
       
       // 启动捕获
@@ -129,11 +130,11 @@ export class MicrophoneCapturer {
       this.frameCount = 0;
       this.lastLogTime = Date.now();
       
-      console.info(TAG, '麦克风捕获已启动');
+      Logger.info('MicrophoneCapturer', TAG, '麦克风捕获已启动');
       return true;
       
     } catch (error) {
-      console.error(TAG, `启动麦克风捕获失败: ${error}`);
+      Logger.error('MicrophoneCapturer', TAG, `启动麦克风捕获失败: ${error}`);
       this.state = MicrophoneState.ERROR;
       await this.release();
       return false;
@@ -184,7 +185,7 @@ export class MicrophoneCapturer {
         if (now - this.lastLogTime >= 5000) {
           const elapsed = (now - this.lastLogTime) / 1000;
           const fps = this.frameCount / elapsed;
-          console.info(TAG, `麦克风统计: ${this.frameCount} 帧, ${fps.toFixed(1)} fps`);
+          Logger.info('MicrophoneCapturer', TAG, `麦克风统计: ${this.frameCount} 帧, ${fps.toFixed(1)} fps`);
           this.frameCount = 0;
           this.lastLogTime = now;
         }
@@ -200,9 +201,9 @@ export class MicrophoneCapturer {
       try {
         await this.audioCapturer.stop();
         this.state = MicrophoneState.PAUSED;
-        console.info(TAG, '麦克风捕获已暂停');
+        Logger.info('MicrophoneCapturer', TAG, '麦克风捕获已暂停');
       } catch (error) {
-        console.error(TAG, `暂停麦克风捕获失败: ${error}`);
+        Logger.error('MicrophoneCapturer', TAG, `暂停麦克风捕获失败: ${error}`);
       }
     }
   }
@@ -215,9 +216,9 @@ export class MicrophoneCapturer {
       try {
         await this.audioCapturer.start();
         this.state = MicrophoneState.CAPTURING;
-        console.info(TAG, '麦克风捕获已恢复');
+        Logger.info('MicrophoneCapturer', TAG, '麦克风捕获已恢复');
       } catch (error) {
-        console.error(TAG, `恢复麦克风捕获失败: ${error}`);
+        Logger.error('MicrophoneCapturer', TAG, `恢复麦克风捕获失败: ${error}`);
       }
     }
   }
@@ -232,13 +233,13 @@ export class MicrophoneCapturer {
       try {
         await this.audioCapturer.stop();
       } catch (error) {
-        console.warn(TAG, `停止 AudioCapturer 时出错: ${error}`);
+        Logger.warn('MicrophoneCapturer', TAG, `停止 AudioCapturer 时出错: ${error}`);
       }
     }
     
     this.state = MicrophoneState.STOPPED;
     this.frameBufferPos = 0;
-    console.info(TAG, '麦克风捕获已停止');
+    Logger.info('MicrophoneCapturer', TAG, '麦克风捕获已停止');
   }
   
   /**
@@ -251,12 +252,12 @@ export class MicrophoneCapturer {
       try {
         await this.audioCapturer.release();
       } catch (error) {
-        console.warn(TAG, `释放 AudioCapturer 时出错: ${error}`);
+        Logger.warn('MicrophoneCapturer', TAG, `释放 AudioCapturer 时出错: ${error}`);
       }
       this.audioCapturer = null;
     }
     
     this.dataCallback = null;
-    console.info(TAG, '麦克风捕获器已释放');
+    Logger.info('MicrophoneCapturer', TAG, '麦克风捕获器已释放');
   }
 }

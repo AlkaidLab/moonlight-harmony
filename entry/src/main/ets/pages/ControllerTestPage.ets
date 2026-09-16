@@ -13,14 +13,14 @@
  * 支持 USB 驱动、Game Controller Kit (蓝牙/系统) 和设备传感器三种测试模式
  */
 
-import { router } from '@kit.ArkUI';
+import { AppNav } from '../common/AppNav';
 import { UsbControllerTestView } from '../components/test/UsbControllerTestView';
 import { GameControllerTestView } from '../components/test/GameControllerTestView';
 import { SensorTestView } from '../components/test/SensorTestView';
 import { AppColors, AppSizes, AppSpacing } from '../common/Theme';
 import { GamepadManager } from '../service/input/GamepadManager';
+import { Logger } from '../common/Logger';
 
-@Entry
 @Component
 struct ControllerTestPage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
@@ -41,9 +41,9 @@ struct ControllerTestPage {
   aboutToDisappear(): void {
     try {
       GamepadManager.getInstance().reattachInputCallbacks();
-      console.info('[ControllerTestPage] 页面销毁，已恢复 GamepadManager 回调');
+      Logger.info('ControllerTestPage', '[ControllerTestPage] 页面销毁，已恢复 GamepadManager 回调');
     } catch (err) {
-      console.error('[ControllerTestPage] 恢复 GamepadManager 回调失败:', err);
+      Logger.error('ControllerTestPage', '[ControllerTestPage] 恢复 GamepadManager 回调失败:', err);
     }
   }
   
@@ -69,6 +69,7 @@ struct ControllerTestPage {
   }
   
   build() {
+    NavDestination() {
     Column() {
       // 标题栏 — 与 SettingsPageV2 等页面风格统一
       Row() {
@@ -84,7 +85,7 @@ struct ControllerTestPage {
         .borderWidth(1)
         .borderColor(AppColors.CardBorder)
         .onClick(() => {
-          router.back();
+          AppNav.pop();
         })
         
         Column() {
@@ -179,6 +180,8 @@ struct ControllerTestPage {
     .onKeyEvent((event: KeyEvent) => {
       return this.handleKeyEvent(event);
     })
+    }
+    .hideTitleBar(true)
   }
   
   @Builder
@@ -200,4 +203,10 @@ struct ControllerTestPage {
       this.currentTabIndex = index;
     })
   }
+}
+
+
+@Builder
+export function ControllerTestPageBuilder() {
+  ControllerTestPage()
 }

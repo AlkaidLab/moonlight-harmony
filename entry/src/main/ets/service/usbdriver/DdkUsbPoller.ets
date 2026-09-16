@@ -17,6 +17,7 @@
  */
 
 import nativeLib from 'libmoonlight_nativelib.so';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[DdkUsbPoller]';
 
@@ -102,7 +103,7 @@ export class DdkUsbPoller {
     if (ddkAvailable !== null) return ddkAvailable;
 
     if (!ddkNative) {
-      console.warn(`${TAG} DDK Poller native 模块不可用`);
+      Logger.warn('DdkUsbPoller', `${TAG} DDK Poller native 模块不可用`);
       ddkAvailable = false;
       return false;
     }
@@ -129,13 +130,13 @@ export class DdkUsbPoller {
       const result = ddkNative!.init();
       if (result.code === 0) {
         ddkInitialized = true;
-        console.info(`${TAG} DDK 初始化成功 (GetDevices=${result.hasGetDevices}, GetDesc=${result.hasGetDeviceDescriptor})`);
+        Logger.info('DdkUsbPoller', `${TAG} DDK 初始化成功 (GetDevices=${result.hasGetDevices}, GetDesc=${result.hasGetDeviceDescriptor})`);
       } else {
-        console.error(`${TAG} DDK 初始化失败: code=${result.code}, error=${result.error}`);
+        Logger.error('DdkUsbPoller', `${TAG} DDK 初始化失败: code=${result.code}, error=${result.error}`);
       }
       return result;
     } catch (err) {
-      console.error(`${TAG} DDK init 异常:`, err);
+      Logger.error('DdkUsbPoller', `${TAG} DDK init 异常:`, err);
       return { code: -2, error: String(err) };
     }
   }
@@ -156,13 +157,13 @@ export class DdkUsbPoller {
     try {
       const result = ddkNative!.findDevice(vid, pid);
       if (result.found) {
-        console.info(`${TAG} 找到设备: VID=0x${vid.toString(16)} PID=0x${pid.toString(16)} deviceId=${result.deviceId}`);
+        Logger.info('DdkUsbPoller', `${TAG} 找到设备: VID=0x${vid.toString(16)} PID=0x${pid.toString(16)} deviceId=${result.deviceId}`);
       } else {
-        console.warn(`${TAG} 未找到设备: VID=0x${vid.toString(16)} PID=0x${pid.toString(16)} (${result.deviceCount ?? 0} 个设备可见)`);
+        Logger.warn('DdkUsbPoller', `${TAG} 未找到设备: VID=0x${vid.toString(16)} PID=0x${pid.toString(16)} (${result.deviceCount ?? 0} 个设备可见)`);
       }
       return result;
     } catch (err) {
-      console.error(`${TAG} findDevice 异常:`, err);
+      Logger.error('DdkUsbPoller', `${TAG} findDevice 异常:`, err);
       return { found: false, error: String(err) };
     }
   }
@@ -186,13 +187,13 @@ export class DdkUsbPoller {
     try {
       const result = ddkNative!.makeDeviceId(busNum, devAddress);
       if (result.found) {
-        console.info(`${TAG} deviceId 构造成功: busNum=${busNum} devAddr=${devAddress} → deviceId=${result.deviceId} (${result.encoding})`);
+        Logger.info('DdkUsbPoller', `${TAG} deviceId 构造成功: busNum=${busNum} devAddr=${devAddress} → deviceId=${result.deviceId} (${result.encoding})`);
       } else {
-        console.warn(`${TAG} deviceId 构造失败: busNum=${busNum} devAddr=${devAddress} — ${result.error}`);
+        Logger.warn('DdkUsbPoller', `${TAG} deviceId 构造失败: busNum=${busNum} devAddr=${devAddress} — ${result.error}`);
       }
       return result;
     } catch (err) {
-      console.error(`${TAG} makeDeviceId 异常:`, err);
+      Logger.error('DdkUsbPoller', `${TAG} makeDeviceId 异常:`, err);
       return { found: false, error: String(err) };
     }
   }
@@ -205,9 +206,9 @@ export class DdkUsbPoller {
       try {
         ddkNative.release();
         ddkInitialized = false;
-        console.info(`${TAG} DDK 已释放`);
+        Logger.info('DdkUsbPoller', `${TAG} DDK 已释放`);
       } catch (err) {
-        console.error(`${TAG} DDK release 异常:`, err);
+        Logger.error('DdkUsbPoller', `${TAG} DDK release 异常:`, err);
       }
     }
   }
@@ -242,12 +243,12 @@ export class DdkUsbPoller {
     timeoutMs: number = 100
   ): boolean {
     if (!ddkInitialized || !ddkNative) {
-      console.error(`${TAG} DDK 未初始化`);
+      Logger.error('DdkUsbPoller', `${TAG} DDK 未初始化`);
       return false;
     }
 
     if (this._running) {
-      console.warn(`${TAG} Poller 已在运行`);
+      Logger.warn('DdkUsbPoller', `${TAG} Poller 已在运行`);
       return false;
     }
 
@@ -266,16 +267,16 @@ export class DdkUsbPoller {
       );
 
       if (pollerId < 0) {
-        console.error(`${TAG} startPoller 失败: pollerId=${pollerId}`);
+        Logger.error('DdkUsbPoller', `${TAG} startPoller 失败: pollerId=${pollerId}`);
         return false;
       }
 
       this.pollerId = pollerId;
       this._running = true;
-      console.info(`${TAG} 轮询已启动: pollerId=${pollerId}`);
+      Logger.info('DdkUsbPoller', `${TAG} 轮询已启动: pollerId=${pollerId}`);
       return true;
     } catch (err) {
-      console.error(`${TAG} start 异常:`, err);
+      Logger.error('DdkUsbPoller', `${TAG} start 异常:`, err);
       return false;
     }
   }
@@ -288,9 +289,9 @@ export class DdkUsbPoller {
 
     try {
       ddkNative!.stopPoller(this.pollerId);
-      console.info(`${TAG} 轮询已停止: pollerId=${this.pollerId}`);
+      Logger.info('DdkUsbPoller', `${TAG} 轮询已停止: pollerId=${this.pollerId}`);
     } catch (err) {
-      console.error(`${TAG} stop 异常:`, err);
+      Logger.error('DdkUsbPoller', `${TAG} stop 异常:`, err);
     }
 
     this._running = false;
@@ -311,14 +312,14 @@ export class DdkUsbPoller {
 
     const ep = endpoint ?? this.outEndpointAddr;
     if (ep === 0) {
-      console.warn(`${TAG} 无输出端点`);
+      Logger.warn('DdkUsbPoller', `${TAG} 无输出端点`);
       return -1;
     }
 
     try {
       return ddkNative.sendOutput(this.pollerId, ep, data);
     } catch (err) {
-      console.error(`${TAG} sendOutput 异常:`, err);
+      Logger.error('DdkUsbPoller', `${TAG} sendOutput 异常:`, err);
       return -1;
     }
   }
