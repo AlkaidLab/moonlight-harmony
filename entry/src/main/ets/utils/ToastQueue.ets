@@ -8,10 +8,11 @@
  * (at your option) any later version.
  */
 
-import { promptAction } from '@kit.ArkUI';
+import { UI } from '../common/UI';
+import { Logger } from '../common/Logger';
 
 /**
- * Toast 队列：串行化 promptAction.showToast，避免多个初始化 toast 同时触发时
+ * Toast 队列：串行化 showToast，避免多个初始化 toast 同时触发时
  * 相互覆盖（HarmonyOS 的 Toast 连续调用会替换前一个，用户只能看到最后一个）。
  *
  * 用法：ToastQueue.show({ message: 'xxx', duration: 2000 });
@@ -62,9 +63,9 @@ export class ToastQueue {
     }
     ToastQueue.running = true;
     try {
-      promptAction.showToast({ message: next.message, duration: next.duration });
+      UI.get().getPromptAction().showToast({ message: next.message, duration: next.duration });
     } catch (e) {
-      console.warn(`ToastQueue: showToast failed: ${e}`);
+      Logger.warn('ToastQueue', `ToastQueue: showToast failed: ${e}`);
     }
     setTimeout(() => ToastQueue.pump(), next.duration + ToastQueue.GAP_MS);
   }

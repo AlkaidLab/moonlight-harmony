@@ -22,6 +22,7 @@ import { BackgroundStreamService, BroadcastControlCallbacks } from './Background
 import { common } from '@kit.AbilityKit';
 import { MoonBridge, ML_TEST_RESULT_INCONCLUSIVE, CONNECTION_TEST_SERVER } from './MoonBridge';
 import { ToastQueue } from '../../utils/ToastQueue';
+import { Logger } from '../../common/Logger';
 
 /**
  * StreamPage 需要实现的回调接口
@@ -106,13 +107,13 @@ export class StreamLifecycleManager {
   registerAppStateListener(): void {
     this.appStateListener = (state: AppState) => {
       if (state === AppState.BACKGROUND) {
-        console.info('[StreamPage] 应用进入后台');
+        Logger.info('StreamLifecycleManager', '[StreamPage] 应用进入后台');
         this.wasInBackground = true;
         // 退后台时 KEY_UP 不会再送达应用，立即释放所有按键状态，
         // 防止 Windows 端 Alt/Ctrl 卡住（切回后无法打字、鼠标操作异常）
         this.callbacks?.releaseAllKeys();
       } else if (state === AppState.FOREGROUND && this.wasInBackground) {
-        console.info('[StreamPage] 应用从后台恢复');
+        Logger.info('StreamLifecycleManager', '[StreamPage] 应用从后台恢复');
         this.wasInBackground = false;
         // 回前台对账按键状态；与窗口焦点恢复回调先后到达时均可安全重复调用
         // （未连接时 reconcileKeyState 不消费记录，留给重连后的焦点恢复）
@@ -145,9 +146,9 @@ export class StreamLifecycleManager {
         this.handleDisplayChange(displayId);
       };
       display.on('change', this.displayChangeCallback);
-      console.info('[StreamPage] 已注册屏幕方向变化监听');
+      Logger.info('StreamLifecycleManager', '[StreamPage] 已注册屏幕方向变化监听');
     } catch (err) {
-      console.warn('[StreamPage] 注册屏幕方向监听失败:', err);
+      Logger.warn('StreamLifecycleManager', '[StreamPage] 注册屏幕方向监听失败:', err);
     }
   }
 
@@ -158,9 +159,9 @@ export class StreamLifecycleManager {
     if (this.displayChangeCallback) {
       try {
         display.off('change', this.displayChangeCallback);
-        console.info('[StreamPage] 已取消屏幕方向变化监听');
+        Logger.info('StreamLifecycleManager', '[StreamPage] 已取消屏幕方向变化监听');
       } catch (err) {
-        console.warn('[StreamPage] 取消屏幕方向监听失败:', err);
+        Logger.warn('StreamLifecycleManager', '[StreamPage] 取消屏幕方向监听失败:', err);
       }
       this.displayChangeCallback = null;
     }
@@ -185,7 +186,7 @@ export class StreamLifecycleManager {
         return;
       }
 
-      console.info(`[StreamPage] 屏幕方向变化: ${isLandscape ? '横屏' : '竖屏'}, displayId=${displayId}`);
+      Logger.info('StreamLifecycleManager', `[StreamPage] 屏幕方向变化: ${isLandscape ? '横屏' : '竖屏'}, displayId=${displayId}`);
       this.lastDisplayOrientation = isLandscape;
 
       // 通知 ViewModel 处理旋转
@@ -194,7 +195,7 @@ export class StreamLifecycleManager {
       // 更新屏幕尺寸
       this.updateScreenSizeAfterRotation();
     } catch (err) {
-      console.warn('[StreamPage] 处理屏幕变化失败:', err);
+      Logger.warn('StreamLifecycleManager', '[StreamPage] 处理屏幕变化失败:', err);
     }
   }
 
@@ -230,7 +231,7 @@ export class StreamLifecycleManager {
         this.callbacks?.updatePanZoomParentSize(viewportSize.width, viewportSize.height);
       }
     } catch (err) {
-      console.warn('[StreamPage] 更新屏幕尺寸失败:', err);
+      Logger.warn('StreamLifecycleManager', '[StreamPage] 更新屏幕尺寸失败:', err);
     }
   }
 
@@ -239,7 +240,7 @@ export class StreamLifecycleManager {
    * 更新窗口管理器的串流分辨率并重新计算 XComponent 尺寸
    */
   async handleServerResolutionChanged(width: number, height: number): Promise<void> {
-    console.info(`[StreamPage] 服务端分辨率变化: ${width}x${height}`);
+    Logger.info('StreamLifecycleManager', `[StreamPage] 服务端分辨率变化: ${width}x${height}`);
     if (!this.windowManager) return;
 
     // 更新窗口管理器的串流分辨率
@@ -271,7 +272,7 @@ export class StreamLifecycleManager {
     if (xComponentSize) {
       this.callbacks?.updateXComponentSize(xComponentSize.width, xComponentSize.height);
       this.callbacks?.updatePanZoomParentSize(viewportSize.width, viewportSize.height);
-      console.info(`[StreamPage] XComponent 尺寸更新: ${JSON.stringify(xComponentSize)}`);
+      Logger.info('StreamLifecycleManager', `[StreamPage] XComponent 尺寸更新: ${JSON.stringify(xComponentSize)}`);
     }
   }
 
@@ -288,16 +289,16 @@ export class StreamLifecycleManager {
       // 播控中心"停止"按钮 → 断开串流
       const broadcastCallbacks: BroadcastControlCallbacks = {
         onStop: () => {
-          console.info('[StreamPage] 播控中心请求停止串流');
+          Logger.info('StreamLifecycleManager', '[StreamPage] 播控中心请求停止串流');
           if (this.callbacks) {
             this.callbacks.stopStreaming();
           }
         }
       } as BroadcastControlCallbacks;
       await this.backgroundService.start(context, gameName, broadcastCallbacks);
-      console.info('[StreamPage] 后台保活已启动');
+      Logger.info('StreamLifecycleManager', '[StreamPage] 后台保活已启动');
     } catch (err) {
-      console.warn('[StreamPage] 启动后台保活失败（不影响串流）:', err);
+      Logger.warn('StreamLifecycleManager', '[StreamPage] 启动后台保活失败（不影响串流）:', err);
     }
   }
 
@@ -308,9 +309,9 @@ export class StreamLifecycleManager {
   async stopBackgroundTask(): Promise<void> {
     try {
       await this.backgroundService.stop();
-      console.info('[StreamPage] 后台保活已停止');
+      Logger.info('StreamLifecycleManager', '[StreamPage] 后台保活已停止');
     } catch (err) {
-      console.warn('[StreamPage] 停止后台保活失败:', err);
+      Logger.warn('StreamLifecycleManager', '[StreamPage] 停止后台保活失败:', err);
     }
   }
 
@@ -324,14 +325,14 @@ export class StreamLifecycleManager {
    * - 如果后台期间连接已断开（pendingTerminationErrorCode），尝试重连
    */
   private handleAppResume(): void {
-    console.info(`[StreamPage] 处理应用恢复, 连接状态: ${this.viewModel?.connectionState}, ` +
+    Logger.info('StreamLifecycleManager', `[StreamPage] 处理应用恢复, 连接状态: ${this.viewModel?.connectionState}, ` +
       `后台保活: ${this.enableBackgroundTask}, 待处理断连: ${this.pendingTerminationErrorCode}`);
 
     // 后台期间连接断开 → 尝试重连而非直接弹错误对话框
     if (this.pendingTerminationErrorCode !== null) {
       const errorCode = this.pendingTerminationErrorCode;
       this.pendingTerminationErrorCode = null;
-      console.info(`[StreamPage] 后台期间连接断开 (errorCode=${errorCode})，尝试重连...`);
+      Logger.info('StreamLifecycleManager', `[StreamPage] 后台期间连接断开 (errorCode=${errorCode})，尝试重连...`);
       this.callbacks?.reconnectStreaming();
       return;
     }
@@ -339,12 +340,12 @@ export class StreamLifecycleManager {
     if (this.enableBackgroundTask) {
       // 后台保活开启：进程一直在运行，只需恢复解码器
       if (this.viewModel?.isConnected) {
-        console.info('[StreamPage] 后台保活开启，尝试恢复串流...');
+        Logger.info('StreamLifecycleManager', '[StreamPage] 后台保活开启，尝试恢复串流...');
         this.viewModel.resumeFromBackground();
       }
     } else {
       // 后台保活关闭：进程可能被冻结过，执行重连
-      console.info('[StreamPage] 后台保活关闭，触发重连...');
+      Logger.info('StreamLifecycleManager', '[StreamPage] 后台保活关闭，触发重连...');
       this.callbacks?.reconnectStreaming();
     }
   }
@@ -356,7 +357,7 @@ export class StreamLifecycleManager {
    * 对齐 Android: Game.connectionTerminated() 中 enableLatencyToast 逻辑
    */
   showLatencyToastIfEnabled(): void {
-    console.info(`[StreamPage] showLatencyToast: enabled=${this.latencyToastEnabled}`);
+    Logger.info('StreamLifecycleManager', `[StreamPage] showLatencyToast: enabled=${this.latencyToastEnabled}`);
     if (!this.latencyToastEnabled) {
       return;
     }
@@ -366,7 +367,7 @@ export class StreamLifecycleManager {
     const stats = session ? session.getSummaryStats() : this.viewModel?.performanceStats;
     if (!stats) return;
 
-    console.info(`[StreamPage] stats: net=${stats.networkLatency}, decode=${stats.latency}, host=${stats.hostLatency}, fps=${stats.renderedFps}`);
+    Logger.info('StreamLifecycleManager', `[StreamPage] stats: net=${stats.networkLatency}, decode=${stats.latency}, host=${stats.hostLatency}, fps=${stats.renderedFps}`);
     const parts: string[] = [];
 
     // 网络延迟 (RTT)
@@ -419,7 +420,7 @@ export class StreamLifecycleManager {
    *           -104 = 帧转换错误
    */
   handleConnectionTerminated(errorCode: number): void {
-    console.info(`StreamPage: 连接终止, errorCode=${errorCode}, inBackground=${this.wasInBackground}`);
+    Logger.info('StreamLifecycleManager', `StreamPage: 连接终止, errorCode=${errorCode}, inBackground=${this.wasInBackground}`);
 
     const ML_ERROR_GRACEFUL_TERMINATION = 0;
     const ML_ERROR_NO_VIDEO_TRAFFIC = -100;
@@ -430,7 +431,7 @@ export class StreamLifecycleManager {
 
     // 应用在后台时连接断开：延迟处理，等回到前台时尝试重连
     if (this.wasInBackground) {
-      console.info(`[StreamPage] 后台期间连接断开，延迟处理 (errorCode=${errorCode})`);
+      Logger.info('StreamLifecycleManager', `[StreamPage] 后台期间连接断开，延迟处理 (errorCode=${errorCode})`);
       this.pendingTerminationErrorCode = errorCode;
       return;
     }
@@ -449,7 +450,7 @@ export class StreamLifecycleManager {
         try {
           portTestResult = MoonBridge.testClientConnectivity(CONNECTION_TEST_SERVER, 443, portFlags);
         } catch (e) {
-          console.warn(`端口诊断失败: ${e}`);
+          Logger.warn('StreamLifecycleManager', `端口诊断失败: ${e}`);
         }
       }
 
@@ -487,7 +488,7 @@ export class StreamLifecycleManager {
             message += `\n\n请确保以下端口已开放:\n${portInfo}`;
           }
         } catch (e) {
-          console.warn(`端口信息格式化失败: ${e}`);
+          Logger.warn('StreamLifecycleManager', `端口信息格式化失败: ${e}`);
         }
       }
 

@@ -37,6 +37,7 @@ import {
   OV_FONT_XS, OV_FONT_SM, OV_FONT_MD, OV_FONT_LG,
   OV_CARD_WIDTH, OV_CARD_RADIUS, OV_CARD_BLUR,
 } from '../../common/OverlayConstants';
+import { Logger } from '../../common/Logger';
 
 /** 菜单回调接口 */
 export interface GameMenuCallbacks {
@@ -169,6 +170,8 @@ export struct GameMenuDialog {
   @State private isAdjustingBitrate: boolean = false;
   @State private abrEnabled: boolean = false;
   private bitrateDebounceTimer: number = -1;
+  /** 入场交错动画定时器，aboutToDisappear 时清理，避免销毁后触发 getUIContext */
+  private animateInTimers: number[] = [];
 
   // 音频振动会话设置
   @State private audioVibrationEnabled: boolean = false;
@@ -220,6 +223,10 @@ export struct GameMenuDialog {
       clearTimeout(this.bitrateDebounceTimer);
       this.bitrateDebounceTimer = -1;
     }
+    for (const t of this.animateInTimers) {
+      clearTimeout(t);
+    }
+    this.animateInTimers = [];
   }
 
   aboutToAppear(): void {
@@ -272,14 +279,14 @@ export struct GameMenuDialog {
 
   private animateIn(): void {
     for (let i = 0; i < MENU_ITEM_COUNT; i++) {
-      setTimeout(() => {
-        animateTo({
+      this.animateInTimers.push(setTimeout(() => {
+        this.getUIContext().animateTo({
           duration: ANIMATION_DURATION_IN,
           curve: Curve.FastOutSlowIn,
         }, () => {
           this.positions[i] = 0;
         });
-      }, i * ANIMATION_STAGGER_DELAY);
+      }, i * ANIMATION_STAGGER_DELAY));
     }
   }
 
@@ -289,7 +296,7 @@ export struct GameMenuDialog {
 
     const callbacks = this.callbacks;
 
-    animateTo({
+    this.getUIContext().animateTo({
       duration: ANIMATION_DURATION_OUT,
       curve: Curve.FastOutLinearIn
     }, () => {
@@ -658,7 +665,7 @@ export struct GameMenuDialog {
     try {
       await PreferencesUtil.put(key, value);
     } catch (error) {
-      console.error('[GyroAssist] 保存设置失败:', error);
+      Logger.error('GameMenuDialog', '[GyroAssist] 保存设置失败:', error);
     }
   }
 
@@ -674,19 +681,19 @@ export struct GameMenuDialog {
       SettingsKeys.ENABLE_AUDIO_VIBRATION,
       this.audioVibrationEnabled
     ).catch((error: Error) => {
-      console.error('[AudioVibration] 保存启用状态失败:', error);
+      Logger.error('GameMenuDialog', '[AudioVibration] 保存启用状态失败:', error);
     });
     PreferencesUtil.put(
       SettingsKeys.AUDIO_VIBRATION_STRENGTH,
       this.audioVibrationStrength
     ).catch((error: Error) => {
-      console.error('[AudioVibration] 保存强度失败:', error);
+      Logger.error('GameMenuDialog', '[AudioVibration] 保存强度失败:', error);
     });
     PreferencesUtil.put(
       SettingsKeys.AUDIO_VIBRATION_SCENE_MODE,
       this.audioVibrationSceneMode
     ).catch((error: Error) => {
-      console.error('[AudioVibration] 保存场景失败:', error);
+      Logger.error('GameMenuDialog', '[AudioVibration] 保存场景失败:', error);
     });
   }
 
@@ -941,7 +948,7 @@ export struct GameMenuDialog {
     .cardStyle()
     .alignItems(VerticalAlign.Center)
     .onClick(() => {
-      animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
         this.showMoreCards = !this.showMoreCards;
       });
     })

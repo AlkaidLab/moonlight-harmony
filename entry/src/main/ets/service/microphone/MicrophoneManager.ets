@@ -16,6 +16,8 @@ import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.Abil
 import { MoonBridge, MoonBridgeClass } from '../streaming/MoonBridge';
 import { MicrophoneConfig, MicrophoneState, MicrophoneStateListener } from './MicrophoneConfig';
 import { MicrophoneStream } from './MicrophoneStream';
+import { SettingsService } from '../SettingsService';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[MicManager]';
 
@@ -40,7 +42,7 @@ export class MicrophoneManager implements MicrophoneStateListener {
     this.context = context;
     this.moonBridge = moonBridge;
     this.enableMic = enableMic;
-    console.info(TAG, `初始化麦克风管理器, enableMic=${enableMic}`);
+    Logger.info('MicrophoneManager', TAG, `初始化麦克风管理器, enableMic=${enableMic}`);
   }
   
   /**
@@ -89,7 +91,7 @@ export class MicrophoneManager implements MicrophoneStateListener {
       this.hasPermission = grantStatus === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
       return this.hasPermission;
     } catch (error) {
-      console.error(TAG, `检查麦克风权限失败: ${error}`);
+      Logger.error('MicrophoneManager', TAG, `检查麦克风权限失败: ${error}`);
       return false;
     }
   }
@@ -106,14 +108,14 @@ export class MicrophoneManager implements MicrophoneStateListener {
       
       if (result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
         this.hasPermission = true;
-        console.info(TAG, '麦克风权限已授予');
+        Logger.info('MicrophoneManager', TAG, '麦克风权限已授予');
         return true;
       } else {
-        console.warn(TAG, '麦克风权限被拒绝');
+        Logger.warn('MicrophoneManager', TAG, '麦克风权限被拒绝');
         return false;
       }
     } catch (error) {
-      console.error(TAG, `请求麦克风权限失败: ${error}`);
+      Logger.error('MicrophoneManager', TAG, `请求麦克风权限失败: ${error}`);
       return false;
     }
   }
@@ -123,18 +125,18 @@ export class MicrophoneManager implements MicrophoneStateListener {
    */
   async initializeMicrophoneStream(): Promise<boolean> {
     if (!this.enableMic) {
-      console.info(TAG, '麦克风功能已禁用');
+      Logger.info('MicrophoneManager', TAG, '麦克风功能已禁用');
       return false;
     }
     
     if (this.microphoneStream !== null) {
-      console.info(TAG, '麦克风流已存在');
+      Logger.info('MicrophoneManager', TAG, '麦克风流已存在');
       return true;
     }
     
     // 检查权限
     if (!await this.hasMicrophonePermission()) {
-      console.warn(TAG, '需要麦克风权限');
+      Logger.warn('MicrophoneManager', TAG, '需要麦克风权限');
       // 尝试请求权限
       if (!await this.requestMicrophonePermission()) {
         return false;
@@ -143,7 +145,7 @@ export class MicrophoneManager implements MicrophoneStateListener {
     
     try {
       // 更新比特率配置
-      const settingsService = (await import('../SettingsService')).SettingsService.getInstance();
+      const settingsService = SettingsService.getInstance();
       const audioSettings = await settingsService.getAudioSettings();
       MicrophoneConfig.setOpusBitrate(audioSettings.micBitrate);
 
@@ -153,18 +155,18 @@ export class MicrophoneManager implements MicrophoneStateListener {
 
       // 检查主机是否支持麦克风
       if (!this.microphoneStream.isMicrophoneAvailable()) {
-        console.info(TAG, '主机不支持麦克风功能');
+        Logger.info('MicrophoneManager', TAG, '主机不支持麦克风功能');
         return true; // 初始化成功，但主机不支持
       }
 
       // 延迟启动模式：只创建流对象，不启动捕获
       // 用户需要主动调用 startMicrophone() 来启动
-      console.info(TAG, '麦克风流已初始化，等待用户启动');
+      Logger.info('MicrophoneManager', TAG, '麦克风流已初始化，等待用户启动');
 
       return true;
 
     } catch (error) {
-      console.error(TAG, `初始化麦克风流失败: ${error}`);
+      Logger.error('MicrophoneManager', TAG, `初始化麦克风流失败: ${error}`);
       this.onMicrophoneError(`初始化失败: ${error}`);
       return false;
     }
@@ -239,6 +241,6 @@ export class MicrophoneManager implements MicrophoneStateListener {
     }
     
     this.state = MicrophoneState.STOPPED;
-    console.info(TAG, '麦克风管理器已清理');
+    Logger.info('MicrophoneManager', TAG, '麦克风管理器已清理');
   }
 }

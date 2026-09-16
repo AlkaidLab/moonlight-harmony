@@ -14,6 +14,7 @@
  * 用于监听和通知应用的前后台状态变化
  */
 import { emitter } from '@kit.BasicServicesKit';
+import { Logger } from '../common/Logger';
 
 // 应用状态变化事件 ID
 export const APP_STATE_EVENT_ID = 10001;
@@ -58,7 +59,7 @@ export class AppStateService {
   onForeground(): void {
     if (this.currentState !== AppState.FOREGROUND) {
       this.currentState = AppState.FOREGROUND;
-      console.info('[AppStateService] 应用进入前台');
+      Logger.info('AppStateService', '[AppStateService] 应用进入前台');
       this.notifyListeners();
       this.emitEvent();
     }
@@ -70,7 +71,7 @@ export class AppStateService {
   onBackground(): void {
     if (this.currentState !== AppState.BACKGROUND) {
       this.currentState = AppState.BACKGROUND;
-      console.info('[AppStateService] 应用进入后台');
+      Logger.info('AppStateService', '[AppStateService] 应用进入后台');
       this.notifyListeners();
       this.emitEvent();
     }
@@ -112,7 +113,7 @@ export class AppStateService {
       try {
         callback(this.currentState);
       } catch (err) {
-        console.error('[AppStateService] 监听器回调错误:', err);
+        Logger.error('AppStateService', '[AppStateService] 监听器回调错误:', err);
       }
     });
   }

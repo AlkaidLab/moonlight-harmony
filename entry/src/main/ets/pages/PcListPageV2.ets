@@ -8,7 +8,8 @@
  * (at your option) any later version.
  */
 
-import { router } from '@kit.ArkUI';
+import { AppNav } from '../common/AppNav';
+import { AppListPageParams, HostWebUiPageParams } from '../common/PageParams';
 import { ComputerInfo, PairState, selectBestAddress } from '../model/ComputerInfo';
 import { ComputerManager } from '../service/ComputerManager';
 import { ComputerCard } from '../components/ComputerCard';
@@ -34,6 +35,8 @@ import { PinDialogView, AboutDialogView } from '../components/dialogs/PcListDial
 import { SettingsBackupService } from '../service/SettingsBackupService';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { ToastQueue } from '../utils/ToastQueue';
+import { Logger } from '../common/Logger';
+import { UI } from '../common/UI';
 
 /**
  * 电脑列表页面 (现代化版本)
@@ -45,7 +48,6 @@ import { ToastQueue } from '../utils/ToastQueue';
  * - 支持 WOL 唤醒
  * - 支持配对/取消配对
  */
-@Entry
 @Component
 struct PcListPageV2 {
   @State viewModel: ComputerListViewModel = new ComputerListViewModel();
@@ -276,12 +278,12 @@ struct PcListPageV2 {
         // 启动轮询
         this.computerManager.startPolling();
       }).catch((err: Error) => {
-        console.error('[MOONLIGHT] PcListPage: 刷新失败', err);
+        Logger.error('PcListPageV2', '[MOONLIGHT] PcListPage: 刷新失败', err);
         // 启动轮询
         this.computerManager.startPolling();
       });
     } catch (err) {
-      console.error('PcListPage: 初始化失败', err);
+      Logger.error('PcListPageV2', 'PcListPage: 初始化失败', err);
       this.isInitializing = false;
     }
   }
@@ -403,7 +405,7 @@ struct PcListPageV2 {
       this.computerManager.refreshAllComputers().then(() => {
         this.syncViewModelFromManager();
       }).catch((err: Error) => {
-        console.warn('[MOONLIGHT] PcListPage: 刷新失败', err);
+        Logger.warn('PcListPageV2', '[MOONLIGHT] PcListPage: 刷新失败', err);
       });
       // 重新加载背景图设置（用户可能在设置中更改了背景图类型）
       // 注意：首次加载时 aboutToAppear 已调用 loadBackgroundImage，不需要重复
@@ -457,6 +459,7 @@ struct PcListPageV2 {
   }
 
   build() {
+    NavDestination() {
     Stack() {
       // 背景图层
       BackgroundImage({ imageUrl: this.backgroundImageUrl, imageOpacity: 0.7 })
@@ -471,7 +474,7 @@ struct PcListPageV2 {
             showScanImport: this.canScanQrCode,
             onAboutClick: () => { this.showAboutDialog = true; },
             onScanImport: () => { this.scanAndImportKeys(); },
-            onSettingsClick: () => { router.pushUrl({ url: 'pages/SettingsPageV2' }); }
+            onSettingsClick: () => { AppNav.push('SettingsPageV2'); }
           } as TitleBarConfig
         })
 
@@ -517,6 +520,18 @@ struct PcListPageV2 {
       const height = newValue.height as number;
       this.screenWidth = width;
       this.isLandscape = width > height;
+    })
+    }
+    .hideTitleBar(true)
+    .onShown(() => this.onPageShow())
+    .onHidden(() => this.onPageHide())
+    .onBackPressed(() => {
+      // 根页面：返回键退到后台（router 时代首页按返回的系统默认行为，进程保活可秒恢复）
+      if (AppNav.stack.size() <= 1) {
+        (UI.get().getHostContext() as common.UIAbilityContext).moveAbilityToBackground();
+        return true;
+      }
+      return false;
     })
   }
 
@@ -615,7 +630,7 @@ struct PcListPageV2 {
         .borderWidth(1.5)
         .borderColor(AppColors.Primary)
         .margin({ left: AppSpacing.Medium })
-        .onClick(() => router.pushUrl({ url: 'pages/AddPcPageV2' }))
+        .onClick(() => AppNav.push('AddPcPageV2'))
       }
       .margin({ top: AppSpacing.XXLarge })
     }
@@ -739,7 +754,7 @@ struct PcListPageV2 {
         offsetY: 4
       })
       .margin({ left: AppSpacing.XLarge, right: AppSpacing.XLarge })
-      .onClick(() => router.pushUrl({ url: 'pages/AddPcPageV2' }))
+      .onClick(() => AppNav.push('AddPcPageV2'))
 
       // 下载壁纸到相册 - 使用 SaveButton 安全控件
       // 注意：SaveButton 作为安全控件，背景色透明度有最低限制 (α >= 0x1A)
@@ -825,12 +840,12 @@ struct PcListPageV2 {
 
         ToastQueue.show({ message: '壁纸已保存到相册' });
       } catch (err) {
-        console.error('下载壁纸失败', err);
+        Logger.error('PcListPageV2', '下载壁纸失败', err);
         const e = err as BusinessError;
         ToastQueue.show({ message: `保存失败: ${e.message || '未知错误'}` });
       }
     } else if (result === SaveButtonOnClickResult.TEMPORARY_AUTHORIZATION_FAILED) {
-      console.error('保存授权失败', error);
+      Logger.error('PcListPageV2', '保存授权失败', error);
       ToastQueue.show({ message: '保存授权失败' });
     }
   };
@@ -843,7 +858,7 @@ struct PcListPageV2 {
       await this.computerManager.refreshAllComputers();
       this.syncViewModelFromManager();
     } catch (err) {
-      console.error('刷新失败', err);
+      Logger.error('PcListPageV2', '刷新失败', err);
     } finally {
       this.isRefreshing = false;
     }
@@ -868,7 +883,7 @@ struct PcListPageV2 {
 
     // 检测 moonlight://pair URL（Sunshine QR 配对）
     const trimmed = result.trim();
-    console.info(`[Scan] 扫码结果 (${trimmed.length}字符): ${trimmed.substring(0, 100)}`);
+    Logger.info('PcListPageV2', `[Scan] 扫码结果 (${trimmed.length}字符): ${trimmed.substring(0, 100)}`);
     if (trimmed.startsWith('moonlight://pair')) {
       await this.handleQrPairing(trimmed);
       return;
@@ -966,7 +981,7 @@ struct PcListPageV2 {
         });
         this.syncViewModelFromManager();
         ToastQueue.show({ message: `已成功配对 ${serverName}！` });
-        router.pushUrl({ url: 'pages/AppListPageV2', params: { computerId: computer.uuid } });
+        AppNav.push('AppListPageV2', { computerId: computer.uuid } as AppListPageParams);
       } else if (result.state === PMPairState.PIN_WRONG) {
         ToastQueue.show({ message: '二维码已过期，请在 Sunshine 重新生成', duration: 3000 });
       } else if (result.state === PMPairState.ALREADY_IN_PROGRESS) {
@@ -996,7 +1011,7 @@ struct PcListPageV2 {
       this.syncViewModelFromManager();
       ToastQueue.show({ message: '刷新完成' });
     } catch (err) {
-      console.error('刷新失败', err);
+      Logger.error('PcListPageV2', '刷新失败', err);
       ToastQueue.show({ message: '刷新失败' });
     } finally {
       this.isScanning = false;
@@ -1010,14 +1025,8 @@ struct PcListPageV2 {
       onPair: (c) => this.actions!.pairWithComputer(c),
       onResumeGame: (c) => this.actions!.resumeGame(c),
       onQuitGame: (c) => this.actions!.quitGame(c),
-      onAppList: (c) => router.pushUrl({
-        url: 'pages/AppListPageV2',
-        params: { computerId: c.uuid }
-      }),
-      onHostWebUi: (c) => router.pushUrl({
-        url: 'pages/HostWebUiPage',
-        params: { computerId: c.uuid }
-      }),
+      onAppList: (c) => AppNav.push('AppListPageV2', { computerId: c.uuid } as AppListPageParams),
+      onHostWebUi: (c) => AppNav.push('HostWebUiPage', { computerId: c.uuid } as HostWebUiPageParams),
       onUnpair: (c) => this.actions!.unpairComputer(c),
       onSleep: (c) => this.actions!.sleepComputer(c),
       onTestNetwork: (c) => this.actions!.testNetwork(c),
@@ -1052,4 +1061,10 @@ struct PcListPageV2 {
     });
     this.optionPickerDialogController.open();
   }
+}
+
+
+@Builder
+export function PcListPageV2Builder() {
+  PcListPageV2()
 }

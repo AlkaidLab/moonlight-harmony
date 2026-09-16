@@ -8,7 +8,8 @@
  * (at your option) any later version.
  */
 
-import { router } from '@kit.ArkUI';
+import { AppNav } from '../common/AppNav';
+import { AppListPageParams, StreamPageParams } from '../common/PageParams';
 import { display } from '@kit.ArkUI';
 import { ComputerManager } from '../service/ComputerManager';
 import { NvHttp, AppEntry, DisplayInfo } from '../service/streaming/NvHttp';
@@ -24,10 +25,8 @@ import { ToastQueue } from '../utils/ToastQueue';
 import { UiSettings, SettingsService } from '../service/SettingsService';
 import { StreamingSession } from '../service/streaming/StreamingSession';
 import { BandwidthProbeService } from '../service/network/BandwidthProbeService';
+import { Logger } from '../common/Logger';
 
-interface AppListPageParams {
-  computerId: string;
-}
 
 /**
  * 应用列表页面 (现代化版本)
@@ -38,7 +37,6 @@ const VERTICAL_SINGLE_ROW_THRESHOLD = 5;
 const DEFAULT_VERTICAL_ROW_COUNT = 2;
 const DEFAULT_HORIZONTAL_ROW_COUNT = 1;
 
-@Entry
 @Component
 struct AppListPageV2 {
   @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
@@ -98,7 +96,7 @@ struct AppListPageV2 {
     for (let attempt = 0; attempt < AppListPageV2.EMPTY_LIST_THRESHOLD; attempt++) {
       apps = await this.nvHttp!.getAppList();
       if (apps.length > 0) break;
-      console.warn(`AppListPageV2: ${label}收到空列表 (${attempt + 1}/${AppListPageV2.EMPTY_LIST_THRESHOLD})`);
+      Logger.warn('AppListPageV2', `AppListPageV2: ${label}收到空列表 (${attempt + 1}/${AppListPageV2.EMPTY_LIST_THRESHOLD})`);
       if (attempt < AppListPageV2.EMPTY_LIST_THRESHOLD - 1) {
         await new Promise<void>(resolve => setTimeout(resolve, AppListPageV2.EMPTY_LIST_RETRY_DELAY_MS));
       }
@@ -151,7 +149,7 @@ struct AppListPageV2 {
     this.preserveBandwidthProbeForLaunch = false;
     this.updateLayoutConfig();
     
-    const params = router.getParams() as AppListPageParams;
+    const params = AppNav.topParams<AppListPageParams>();
     if (params?.computerId) {
       this.computerId = params.computerId;
       this.loadApps();
@@ -174,19 +172,19 @@ struct AppListPageV2 {
   private preheatStreamResources(): void {
     try {
       const caps = StreamingSession.getDecoderCapabilities();
-      console.info(`AppListPage: native 预热完成, H264=${caps.supportsH264}, HEVC=${caps.supportsHEVC}, AV1=${caps.supportsAV1}`);
+      Logger.info('AppListPageV2', `AppListPage: native 预热完成, H264=${caps.supportsH264}, HEVC=${caps.supportsHEVC}, AV1=${caps.supportsAV1}`);
     } catch (err) {
-      console.warn(`AppListPage: native 预热失败: ${(err as Error).message}`);
+      Logger.warn('AppListPageV2', `AppListPage: native 预热失败: ${(err as Error).message}`);
     }
     const settings = SettingsService.getInstance();
     settings.getStreamConfig().catch((err: Error) => {
-      console.warn(`AppListPage: stream 配置预热失败: ${err.message}`);
+      Logger.warn('AppListPageV2', `AppListPage: stream 配置预热失败: ${err.message}`);
     });
     settings.getInputSettings().catch((err: Error) => {
-      console.warn(`AppListPage: input 配置预热失败: ${err.message}`);
+      Logger.warn('AppListPageV2', `AppListPage: input 配置预热失败: ${err.message}`);
     });
     settings.getDisplaySettings().catch((err: Error) => {
-      console.warn(`AppListPage: display 配置预热失败: ${err.message}`);
+      Logger.warn('AppListPageV2', `AppListPage: display 配置预热失败: ${err.message}`);
     });
   }
 
@@ -210,11 +208,6 @@ struct AppListPageV2 {
     this.cancelRetryTimer();
     // 清理运行状态轮询
     this.cancelRunningStatePolling();
-  }
-
-  onBackPress(): boolean {
-    this.viewModel.cancelIconLoading();
-    return false;
   }
 
   /**
@@ -285,13 +278,13 @@ struct AppListPageV2 {
       const computer = this.computerManager.getComputer(this.computerId);
       if (!computer) {
         ToastQueue.show({ message: '找不到电脑' });
-        router.back();
+        AppNav.pop();
         return;
       }
       
       if (computer.pairState !== PairState.PAIRED) {
         ToastQueue.show({ message: '设备未配对，请重新配对' });
-        router.back();
+        AppNav.pop();
         return;
       }
       
@@ -394,7 +387,7 @@ struct AppListPageV2 {
   private scheduleNextRunningPoll(): void {
     if (this.runningPollAttempt >= AppListPageV2.RUNNING_POLL_MAX_ATTEMPTS) {
       // 上限到，仍有运行中游戏：可能游戏真的没退出（用户取消了退出 / 进程卡住）
-      console.info('AppListPageV2: 运行状态轮询达上限，停止');
+      Logger.info('AppListPageV2', 'AppListPageV2: 运行状态轮询达上限，停止');
       this.cancelRunningStatePolling();
       return;
     }
@@ -410,7 +403,7 @@ struct AppListPageV2 {
       }
       // refreshApps 后状态可能变化：若已无 running app，停止；否则继续等
       if (!this.viewModel.hasRunningApp) {
-        console.info(`AppListPageV2: 运行状态收敛（第 ${this.runningPollAttempt} 次轮询后）`);
+        Logger.info('AppListPageV2', `AppListPageV2: 运行状态收敛（第 ${this.runningPollAttempt} 次轮询后）`);
         this.cancelRunningStatePolling();
         return;
       }
@@ -436,7 +429,7 @@ struct AppListPageV2 {
       if (firstApp.iconLoaded && firstApp.localIconPath) {
         this.backgroundImageUrl = `file://${firstApp.localIconPath}`;
         setTimeout(() => {
-          animateTo({ duration: 500, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 500, curve: Curve.EaseOut }, () => {
             this.backgroundOpacity = 0.7;
           });
         }, 50);
@@ -467,7 +460,7 @@ struct AppListPageV2 {
     
     const newUrl = `file://${app.localIconPath}`;
     if (this.backgroundImageUrl !== newUrl) {
-      animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
         this.backgroundImageUrl = newUrl;
       });
     }
@@ -513,7 +506,7 @@ struct AppListPageV2 {
       const computer = this.computerManager.getComputer(this.computerId);
       if (computer && computer.pairState !== PairState.PAIRED) {
         ToastQueue.show({ message: '配对已失效，请重新配对' });
-        router.back();
+        AppNav.pop();
         return;
       }
       
@@ -537,7 +530,7 @@ struct AppListPageV2 {
         // 但运行状态要按刚拿到的 serverInfo 同步——否则退游戏后的收敛轮询
         // 靠 hasRunningApp 判断，会一直等不到收敛。
         if (apps.length === 0 && silent && this.viewModel.appCount > 0) {
-          console.warn('AppListPageV2: 静默刷新返回空列表，保留现有数据');
+          Logger.warn('AppListPageV2', 'AppListPageV2: 静默刷新返回空列表，保留现有数据');
           this.viewModel.syncRunningState(computer?.runningGameId || 0);
           return;
         }
@@ -552,7 +545,7 @@ struct AppListPageV2 {
       const errMsg = (err as Error).message || '';
       if (errMsg.includes('401') || errMsg.includes('not authorized') || errMsg.includes('Certificate verification')) {
         ToastQueue.show({ message: '配对已失效，请重新配对' });
-        router.back();
+        AppNav.pop();
         return;
       }
       // 静默刷新（如 onPageShow 自动触发的后台刷新）不弹 toast
@@ -560,12 +553,13 @@ struct AppListPageV2 {
       if (!silent && this.viewModel.appCount === 0) {
         ToastQueue.show({ message: '刷新失败' });
       } else {
-        console.warn('AppListPageV2: 刷新失败（静默）:', errMsg);
+        Logger.warn('AppListPageV2', 'AppListPageV2: 刷新失败（静默）:', errMsg);
       }
     }
   }
 
   build() {
+    NavDestination() {
     Stack() {
       // 纯色基础背景
       Column()
@@ -640,6 +634,9 @@ struct AppListPageV2 {
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Transparent)
+    }
+    .hideTitleBar(true)
+    .onShown(() => this.onPageShow())
   }
 
   @Builder
@@ -657,7 +654,7 @@ struct AppListPageV2 {
       .backgroundColor(AppColors.Surface)
       .borderWidth(1)
       .borderColor(AppColors.CardBorder)
-      .onClick(() => router.back())
+      .onClick(() => AppNav.pop())
 
       // 标题
       Column() {
@@ -697,7 +694,7 @@ struct AppListPageV2 {
       .borderWidth(1)
       .borderColor(this.showSearch ? AppColors.Accent : AppColors.CardBorder)
       .onClick(() => {
-        animateTo({ duration: AppAnimation.Normal, curve: AppAnimation.EaseOut }, () => {
+        this.getUIContext().animateTo({ duration: AppAnimation.Normal, curve: AppAnimation.EaseOut }, () => {
           this.showSearch = !this.showSearch;
           if (!this.showSearch) {
             this.searchText = '';
@@ -719,7 +716,7 @@ struct AppListPageV2 {
       .borderColor(AppColors.CardBorder)
       .margin({ left: AppSpacing.Small })
       .onClick(() => {
-        animateTo({ duration: AppAnimation.Normal, curve: AppAnimation.EaseOut }, () => {
+        this.getUIContext().animateTo({ duration: AppAnimation.Normal, curve: AppAnimation.EaseOut }, () => {
           UiSettings.toggleSmallIconMode();
         });
       })
@@ -1025,7 +1022,7 @@ struct AppListPageV2 {
           .borderColor(AppColors.CardBorder)
           .borderRadius(AppSizes.RadiusSmall)
           .height(36)
-          .onClick(() => router.back())
+          .onClick(() => AppNav.pop())
       }
       .margin({ top: AppSpacing.Large })
     }
@@ -1217,19 +1214,16 @@ struct AppListPageV2 {
     // 把当前 app 的本地海报路径传给 StreamPage，作为 ConnectingOverlay 的背景，
     // 让等待 launchApp / 首帧的几秒钟不再是纯黑屏。
     const posterPath = (app.localIconPath && app.iconLoaded) ? app.localIconPath : '';
-    router.pushUrl({
-      url: 'pages/StreamPage',
-      params: {
-        computerId: this.computerId,
-        appId: app.id,
-        appName: app.name,
-        cmdList: app.cmdList.length > 0 ? JSON.stringify(app.cmdList) : undefined,
-        resume: app.isRunning,
-        displayGuid: displayGuid,
-        useVdd: this.useVirtualDisplay,
-        posterPath: posterPath
-      }
-    });
+    AppNav.push('StreamPage', {
+      computerId: this.computerId,
+      appId: app.id,
+      appName: app.name,
+      cmdList: app.cmdList.length > 0 ? JSON.stringify(app.cmdList) : undefined,
+      resume: app.isRunning,
+      displayGuid: displayGuid,
+      useVdd: this.useVirtualDisplay,
+      posterPath: posterPath
+    } as StreamPageParams);
   }
 
   private scheduleBandwidthProbe(): void {
@@ -1248,7 +1242,7 @@ struct AppListPageV2 {
         return;
       }
       BandwidthProbeService.getInstance().preheat(this.computerId, endpoint, nvHttp).catch((err: Error) => {
-        console.info('AppListPage: 带宽预探测已跳过: ' + err.message);
+        Logger.info('AppListPageV2', 'AppListPage: 带宽预探测已跳过: ' + err.message);
       });
     }, 300);
   }
@@ -1428,4 +1422,10 @@ struct AppListPageV2 {
       ToastQueue.show({ message: '退出失败' });
     }
   }
+}
+
+
+@Builder
+export function AppListPageV2Builder() {
+  AppListPageV2()
 }

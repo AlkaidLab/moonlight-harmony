@@ -20,6 +20,7 @@
  */
 
 import nativeLib from 'libmoonlight_nativelib.so';
+import { Logger } from '../../common/Logger';
 
 /**
  * 拦截到的按键事件
@@ -88,16 +89,16 @@ export class InputInterceptorService {
     }
 
     if (!this.native) {
-      console.warn('InputInterceptor: Native 模块不可用');
+      Logger.warn('InputInterceptorService', 'InputInterceptor: Native 模块不可用');
       return -1;
     }
 
     const result = this.native.addKeyInterceptor(callback);
     if (result === 0) {
       this.active = true;
-      console.info('InputInterceptor: 按键拦截器已启动');
+      Logger.info('InputInterceptorService', 'InputInterceptor: 按键拦截器已启动');
     } else {
-      console.warn(`InputInterceptor: 启动失败，错误码=${result}`);
+      Logger.warn('InputInterceptorService', `InputInterceptor: 启动失败，错误码=${result}`);
     }
     return result;
   }
@@ -112,7 +113,7 @@ export class InputInterceptorService {
 
     this.native.removeKeyInterceptor();
     this.active = false;
-    console.info('InputInterceptor: 按键拦截器已停止');
+    Logger.info('InputInterceptorService', 'InputInterceptor: 按键拦截器已停止');
   }
 
   /**
@@ -206,16 +207,16 @@ export class MouseInterceptorService {
       this.stop();
     }
     if (!this.native) {
-      console.warn('MouseInterceptor: Native 模块不可用');
+      Logger.warn('InputInterceptorService', 'MouseInterceptor: Native 模块不可用');
       return -1;
     }
 
     const result = this.native.addMouseInterceptor();
     if (result === 0) {
       this.active = true;
-      console.info('MouseInterceptor: 鼠标拦截器已启动（全速轮询）');
+      Logger.info('InputInterceptorService', 'MouseInterceptor: 鼠标拦截器已启动（全速轮询）');
     } else {
-      console.warn(`MouseInterceptor: 启动失败，错误码=${result}`);
+      Logger.warn('InputInterceptorService', `MouseInterceptor: 启动失败，错误码=${result}`);
     }
     return result;
   }
@@ -228,7 +229,7 @@ export class MouseInterceptorService {
     if (this.active) {
       this.native.removeMouseInterceptor();
       this.active = false;
-      console.info('MouseInterceptor: 鼠标拦截器已停止');
+      Logger.info('InputInterceptorService', 'MouseInterceptor: 鼠标拦截器已停止');
     }
     this.unlockCursor();
   }
@@ -252,7 +253,7 @@ export class MouseInterceptorService {
     const result = this.native.lockCursor(windowId, followMovement);
     if (result === 0) {
       this.lockedWindowId = windowId;
-      console.info(`MouseInterceptor: 光标锁定成功 (windowId=${windowId}, followMovement=${followMovement})`);
+      Logger.info('InputInterceptorService', `MouseInterceptor: 光标锁定成功 (windowId=${windowId}, followMovement=${followMovement})`);
     }
     return result;
   }
@@ -263,9 +264,9 @@ export class MouseInterceptorService {
     const result = this.native.unlockCursor(windowId);
     if (result === 0) {
       this.lockedWindowId = -1;
-      console.info(`MouseInterceptor: 光标已释放 (windowId=${windowId})`);
+      Logger.info('InputInterceptorService', `MouseInterceptor: 光标已释放 (windowId=${windowId})`);
     } else {
-      console.warn(`MouseInterceptor: 光标释放失败 (windowId=${windowId}, error=${result})`);
+      Logger.warn('InputInterceptorService', `MouseInterceptor: 光标释放失败 (windowId=${windowId}, error=${result})`);
     }
     return result;
   }

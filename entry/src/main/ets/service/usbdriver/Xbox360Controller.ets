@@ -19,6 +19,7 @@ import { AbstractXboxController } from './AbstractXboxController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, Xbox360, UsbClass } from './ControllerConstants';
 import { readShortLE, AXIS_MAX, TRIGGER_MAX } from '../input/GamepadTypes';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[USB-X360]';
 
@@ -65,7 +66,7 @@ export class Xbox360Controller extends AbstractXboxController {
       iface.protocol === Xbox360.IFACE_PROTOCOL;
     
     if (isXbox360) {
-      console.info(`${TAG} 检测到 Xbox 360 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+      Logger.info('Xbox360Controller', `${TAG} 检测到 Xbox 360 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
     }
     
     return isXbox360;
@@ -83,7 +84,7 @@ export class Xbox360Controller extends AbstractXboxController {
    */
   protected handleRead(buffer: Uint8Array): boolean {
     if (buffer.length < 14) {
-      console.warn(`${TAG} 读取数据太短: ${buffer.length}`);
+      Logger.warn('Xbox360Controller', `${TAG} 读取数据太短: ${buffer.length}`);
       return false;
     }
     
@@ -143,7 +144,7 @@ export class Xbox360Controller extends AbstractXboxController {
     
     const res = await this.bulkWrite(commandBuffer);
     if (res !== commandBuffer.length) {
-      console.warn(`${TAG} LED 设置失败: ${res}`);
+      Logger.warn('Xbox360Controller', `${TAG} LED 设置失败: ${res}`);
       return false;
     }
     

@@ -11,6 +11,7 @@
 import { socket, connection } from '@kit.NetworkKit';
 import { NvHttp } from '../streaming/NvHttp';
 import { isIPv6Address, isIPv4Address } from '../../utils/NetHelper';
+import { Logger } from '../../common/Logger';
 
 /**
  * Wake-on-LAN 魔术包发送器
@@ -65,7 +66,7 @@ export class WakeOnLan {
       uniqueAddresses.push('255.255.255.255');
     }
 
-    console.info(`WOL: 开始发送魔术包 MAC=${macAddress} 地址列表=[${uniqueAddresses.join(', ')}] httpPort=${httpPort}`);
+    Logger.info('WakeOnLan', `WOL: 开始发送魔术包 MAC=${macAddress} 地址列表=[${uniqueAddresses.join(', ')}] httpPort=${httpPort}`);
 
     for (const address of uniqueAddresses) {
       const isIPv6 = isIPv6Address(address);
@@ -75,44 +76,44 @@ export class WakeOnLan {
         try {
           await WakeOnLan.sendBroadcast(payload, allPorts);
           sentWolPacket = true;
-          console.info(`WOL: 广播发送成功 (255.255.255.255)`);
+          Logger.info('WakeOnLan', `WOL: 广播发送成功 (255.255.255.255)`);
         } catch (e) {
           lastError = e instanceof Error ? e : new Error(String(e));
-          console.info(`WOL: 广播发送失败（已忽略）: ${lastError.message}`);
+          Logger.info('WakeOnLan', `WOL: 广播发送失败（已忽略）: ${lastError.message}`);
         }
       }
 
       // 2) DNS 解析地址后发送到每个解析结果（单播，不设 broadcast 标志）
       try {
         const resolvedAddresses = await WakeOnLan.resolveAddress(address);
-        console.info(`WOL: DNS 解析 ${address} → [${resolvedAddresses.join(', ')}]`);
+        Logger.info('WakeOnLan', `WOL: DNS 解析 ${address} → [${resolvedAddresses.join(', ')}]`);
         for (const resolved of resolvedAddresses) {
           try {
             const resolvedIsIPv6 = isIPv6Address(resolved);
             await WakeOnLan.sendUnicast(payload, resolved, allPorts, resolvedIsIPv6);
             sentWolPacket = true;
-            console.info(`WOL: 单播发送成功 → ${resolved}`);
+            Logger.info('WakeOnLan', `WOL: 单播发送成功 → ${resolved}`);
           } catch (e) {
             lastError = e instanceof Error ? e : new Error(String(e));
-            console.info(`WOL: 单播发送失败 → ${resolved}: ${lastError.message}`);
+            Logger.info('WakeOnLan', `WOL: 单播发送失败 → ${resolved}: ${lastError.message}`);
           }
         }
       } catch (e) {
         // DNS 解析失败，尝试直接用原始地址发送
         lastError = e instanceof Error ? e : new Error(String(e));
-        console.info(`WOL: DNS 解析失败 ${address}: ${lastError.message}，尝试直接发送`);
+        Logger.info('WakeOnLan', `WOL: DNS 解析失败 ${address}: ${lastError.message}，尝试直接发送`);
         try {
           await WakeOnLan.sendUnicast(payload, address, allPorts, isIPv6);
           sentWolPacket = true;
-          console.info(`WOL: 直接发送成功 → ${address}`);
+          Logger.info('WakeOnLan', `WOL: 直接发送成功 → ${address}`);
         } catch (e2) {
           lastError = e2 instanceof Error ? e2 : new Error(String(e2));
-          console.info(`WOL: 直接发送失败 → ${address}: ${lastError.message}`);
+          Logger.info('WakeOnLan', `WOL: 直接发送失败 → ${address}: ${lastError.message}`);
         }
       }
     }
 
-    console.info(`WOL: 发送完毕, 成功=${sentWolPacket}`);
+    Logger.info('WakeOnLan', `WOL: 发送完毕, 成功=${sentWolPacket}`);
 
     if (!sentWolPacket && lastError) {
       throw lastError;

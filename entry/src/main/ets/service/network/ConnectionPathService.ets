@@ -10,6 +10,7 @@
 
 import { connection } from '@kit.NetworkKit';
 import { isIPv4Address, isIPv6Address, isLanAddress, isPublicAddress, parseAddressAndPort } from '../../utils/NetHelper';
+import { Logger } from '../../common/Logger';
 
 export enum ConnectionPath {
   LAN = 'LAN',
@@ -107,7 +108,7 @@ export class ConnectionPathService {
         }
       }
     } catch (err) {
-      console.warn('ConnectionPathService: 读取默认网络能力失败: ' + String(err));
+      Logger.warn('ConnectionPathService', 'ConnectionPathService: 读取默认网络能力失败: ' + String(err));
     }
 
     if (netHandle) {
@@ -121,7 +122,7 @@ export class ConnectionPathService {
         localParts.sort();
         localNetworkKey = properties.interfaceName + ':' + localParts.join(',');
       } catch (err) {
-        console.warn('ConnectionPathService: 读取本地链路属性失败: ' + String(err));
+        Logger.warn('ConnectionPathService', 'ConnectionPathService: 读取本地链路属性失败: ' + String(err));
       }
     }
 
@@ -137,7 +138,7 @@ export class ConnectionPathService {
           }
         }
       } catch (err) {
-        console.warn('ConnectionPathService: 目标域名解析失败: ' + String(err));
+        Logger.warn('ConnectionPathService', 'ConnectionPathService: 目标域名解析失败: ' + String(err));
       }
     }
 

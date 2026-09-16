@@ -13,7 +13,9 @@
  * 
  * 显示远程游戏画面并处理用户输入
  */
-import { router, LengthMetrics } from '@kit.ArkUI';
+import { LengthMetrics } from '@kit.ArkUI';
+import { AppNav } from '../common/AppNav';
+import { StreamPageParams } from '../common/PageParams';
 import { display } from '@kit.ArkUI';
 import { getDisplayRequestHz } from '../utils/DisplayFrameRate';
 import { promptAction } from '@kit.ArkUI';
@@ -67,6 +69,7 @@ import { ClipboardSyncObserver, ClipboardSyncService } from '../service/clipboar
 import { ClipboardSyncConfig } from '../service/clipboard/ClipboardSyncConfig';
 import { SunshineClipboardBlobTransport } from '../service/clipboard/SunshineClipboardBlobTransport';
 import { ThreeFingerImeGestureHandler, ThreeFingerImeGestureResult } from '../service/input/ThreeFingerImeGestureHandler';
+import { Logger } from '../common/Logger';
 
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
@@ -93,15 +96,6 @@ class StreamClipboardObserver implements ClipboardSyncObserver {
   }
 }
 
-interface StreamPageParams {
-  computerId: string;
-  appId: number;
-  appName?: string;
-  cmdList?: string;       // JSON 字符串格式的超级指令列表
-  displayGuid?: string;   // 指定的显示器 GUID
-  useVdd?: boolean;       // 是否使用虚拟显示器
-  posterPath?: string;    // 应用本地海报路径，连接中遮罩背景
-}
 
 interface Ds5TouchIndicator {
   pointerId: number;
@@ -170,7 +164,6 @@ class CustomKeyManagerHostImpl implements CustomKeyManagerHost {
   }
 }
 
-@Entry
 @Component
 struct StreamPage {
   // ViewModel
@@ -308,7 +301,7 @@ struct StreamPage {
   private netSceneLastKey: string = '';
   
   aboutToAppear(): void {
-    const params = router.getParams() as StreamPageParams;
+    const params = AppNav.topParams<StreamPageParams>();
     if (params) {
       this.computerId = params.computerId;
       this.appId = params.appId;
@@ -334,7 +327,7 @@ struct StreamPage {
       CustomKeyStore.loadGameProfile(this.appId).then((profile) => {
         if (profile) {
           this.customKeyProfileVersion++;
-          console.info(`[StreamPage] 自动加载游戏配置: ${profile.name}`);
+          Logger.info('StreamPage', `[StreamPage] 自动加载游戏配置: ${profile.name}`);
         }
       });
     }
@@ -352,7 +345,7 @@ struct StreamPage {
           this.aiKeyNvHttp = nvHttp;
         }
       } catch (err) {
-        console.warn(`[StreamPage] AI 服务初始化失败: ${err}`);
+        Logger.warn('StreamPage', `[StreamPage] AI 服务初始化失败: ${err}`);
       }
     }
 
@@ -509,12 +502,12 @@ struct StreamPage {
   private initializeGamepad(): void {
     this.gamepadManager.setListener({
       onGamepadConnected: (deviceId: number, name: string, controllerType: number) => {
-        console.info(`手柄已连接: ${name} (ID: ${deviceId}, Type: ${controllerType})`);
+        Logger.info('StreamPage', `手柄已连接: ${name} (ID: ${deviceId}, Type: ${controllerType})`);
         this.controllerTypes.set(deviceId, controllerType);
         ToastQueue.show({ message: `手柄已连接: ${name}` });
       },
       onGamepadDisconnected: (deviceId: number) => {
-        console.info(`手柄已断开: ID ${deviceId}`);
+        Logger.info('StreamPage', `手柄已断开: ID ${deviceId}`);
         this.controllerTypes.delete(deviceId);
         ToastQueue.show({ message: '手柄已断开' });
       },
@@ -573,7 +566,7 @@ struct StreamPage {
           });
         }
       }).catch((err: Error) => {
-        console.warn(`[StreamPage] AI 可用性探测失败: ${err.message}`);
+        Logger.warn('StreamPage', `[StreamPage] AI 可用性探测失败: ${err.message}`);
       });
     }, 2000);
   }
@@ -669,10 +662,10 @@ struct StreamPage {
           this.forceUsbDriverMode();
         }
       }).catch((err: Error) => {
-        console.warn('[StreamPage] 未识别 USB 手柄提示对话框关闭异常:', err);
+        Logger.warn('StreamPage', '[StreamPage] 未识别 USB 手柄提示对话框关闭异常:', err);
       });
     } catch (err) {
-      console.warn('[StreamPage] runUnhandledUsbCheck 异常:', err);
+      Logger.warn('StreamPage', '[StreamPage] runUnhandledUsbCheck 异常:', err);
     }
   }
   
@@ -783,12 +776,12 @@ struct StreamPage {
       // 配置窗口
       await this.windowManager?.configureWindow();
     } catch (err) {
-      console.error('初始化显示失败:', err);
+      Logger.error('StreamPage', '初始化显示失败:', err);
     }
   }
   
   aboutToDisappear(): void {
-    console.info('StreamPage aboutToDisappear - cleaning up');
+    Logger.info('StreamPage', 'StreamPage aboutToDisappear - cleaning up');
 
     // 标记销毁：阻止异步启动链路在销毁后重新启用帧率保活
     this.pageDisposed = true;
@@ -1231,9 +1224,9 @@ struct StreamPage {
       });
       this.mouseDisplaySync.on('frame', () => {});
       this.getUIContext().runScopedTask(() => { this.mouseDisplaySync?.start(); });
-      console.info(`StreamPage: DisplaySync 已启动（期望 ${deviceRefreshRate}Hz）`);
+      Logger.info('StreamPage', `StreamPage: DisplaySync 已启动（期望 ${deviceRefreshRate}Hz）`);
     } catch (e) {
-      console.warn('StreamPage: DisplaySync 创建失败:', JSON.stringify(e));
+      Logger.warn('StreamPage', 'StreamPage: DisplaySync 创建失败:', JSON.stringify(e));
       if (this.mouseDisplaySync) {
         try { this.mouseDisplaySync.stop(); } catch (_) {}
         try { this.mouseDisplaySync.off('frame'); } catch (_) {}
@@ -1250,7 +1243,7 @@ struct StreamPage {
       try { this.mouseDisplaySync.stop(); } catch (_) {}
       try { this.mouseDisplaySync.off('frame'); } catch (_) {}
       this.mouseDisplaySync = null;
-      console.info('StreamPage: DisplaySync 已停止');
+      Logger.info('StreamPage', 'StreamPage: DisplaySync 已停止');
     }
   }
 
@@ -1366,7 +1359,7 @@ struct StreamPage {
     if (xComponentSize) {
       this.xComponentWidth = xComponentSize.width;
       this.xComponentHeight = xComponentSize.height;
-      console.info(`StreamPage: XComponent 尺寸 = ${JSON.stringify(xComponentSize)}`);
+      Logger.info('StreamPage', `StreamPage: XComponent 尺寸 = ${JSON.stringify(xComponentSize)}`);
     }
 
     // 应用画面位置和偏移
@@ -1432,7 +1425,7 @@ struct StreamPage {
     // 页面已销毁时（异步启动链路在 aboutToDisappear 后恢复）放弃启动，
     // 避免对已销毁页面重新产生高刷请求
     if (this.pageDisposed) {
-      console.warn('launchStream: 页面已销毁，跳过串流启动');
+      Logger.warn('StreamPage', 'launchStream: 页面已销毁，跳过串流启动');
       return;
     }
 
@@ -1448,7 +1441,7 @@ struct StreamPage {
         this.xComponentFrameRequestActive = frameNode !== null && frameNode !== undefined &&
           MoonBridge.setXComponentFrameRate(frameNode, displayHz);
       } catch (e) {
-        console.warn(`XComponent 帧率请求不可用: ${e}`);
+        Logger.warn('StreamPage', `XComponent 帧率请求不可用: ${e}`);
       }
       if (!this.xComponentFrameRequestActive && displayHz > 60) {
         this.startStreamDisplaySync(displayHz);
@@ -1456,7 +1449,7 @@ struct StreamPage {
       try {
         MoonBridge.setFrameRateKeepAlive(true, displayHz);
       } catch (e) {
-        console.warn(`启用帧率请求失败: ${e}`);
+        Logger.warn('StreamPage', `启用帧率请求失败: ${e}`);
       }
       this.startStreamFrameDiagnostics(displayHz);
     }
@@ -1590,29 +1583,29 @@ struct StreamPage {
       if (!this.viewModel.showLocalCursor) {
         try {
           pointer.setPointerVisibleSync(false);
-          console.info('StreamPage: 已隐藏本地系统鼠标光标');
+          Logger.info('StreamPage', 'StreamPage: 已隐藏本地系统鼠标光标');
         } catch (e) {
-          console.warn('StreamPage: 隐藏鼠标光标失败:', JSON.stringify(e));
+          Logger.warn('StreamPage', 'StreamPage: 隐藏鼠标光标失败:', JSON.stringify(e));
         }
       } else {
-        console.info('StreamPage: 本地光标模式已启用，保持系统光标可见');
+        Logger.info('StreamPage', 'StreamPage: 本地光标模式已启用，保持系统光标可见');
       }
       
     } catch (err) {
-      console.error('开始串流失败:', err);
+      Logger.error('StreamPage', '开始串流失败:', err);
       // 启动失败时 launchStream 可能已启用帧率保活，这里幂等复位
       this.resetStreamFrameHints();
     }
   }
   
   /**
-   * 收归的退出串流并返回：恢复窗口、延迟、router.back()。
+   * 收归的退出串流并返回：恢复窗口、延迟、AppNav.pop()。
    * 供 stopStreaming / quitGameAndReturn 复用，避免重复逻辑。
    */
   private async exitStreamAndReturn(): Promise<void> {
     await this.windowManager?.restoreWindow();
     await new Promise<void>((resolve) => setTimeout(resolve, 150));
-    router.back();
+    AppNav.pop();
   }
 
   /**
@@ -1705,7 +1698,7 @@ struct StreamPage {
     try {
       await PreferencesUtil.put(SettingsKeys.LAST_STREAM_DIAGNOSTICS, text);
     } catch (err) {
-      console.warn('[StreamPage] 保存串流诊断失败:', JSON.stringify(err));
+      Logger.warn('StreamPage', '[StreamPage] 保存串流诊断失败:', JSON.stringify(err));
     }
   }
 
@@ -1731,13 +1724,13 @@ struct StreamPage {
         }
         this.streamReportData = aiReport;
       }).catch((err: Error) => {
-        console.warn(`[StreamPage] AI 串流战报总结失败: ${err.message}`);
+        Logger.warn('StreamPage', `[StreamPage] AI 串流战报总结失败: ${err.message}`);
         if (requestId === this.streamReportAiRequestId && this.showStreamReport) {
           this.streamReportData = report.data;
         }
       });
     }).catch((err: Error) => {
-      console.warn(`[StreamPage] AI 串流战报可用性检查失败: ${err.message}`);
+      Logger.warn('StreamPage', `[StreamPage] AI 串流战报可用性检查失败: ${err.message}`);
     });
   }
 
@@ -1751,14 +1744,14 @@ struct StreamPage {
       // launchStream resumes after awaits: explicitly bind start to this window.
       this.getUIContext().runScopedTask(() => { this.streamDisplaySync?.start(); });
       this.stopMouseKeepAlive();
-      console.info(`FrameRateRequest: path=DisplaySync expected=${displayHz}`);
+      Logger.info('StreamPage', `FrameRateRequest: path=DisplaySync expected=${displayHz}`);
     } catch (e) {
       if (this.streamDisplaySync) {
         try { this.streamDisplaySync.stop(); } catch (_) {}
         try { this.streamDisplaySync.off('frame'); } catch (_) {}
         this.streamDisplaySync = null;
       }
-      console.warn(`DisplaySync 帧率请求失败: ${e}`);
+      Logger.warn('StreamPage', `DisplaySync 帧率请求失败: ${e}`);
     }
   }
 
@@ -1775,7 +1768,7 @@ struct StreamPage {
       const path = this.xComponentFrameRequestActive
         ? 'XComponent'
         : this.streamDisplaySync !== null ? 'DisplaySync' : 'none';
-      console.info(`FrameRateDiagnostics: rxFps=${stats.fps.toFixed(1)} submittedFps=${stats.renderedFps.toFixed(1)} decodeMs=${stats.globalAvgDecodeLatency.toFixed(1)} drops=${stats.droppedFrames} requestedHz=${displayHz} screenHz=${screenHz} path=${path} displaySyncActive=${this.streamDisplaySync !== null} displaySyncCallbackHz=${(this.streamDisplayCallbacks / seconds).toFixed(1)}`);
+      Logger.info('StreamPage', `FrameRateDiagnostics: rxFps=${stats.fps.toFixed(1)} submittedFps=${stats.renderedFps.toFixed(1)} decodeMs=${stats.globalAvgDecodeLatency.toFixed(1)} drops=${stats.droppedFrames} requestedHz=${displayHz} screenHz=${screenHz} path=${path} displaySyncActive=${this.streamDisplaySync !== null} displaySyncCallbackHz=${(this.streamDisplayCallbacks / seconds).toFixed(1)}`);
       this.streamDisplayCallbacks = 0;
       lastTime = now;
     }, 5000);
@@ -1846,7 +1839,7 @@ struct StreamPage {
         abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
 
       if (!granted) {
-        console.info('[StreamPage] 请求剪贴板权限...');
+        Logger.info('StreamPage', '[StreamPage] 请求剪贴板权限...');
         const result = await atManager.requestPermissionsFromUser(this.context, [permission]);
         granted = result.authResults.length > 0 &&
           result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
@@ -1854,7 +1847,7 @@ struct StreamPage {
 
       return granted;
     } catch (error) {
-      console.error('[StreamPage] 检查剪贴板权限失败:', error);
+      Logger.error('StreamPage', '[StreamPage] 检查剪贴板权限失败:', error);
       return false;
     }
   }
@@ -1885,7 +1878,7 @@ struct StreamPage {
         if (computer) {
           blobTransport = new SunshineClipboardBlobTransport(NvHttp.fromComputer(computer, this.context));
         } else {
-          console.warn(`[StreamPage] 图片剪贴板同步已开启但找不到 computer(id=${this.computerId})，blob 通道不可用`);
+          Logger.warn('StreamPage', `[StreamPage] 图片剪贴板同步已开启但找不到 computer(id=${this.computerId})，blob 通道不可用`);
         }
       }
       this.clipboardSyncService = new ClipboardSyncService(
@@ -1895,7 +1888,7 @@ struct StreamPage {
       );
       this.clipboardSyncService.start();
     } catch (error) {
-      console.error('Failed to initialize clipboard sync:', error);
+      Logger.error('StreamPage', 'Failed to initialize clipboard sync:', error);
       this.stopClipboardSync();
     }
   }
@@ -1905,7 +1898,7 @@ struct StreamPage {
    */
   private runStreamShutdownInBackground(label: string, task: () => Promise<void>): void {
     if (this.pendingStreamShutdown) {
-      console.info(`[StreamPage] ${label}流程已在进行中，忽略重复请求`);
+      Logger.info('StreamPage', `[StreamPage] ${label}流程已在进行中，忽略重复请求`);
       return;
     }
 
@@ -1914,7 +1907,7 @@ struct StreamPage {
       try {
         await task();
       } catch (err) {
-        console.error(`[StreamPage] ${label}后台收尾失败:`, err);
+        Logger.error('StreamPage', `[StreamPage] ${label}后台收尾失败:`, err);
       } finally {
         this.pendingStreamShutdown = null;
         this.pendingStreamShutdownLabel = '';
@@ -1924,7 +1917,7 @@ struct StreamPage {
 
   private runDetachedAsyncTask(label: string, task: () => Promise<void>): void {
     task().catch((err: Error) => {
-      console.error(`[StreamPage] ${label}失败:`, err);
+      Logger.error('StreamPage', `[StreamPage] ${label}失败:`, err);
     });
   }
 
@@ -1965,13 +1958,13 @@ struct StreamPage {
       await this.exitStreamAndReturn();
     } catch (err) {
       this.isClosingStreamReport = false;
-      console.error('[StreamPage] 关闭串流战报失败:', err);
+      Logger.error('StreamPage', '[StreamPage] 关闭串流战报失败:', err);
     }
   }
 
   async stopStreaming(): Promise<void> {
     if (this.pendingStreamShutdown) {
-      console.info('[StreamPage] stopStreaming 已在执行，忽略重复调用');
+      Logger.info('StreamPage', '[StreamPage] stopStreaming 已在执行，忽略重复调用');
       return;
     }
 
@@ -2007,7 +2000,7 @@ struct StreamPage {
    */
   async quitGameAndReturn(): Promise<void> {
     if (this.pendingStreamShutdown) {
-      console.info('[StreamPage] quitGameAndReturn 已在执行，忽略重复调用');
+      Logger.info('StreamPage', '[StreamPage] quitGameAndReturn 已在执行，忽略重复调用');
       return;
     }
 
@@ -2046,7 +2039,7 @@ struct StreamPage {
    * 静默停止当前会话，然后重新启动串流，不导航离开页面
    */
   async reconnectStreaming(): Promise<void> {
-    console.info('[StreamPage] 开始重连串流...');
+    Logger.info('StreamPage', '[StreamPage] 开始重连串流...');
     try {
       this.stopClipboardSync();
 
@@ -2056,7 +2049,7 @@ struct StreamPage {
       this.touchInputHandler.setDs5TouchpadSink(null);
       this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
       await this.viewModel.stopStreaming();
-      console.info('[StreamPage] 旧会话已停止，开始重新连接...');
+      Logger.info('StreamPage', '[StreamPage] 旧会话已停止，开始重新连接...');
 
       // 重新配置窗口和尺寸（与初次连接共用同一流程，避免画面缩小/黑边）
       await this.configureStreamWindow();
@@ -2065,12 +2058,12 @@ struct StreamPage {
       await this.launchStream();
       this.streamStartedAtMs = Date.now();
       await this.startClipboardSync();
-      console.info('[StreamPage] 重连串流成功');
+      Logger.info('StreamPage', '[StreamPage] 重连串流成功');
 
       ToastQueue.show({ message: '已重新连接' });
     } catch (err) {
       this.resetStreamFrameHints();
-      console.error('[StreamPage] 重连串流失败:', err);
+      Logger.error('StreamPage', '[StreamPage] 重连串流失败:', err);
       ToastQueue.show({ message: '重连失败，请手动重试' });
     }
   }
@@ -2272,7 +2265,7 @@ struct StreamPage {
     }
     this.viewModel.setTouchMode(nextMode);
     this.touchInputHandler.setMode(this.toTouchInputMode(nextMode));
-    console.info(`StreamPage: 触摸模式切换为 ${mode}`);
+    Logger.info('StreamPage', `StreamPage: 触摸模式切换为 ${mode}`);
   }
 
   private toTouchInputMode(mode: TouchMode): TouchInputMode {
@@ -2301,7 +2294,7 @@ struct StreamPage {
           message: `已切换到: ${modeDesc}`,
           duration: 3000
         });
-        console.info(`StreamPage: 已切换输入模式 -> ${modeDesc}`);
+        Logger.info('StreamPage', `StreamPage: 已切换输入模式 -> ${modeDesc}`);
       } else {
         ToastQueue.show({ 
           message: '切换失败，请重试',
@@ -2309,7 +2302,7 @@ struct StreamPage {
         });
       }
     } catch (err) {
-      console.error('强制 USB 驱动模式切换失败:', err);
+      Logger.error('StreamPage', '强制 USB 驱动模式切换失败:', err);
       ToastQueue.show({ 
         message: '切换失败: ' + (err as Error).message,
         duration: 2000
@@ -2318,6 +2311,7 @@ struct StreamPage {
   }
 
   build() {
+    NavDestination() {
     Stack() {
       // 视频渲染层 — 包裹在独立 Stack 中实现 9 宫格定位 + 偏移
       Stack() {
@@ -2327,11 +2321,11 @@ struct StreamPage {
           controller: this.xComponentController
         })
           .onLoad(() => {
-            console.info('XComponent 加载完成');
+            Logger.info('StreamPage', 'XComponent 加载完成');
             this.startStreaming();
           })
           .onDestroy(() => {
-            console.info('XComponent 销毁');
+            Logger.info('StreamPage', 'XComponent 销毁');
           })
           .width(this.xComponentWidth)
           .height(this.xComponentHeight)
@@ -2547,6 +2541,9 @@ struct StreamPage {
     .onKeyEvent((event: KeyEvent) => {
       return this.inputHandler.handleKeyEvent(event);
     })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => this.onBackPress())
   }
 
   // ==================== UI Builders ====================
@@ -2888,7 +2885,7 @@ struct StreamPage {
         .borderRadius(14)
         .backgroundColor('#30FFFFFF')
         .onClick(() => {
-          router.back();
+          AppNav.pop();
         })
     }
     .padding({ left: 20, right: 20, top: 14, bottom: 14 })
@@ -2899,4 +2896,9 @@ struct StreamPage {
     .shadow({ radius: 12, color: '#40000000', offsetY: 4 })
     .transition(TransitionEffect.OPACITY.animation({ duration: 300 }))
   }
+}
+
+@Builder
+export function StreamPageBuilder() {
+  StreamPage()
 }

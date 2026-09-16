@@ -17,6 +17,7 @@
  */
 import { MoonBridge, MoonBridgeClass } from '../streaming/MoonBridge';
 import { MicrophoneConfig, MicrophoneState, MicrophoneStateListener } from './MicrophoneConfig';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[MicStream]';
 
@@ -42,7 +43,7 @@ export class MicrophoneStream {
   
   constructor(moonBridge: MoonBridgeClass) {
     this.moonBridge = moonBridge;
-    console.info(TAG, '初始化麦克风流');
+    Logger.info('MicrophoneStream', TAG, '初始化麦克风流');
   }
   
   /**
@@ -71,13 +72,13 @@ export class MicrophoneStream {
    */
   async start(): Promise<boolean> {
     if (this.running) {
-      console.info(TAG, '麦克风流已在运行');
+      Logger.info('MicrophoneStream', TAG, '麦克风流已在运行');
       return true;
     }
     
     // 检查主机是否请求了麦克风
     if (!this.moonBridge.isMicrophoneRequested()) {
-      console.info(TAG, '主机未请求麦克风');
+      Logger.info('MicrophoneStream', TAG, '主机未请求麦克风');
       return false;
     }
     
@@ -85,7 +86,7 @@ export class MicrophoneStream {
     
     // 记录加密状态
     if (this.moonBridge.isMicrophoneEncryptionEnabled()) {
-      console.info(TAG, '麦克风加密已启用');
+      Logger.info('MicrophoneStream', TAG, '麦克风加密已启用');
     }
     
     return this.startMicrophoneCapture();
@@ -105,14 +106,14 @@ export class MicrophoneStream {
       // 获取麦克风端口
       const micPort = this.moonBridge.getMicPortNumber();
       if (micPort === 0) {
-        console.warn(TAG, '未获取到麦克风端口');
+        Logger.warn('MicrophoneStream', TAG, '未获取到麦克风端口');
       } else {
-        console.info(TAG, `使用麦克风端口: ${micPort}`);
+        Logger.info('MicrophoneStream', TAG, `使用麦克风端口: ${micPort}`);
       }
       
       // 启动 native 低时延采集器
       const bitrate = MicrophoneConfig.getOpusBitrate();
-      console.info(TAG, `启动 native 麦克风: rate=${MicrophoneConfig.SAMPLE_RATE} ch=${MicrophoneConfig.CHANNELS} bitrate=${bitrate}`);
+      Logger.info('MicrophoneStream', TAG, `启动 native 麦克风: rate=${MicrophoneConfig.SAMPLE_RATE} ch=${MicrophoneConfig.CHANNELS} bitrate=${bitrate}`);
 
       const ret = this.moonBridge.nativeMicStart(
         MicrophoneConfig.SAMPLE_RATE,
@@ -121,7 +122,7 @@ export class MicrophoneStream {
       );
       
       if (ret !== 0) {
-        console.error(TAG, `启动 native 麦克风失败: ${ret}`);
+        Logger.error('MicrophoneStream', TAG, `启动 native 麦克风失败: ${ret}`);
         this.notifyError('启动低时延麦克风采集失败');
         return false;
       }
@@ -134,12 +135,12 @@ export class MicrophoneStream {
       this.startStatsTimer();
 
       this.notifyStateChanged(MicrophoneState.CAPTURING);
-      console.info(TAG, '麦克风流已启动（native 低时延模式）');
+      Logger.info('MicrophoneStream', TAG, '麦克风流已启动（native 低时延模式）');
       
       return true;
       
     } catch (error) {
-      console.error(TAG, `启动麦克风捕获失败: ${error}`);
+      Logger.error('MicrophoneStream', TAG, `启动麦克风捕获失败: ${error}`);
       this.moonBridge.nativeMicStop();
       this.notifyError(`启动麦克风捕获失败: ${error}`);
       return false;
@@ -159,7 +160,7 @@ export class MicrophoneStream {
     this.moonBridge.nativeMicPause();
 
     this.notifyStateChanged(MicrophoneState.PAUSED);
-    console.info(TAG, '麦克风流已暂停');
+    Logger.info('MicrophoneStream', TAG, '麦克风流已暂停');
   }
   
   /**
@@ -173,7 +174,7 @@ export class MicrophoneStream {
     this.moonBridge.nativeMicResume();
     this.paused = false;
     this.notifyStateChanged(MicrophoneState.CAPTURING);
-    console.info(TAG, '麦克风流已恢复');
+    Logger.info('MicrophoneStream', TAG, '麦克风流已恢复');
   }
   
   /**
@@ -202,7 +203,7 @@ export class MicrophoneStream {
       return;
     }
 
-    console.info(TAG, '停止麦克风流');
+    Logger.info('MicrophoneStream', TAG, '停止麦克风流');
 
     this.running = false;
     this.paused = false;
@@ -214,7 +215,7 @@ export class MicrophoneStream {
     this.moonBridge.nativeMicStop();
 
     this.notifyStateChanged(MicrophoneState.STOPPED);
-    console.info(TAG, '麦克风流已停止');
+    Logger.info('MicrophoneStream', TAG, '麦克风流已停止');
   }
 
   /**
@@ -241,13 +242,13 @@ export class MicrophoneStream {
       try {
         const stats = this.moonBridge.nativeMicGetStats();
         if (stats) {
-          console.info(TAG,
+          Logger.info('MicrophoneStream', TAG,
             `麦克风统计: 已采集=${stats.captured}, 已编码=${stats.encoded}, ` +
             `已发送=${stats.sent}, 丢弃=${stats.dropped}, ` +
             `速率=${(stats.sent / 10).toFixed(1)} pps`);
         }
       } catch (e) {
-        console.warn(TAG, `获取麦克风统计失败: ${e}`);
+        Logger.warn('MicrophoneStream', TAG, `获取麦克风统计失败: ${e}`);
       }
     }, 10000);
   }

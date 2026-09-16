@@ -17,6 +17,7 @@
 
 import nativelib from 'libmoonlight_nativelib.so';
 import { NativeGamepadState, NativeButtonFlags, NativeGamepadType } from './NativeGamepad';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[NativeHidParser]';
 
@@ -70,14 +71,14 @@ export class NativeHidParserService {
       if (lib.Gamepad !== undefined) {
         this.gamepadModule = lib.Gamepad;
         this.initialized = true;
-        console.info(`${TAG} 原生 Gamepad 模块已加载`);
+        Logger.info('NativeHidParserService', `${TAG} 原生 Gamepad 模块已加载`);
         return true;
       } else {
-        console.error(`${TAG} 原生库中未找到 Gamepad 模块`);
+        Logger.error('NativeHidParserService', `${TAG} 原生库中未找到 Gamepad 模块`);
         return false;
       }
     } catch (err) {
-      console.error(`${TAG} 加载原生库失败:`, err);
+      Logger.error('NativeHidParserService', `${TAG} 加载原生库失败:`, err);
       return false;
     }
   }
@@ -99,14 +100,14 @@ export class NativeHidParserService {
    */
   parseHidReport(vendorId: number, productId: number, data: Uint8Array, forceType?: number): NativeGamepadState | null {
     if (!this.gamepadModule) {
-      console.warn(`${TAG} 服务未初始化`);
+      Logger.warn('NativeHidParserService', `${TAG} 服务未初始化`);
       return null;
     }
 
     try {
       return this.gamepadModule.parseHidReport(vendorId, productId, data, forceType ?? 0);
     } catch (err) {
-      console.error(`${TAG} 解析 HID 报告失败:`, err);
+      Logger.error('NativeHidParserService', `${TAG} 解析 HID 报告失败:`, err);
       return null;
     }
   }

@@ -12,6 +12,7 @@ import { NvHttp, NetworkProbeCapabilities, NetworkProbeSession } from '../stream
 import { SettingsService, BandwidthProbeSettings } from '../SettingsService';
 import { ConnectionPath, ConnectionPathInfo, ConnectionPathService } from './ConnectionPathService';
 import { StringUtil } from '../../utils/StringUtil';
+import { Logger } from '../../common/Logger';
 
 export const METERED_BANDWIDTH_PROBE_MAX_BYTES: number = 320 * 1024;
 
@@ -117,12 +118,12 @@ export class BandwidthProbeService {
       const result = await this.runProgressiveProbe(probeSession, capabilities, isTrafficConstrained, operationId);
       if (result && operationId === this.operationId) {
         this.cache.set(cacheKey, result);
-        console.info('BandwidthProbeService: path=' + pathInfo.path + ', measured=' +
+        Logger.info('BandwidthProbeService', 'BandwidthProbeService: path=' + pathInfo.path + ', measured=' +
           Math.round(result.measuredKbps).toString() + 'kbps, safe=' + result.safeBitrateKbps.toString() + 'kbps');
       }
     } catch (err) {
       if (operationId === this.operationId) {
-        console.info('BandwidthProbeService: 启动前探测已回退: ' + String(err));
+        Logger.info('BandwidthProbeService', 'BandwidthProbeService: 启动前探测已回退: ' + String(err));
       }
     } finally {
       if (probeSession) {
@@ -207,7 +208,7 @@ export class BandwidthProbeService {
 
   private canProbe(pathInfo: ConnectionPathInfo, settings: BandwidthProbeSettings): boolean {
     if ((pathInfo.isMetered || pathInfo.isCellular) && !settings.meteredProbeEnabled) {
-      console.info('BandwidthProbeService: 计费或蜂窝网络未授权主动探测');
+      Logger.info('BandwidthProbeService', 'BandwidthProbeService: 计费或蜂窝网络未授权主动探测');
       return false;
     }
     return true;

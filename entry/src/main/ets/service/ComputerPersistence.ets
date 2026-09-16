@@ -19,6 +19,7 @@ import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { NvHttp } from './streaming/NvHttp';
 import { isLoopbackIPv4, parseAddressAndPort } from '../utils/NetHelper';
 import { SettingsBackupService } from './SettingsBackupService';
+import { Logger } from '../common/Logger';
 
 // =============================================================================
 // 类型定义
@@ -139,9 +140,9 @@ export class ComputerPersistence {
 
       await PreferencesUtil.put(STORAGE_KEY, JSON.stringify(computerList));
       SettingsBackupService.scheduleAutoSave();
-      console.info(`ComputerPersistence: 保存 ${computerList.length} 台电脑`);
+      Logger.info('ComputerPersistence', `ComputerPersistence: 保存 ${computerList.length} 台电脑`);
     } catch (err) {
-      console.error('ComputerPersistence: 保存电脑列表失败', err);
+      Logger.error('ComputerPersistence', 'ComputerPersistence: 保存电脑列表失败', err);
     }
   }
 
@@ -158,12 +159,12 @@ export class ComputerPersistence {
     try {
       const savedJson = await PreferencesUtil.get<string>(STORAGE_KEY, '');
       if (!savedJson) {
-        console.info('ComputerPersistence: 没有保存的电脑');
+        Logger.info('ComputerPersistence', 'ComputerPersistence: 没有保存的电脑');
         return computers;
       }
 
       const computerList = JSON.parse(savedJson) as SavedComputerData[];
-      console.info(`ComputerPersistence: 解析到 ${computerList.length} 台电脑`);
+      Logger.info('ComputerPersistence', `ComputerPersistence: 解析到 ${computerList.length} 台电脑`);
 
       for (const saved of computerList) {
         // 解析配对状态（兼容旧格式数字字符串 "1" 和新格式 "PAIRED"）
@@ -180,7 +181,7 @@ export class ComputerPersistence {
           }
         }
 
-        console.info(`ComputerPersistence: 加载 ${saved.name} (pairState=${pairState}, httpPort=${httpPort}, cert=${saved.serverCert ? '有' : '无'})`);
+        Logger.info('ComputerPersistence', `ComputerPersistence: 加载 ${saved.name} (pairState=${pairState}, httpPort=${httpPort}, cert=${saved.serverCert ? '有' : '无'})`);
 
         // 过滤持久化中遗留的 127.x 回环地址（对齐 Android GS IPv6 Forwarder 保护）
         const cleanLocalAddr = (saved.localAddress && !isLoopbackIPv4(saved.localAddress))
@@ -207,9 +208,9 @@ export class ComputerPersistence {
         computers.set(computer.uuid, computer);
       }
 
-      console.info(`ComputerPersistence: 加载完成，共 ${computers.size} 台电脑`);
+      Logger.info('ComputerPersistence', `ComputerPersistence: 加载完成，共 ${computers.size} 台电脑`);
     } catch (err) {
-      console.error('ComputerPersistence: 加载电脑列表失败', err);
+      Logger.error('ComputerPersistence', 'ComputerPersistence: 加载电脑列表失败', err);
     }
 
     return computers;

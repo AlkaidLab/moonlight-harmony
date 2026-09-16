@@ -41,6 +41,7 @@ import {
   LI_TILT_UNKNOWN,
   LI_ROT_UNKNOWN
 } from '../streaming/MoonBridge';
+import { Logger } from '../../common/Logger';
 
 /**
  * 触摸输入模式
@@ -335,7 +336,7 @@ export class TouchInputHandler {
       this.ds5Touchpad.cancelActiveInput();
     }
     this.mode = mode;
-    console.info(`TouchInputHandler: 模式切换为 ${mode}`);
+    Logger.info('TouchInputHandler', `TouchInputHandler: 模式切换为 ${mode}`);
   }
 
   /** 绑定当前串流会话的 DS5 触控输出。 */
@@ -975,7 +976,7 @@ export class TouchInputHandler {
     // 首次手写笔事件诊断日志
     if (!this.penFirstEventLogged) {
       this.penFirstEventLogged = true;
-      console.info(`手写笔首次事件: sourceTool=${event.sourceTool}, pressure=${eventPressure}, ` +
+      Logger.info('TouchInputHandler', `手写笔首次事件: sourceTool=${event.sourceTool}, pressure=${eventPressure}, ` +
         `tiltX=${tiltX}, tiltY=${tiltY}, computedTilt=${tilt}, rotation=${rotation}, ` +
         `type=${event.type}, pointers=${touches.length}`);
     }
@@ -1008,7 +1009,7 @@ export class TouchInputHandler {
           );
           // 检测主机是否支持 Pen 事件
           if (ret === LI_ERR_UNSUPPORTED) {
-            console.warn('手写笔: 主机不支持 Pen 事件，回退到 Touch 事件');
+            Logger.warn('TouchInputHandler', '手写笔: 主机不支持 Pen 事件，回退到 Touch 事件');
             this.penUnsupported = true;
             // 回退：用 touch 事件重新发送
             this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event);

@@ -28,6 +28,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceVibrationCoordinator } from '../../service/input/DeviceVibrationCoordinator';
 import { display } from '@kit.ArkUI';
+import { Logger } from '../../common/Logger';
 
 // =============================================================================
 // Windows 虚拟键码
@@ -290,7 +291,7 @@ export struct VirtualKeyboard {
     // 预计算键盘初始位置（底部对齐）
     try {
       const d = display.getDefaultDisplaySync();
-      this.posY = px2vp(d.height) - (TITLE_BAR_HEIGHT + (KEYBOARD_ROWS.length - 1) * KEY_HEIGHT
+      this.posY = this.getUIContext().px2vp(d.height) - (TITLE_BAR_HEIGHT + (KEYBOARD_ROWS.length - 1) * KEY_HEIGHT
         + FUNC_KEY_HEIGHT + (KEYBOARD_ROWS.length - 1) * ROW_GAP + KB_PADDING * 2);
     } catch (_e) {
       this.posY = 500;
@@ -359,7 +360,7 @@ export struct VirtualKeyboard {
       const globalY = (area.globalPosition?.y ?? -1) as number;
       // 检测键盘是否超出屏幕底部，如果是则自动上移
       if (globalY >= 0 && actualH > 0) {
-        const screenH = px2vp(display.getDefaultDisplaySync().height);
+        const screenH = this.getUIContext().px2vp(display.getDefaultDisplaySync().height);
         const overflow = (globalY + actualH) - screenH;
         if (overflow > 10) {
           this.posY = Math.max(0, this.posY - overflow);
@@ -648,7 +649,7 @@ export struct VirtualKeyboard {
         await PreferencesUtil.put(KB_BG_IMAGE_KEY, destPath);
       }
     } catch (e) {
-      console.error('VirtualKeyboard: pickBackgroundImage failed', e);
+      Logger.error('VirtualKeyboard', 'VirtualKeyboard: pickBackgroundImage failed', e);
     }
   }
 
@@ -665,7 +666,7 @@ export struct VirtualKeyboard {
       this.backgroundImageUri = '';
       await PreferencesUtil.put(KB_BG_IMAGE_KEY, '');
     } catch (e) {
-      console.error('VirtualKeyboard: clearBackgroundImage failed', e);
+      Logger.error('VirtualKeyboard', 'VirtualKeyboard: clearBackgroundImage failed', e);
     }
   }
 }

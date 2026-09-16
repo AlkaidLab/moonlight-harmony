@@ -11,6 +11,7 @@ import { util } from '@kit.ArkTS';
 import { fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { DEV_KEY_SALT } from '../config/DevKeySecret';
+import { Logger } from '../common/Logger';
 
 export class DevKeyVerifier {
   /**
@@ -30,7 +31,7 @@ export class DevKeyVerifier {
         return textDecoder.decodeToString(new Uint8Array(buffer)).trim();
       }
     } catch (err) {
-      console.error(`DevKeyVerifier: 无法读取设备 ID: ${err}`);
+      Logger.error('DevKeyVerifier', `DevKeyVerifier: 无法读取设备 ID: ${err}`);
     }
     return '';
   }

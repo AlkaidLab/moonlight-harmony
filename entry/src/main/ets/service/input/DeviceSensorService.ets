@@ -19,6 +19,7 @@
 
 import { sensor } from '@kit.SensorServiceKit';
 import { display } from '@kit.ArkUI';
+import { Logger } from '../../common/Logger';
 
 // =============================================================================
 // 常量定义
@@ -130,7 +131,7 @@ export class DeviceSensorService {
     }
 
     this.availabilityChecked = true;
-    console.info(`[DeviceSensor] 可用性检查: gyro=${this.gyroAvailable}, accel=${this.accelAvailable}`);
+    Logger.info('DeviceSensorService', `[DeviceSensor] 可用性检查: gyro=${this.gyroAvailable}, accel=${this.accelAvailable}`);
   }
 
   /**
@@ -232,7 +233,7 @@ export class DeviceSensorService {
       try {
         sensor.off(sensor.SensorId.GYROSCOPE);
       } catch (err) {
-        console.warn(`[DeviceSensor] 取消陀螺仪订阅失败: ${err}`);
+        Logger.warn('DeviceSensorService', `[DeviceSensor] 取消陀螺仪订阅失败: ${err}`);
       }
       this.gyroEnabled = false;
     }
@@ -240,7 +241,7 @@ export class DeviceSensorService {
     this.gyroReportRateHz = reportRateHz;
 
     if (reportRateHz === 0) {
-      console.info('[DeviceSensor] 陀螺仪已禁用');
+      Logger.info('DeviceSensorService', '[DeviceSensor] 陀螺仪已禁用');
       // 发送归零事件以确保虚拟控制器静止
       if (this.dataCallback) {
         this.dataCallback(this.controllerNumber, LI_MOTION_TYPE_GYRO, 0, 0, 0);
@@ -282,9 +283,9 @@ export class DeviceSensorService {
       }, { interval: intervalNs });
 
       this.gyroEnabled = true;
-      console.info(`[DeviceSensor] 陀螺仪已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
+      Logger.info('DeviceSensorService', `[DeviceSensor] 陀螺仪已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
     } catch (err) {
-      console.error(`[DeviceSensor] 启用陀螺仪失败: ${err}`);
+      Logger.error('DeviceSensorService', `[DeviceSensor] 启用陀螺仪失败: ${err}`);
       this.gyroAvailable = false;
     }
   }
@@ -298,7 +299,7 @@ export class DeviceSensorService {
       try {
         sensor.off(sensor.SensorId.ACCELEROMETER);
       } catch (err) {
-        console.warn(`[DeviceSensor] 取消加速度计订阅失败: ${err}`);
+        Logger.warn('DeviceSensorService', `[DeviceSensor] 取消加速度计订阅失败: ${err}`);
       }
       this.accelEnabled = false;
     }
@@ -306,7 +307,7 @@ export class DeviceSensorService {
     this.accelReportRateHz = reportRateHz;
 
     if (reportRateHz === 0) {
-      console.info('[DeviceSensor] 加速度计已禁用');
+      Logger.info('DeviceSensorService', '[DeviceSensor] 加速度计已禁用');
       return;
     }
 
@@ -343,9 +344,9 @@ export class DeviceSensorService {
       }, { interval: intervalNs });
 
       this.accelEnabled = true;
-      console.info(`[DeviceSensor] 加速度计已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
+      Logger.info('DeviceSensorService', `[DeviceSensor] 加速度计已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
     } catch (err) {
-      console.error(`[DeviceSensor] 启用加速度计失败: ${err}`);
+      Logger.error('DeviceSensorService', `[DeviceSensor] 启用加速度计失败: ${err}`);
       this.accelAvailable = false;
     }
   }
@@ -357,7 +358,7 @@ export class DeviceSensorService {
     this.setGyroState(0);
     this.setAccelState(0);
     this.dataCallback = null;
-    console.info('[DeviceSensor] 所有传感器已禁用');
+    Logger.info('DeviceSensorService', '[DeviceSensor] 所有传感器已禁用');
   }
 
   /**

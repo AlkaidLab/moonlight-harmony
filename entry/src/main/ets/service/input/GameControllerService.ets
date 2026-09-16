@@ -16,6 +16,7 @@
  */
 
 import nativeLib from 'libmoonlight_nativelib.so';
+import { Logger } from '../../common/Logger';
 
 /**
  * 设备信息
@@ -153,7 +154,7 @@ export class GameControllerService {
    */
   isAvailable(): boolean {
     if (!native) {
-      console.warn('[GameController] Native 模块不可用');
+      Logger.warn('GameControllerService', '[GameController] Native 模块不可用');
       return false;
     }
     return native.isAvailable();
@@ -164,22 +165,22 @@ export class GameControllerService {
    */
   init(): boolean {
     if (!native) {
-      console.error('[GameController] Native 模块不可用');
+      Logger.error('GameControllerService', '[GameController] Native 模块不可用');
       return false;
     }
     
     if (this.initialized) {
-      console.warn('[GameController] 已初始化');
+      Logger.warn('GameControllerService', '[GameController] 已初始化');
       return true;
     }
     
     const result = native.init();
     if (result === 0) {
       this.initialized = true;
-      console.info('[GameController] 初始化成功');
+      Logger.info('GameControllerService', '[GameController] 初始化成功');
       return true;
     } else {
-      console.error(`[GameController] 初始化失败: ${result}`);
+      Logger.error('GameControllerService', `[GameController] 初始化失败: ${result}`);
       return false;
     }
   }
@@ -193,7 +194,7 @@ export class GameControllerService {
     this.stopMonitor();
     native.uninit();
     this.initialized = false;
-    console.info('[GameController] 已反初始化');
+    Logger.info('GameControllerService', '[GameController] 已反初始化');
   }
   
   /**
@@ -231,7 +232,7 @@ export class GameControllerService {
    */
   startMonitor(): boolean {
     if (!native || !this.initialized) {
-      console.error('[GameController] 未初始化');
+      Logger.error('GameControllerService', '[GameController] 未初始化');
       return false;
     }
     
@@ -244,10 +245,10 @@ export class GameControllerService {
     const result = native.startMonitor();
     if (result === 0) {
       this.monitoring = true;
-      console.info('[GameController] 开始监听');
+      Logger.info('GameControllerService', '[GameController] 开始监听');
       return true;
     } else {
-      console.error(`[GameController] 开始监听失败: ${result}`);
+      Logger.error('GameControllerService', `[GameController] 开始监听失败: ${result}`);
       return false;
     }
   }
@@ -260,7 +261,7 @@ export class GameControllerService {
     
     native.stopMonitor();
     this.monitoring = false;
-    console.info('[GameController] 停止监听');
+    Logger.info('GameControllerService', '[GameController] 停止监听');
   }
 
   /**
@@ -270,7 +271,7 @@ export class GameControllerService {
   pauseInputMonitor(): void {
     if (!native || !this.monitoring) return;
     native.pauseInputMonitor();
-    console.info('[GameController] 暂停输入监听（设备监听保持活跃）');
+    Logger.info('GameControllerService', '[GameController] 暂停输入监听（设备监听保持活跃）');
   }
 
   /**
@@ -280,7 +281,7 @@ export class GameControllerService {
   resumeInputMonitor(): void {
     if (!native || !this.monitoring) return;
     native.resumeInputMonitor();
-    console.info('[GameController] 恢复输入监听');
+    Logger.info('GameControllerService', '[GameController] 恢复输入监听');
   }
 
   /**
@@ -327,11 +328,11 @@ export class GameControllerService {
    */
   refreshDeviceCache(): number {
     if (!native || !this.initialized) {
-      console.warn('[GameController] refreshDeviceCache: 未初始化');
+      Logger.warn('GameControllerService', '[GameController] refreshDeviceCache: 未初始化');
       return -1;
     }
     const result = native.refreshDevices();
-    console.info(`[GameController] refreshDeviceCache: 新发现 ${result} 个设备`);
+    Logger.info('GameControllerService', `[GameController] refreshDeviceCache: 新发现 ${result} 个设备`);
     return result;
   }
 

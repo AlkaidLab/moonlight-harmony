@@ -21,6 +21,7 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ToastQueue } from '../utils/ToastQueue';
+import { Logger } from '../common/Logger';
 
 /**
  * 背景图组件属性
@@ -124,12 +125,12 @@ export struct BackgroundImage {
         
         ToastQueue.show({ message: '图片已保存到相册' });
       } catch (err) {
-        console.error('BackgroundImage: 保存图片失败', err);
+        Logger.error('BackgroundImage', 'BackgroundImage: 保存图片失败', err);
         const e = err as BusinessError;
         ToastQueue.show({ message: `保存失败: ${e.message || '未知错误'}` });
       }
     } else if (result === SaveButtonOnClickResult.TEMPORARY_AUTHORIZATION_FAILED) {
-      console.error('BackgroundImage: 授权失败', error);
+      Logger.error('BackgroundImage', 'BackgroundImage: 授权失败', error);
       ToastQueue.show({ message: '保存授权失败' });
     }
     this.showSaveDialog = false;
@@ -197,7 +198,7 @@ export struct BackgroundImage {
           .onError(() => {
             // 加载失败保持装饰层显示
             this.imageLoaded = false;
-            console.warn('BackgroundImage: 背景图加载失败', this.imageUrl);
+            Logger.warn('BackgroundImage', 'BackgroundImage: 背景图加载失败', this.imageUrl);
           })
           .gesture(
             LongPressGesture({ repeat: false, duration: 800 })

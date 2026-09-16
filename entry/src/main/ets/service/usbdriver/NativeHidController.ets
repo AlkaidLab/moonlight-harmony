@@ -22,6 +22,7 @@ import { ButtonFlags, UsbClass, ControllerType, ControllerCapabilities } from '.
 import { AXIS_MAX, TRIGGER_MAX } from '../input/GamepadTypes';
 import { NativeHidParserService, NativeGamepadState, NativeGamepadType, NativeButtonFlags } from './NativeHidParserService';
 import { createUsbError, UsbError } from './UsbErrorCodes';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[USB-NativeHID]';
 
@@ -101,7 +102,7 @@ export class NativeHidController extends AbstractController {
     // 查找端点
     this.findEndpoints();
 
-    console.info(`${TAG} 创建控制器: ${this.deviceName} (type=${nativeType})`);
+    Logger.info('NativeHidController', `${TAG} 创建控制器: ${this.deviceName} (type=${nativeType})`);
   }
 
   /**
@@ -111,7 +112,7 @@ export class NativeHidController extends AbstractController {
    */
   setForceProtocolType(protocolType: number): void {
     this.forceProtocolType = protocolType;
-    console.info(`${TAG} 设置强制协议类型: ${protocolType}`);
+    Logger.info('NativeHidController', `${TAG} 设置强制协议类型: ${protocolType}`);
   }
 
   /**
@@ -141,7 +142,7 @@ export class NativeHidController extends AbstractController {
 
     // 检查原生层是否支持
     if (parser.isSupportedGamepad(device.vendorId, device.productId)) {
-      console.info(`${TAG} 原生支持的手柄: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+      Logger.info('NativeHidController', `${TAG} 原生支持的手柄: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
       return true;
     }
 
@@ -163,11 +164,11 @@ export class NativeHidController extends AbstractController {
         // protocol=1 表示键盘，protocol=2 表示鼠标
         if (iface.subClass === NativeHidController.HID_SUBCLASS_BOOT) {
           if (iface.protocol === NativeHidController.HID_PROTOCOL_KEYBOARD) {
-            console.info(`${TAG} 跳过键盘设备: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+            Logger.info('NativeHidController', `${TAG} 跳过键盘设备: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
             return false;
           }
           if (iface.protocol === NativeHidController.HID_PROTOCOL_MOUSE) {
-            console.info(`${TAG} 跳过鼠标设备: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+            Logger.info('NativeHidController', `${TAG} 跳过鼠标设备: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
             return false;
           }
         }
@@ -175,15 +176,15 @@ export class NativeHidController extends AbstractController {
         // 额外检查设备名称排除键盘/鼠标
         const nameLower = device.name.toLowerCase();
         if (nameLower.includes('keyboard') || nameLower.includes('键盘')) {
-          console.info(`${TAG} 通过名称跳过键盘: ${device.name}`);
+          Logger.info('NativeHidController', `${TAG} 通过名称跳过键盘: ${device.name}`);
           return false;
         }
         if (nameLower.includes('mouse') || nameLower.includes('鼠标')) {
-          console.info(`${TAG} 通过名称跳过鼠标: ${device.name}`);
+          Logger.info('NativeHidController', `${TAG} 通过名称跳过鼠标: ${device.name}`);
           return false;
         }
         
-        console.info(`${TAG} 检测到 HID 接口设备: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}, subClass=${iface.subClass}, protocol=${iface.protocol}`);
+        Logger.info('NativeHidController', `${TAG} 检测到 HID 接口设备: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}, subClass=${iface.subClass}, protocol=${iface.protocol}`);
         return true;
       }
     }
@@ -207,7 +208,7 @@ export class NativeHidController extends AbstractController {
         for (let j = 0; j < iface.endpoints.length; j++) {
           const ep = iface.endpoints[j];
           // 记录端点详情，包括 interval
-          console.info(`${TAG} 端点[${j}]: addr=0x${ep.address.toString(16)}, dir=${(ep.direction & 0x80) ? 'IN' : 'OUT'}, type=${ep.attributes}, maxPkt=${ep.maxPacketSize}, interval=${ep.interval}ms`);
+          Logger.info('NativeHidController', `${TAG} 端点[${j}]: addr=0x${ep.address.toString(16)}, dir=${(ep.direction & 0x80) ? 'IN' : 'OUT'}, type=${ep.attributes}, maxPkt=${ep.maxPacketSize}, interval=${ep.interval}ms`);
           
           if ((ep.direction & 0x80) !== 0) {
             this.inputEndpoint = ep.address;
@@ -222,17 +223,17 @@ export class NativeHidController extends AbstractController {
         try {
           const ret = usbManager.claimInterface(this.pipe, iface, true);
           if (ret === 0) {
-            console.info(`${TAG} 成功声明 HID 接口 (id=${iface.id})`);
+            Logger.info('NativeHidController', `${TAG} 成功声明 HID 接口 (id=${iface.id})`);
           }
         } catch (err) {
-          console.error(`${TAG} 声明接口失败:`, err);
+          Logger.error('NativeHidController', `${TAG} 声明接口失败:`, err);
         }
 
         break;
       }
     }
 
-    console.info(`${TAG} 端点配置: IN=0x${this.inputEndpoint.toString(16)}, OUT=0x${this.outputEndpoint.toString(16)}`);
+    Logger.info('NativeHidController', `${TAG} 端点配置: IN=0x${this.inputEndpoint.toString(16)}, OUT=0x${this.outputEndpoint.toString(16)}`);
   }
 
   start(): boolean {
@@ -241,7 +242,7 @@ export class NativeHidController extends AbstractController {
     }
 
     if (this.inputEndpoint === 0) {
-      console.error(`${TAG} 无法启动: 未找到输入端点`);
+      Logger.error('NativeHidController', `${TAG} 无法启动: 未找到输入端点`);
       return false;
     }
 
@@ -253,7 +254,7 @@ export class NativeHidController extends AbstractController {
     // ArkTS async 轮询
     this.inputLoop();
 
-    console.info(`${TAG} 控制器已启动 (ArkTS 轮询): ${this.deviceName}`);
+    Logger.info('NativeHidController', `${TAG} 控制器已启动 (ArkTS 轮询): ${this.deviceName}`);
     return true;
   }
 
@@ -277,28 +278,28 @@ export class NativeHidController extends AbstractController {
             const iface = config.interfaces[i];
             if (iface.clazz === 3 /* USB_CLASS_HID */) {
               usbManager.releaseInterface(this.pipe, iface);
-              console.info(`${TAG} 已释放 HID 接口 ${i}`);
+              Logger.info('NativeHidController', `${TAG} 已释放 HID 接口 ${i}`);
               released = true;
               break;
             }
           }
           if (!released) {
-            console.warn(`${TAG} 未找到 HID 接口（共 ${config.interfaces.length} 个接口）`);
+            Logger.warn('NativeHidController', `${TAG} 未找到 HID 接口（共 ${config.interfaces.length} 个接口）`);
           }
         }
       } catch (err) {
-        console.error(`${TAG} 释放接口异常:`, err);
+        Logger.error('NativeHidController', `${TAG} 释放接口异常:`, err);
       }
     }
 
     try {
       usbManager.closePipe(this.pipe);
-      console.info(`${TAG} closePipe 成功`);
+      Logger.info('NativeHidController', `${TAG} closePipe 成功`);
     } catch (err) {
-      console.error(`${TAG} closePipe 失败:`, err);
+      Logger.error('NativeHidController', `${TAG} closePipe 失败:`, err);
     }
 
-    console.info(`${TAG} 控制器已停止: ${this.deviceName}`);
+    Logger.info('NativeHidController', `${TAG} 控制器已停止: ${this.deviceName}`);
   }
   
   /**
@@ -369,7 +370,7 @@ export class NativeHidController extends AbstractController {
           
           // 恢复成功
           if (recovering) {
-            console.info(`${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
+            Logger.info('NativeHidController', `${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
             consecutiveErrors = 0;
             recovering = false;
           }
@@ -380,7 +381,7 @@ export class NativeHidController extends AbstractController {
           const now = Date.now();
           if (now - lastStatTime >= STAT_INTERVAL_MS) {
             const pollRate = (pollCount * 1000) / (now - lastStatTime);
-            console.info(`${TAG} 轮询率: ${pollRate.toFixed(1)} Hz (${pollCount} 次/${((now - lastStatTime) / 1000).toFixed(1)}秒)`);
+            Logger.info('NativeHidController', `${TAG} 轮询率: ${pollRate.toFixed(1)} Hz (${pollCount} 次/${((now - lastStatTime) / 1000).toFixed(1)}秒)`);
             pollCount = 0;
             lastStatTime = now;
           }
@@ -400,7 +401,7 @@ export class NativeHidController extends AbstractController {
               // 正常超时 - 累计连续超时次数（用于检测雷蛇等静默断开的设备）
               this.consecutiveTimeouts++;
               if (this.consecutiveTimeouts >= NativeHidController.SILENT_DISCONNECT_TIMEOUT_COUNT) {
-                console.warn(`${TAG} 检测到可能的静默断开: 连续 ${this.consecutiveTimeouts} 次超时无数据`);
+                Logger.warn('NativeHidController', `${TAG} 检测到可能的静默断开: 连续 ${this.consecutiveTimeouts} 次超时无数据`);
                 // 静默断开也走智能恢复而非直接 break
                 // 如果设备只是暂时无数据，最终会恢复
               } else {
@@ -414,12 +415,12 @@ export class NativeHidController extends AbstractController {
           
           if (consecutiveErrors >= 3 && !recovering) {
             recovering = true;
-            console.warn(`${TAG} 连续 ${consecutiveErrors} 次设备错误 (code=${errorCode}, elapsed=${elapsedTime}ms)，尝试恢复: ${err}`);
+            Logger.warn('NativeHidController', `${TAG} 连续 ${consecutiveErrors} 次设备错误 (code=${errorCode}, elapsed=${elapsedTime}ms)，尝试恢复: ${err}`);
           }
           
           // 超过恢复上限 → 归零输入并放弃
           if (consecutiveErrors >= MAX_RECOVERY_ERRORS) {
-            console.error(`${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
+            Logger.error('NativeHidController', `${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
             this.buttonFlags = 0;
             this.leftStickX = 0;
             this.leftStickY = 0;
@@ -440,7 +441,7 @@ export class NativeHidController extends AbstractController {
     
     // 根据错误类型决定是否通知设备移除
     if (this.running) {
-      console.warn(`${TAG} 由于设备断开/IO错误，自动停止控制器`);
+      Logger.warn('NativeHidController', `${TAG} 由于设备断开/IO错误，自动停止控制器`);
       this.stop();
     }
   }
@@ -532,7 +533,7 @@ export class NativeHidController extends AbstractController {
    */
   private fallbackParseHidReport(data: Uint8Array, hexStr: string): void {
     if (data.length < 9) {
-      console.warn(`${TAG} HID 数据太短: ${data.length}`);
+      Logger.warn('NativeHidController', `${TAG} HID 数据太短: ${data.length}`);
       return;
     }
 
@@ -701,7 +702,7 @@ export class NativeHidController extends AbstractController {
 
       await usbManager.bulkTransfer(this.pipe, endpoint, data, 100);
     } catch (err) {
-      console.error(`${TAG} 发送输出报告失败:`, err);
+      Logger.error('NativeHidController', `${TAG} 发送输出报告失败:`, err);
     }
   }
 

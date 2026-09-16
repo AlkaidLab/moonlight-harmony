@@ -1,4 +1,5 @@
 import { display } from '@kit.ArkUI';
+import { Logger } from '../../common/Logger';
 
 /**
  * HDR 亮度采样与聚合
@@ -114,7 +115,7 @@ export async function sampleDisplayBrightness(
       const info = display.getBrightnessInfo(displayId);
       samples.push({ sdrNits: info.sdrNits, currentHeadroom: info.currentHeadroom, maxHeadroom: info.maxHeadroom });
     } catch (err) {
-      console.warn(`[Brightness] getBrightnessInfo 不可用: ${err}`);
+      Logger.warn('BrightnessSampler', `[Brightness] getBrightnessInfo 不可用: ${err}`);
     }
   }
   if (samples.length === 0) {

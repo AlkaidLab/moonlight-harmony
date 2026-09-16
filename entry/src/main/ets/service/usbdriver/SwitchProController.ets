@@ -20,6 +20,7 @@ import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, SwitchPro, UsbClass, ControllerType, ControllerCapabilities, MotionType } from './ControllerConstants';
 import { readShortLE } from '../input/GamepadTypes';
 import { UsbError } from './UsbErrorCodes';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[USB-SWITCH]';
 const PACKET_SIZE = 64;
@@ -116,7 +117,7 @@ export class SwitchProController extends AbstractController {
       return false;
     }
     
-    console.info(`${TAG} 检测到 Switch 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+    Logger.info('SwitchProController', `${TAG} 检测到 Switch 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
     return true;
   }
   
@@ -176,7 +177,7 @@ export class SwitchProController extends AbstractController {
       const result = usbManager.claimInterface(this.pipe, this.usbInterface, true);
       return result === 0;
     } catch (err) {
-      console.error(`${TAG} 声明接口失败:`, err);
+      Logger.error('SwitchProController', `${TAG} 声明接口失败:`, err);
       return false;
     }
   }
@@ -474,39 +475,39 @@ export class SwitchProController extends AbstractController {
    * 输入循环
    */
   private async inputLoop(): Promise<void> {
-    console.info(`${TAG} 开始初始化...`);
+    Logger.info('SwitchProController', `${TAG} 开始初始化...`);
     
     // 初始化序列
     const handshakeSuccess = await this.handshake();
     if (!handshakeSuccess || this.stopped) {
-      if (!handshakeSuccess) console.error(`${TAG} 握手失败`);
+      if (!handshakeSuccess) Logger.error('SwitchProController', `${TAG} 握手失败`);
       this.stop();
       return;
     }
     
     const deviceType = this.isJoyCon() ? "Joy-Con" : "Switch Pro";
-    console.info(`${TAG} ${deviceType}: handshake ${handshakeSuccess}`);
-    console.info(`${TAG} ${deviceType}: highSpeed ${await this.highSpeed()}`);
+    Logger.info('SwitchProController', `${TAG} ${deviceType}: handshake ${handshakeSuccess}`);
+    Logger.info('SwitchProController', `${TAG} ${deviceType}: highSpeed ${await this.highSpeed()}`);
     if (this.stopped) return;
-    console.info(`${TAG} ${deviceType}: handshake ${await this.handshake()}`);
+    Logger.info('SwitchProController', `${TAG} ${deviceType}: handshake ${await this.handshake()}`);
     if (this.stopped) return;
     
     // 应用默认校准
     this.applyDefaultCalibration(0);
     this.applyDefaultCalibration(1);
     
-    console.info(`${TAG} ${deviceType}: setInputReportMode ${await this.setInputReportMode(0x30)}`);
+    Logger.info('SwitchProController', `${TAG} ${deviceType}: setInputReportMode ${await this.setInputReportMode(0x30)}`);
     if (this.stopped) return;
-    console.info(`${TAG} ${deviceType}: forceUSB ${await this.forceUSB()}`);
+    Logger.info('SwitchProController', `${TAG} ${deviceType}: forceUSB ${await this.forceUSB()}`);
     if (this.stopped) return;
-    console.info(`${TAG} ${deviceType}: enableVibration ${await this.enableVibration(true)}`);
+    Logger.info('SwitchProController', `${TAG} ${deviceType}: enableVibration ${await this.enableVibration(true)}`);
     if (this.stopped) return;
-    console.info(`${TAG} ${deviceType}: setPlayerLED ${await this.setPlayerLED(this.getControllerId() + 1)}`);
+    Logger.info('SwitchProController', `${TAG} ${deviceType}: setPlayerLED ${await this.setPlayerLED(this.getControllerId() + 1)}`);
     if (this.stopped) return;
-    console.info(`${TAG} ${deviceType}: enableIMU ${await this.enableIMU(true)}`);
+    Logger.info('SwitchProController', `${TAG} ${deviceType}: enableIMU ${await this.enableIMU(true)}`);
     if (this.stopped) return;
     
-    console.info(`${TAG} ${deviceType}: 初始化完成!`);
+    Logger.info('SwitchProController', `${TAG} ${deviceType}: 初始化完成!`);
     
     // 通知设备已添加
     this.notifyDeviceAdded();
@@ -536,7 +537,7 @@ export class SwitchProController extends AbstractController {
           consecutiveTimeouts = 0;  // 收到数据，重置超时计数
           // 恢复成功
           if (recovering) {
-            console.info(`${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
+            Logger.info('SwitchProController', `${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
             consecutiveErrors = 0;
             recovering = false;
           }
@@ -552,7 +553,7 @@ export class SwitchProController extends AbstractController {
           if (errorCode === -8) {  // USB_ERROR_TIMEOUT
             consecutiveTimeouts++;
             if (consecutiveTimeouts >= MAX_CONSECUTIVE_TIMEOUTS) {
-              console.warn(`${TAG} 连续 ${consecutiveTimeouts} 次超时，设备可能进入省电模式`);
+              Logger.warn('SwitchProController', `${TAG} 连续 ${consecutiveTimeouts} 次超时，设备可能进入省电模式`);
               isSleepMode = true;
               break;
             }
@@ -564,12 +565,12 @@ export class SwitchProController extends AbstractController {
           
           if (consecutiveErrors >= 3 && !recovering) {
             recovering = true;
-            console.warn(`${TAG} 连续 ${consecutiveErrors} 次设备错误 (code=${errorCode})，尝试恢复: ${err}`);
+            Logger.warn('SwitchProController', `${TAG} 连续 ${consecutiveErrors} 次设备错误 (code=${errorCode})，尝试恢复: ${err}`);
           }
           
           // 超过恢复上限 → 归零输入并放弃
           if (consecutiveErrors >= MAX_RECOVERY_ERRORS) {
-            console.error(`${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
+            Logger.error('SwitchProController', `${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
             this.buttonFlags = 0;
             this.leftStickX = 0;
             this.leftStickY = 0;
@@ -588,16 +589,16 @@ export class SwitchProController extends AbstractController {
       }
     }
     
-    console.info(`${TAG} 输入循环结束`);
+    Logger.info('SwitchProController', `${TAG} 输入循环结束`);
     
     // 根据错误类型决定是否通知设备移除
     if (!this.stopped) {
       if (isSleepMode) {
-        console.info(`${TAG} 设备进入省电模式，等待自动重连...`);
+        Logger.info('SwitchProController', `${TAG} 设备进入省电模式，等待自动重连...`);
         // 省电模式：只停止 I/O 循环但不立即移除，让 UsbDriverService 定时器处理重连
         this.notifyDeviceRemoved();
       } else {
-        console.warn(`${TAG} 由于设备断开/IO错误，自动停止控制器`);
+        Logger.warn('SwitchProController', `${TAG} 由于设备断开/IO错误，自动停止控制器`);
         this.stop();
       }
     }
@@ -607,16 +608,16 @@ export class SwitchProController extends AbstractController {
    * 启动控制器
    */
   start(): boolean {
-    console.info(`${TAG} 启动控制器`);
+    Logger.info('SwitchProController', `${TAG} 启动控制器`);
     this.markInitializing();
     
     if (!this.findEndpoints()) {
-      console.error(`${TAG} 查找端点失败`);
+      Logger.error('SwitchProController', `${TAG} 查找端点失败`);
       return false;
     }
     
     if (!this.claimInterface()) {
-      console.error(`${TAG} 声明接口失败`);
+      Logger.error('SwitchProController', `${TAG} 声明接口失败`);
       return false;
     }
     
@@ -634,7 +635,7 @@ export class SwitchProController extends AbstractController {
       return;
     }
     
-    console.info(`${TAG} 停止控制器`);
+    Logger.info('SwitchProController', `${TAG} 停止控制器`);
     this.stopped = true;
     this.markStopped();
     
@@ -644,7 +645,7 @@ export class SwitchProController extends AbstractController {
       try {
         usbManager.releaseInterface(this.pipe, this.usbInterface);
       } catch (err) {
-        console.error(`${TAG} 释放接口失败:`, err);
+        Logger.error('SwitchProController', `${TAG} 释放接口失败:`, err);
       }
     }
     
@@ -652,7 +653,7 @@ export class SwitchProController extends AbstractController {
       try {
         usbManager.closePipe(this.pipe);
       } catch (err) {
-        console.error(`${TAG} 关闭管道失败:`, err);
+        Logger.error('SwitchProController', `${TAG} 关闭管道失败:`, err);
       }
       this.pipe = null;
     }

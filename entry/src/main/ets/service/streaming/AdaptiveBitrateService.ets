@@ -17,6 +17,7 @@ import {
   SystemNetScene,
   SystemNetSceneListener
 } from '../network/NetworkBoostService';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[ABR]';
 
@@ -90,7 +91,7 @@ export class AdaptiveBitrateService {
   async checkCapabilities(): Promise<AbrCapabilities> {
     const caps = await this.nvHttp.getAbrCapabilities();
     this.serverSupported = caps.supported;
-    console.info(`${TAG} 服务端 ABR: supported=${caps.supported}, version=${caps.version}, features=${JSON.stringify(caps.features)}`);
+    Logger.info('AdaptiveBitrateService', `${TAG} 服务端 ABR: supported=${caps.supported}, version=${caps.version}, features=${JSON.stringify(caps.features)}`);
     return caps;
   }
 
@@ -132,7 +133,7 @@ export class AdaptiveBitrateService {
       this.scheduleTick();
     }, 1000);
 
-    console.info(TAG + ' 已启动: bitrate=' + initialBitrate.toString() + 'kbps, max=' +
+    Logger.info('AdaptiveBitrateService', TAG + ' 已启动: bitrate=' + initialBitrate.toString() + 'kbps, max=' +
       this.userMaxBitrate.toString() + 'kbps, mode=' + mode + ', server=' + this.serverSupported.toString());
   }
 
@@ -154,7 +155,7 @@ export class AdaptiveBitrateService {
       try {
         await pendingTick;
       } catch (err) {
-        console.warn(TAG + ' 等待在途调节结束失败: ' + String(err));
+        Logger.warn('AdaptiveBitrateService', TAG + ' 等待在途调节结束失败: ' + String(err));
       }
       if (this.tickPromise === pendingTick) {
         this.tickPromise = null;
@@ -179,7 +180,7 @@ export class AdaptiveBitrateService {
     }
 
     this.resetState();
-    console.info(`${TAG} 已停止，恢复码率: ${this.initialBitrate}kbps`);
+    Logger.info('AdaptiveBitrateService', `${TAG} 已停止，恢复码率: ${this.initialBitrate}kbps`);
   }
 
   isEnabled(): boolean {
@@ -308,7 +309,7 @@ export class AdaptiveBitrateService {
       mode: this.mode,
     };
     const ok = await this.nvHttp.setAbrMode(config);
-    console.info(`${TAG} 服务端 ABR 启用: ${ok ? '成功' : '失败'}`);
+    Logger.info('AdaptiveBitrateService', `${TAG} 服务端 ABR 启用: ${ok ? '成功' : '失败'}`);
     return ok;
   }
 
@@ -321,7 +322,7 @@ export class AdaptiveBitrateService {
     promise.then((): void => {
       this.finishTick(promise);
     }).catch((err: Error): void => {
-      console.warn(TAG + ' 调节周期失败: ' + err.message);
+      Logger.warn('AdaptiveBitrateService', TAG + ' 调节周期失败: ' + err.message);
       this.finishTick(promise);
     });
   }
@@ -343,10 +344,10 @@ export class AdaptiveBitrateService {
         const ok = await this.tryEnableServer();
         if (ok) {
           this.serverEnableRetries = 0;
-          console.info(`${TAG} 服务端 ABR 启用成功（第 ${retryNum} 次）`);
+          Logger.info('AdaptiveBitrateService', `${TAG} 服务端 ABR 启用成功（第 ${retryNum} 次）`);
         } else if (++this.serverEnableRetries > AdaptiveBitrateService.MAX_SERVER_ENABLE_RETRIES) {
           this.serverSupported = false;
-          console.warn(`${TAG} 服务端 ABR 重试 ${AdaptiveBitrateService.MAX_SERVER_ENABLE_RETRIES} 次均失败，降级到本地控制器`);
+          Logger.warn('AdaptiveBitrateService', `${TAG} 服务端 ABR 重试 ${AdaptiveBitrateService.MAX_SERVER_ENABLE_RETRIES} 次均失败，降级到本地控制器`);
         }
       }
     }
@@ -396,14 +397,14 @@ export class AdaptiveBitrateService {
     const action = await this.nvHttp.reportNetworkFeedback(feedback);
     if (!this.enabled) return;
     if (action?.bitrateApplied === false) {
-      console.warn(TAG + ' [server] 码率变更被 Sunshine 拒绝: ' +
+      Logger.warn('AdaptiveBitrateService', TAG + ' [server] 码率变更被 Sunshine 拒绝: ' +
         (action.bitrateApplyError ?? action.reason ?? 'unknown'));
       return;
     }
     if (action?.newBitrate && action.newBitrate !== this.currentBitrate) {
       const clamped = clamp(action.newBitrate, this.minBitrate, this.maxBitrate);
       if (action.bitrateApplied === true && clamped === action.newBitrate) {
-        console.info(`${TAG} [server] ${this.currentBitrate}→${clamped}kbps 已由 Sunshine 接受 (${action.reason})`);
+        Logger.info('AdaptiveBitrateService', `${TAG} [server] ${this.currentBitrate}→${clamped}kbps 已由 Sunshine 接受 (${action.reason})`);
         this.currentBitrate = clamped;
         if (this.onBitrateAccepted) {
           this.onBitrateAccepted(clamped);
@@ -414,7 +415,7 @@ export class AdaptiveBitrateService {
       // 旧版 Sunshine 不返回 bitrateApplied，仍由客户端通过 /bitrate 应用。
       const success = await this.onBitrateChange!(clamped, action.reason ?? 'server');
       if (success) {
-        console.info(`${TAG} [server] ${this.currentBitrate}→${clamped}kbps (${action.reason})`);
+        Logger.info('AdaptiveBitrateService', `${TAG} [server] ${this.currentBitrate}→${clamped}kbps (${action.reason})`);
         this.currentBitrate = clamped;
       }
     }
@@ -556,7 +557,7 @@ export class AdaptiveBitrateService {
       const success = await this.onBitrateChange!(newBitrate, reason);
       if (success) {
         this.lastDirection = newBitrate > this.currentBitrate ? 'up' : 'down';
-        console.info(`${TAG} [local] ${this.currentBitrate}→${newBitrate}kbps (${reason})`);
+        Logger.info('AdaptiveBitrateService', `${TAG} [local] ${this.currentBitrate}→${newBitrate}kbps (${reason})`);
         this.currentBitrate = newBitrate;
         this.lastAdjustTime = now;
         if (sceneMitigation) {

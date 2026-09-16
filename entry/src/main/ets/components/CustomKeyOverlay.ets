@@ -69,6 +69,7 @@ import {
 } from '../service/customkey/CustomKeyTheme';
 import { CustomKeyBtn } from './CustomKeyBtn';
 import { AiKeyRecommendation } from '../service/AiKeyService';
+import { Logger } from '../common/Logger';
 
 // =============================================================================
 // 主覆盖层组件
@@ -296,32 +297,34 @@ export struct CustomKeyOverlay {
 
   /** 屏幕变化监听回调引用，用于注销 */
   private displayChangeCallback: ((displayId: number) => void) | null = null;
+  /** 取色扫描动画定时器，aboutToDisappear 时清理，避免销毁后触发 getUIContext */
+  private captureAnimTimers: number[] = [];
 
   async aboutToAppear(): Promise<void> {
     // 获取屏幕尺寸
     const displayInfo = display.getDefaultDisplaySync();
-    this.screenWidthVp = px2vp(displayInfo.width);
-    this.screenHeightVp = px2vp(displayInfo.height);
+    this.screenWidthVp = this.getUIContext().px2vp(displayInfo.width);
+    this.screenHeightVp = this.getUIContext().px2vp(displayInfo.height);
 
     // 监听屏幕变化（折叠屏展开/折叠、旋转等），动态更新坐标基准
     this.displayChangeCallback = (_displayId: number): void => {
       try {
         const info = display.getDefaultDisplaySync();
-        const newW = px2vp(info.width);
-        const newH = px2vp(info.height);
+        const newW = this.getUIContext().px2vp(info.width);
+        const newH = this.getUIContext().px2vp(info.height);
         if (newW > 0 && newH > 0 && (newW !== this.screenWidthVp || newH !== this.screenHeightVp)) {
-          console.info(`[CustomKeyOverlay] 屏幕尺寸变化: ${this.screenWidthVp}x${this.screenHeightVp} → ${newW}x${newH}`);
+          Logger.info('CustomKeyOverlay', `[CustomKeyOverlay] 屏幕尺寸变化: ${this.screenWidthVp}x${this.screenHeightVp} → ${newW}x${newH}`);
           this.screenWidthVp = newW;
           this.screenHeightVp = newH;
         }
       } catch (e) {
-        console.warn('[CustomKeyOverlay] 获取屏幕尺寸失败:', e);
+        Logger.warn('CustomKeyOverlay', '[CustomKeyOverlay] 获取屏幕尺寸失败:', e);
       }
     };
     try {
       display.on('change', this.displayChangeCallback);
     } catch (e) {
-      console.warn('[CustomKeyOverlay] 注册屏幕变化监听失败:', e);
+      Logger.warn('CustomKeyOverlay', '[CustomKeyOverlay] 注册屏幕变化监听失败:', e);
     }
 
     await CustomKeyStore.init();
@@ -336,6 +339,10 @@ export struct CustomKeyOverlay {
   }
 
   aboutToDisappear(): void {
+    for (const t of this.captureAnimTimers) {
+      clearTimeout(t);
+    }
+    this.captureAnimTimers = [];
     // 注销屏幕变化监听
     if (this.displayChangeCallback) {
       try {
@@ -1625,11 +1632,11 @@ export struct CustomKeyOverlay {
       this.captureAnimActive = true;
 
       // 阶段1：扫描线从上往下扫（0→600ms）
-      animateTo({ duration: 600, curve: Curve.Linear }, () => {
+      this.getUIContext().animateTo({ duration: 600, curve: Curve.Linear }, () => {
         this.scanLineY = 100;
       });
       // 扫过区域同步染色
-      animateTo({ duration: 600, curve: Curve.EaseIn }, () => {
+      this.getUIContext().animateTo({ duration: 600, curve: Curve.EaseIn }, () => {
         this.scanTintOpacity = 0.3;
       });
 
@@ -1639,34 +1646,34 @@ export struct CustomKeyOverlay {
       await this.applyThemeToAllKeys(theme);
 
       // 阶段2：扫描完成 → 全屏闪烁 + 标签淡入（600ms后）
-      setTimeout(() => {
+      this.captureAnimTimers.push(setTimeout(() => {
         // 闪光
-        animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+        this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
           this.scanFlashOpacity = 0.25;
         });
-        setTimeout(() => {
-          animateTo({ duration: 300, curve: Curve.EaseIn }, () => {
+        this.captureAnimTimers.push(setTimeout(() => {
+          this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseIn }, () => {
             this.scanFlashOpacity = 0;
           });
-        }, 150);
+        }, 150));
         // 标签淡入
-        animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+        this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
           this.scanLabelOpacity = 1;
         });
-      }, 600);
+      }, 600));
 
       // 阶段3：整体淡出（1200ms后开始）
-      setTimeout(() => {
-        animateTo({ duration: 400, curve: Curve.EaseIn }, () => {
+      this.captureAnimTimers.push(setTimeout(() => {
+        this.getUIContext().animateTo({ duration: 400, curve: Curve.EaseIn }, () => {
           this.scanTintOpacity = 0;
           this.scanLabelOpacity = 0;
         });
-        setTimeout(() => { this.captureAnimActive = false; }, 450);
-      }, 1200);
+        this.captureAnimTimers.push(setTimeout(() => { this.captureAnimActive = false; }, 450));
+      }, 1200));
     } catch (e) {
       this.hidingForCapture = false;
       this.showThemePanel = true;
-      console.error('[CustomKeyOverlay] 屏幕取色失败:', JSON.stringify(e));
+      Logger.error('CustomKeyOverlay', '[CustomKeyOverlay] 屏幕取色失败:', JSON.stringify(e));
       ToastQueue.show({ message: '屏幕取色失败，请手动选择主题', duration: 2000 });
     }
     this.themeExtracting = false;
@@ -2047,7 +2054,7 @@ export struct CustomKeyOverlay {
         previewMode: systemShare.SharePreviewMode.DEFAULT,
       });
     } catch (e) {
-      console.error('[CustomKeyOverlay] 分享失败:', JSON.stringify(e));
+      Logger.error('CustomKeyOverlay', '[CustomKeyOverlay] 分享失败:', JSON.stringify(e));
       ToastQueue.show({ message: '分享失败', duration: 1500 });
     }
   }
@@ -2181,7 +2188,7 @@ export struct CustomKeyOverlay {
 
       return granted;
     } catch (error) {
-      console.error('[CustomKeyOverlay] 检查剪贴板权限失败:', JSON.stringify(error));
+      Logger.error('CustomKeyOverlay', '[CustomKeyOverlay] 检查剪贴板权限失败:', JSON.stringify(error));
       return false;
     }
   }

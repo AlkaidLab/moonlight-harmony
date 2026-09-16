@@ -1,4 +1,5 @@
 import { display } from '@kit.ArkUI';
+import { Logger } from '../common/Logger';
 
 // An empty capability list means unknown, not a 60 Hz hardware limit.
 export function getSupportedDisplayRates(): number[] {
@@ -8,7 +9,7 @@ export function getSupportedDisplayRates(): number[] {
       return rates.filter((rate: number) => Number.isFinite(rate) && rate > 0);
     }
   } catch (err) {
-    console.warn(`[DisplayFrameRate] 读取 supportedRefreshRates 失败: ${err}`);
+    Logger.warn('DisplayFrameRate', `[DisplayFrameRate] 读取 supportedRefreshRates 失败: ${err}`);
   }
   return [];
 }
