@@ -213,13 +213,6 @@ export class RcpSessionPool {
   }
 
   /**
-   * 当前池中可复用 session 数量（仅用于调试/测试；已淘汰未关闭的不计）
-   */
-  static size(): number {
-    return RcpSessionPool.entries.size;
-  }
-
-  /**
    * 新建 session 前腾位置：live（含 retired 未关闭的）达到 MAX_SIZE 时执行。
    * 优先关闭空闲条目（立即 close 安全且真正释放系统资源）；全部在途时
    * 回退为立即关闭最久未用的（见类注释设计要点第 1 条）。
@@ -251,10 +244,7 @@ export class RcpSessionPool {
   }
 
   private static retire(entry: SessionPoolEntry, reason: string): void {
-    // 实例确认：该条目必须仍是其 cacheKey 下的存活条目（否则已被其他路径淘汰）
-    if (RcpSessionPool.entries.get(entry.cacheKey) !== entry) {
-      return;
-    }
+    // 调用方（invalidate/makeRoom）已保证 entry 是存活条目
     RcpSessionPool.entries.delete(entry.cacheKey);
     entry.retired = true;
     if (entry.inFlight <= 0) {
