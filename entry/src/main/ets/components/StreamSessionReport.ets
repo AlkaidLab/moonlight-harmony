@@ -642,36 +642,46 @@ export struct StreamSessionReport {
   @State private fitScale: number = 1;
   @State private isSharing: boolean = false;
 
+  /** 入场动画定时器，aboutToDisappear 时清理，避免销毁后触发 getUIContext */
+  private entranceTimers: number[] = [];
+
+  aboutToDisappear(): void {
+    for (const t of this.entranceTimers) {
+      clearTimeout(t);
+    }
+    this.entranceTimers = [];
+  }
+
   aboutToAppear(): void {
     this.fitScale = this.calculateFitScale();
     this.metricReveal = 0;
     this.sparkleSpin = 0;
     this.heartScale = 1;
     this.sparkleDrift = 0;
-    setTimeout(() => {
+    this.entranceTimers.push(setTimeout(() => {
       this.getUIContext().animateTo({ duration: 360, curve: Curve.FastOutSlowIn }, () => {
         this.overlayOpacity = 1;
         this.cardScale = 1;
         this.cardOffsetY = 0;
       });
-    }, 30);
-    setTimeout(() => {
+    }, 30));
+    this.entranceTimers.push(setTimeout(() => {
       this.getUIContext().animateTo({ duration: 920, curve: Curve.FastOutSlowIn }, () => {
         this.metricReveal = 1;
       });
-    }, 260);
-    setTimeout(() => {
+    }, 260));
+    this.entranceTimers.push(setTimeout(() => {
       this.getUIContext().animateTo({ duration: 900, curve: Curve.EaseInOut, iterations: -1, playMode: PlayMode.Alternate }, () => {
         this.mascotBounce = -8;
       });
-    }, 420);
-    setTimeout(() => {
+    }, 420));
+    this.entranceTimers.push(setTimeout(() => {
       this.getUIContext().animateTo({ duration: 1100, curve: Curve.EaseInOut, iterations: -1, playMode: PlayMode.Alternate }, () => {
         this.sparkleSpin = 12;
         this.heartScale = 1.18;
         this.sparkleDrift = -10;
       });
-    }, 520);
+    }, 520));
   }
 
   private calculateFitScale(): number {

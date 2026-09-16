@@ -102,6 +102,8 @@ export struct PerformanceOverlay {
   // 定时器
   private updateTimer: number = -1;
   private guideTimer: number = -1;
+  /** 锁定闪烁动画定时器，aboutToDisappear 时清理，避免销毁后触发 getUIContext */
+  private lockFlashTimers: number[] = [];
   
   // 弹窗控制器
   private settingsDialogController: CustomDialogController | null = null;
@@ -134,7 +136,15 @@ export struct PerformanceOverlay {
     if (this.guideTimer !== -1) {
       clearTimeout(this.guideTimer);
     }
+    this.stopLockFlash();
     this.settingsDialogController?.close();
+  }
+
+  private stopLockFlash(): void {
+    for (const t of this.lockFlashTimers) {
+      clearTimeout(t);
+    }
+    this.lockFlashTimers = [];
   }
   
   private async checkAndShowGuide(): Promise<void> {
@@ -355,6 +365,7 @@ export struct PerformanceOverlay {
 
   /** 锁定时播放金色边框闪烁动画（闪 3 次） */
   private playLockFlash(): void {
+    this.stopLockFlash();
     let count = 0;
     const flash = () => {
       if (count >= 3) {
@@ -364,13 +375,13 @@ export struct PerformanceOverlay {
       this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
         this.lockFlashBorderOpacity = 0.8;
       });
-      setTimeout(() => {
+      this.lockFlashTimers.push(setTimeout(() => {
         this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
           this.lockFlashBorderOpacity = 0;
         });
         count++;
-        setTimeout(flash, 180);
-      }, 180);
+        this.lockFlashTimers.push(setTimeout(flash, 180));
+      }, 180));
     };
     flash();
   }

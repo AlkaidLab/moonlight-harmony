@@ -149,7 +149,7 @@ struct AppListPageV2 {
     this.preserveBandwidthProbeForLaunch = false;
     this.updateLayoutConfig();
     
-    const params = AppNav.stack.getParamByIndex(AppNav.stack.size() - 1) as AppListPageParams;
+    const params = AppNav.topParams<AppListPageParams>();
     if (params?.computerId) {
       this.computerId = params.computerId;
       this.loadApps();
@@ -208,11 +208,6 @@ struct AppListPageV2 {
     this.cancelRetryTimer();
     // 清理运行状态轮询
     this.cancelRunningStatePolling();
-  }
-
-  onBackPress(): boolean {
-    this.viewModel.cancelIconLoading();
-    return false;
   }
 
   /**
@@ -641,6 +636,7 @@ struct AppListPageV2 {
     .backgroundColor(Color.Transparent)
     }
     .hideTitleBar(true)
+    .onShown(() => this.onPageShow())
   }
 
   @Builder

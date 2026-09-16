@@ -372,11 +372,6 @@ struct SettingsPageV2 {
     }, 250);
   }
 
-  onBackPress(): boolean {
-    AppNav.pop();
-    return true;
-  }
-
   private loadVersionInfo(): void {
     try {
       const bundleInfo = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
@@ -2510,6 +2505,7 @@ struct SettingsPageV2 {
     } as SheetOptions)
     }
     .hideTitleBar(true)
+    .onShown(() => this.onPageShow())
   }
 
   @Builder

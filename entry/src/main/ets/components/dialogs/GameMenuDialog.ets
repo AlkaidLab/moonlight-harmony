@@ -170,6 +170,8 @@ export struct GameMenuDialog {
   @State private isAdjustingBitrate: boolean = false;
   @State private abrEnabled: boolean = false;
   private bitrateDebounceTimer: number = -1;
+  /** 入场交错动画定时器，aboutToDisappear 时清理，避免销毁后触发 getUIContext */
+  private animateInTimers: number[] = [];
 
   // 音频振动会话设置
   @State private audioVibrationEnabled: boolean = false;
@@ -221,6 +223,10 @@ export struct GameMenuDialog {
       clearTimeout(this.bitrateDebounceTimer);
       this.bitrateDebounceTimer = -1;
     }
+    for (const t of this.animateInTimers) {
+      clearTimeout(t);
+    }
+    this.animateInTimers = [];
   }
 
   aboutToAppear(): void {
@@ -273,14 +279,14 @@ export struct GameMenuDialog {
 
   private animateIn(): void {
     for (let i = 0; i < MENU_ITEM_COUNT; i++) {
-      setTimeout(() => {
+      this.animateInTimers.push(setTimeout(() => {
         this.getUIContext().animateTo({
           duration: ANIMATION_DURATION_IN,
           curve: Curve.FastOutSlowIn,
         }, () => {
           this.positions[i] = 0;
         });
-      }, i * ANIMATION_STAGGER_DELAY);
+      }, i * ANIMATION_STAGGER_DELAY));
     }
   }
 

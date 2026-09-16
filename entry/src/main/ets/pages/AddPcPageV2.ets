@@ -50,12 +50,22 @@ struct AddPcPageV2 {
     '串流の呼吸・壱ノ型',
   ];
 
+  /** 入场/弹跳动画定时器，aboutToDisappear 时清理，避免销毁后触发 getUIContext */
+  private entranceTimers: number[] = [];
+
+  aboutToDisappear() {
+    for (const t of this.entranceTimers) {
+      clearTimeout(t);
+    }
+    this.entranceTimers = [];
+  }
+
   aboutToAppear() {
     // 随机选择初始语录
     this.dianLaoIndex = Math.floor(Math.random() * this.dianLaoQuotes.length);
 
     // 入场动画
-    setTimeout(() => {
+    this.entranceTimers.push(setTimeout(() => {
       this.getUIContext().animateTo({
         duration: AppAnimation.Slow,
         curve: Curve.EaseOut
@@ -63,12 +73,12 @@ struct AddPcPageV2 {
         this.headerOffset = 0;
         this.headerOpacity = 1;
       });
-    }, 100);
+    }, 100));
 
     // 颠佬弹跳动画
-    setTimeout(() => {
+    this.entranceTimers.push(setTimeout(() => {
       this.startDianLaoBounce();
-    }, 600);
+    }, 600));
   }
 
   build() {

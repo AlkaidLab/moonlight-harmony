@@ -38,12 +38,23 @@ export class Logger {
     hilog.error(DOMAIN, tag, '%{public}s', Logger.join(args));
   }
 
-  /** 将 console 风格的多参数拼接为单条消息（空格分隔），undefined 原样输出 */
+  /** 将 console 风格的多参数拼接为单条消息（空格分隔），undefined 原样输出。
+   *  Error 参数输出 name/message 与完整堆栈，对齐 console.error 的行为 */
   private static join(args: (Object | undefined)[]): string {
     let msg = '';
     for (const a of args) {
-      msg += (msg.length > 0 ? ' ' : '') + (a === undefined ? 'undefined' : String(a));
+      msg += (msg.length > 0 ? ' ' : '') + Logger.stringify(a);
     }
     return msg;
+  }
+
+  private static stringify(a: Object | undefined): string {
+    if (a === undefined) {
+      return 'undefined';
+    }
+    if (a instanceof Error) {
+      return a.stack ?? `${a.name}: ${a.message}`;
+    }
+    return String(a);
   }
 }

@@ -51,7 +51,7 @@ struct HostWebUiPage {
   }
 
   private async loadHost(): Promise<void> {
-    const params = AppNav.stack.getParamByIndex(AppNav.stack.size() - 1) as HostWebUiPageParams;
+    const params = AppNav.topParams<HostWebUiPageParams>();
     if (!params?.computerId) {
       this.isLoading = false;
       this.loadError = '缺少主机信息';
@@ -235,6 +235,7 @@ struct HostWebUiPage {
     .backgroundColor(AppColors.Background)
     }
     .hideTitleBar(true)
+    .onBackPressed(() => this.onBackPress())
   }
 
   @Builder

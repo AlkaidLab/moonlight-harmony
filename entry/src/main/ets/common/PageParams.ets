@@ -16,6 +16,19 @@
  *   AppNav.push('StreamPage', { ... } as StreamPageParams);
  */
 
+/**
+ * route_map.json 注册的路由名。AppNav.push 的参数类型收窄到此联合类型，
+ * 拼写错误在编译期报错，而不是运行时路由静默失败。
+ */
+export type RouteName =
+  | 'PcListPageV2'
+  | 'AppListPageV2'
+  | 'StreamPage'
+  | 'HostWebUiPage'
+  | 'AddPcPageV2'
+  | 'SettingsPageV2'
+  | 'ControllerTestPage';
+
 /** AppListPageV2（应用列表） */
 export interface AppListPageParams {
   computerId: string;
@@ -36,4 +49,9 @@ export interface StreamPageParams {
   displayGuid?: string;   // 指定的显示器 GUID
   useVdd?: boolean;       // 是否使用虚拟显示器
   posterPath?: string;    // 应用本地海报路径，连接中遮罩背景
+}
+
+/** 将超级指令列表序列化为路由参数（空列表 → undefined），StreamPage 侧负责反序列化 */
+export function serializeCmdList<T>(cmdList?: T[]): string | undefined {
+  return cmdList && cmdList.length > 0 ? JSON.stringify(cmdList) : undefined;
 }

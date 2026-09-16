@@ -36,6 +36,7 @@ import { SettingsBackupService } from '../service/SettingsBackupService';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { ToastQueue } from '../utils/ToastQueue';
 import { Logger } from '../common/Logger';
+import { UI } from '../common/UI';
 
 /**
  * 电脑列表页面 (现代化版本)
@@ -522,10 +523,12 @@ struct PcListPageV2 {
     })
     }
     .hideTitleBar(true)
+    .onShown(() => this.onPageShow())
+    .onHidden(() => this.onPageHide())
     .onBackPressed(() => {
       // 根页面：返回键退出应用（保持旧 router.replaceUrl 首页语义）
       if (AppNav.stack.size() <= 1) {
-        (getContext(this) as common.UIAbilityContext).terminateSelf();
+        (UI.get().getHostContext() as common.UIAbilityContext).terminateSelf();
         return true;
       }
       return false;

@@ -16,6 +16,7 @@ import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.Abil
 import { MoonBridge, MoonBridgeClass } from '../streaming/MoonBridge';
 import { MicrophoneConfig, MicrophoneState, MicrophoneStateListener } from './MicrophoneConfig';
 import { MicrophoneStream } from './MicrophoneStream';
+import { SettingsService } from '../SettingsService';
 import { Logger } from '../../common/Logger';
 
 const TAG = '[MicManager]';
@@ -144,7 +145,7 @@ export class MicrophoneManager implements MicrophoneStateListener {
     
     try {
       // 更新比特率配置
-      const settingsService = (await import('../SettingsService')).SettingsService.getInstance();
+      const settingsService = SettingsService.getInstance();
       const audioSettings = await settingsService.getAudioSettings();
       MicrophoneConfig.setOpusBitrate(audioSettings.micBitrate);
 

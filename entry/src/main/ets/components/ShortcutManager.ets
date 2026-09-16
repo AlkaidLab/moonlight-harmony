@@ -79,7 +79,7 @@ export class ShortcutManager {
       await this.loadShortcuts();
       this.initialized = true;
     } catch (error) {
-      Logger.error('ShortcutManager', 'ShortcutManager', `初始化失败: ${error}`);
+      Logger.error('ShortcutManager', `初始化失败: ${error}`);
       // 即使失败也使用默认配置
       this.shortcuts = this.getDefaultShortcuts();
       this.initialized = true;
@@ -259,7 +259,7 @@ export class ShortcutManager {
           .filter(s => !this.deletedBuiltinIds.includes(s.id));
       }
     } catch (error) {
-      Logger.error('ShortcutManager', 'ShortcutManager', `加载快捷键失败: ${error}`);
+      Logger.error('ShortcutManager', `加载快捷键失败: ${error}`);
       this.shortcuts = this.getDefaultShortcuts();
     }
   }
@@ -276,7 +276,7 @@ export class ShortcutManager {
       await this.prefs.flush();
       SettingsBackupService.scheduleAutoSave();
     } catch (error) {
-      Logger.error('ShortcutManager', 'ShortcutManager', `保存快捷键失败: ${error}`);
+      Logger.error('ShortcutManager', `保存快捷键失败: ${error}`);
     }
   }
   

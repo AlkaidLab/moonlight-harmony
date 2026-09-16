@@ -297,6 +297,8 @@ export struct CustomKeyOverlay {
 
   /** 屏幕变化监听回调引用，用于注销 */
   private displayChangeCallback: ((displayId: number) => void) | null = null;
+  /** 取色扫描动画定时器，aboutToDisappear 时清理，避免销毁后触发 getUIContext */
+  private captureAnimTimers: number[] = [];
 
   async aboutToAppear(): Promise<void> {
     // 获取屏幕尺寸
@@ -337,6 +339,10 @@ export struct CustomKeyOverlay {
   }
 
   aboutToDisappear(): void {
+    for (const t of this.captureAnimTimers) {
+      clearTimeout(t);
+    }
+    this.captureAnimTimers = [];
     // 注销屏幕变化监听
     if (this.displayChangeCallback) {
       try {
@@ -1640,30 +1646,30 @@ export struct CustomKeyOverlay {
       await this.applyThemeToAllKeys(theme);
 
       // 阶段2：扫描完成 → 全屏闪烁 + 标签淡入（600ms后）
-      setTimeout(() => {
+      this.captureAnimTimers.push(setTimeout(() => {
         // 闪光
         this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
           this.scanFlashOpacity = 0.25;
         });
-        setTimeout(() => {
+        this.captureAnimTimers.push(setTimeout(() => {
           this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseIn }, () => {
             this.scanFlashOpacity = 0;
           });
-        }, 150);
+        }, 150));
         // 标签淡入
         this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
           this.scanLabelOpacity = 1;
         });
-      }, 600);
+      }, 600));
 
       // 阶段3：整体淡出（1200ms后开始）
-      setTimeout(() => {
+      this.captureAnimTimers.push(setTimeout(() => {
         this.getUIContext().animateTo({ duration: 400, curve: Curve.EaseIn }, () => {
           this.scanTintOpacity = 0;
           this.scanLabelOpacity = 0;
         });
-        setTimeout(() => { this.captureAnimActive = false; }, 450);
-      }, 1200);
+        this.captureAnimTimers.push(setTimeout(() => { this.captureAnimActive = false; }, 450));
+      }, 1200));
     } catch (e) {
       this.hidingForCapture = false;
       this.showThemePanel = true;

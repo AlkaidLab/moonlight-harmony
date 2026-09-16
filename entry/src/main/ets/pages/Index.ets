@@ -45,6 +45,8 @@ struct Index {
   @State showPrivacyConsent: boolean = false;
   /** 隐私政策弹窗透明度（用于淡入动画） */
   @State privacyDialogOpacity: number = 0;
+  /** 防止定时器重复触发导致 PcListPageV2 重复入栈 */
+  private hasNavigatedToMain: boolean = false;
 
   /** 隐私政策章节内容 */
   private privacySections: PrivacySection[] = [
@@ -163,7 +165,10 @@ struct Index {
     setTimeout(() => {
       this.isLoading = false;
       try {
-        AppNav.push('PcListPageV2');
+        if (!this.hasNavigatedToMain) {
+          this.hasNavigatedToMain = true;
+          AppNav.push('PcListPageV2');
+        }
       } catch (e) {
         Logger.error('Index', 'Index: navigation failed - ' + e);
       }
@@ -227,7 +232,10 @@ struct Index {
     setTimeout(() => {
       this.isLoading = false;
       try {
-        AppNav.push('PcListPageV2');
+        if (!this.hasNavigatedToMain) {
+          this.hasNavigatedToMain = true;
+          AppNav.push('PcListPageV2');
+        }
       } catch (e) {
         Logger.error('Index', 'Index: navigation failed - ' + e);
       }

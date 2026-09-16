@@ -8,7 +8,6 @@
  * (at your option) any later version.
  */
 
-import { hilog } from '@kit.PerformanceAnalysisKit';
 import { NvHttp } from '../service/streaming/NvHttp';
 import { WakeOnLan } from '../service/network/WakeOnLan';
 import {
@@ -26,9 +25,9 @@ import {
 } from './NetHelper';
 import { formatDisplayAddress, selectBestAddress } from '../model/ComputerInfo';
 import { ConnectionPath, ConnectionPathService } from '../service/network/ConnectionPathService';
+import { Logger } from '../common/Logger';
 
 const TAG = 'NetworkSelfCheck';
-const DOMAIN = 0x0000;
 
 /**
  * 网络契约自检
@@ -135,9 +134,9 @@ export class NetworkErrorClassifierSelfCheck {
     failed += NetworkErrorClassifierSelfCheck.runDisplayAddressCases();
 
     if (failed === 0) {
-      hilog.info(DOMAIN, TAG, 'network self-check passed');
+      Logger.info(TAG, 'network self-check passed');
     } else {
-      hilog.error(DOMAIN, TAG, 'network self-check FAILED: %{public}d cases broken', failed);
+      Logger.error(TAG, 'network self-check FAILED:', failed, 'cases broken');
     }
     return failed;
   }
@@ -155,9 +154,8 @@ export class NetworkErrorClassifierSelfCheck {
     for (const c of KNOWN_AMBIGUOUS_CASES) {
       const actual = NvHttp.isTransientNetworkError(c.msg);
       if (actual !== c.expected) {
-        hilog.warn(DOMAIN, TAG,
-          'AMBIGUOUS CASE CHANGED: isTransientNetworkError(%{public}s) = %{public}s, was %{public}s — review needed',
-          c.msg, String(actual), String(c.expected));
+        Logger.warn(TAG,
+          `AMBIGUOUS CASE CHANGED: isTransientNetworkError(${c.msg}) = ${String(actual)}, was ${String(c.expected)} — review needed`);
       }
     }
     const errCase = new Error('Connection timeout');
@@ -169,10 +167,10 @@ export class NetworkErrorClassifierSelfCheck {
       '同一错误负载用 Error 或 string 传入应分类一致');
 
     if (failed === 0) {
-      hilog.info(DOMAIN, TAG, 'transient error classifier self-check passed (%{public}d cases + equivalence)',
-        TRANSIENT_CASES.length);
+      Logger.info(TAG,
+        `transient error classifier self-check passed (${TRANSIENT_CASES.length} cases + equivalence)`);
     } else {
-      hilog.error(DOMAIN, TAG, 'transient error classifier self-check FAILED: %{public}d cases broken', failed);
+      Logger.error(TAG, 'transient error classifier self-check FAILED:', failed, 'cases broken');
     }
     return failed;
   }
@@ -521,17 +519,16 @@ export class NetworkErrorClassifierSelfCheck {
     if (actual === expected) {
       return 0;
     }
-    hilog.error(DOMAIN, TAG,
-      'CONTRACT BROKEN [%{public}s] %{public}s = %{public}s, expected %{public}s — %{public}s',
-      scope, name, String(actual), String(expected), reason);
+    Logger.error(TAG,
+      `CONTRACT BROKEN [${scope}] ${name} = ${String(actual)}, expected ${String(expected)} — ${reason}`);
     return 1;
   }
 
   private static logGroupResult(group: string, failed: number): void {
     if (failed === 0) {
-      hilog.info(DOMAIN, TAG, '%{public}s self-check passed', group);
+      Logger.info(TAG, `${group} self-check passed`);
     } else {
-      hilog.error(DOMAIN, TAG, '%{public}s self-check FAILED: %{public}d cases broken', group, failed);
+      Logger.error(TAG, `${group} self-check FAILED: ${failed} cases broken`);
     }
   }
 }

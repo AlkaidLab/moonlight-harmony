@@ -16,7 +16,7 @@
  */
 import { promptAction } from '@kit.ArkUI';
 import { AppNav } from '../common/AppNav';
-import { AppListPageParams, StreamPageParams } from '../common/PageParams';
+import { AppListPageParams, StreamPageParams, serializeCmdList } from '../common/PageParams';
 import { common } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
 import { ObservableComputer } from './ComputerViewModel';
@@ -101,7 +101,7 @@ export class PcListActions {
           computerId: computer.uuid,
           appId: computer.runningGameId,
           appName: runningApp?.name || '正在运行',
-          cmdList: cmdList && cmdList.length > 0 ? JSON.stringify(cmdList) : undefined,
+          cmdList: serializeCmdList(cmdList),
           resume: true
         } as StreamPageParams);
         return;
@@ -115,7 +115,7 @@ export class PcListActions {
         computerId: computer.uuid,
         appId: firstApp.id,
         appName: firstApp.name,
-        cmdList: firstApp.cmdList && firstApp.cmdList.length > 0 ? JSON.stringify(firstApp.cmdList) : undefined,
+        cmdList: serializeCmdList(firstApp.cmdList),
         resume: false
       } as StreamPageParams);
     } catch (err) {
@@ -269,7 +269,7 @@ export class PcListActions {
           computerId: computer.uuid,
           appId: computer.runningGameId,
           appName: runningApp?.name,
-          cmdList: cmdList && cmdList.length > 0 ? JSON.stringify(cmdList) : undefined,
+          cmdList: serializeCmdList(cmdList),
           resume: true
         } as StreamPageParams);
         return;

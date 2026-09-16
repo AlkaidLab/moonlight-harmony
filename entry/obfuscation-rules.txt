@@ -1,7 +1,9 @@
 # Release 混淆规则（首次启用采用保守策略，详见下方注释）
 # -enable-toplevel-obfuscation: 混淆模块顶层标识符（类/函数/变量名）
 -enable-toplevel-obfuscation
-# -enable-export-obfuscation: 混淆导出名称（工程无动态 import/runtimeOnly，arkg 会统一重命名引用方）
+# -enable-export-obfuscation: 混淆导出名称（runtimeOnly 为空；引用方由 arkg 统一重命名。
+#   注意：动态 import 的导出名不会被改写，工程中不得新增按名访问导出的动态 import，
+#   否则需为对应导出名追加 -keep-global-name）
 -enable-export-obfuscation
 # -remove-comments: 移除注释
 -remove-comments

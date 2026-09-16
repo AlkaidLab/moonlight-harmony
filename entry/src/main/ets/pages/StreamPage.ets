@@ -163,7 +163,6 @@ class CustomKeyManagerHostImpl implements CustomKeyManagerHost {
   }
 }
 
-@Entry
 @Component
 struct StreamPage {
   // ViewModel
@@ -297,7 +296,7 @@ struct StreamPage {
   private netSceneLastKey: string = '';
   
   aboutToAppear(): void {
-    const params = AppNav.stack.getParamByIndex(AppNav.stack.size() - 1) as StreamPageParams;
+    const params = AppNav.topParams<StreamPageParams>();
     if (params) {
       this.computerId = params.computerId;
       this.appId = params.appId;
@@ -2497,6 +2496,7 @@ struct StreamPage {
     })
     }
     .hideTitleBar(true)
+    .onBackPressed(() => this.onBackPress())
   }
 
   // ==================== UI Builders ====================
