@@ -227,8 +227,9 @@ export class NvHttp {
   static readonly DEFAULT_HTTPS_PORT = DEFAULT_HTTPS_PORT;
   static readonly DEFAULT_HTTP_PORT = DEFAULT_HTTP_PORT;
   // 超时时间（对齐 Android 版 NvHTTP 的 SHORT_CONNECTION_TIMEOUT/LONG_CONNECTION_TIMEOUT/READ_TIMEOUT）
-  // 注意：HarmonyOS rcp 当前没有连接复用（每次 createSession+close），每次请求都要走完整 TCP+TLS handshake
-  // 所以 connect 阶段比 Android OkHttp 慢 1.5~3 RTT，这里给的 timeout 已经考虑此差异
+  // 注意：rcp 的连接复用由 RcpSessionPool 开启（同 host 第二次起免 TCP+TLS handshake），
+  // 但冷启动 / session 被淘汰后重建时 connect 阶段仍比 Android OkHttp 慢 1.5~3 RTT，
+  // 这里给的 timeout 已经考虑此差异
   static readonly CONNECTION_TIMEOUT = 3000;
   static readonly LONG_CONNECTION_TIMEOUT = 5000;
   static readonly READ_TIMEOUT = 7000;

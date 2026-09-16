@@ -200,17 +200,17 @@ export class HttpClient {
       return { statusCode: response.statusCode, body: body };
     } catch (err) {
       const error = err as Error;
-      // 连接级错误时丢弃 session（损坏的连接复用只会继续失败）
-      if (HttpClient.isConnectionError(error.message)) {
+      if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
         RcpSessionPool.invalidate(key);
       }
-      const isTimeout = error.message?.includes('Timeout') || error.message?.includes('timeout');
-      if (isTimeout) {
+      if (HttpClient.isTimeoutError(error.message)) {
         Logger.warn('HttpClient', `HttpClient: 请求超时 - ${url}`);
       } else {
         Logger.error('HttpClient', `HttpClient: 请求失败 - ${error.message}`);
       }
       throw new Error(`HTTP 请求失败: ${error.message}`);
+    } finally {
+      RcpSessionPool.release(session);
     }
   }
 
@@ -218,18 +218,21 @@ export class HttpClient {
    * 判断是否连接级错误（应 invalidate session）
    * 协议级错误（401/4xx/5xx）不应丢 session，因为连接本身是好的
    *
-   * 重要：timeout 不在其中。timeout 仅意味单次请求慢/对端暂不响应，
-   * session 本身可能还能用，rcp 内部 ConnectionPool 会自行重建坏 TCP。
-   * 主动 session.close() 会同步取消同 session 上所有 in-flight 请求（HTTP/2 RST_STREAM 雪崩），
-   * 且该 RST/GOAWAY 会触发 Sunshine (Simple-Web-Server) 一侧 SSL state machine 异常，
-   * 让 HTTPS listener 进入 wedged 状态。只在明确丢连接错误时才 invalidate。
+   * timeout 也 invalidate：session 内缓存过期 DNS / 死连接时，同一 host
+   * 会反复 connect timeout，只有换新 session 才能拿到新解析。真机案例：
+   * AAAA-only DDNS 域名换 IP 后手动添加反复失败，直到重装应用（杀进程）
+   * 才恢复——旧实现恰恰不淘汰 timeout。
    *
-   * 同理：裸 connection reset / econnreset 也不 invalidate。
-   * - 单条空闲 TCP 被 firewall idle timeout 杀掉，rcp 池能自动重建新 TCP
-   * - 真正 session 级 TLS 损坏的 reset 会带 handshake/1007900035 关键词
-   * - HTTP/2 协议层崩溃由 1007900016 单独覆盖
-   * 让普通 reset 走 transient retry 兜底，避免 invalidate 把 session 内其他
-   * in-flight 请求级联 RST，反而扩大故障面。
+   * invalidate 是安全的：RcpSessionPool 只把 session 摘出池子并等在途
+   * 请求自然结束才 close，不会级联取消同 session 上其他 in-flight 请求
+   * （立即 close 的 RST_STREAM 雪崩会触发 Sunshine Simple-Web-Server 的
+   * SSL state machine 异常，让 HTTPS listener 进入 wedged 状态）。
+   *
+   * 同理：裸 connection reset / econnreset 仍不 invalidate，但理由变了——
+   * 淘汰已无级联风险，剩下的理由是性能：单条空闲 TCP 被 firewall idle
+   * timeout 杀掉时 rcp 池能自动重建，没必要丢弃整个 session；
+   * 真正 session 级 TLS 损坏的 reset 会带 handshake/1007900035 关键词，
+   * HTTP/2 协议层崩溃由 1007900016 单独覆盖。
    */
   private static isConnectionError(msg: string): boolean {
     if (!msg) return false;
@@ -240,6 +243,14 @@ export class HttpClient {
       lower.includes('1007900007') || // Couldn't connect
       lower.includes('1007900035') || // SSL connection
       lower.includes('1007900016');   // HTTP2 framing
+  }
+
+  /**
+   * 判断是否超时错误（connect / transfer 超时统一识别）
+   */
+  private static isTimeoutError(msg: string): boolean {
+    if (!msg) return false;
+    return msg.toLowerCase().includes('timeout');
   }
 
   /**
@@ -298,11 +309,13 @@ export class HttpClient {
       return { statusCode: response.statusCode ?? 0, body: responseBody };
     } catch (err) {
       const error = err as Error;
-      if (HttpClient.isConnectionError(error.message)) {
+      if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
         RcpSessionPool.invalidate(key);
       }
       Logger.error('HttpClient', `HttpClient: RAW 请求失败 - ${error.message}`);
       throw new Error(`HTTP 请求失败: ${error.message}`);
+    } finally {
+      RcpSessionPool.release(session);
     }
   }
 
@@ -363,11 +376,13 @@ export class HttpClient {
       return response.body;
     } catch (err) {
       const error = err as Error;
-      if (HttpClient.isConnectionError(error.message)) {
+      if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
         RcpSessionPool.invalidate(key);
       }
       Logger.error('HttpClient', `HttpClient: 二进制请求失败 - ${error.message}`);
       throw new Error(`HTTP 请求失败: ${error.message}`);
+    } finally {
+      RcpSessionPool.release(session);
     }
   }
 
@@ -427,11 +442,13 @@ export class HttpClient {
       return { statusCode: response.statusCode ?? 0, body: responseBody };
     } catch (err) {
       const error = err as Error;
-      if (HttpClient.isConnectionError(error.message)) {
+      if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
         RcpSessionPool.invalidate(key);
       }
       Logger.error('HttpClient', `HttpClient: POST 请求失败 - ${error.message}`);
       throw new Error(`HTTP POST 请求失败: ${error.message}`);
+    } finally {
+      RcpSessionPool.release(session);
     }
   }
 
@@ -468,11 +485,13 @@ export class HttpClient {
       return { statusCode: response.statusCode ?? 0, body: responseBody };
     } catch (err) {
       const error = err as Error;
-      if (HttpClient.isConnectionError(error.message)) {
+      if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
         RcpSessionPool.invalidate(key);
       }
       Logger.error('HttpClient', `HttpClient: POST(binary) 请求失败 - ${error.message}`);
       throw new Error(`HTTP POST 请求失败: ${error.message}`);
+    } finally {
+      RcpSessionPool.release(session);
     }
   }
 

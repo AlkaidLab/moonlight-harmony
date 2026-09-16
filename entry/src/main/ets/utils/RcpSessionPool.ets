@@ -17,6 +17,10 @@ import { Logger } from '../common/Logger';
 interface SessionPoolEntry {
   session: rcp.Session;
   lastUsedAt: number;
+  /** 在途请求数：acquire +1，release -1 */
+  inFlight: number;
+  /** 已被淘汰：不再复用，等 inFlight 归零后关闭 */
+  retired: boolean;
 }
 
 /**
@@ -49,7 +53,13 @@ export interface SessionAcquireOptions {
  * - 同 origin 但不同 cert 必须分开 session（cert 在 session 创建时绑定）
  * - timeout 不在 session 创建时绑定，由调用方 Request.configuration 覆盖，
  *   这样同一 session 可服务多个不同超时的请求
- * - 出错时调用方主动 invalidate（连接可能损坏，避免持续踩坑）
+ * - 连接级错误 / 超时由调用方 invalidate：session 可能持有过期 DNS 或损坏
+ *   连接，只有换新 session 才能恢复（尤其 DDNS 域名换 IP 的场景）
+ * - invalidate 只把条目移出池子并标记 retired，等该 session 上在途请求
+ *   （acquire/release 计数）自然结束才真正 close——立即 close 会级联取消
+ *   其他 in-flight 请求（HTTP/2 RST_STREAM 雪崩），且可能触发 Sunshine
+ *   Simple-Web-Server 的 SSL state machine 异常导致 HTTPS listener wedged。
+ *   新的 acquire 拿到的已是全新 session，因此淘汰立即生效。
  *
  * 参考：
  * - https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/remote-communication-cpo
@@ -63,7 +73,10 @@ export class RcpSessionPool {
   private static readonly MAX_CONN_PER_HOST = 4;
   private static readonly MAX_TOTAL_CONN = 16;
 
+  /** 存活（可复用）的 session，按 cacheKey 索引；retired 条目会立即移出 */
   private static readonly entries: Map<string, SessionPoolEntry> = new Map();
+  /** session → 条目反查表：release 只拿得到 session 对象；retired 条目关闭前一直保留 */
+  private static readonly live: Map<rcp.Session, SessionPoolEntry> = new Map();
 
   private static createSession(options: SessionAcquireOptions): rcp.Session {
     const securityConfig: rcp.SecurityConfiguration = {
@@ -90,12 +103,14 @@ export class RcpSessionPool {
   }
 
   /**
-   * 取/建一个 Session（按 cacheKey 缓存）
+   * 取/建一个 Session（按 cacheKey 缓存）。
+   * 每次 acquire 必须对应一次 release（请求结束后的 finally 里调用）。
    */
   static acquire(cacheKey: string, options: SessionAcquireOptions): rcp.Session {
     const cached = RcpSessionPool.entries.get(cacheKey);
     if (cached) {
       cached.lastUsedAt = Date.now();
+      cached.inFlight++;
       // 重新插入维护 LRU 顺序（Map 保留插入顺序）
       RcpSessionPool.entries.delete(cacheKey);
       RcpSessionPool.entries.set(cacheKey, cached);
@@ -111,21 +126,19 @@ export class RcpSessionPool {
         }
       });
       if (oldestKey !== undefined) {
-        const oldEntry = RcpSessionPool.entries.get(oldestKey);
-        RcpSessionPool.entries.delete(oldestKey);
-        if (oldEntry) {
-          try {
-            oldEntry.session.close();
-          } catch (_e) {
-            // 忽略关闭异常
-          }
-        }
-        Logger.info('RcpSessionPool', `RcpSessionPool: LRU 淘汰 ${oldestKey}`);
+        RcpSessionPool.retire(oldestKey, 'LRU 淘汰');
       }
     }
 
     const session = RcpSessionPool.createSession(options);
-    RcpSessionPool.entries.set(cacheKey, { session, lastUsedAt: Date.now() });
+    const entry: SessionPoolEntry = {
+      session: session,
+      lastUsedAt: Date.now(),
+      inFlight: 1,
+      retired: false
+    };
+    RcpSessionPool.entries.set(cacheKey, entry);
+    RcpSessionPool.live.set(session, entry);
     Logger.info('RcpSessionPool', `RcpSessionPool: 新建 session ${cacheKey} (size=${RcpSessionPool.entries.size})`);
     return session;
   }
@@ -139,32 +152,42 @@ export class RcpSessionPool {
   }
 
   /**
-   * 标记 session 损坏（请求出错时调用），从池中移除并关闭
-   * 下次同 cacheKey 请求会重建 session
+   * 请求结束（成功或失败）后归还。
+   * retired 条目在 inFlight 归零时真正 close；存活条目留在池中继续复用。
+   */
+  static release(session: rcp.Session): void {
+    const entry = RcpSessionPool.live.get(session);
+    if (!entry) {
+      return;
+    }
+    if (entry.inFlight > 0) {
+      entry.inFlight--;
+    }
+    if (entry.retired && entry.inFlight === 0) {
+      RcpSessionPool.closeEntry(entry);
+    }
+  }
+
+  /**
+   * 淘汰 session（连接级错误 / 超时时调用）：下次同 cacheKey 请求会重建
+   * 全新 session。不立即 close，等在途请求结束后再关（见类注释）。
    */
   static invalidate(cacheKey: string): void {
-    const entry = RcpSessionPool.entries.get(cacheKey);
-    if (!entry) return;
-    RcpSessionPool.entries.delete(cacheKey);
-    try {
-      entry.session.close();
-    } catch (_e) {
-      // 忽略
-    }
-    Logger.warn('RcpSessionPool', `RcpSessionPool: invalidate ${cacheKey}`);
+    RcpSessionPool.retire(cacheKey, 'invalidate');
   }
 
   /**
    * 关闭所有 session（应用退出时调用）
    */
   static disposeAll(): void {
-    RcpSessionPool.entries.forEach((entry) => {
+    RcpSessionPool.live.forEach((entry) => {
       try {
         entry.session.close();
       } catch (_e) {
         // 忽略
       }
     });
+    RcpSessionPool.live.clear();
     RcpSessionPool.entries.clear();
   }
 
@@ -189,5 +212,29 @@ export class RcpSessionPool {
    */
   static size(): number {
     return RcpSessionPool.entries.size;
+  }
+
+  private static retire(cacheKey: string, reason: string): void {
+    const entry = RcpSessionPool.entries.get(cacheKey);
+    if (!entry) {
+      return;
+    }
+    RcpSessionPool.entries.delete(cacheKey);
+    entry.retired = true;
+    if (entry.inFlight <= 0) {
+      RcpSessionPool.closeEntry(entry);
+      Logger.warn('RcpSessionPool', `RcpSessionPool: ${reason} → 关闭 ${cacheKey}`);
+    } else {
+      Logger.warn('RcpSessionPool', `RcpSessionPool: ${reason} → ${cacheKey} 标记待关闭（${entry.inFlight} 个在途请求结束后关闭）`);
+    }
+  }
+
+  private static closeEntry(entry: SessionPoolEntry): void {
+    RcpSessionPool.live.delete(entry.session);
+    try {
+      entry.session.close();
+    } catch (_e) {
+      // 忽略
+    }
   }
 }
