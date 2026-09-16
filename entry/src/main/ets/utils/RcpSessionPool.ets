@@ -52,10 +52,11 @@ export interface SessionAcquireOptions {
  *
  * 设计要点：
  * - 实际打开的 session 总数（含已淘汰未关闭的）有硬上限 MAX_SIZE，守住
- *   rcp 系统级 session 上限（错误码 1007900994 暗示其存在）：腾位时优先
- *   关闭空闲条目（无 in-flight，立即 close 安全且真正释放资源）；全部
- *   在途时才回退为立即关闭最久未用的——仅当超过 MAX_SIZE 个不同 host
- *   同时在途才走到，此角落与旧实现行为一致（接受级联取消，保住上限）
+ *   rcp 系统级 session 上限（错误码 1007900994 暗示其存在）。腾位关闭
+ *   优先级：空闲条目（立即 close 安全且真正释放资源）→ retired 条目
+ *   （本就在等在途请求结束，且 entries 空而 live 打满时只有它们可关，
+ *   否则会突破上限）→ 最久未用的在途条目（极端场景，与旧实现一致，
+ *   接受级联取消保住上限）
  * - 同 origin 但不同 cert 必须分开 session（cert 在 session 创建时绑定）
  * - timeout 不在 session 创建时绑定，由调用方 Request.configuration 覆盖，
  *   这样同一 session 可服务多个不同超时的请求
@@ -214,32 +215,41 @@ export class RcpSessionPool {
 
   /**
    * 新建 session 前腾位置：live（含 retired 未关闭的）达到 MAX_SIZE 时执行。
-   * 优先关闭空闲条目（立即 close 安全且真正释放系统资源）；全部在途时
-   * 回退为立即关闭最久未用的（见类注释设计要点第 1 条）。
+   * 关闭优先级：空闲条目（立即 close 安全且真正释放系统资源）→ retired
+   * 条目（本就等在途请求结束；entries 空而 live 打满时只有它们可关，
+   * 否则会突破上限）→ 最久未用的在途条目（极端场景才走到，与旧实现
+   * 行为一致，接受级联取消以守住上限）。
    */
   private static makeRoom(): void {
     while (RcpSessionPool.live.size >= RcpSessionPool.MAX_SIZE) {
-      let lru: SessionPoolEntry | undefined;
+      let lruLive: SessionPoolEntry | undefined;
       let idle: SessionPoolEntry | undefined;
-      // Map 保持 LRU 插入序：第一条即最久未用
+      // Map 保持 LRU 插入序：entries 第一条即最久未用的存活条目
       RcpSessionPool.entries.forEach((e) => {
-        if (lru === undefined) {
-          lru = e;
+        if (lruLive === undefined) {
+          lruLive = e;
         }
         if (idle === undefined && e.inFlight === 0) {
           idle = e;
         }
       });
-      const victim = idle ?? lru;
+      let retired: SessionPoolEntry | undefined;
+      RcpSessionPool.live.forEach((e) => {
+        if (retired === undefined && e.retired) {
+          retired = e;
+        }
+      });
+      const victim = idle ?? retired ?? lruLive;
       if (victim === undefined) {
-        // live 里除 entries 外只剩 retired 条目，而 retired 只减不增，
-        // entries 为空时 live 必为空，走不到这里；类型守卫
+        // 不可达：while 条件保证 live 非空，非空必有条目；类型守卫
         break;
       }
-      const forced = victim.inFlight > 0;
-      RcpSessionPool.entries.delete(victim.cacheKey);
+      // retired 条目已不在 entries；按 key 删会误删同 key 已重建的新条目
+      if (!victim.retired) {
+        RcpSessionPool.entries.delete(victim.cacheKey);
+      }
       RcpSessionPool.closeEntry(victim);
-      Logger.warn('RcpSessionPool', `RcpSessionPool: 腾位淘汰 ${victim.cacheKey}${forced ? '（全忙回退，立即关闭在途 session）' : '（空闲）'}`);
+      Logger.warn('RcpSessionPool', `RcpSessionPool: 腾位淘汰 ${victim.cacheKey}${victim.inFlight > 0 ? `（${victim.retired ? 'retired' : '全忙'}回退，立即关闭在途 session）` : '（空闲）'}`);
     }
   }
 

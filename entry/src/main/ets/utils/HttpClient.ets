@@ -175,17 +175,17 @@ export class HttpClient {
 
     Logger.debug('HttpClient', `HttpClient: GET ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
 
-    const request = new rcp.Request(
-      url,
-      'GET',
-      HttpClient.normalizeHeaders(config?.headers),
-      undefined,
-      undefined,
-      undefined,
-      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
-    );
-
     try {
+      // 构造也在 try 内：同步抛出（如非法 URL）时 finally 的 release 仍会执行
+      const request = new rcp.Request(
+        url,
+        'GET',
+        HttpClient.normalizeHeaders(config?.headers),
+        undefined,
+        undefined,
+        undefined,
+        HttpClient.createRequestConfig(connectTimeout, transferTimeout)
+      );
       const response = await session.fetch(request);
       Logger.debug('HttpClient', `HttpClient: 响应状态码 = ${response.statusCode}`);
 
@@ -297,17 +297,16 @@ export class HttpClient {
 
     Logger.debug('HttpClient', `HttpClient: RAW ${method} ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
 
-    const request = new rcp.Request(
-      url,
-      method,
-      HttpClient.normalizeHeaders(config?.headers),
-      body,
-      undefined,
-      undefined,
-      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
-    );
-
     try {
+      const request = new rcp.Request(
+        url,
+        method,
+        HttpClient.normalizeHeaders(config?.headers),
+        body,
+        undefined,
+        undefined,
+        HttpClient.createRequestConfig(connectTimeout, transferTimeout)
+      );
       const response = await session.fetch(request);
       const responseBody = response.body ? StringUtil.arrayBufferToString(response.body) : '';
       return { statusCode: response.statusCode ?? 0, body: responseBody };
@@ -358,17 +357,16 @@ export class HttpClient {
 
     Logger.info('HttpClient', `HttpClient: 二进制 GET ${url} (sessionKey=${key})`);
 
-    const request = new rcp.Request(
-      url,
-      'GET',
-      HttpClient.normalizeHeaders(config?.headers),
-      undefined,
-      undefined,
-      undefined,
-      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
-    );
-
     try {
+      const request = new rcp.Request(
+        url,
+        'GET',
+        HttpClient.normalizeHeaders(config?.headers),
+        undefined,
+        undefined,
+        undefined,
+        HttpClient.createRequestConfig(connectTimeout, transferTimeout)
+      );
       const response = await session.fetch(request);
       if (response.statusCode !== 200) {
         throw new Error(`HTTP ${response.statusCode}`);
@@ -426,17 +424,16 @@ export class HttpClient {
 
     Logger.debug('HttpClient', `HttpClient: POST ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
 
-    const request = new rcp.Request(
-      url,
-      'POST',
-      HttpClient.normalizeHeaders(config?.headers),
-      body,
-      undefined,
-      undefined,
-      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
-    );
-
     try {
+      const request = new rcp.Request(
+        url,
+        'POST',
+        HttpClient.normalizeHeaders(config?.headers),
+        body,
+        undefined,
+        undefined,
+        HttpClient.createRequestConfig(connectTimeout, transferTimeout)
+      );
       const response = await session.fetch(request);
       Logger.debug('HttpClient', `HttpClient: POST 响应状态码 = ${response.statusCode}`);
       if (!response.body) {
@@ -469,17 +466,16 @@ export class HttpClient {
     Logger.debug('HttpClient', `HttpClient: POST(binary) ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
 
     const requestBody = HttpClient.toExactArrayBuffer(body);
-    const request = new rcp.Request(
-      url,
-      'POST',
-      HttpClient.normalizeHeaders(config?.headers),
-      requestBody,
-      undefined,
-      undefined,
-      HttpClient.createRequestConfig(connectTimeout, transferTimeout)
-    );
-
     try {
+      const request = new rcp.Request(
+        url,
+        'POST',
+        HttpClient.normalizeHeaders(config?.headers),
+        requestBody,
+        undefined,
+        undefined,
+        HttpClient.createRequestConfig(connectTimeout, transferTimeout)
+      );
       const response = await session.fetch(request);
       Logger.debug('HttpClient', `HttpClient: POST(binary) 响应状态码 = ${response.statusCode}`);
       if (response.statusCode < 200 || response.statusCode >= 300) {
