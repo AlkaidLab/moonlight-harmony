@@ -16,13 +16,8 @@
  * - 保存 NativeWindow 引用供解码器使用
  * - 直接渲染模式（低延迟）
  * - VSync 渲染模式（使用 RenderOutputBufferAtTime）
- * - 高帧率保持（针对鸿蒙7 无触摸降刷新率策略）：
- *   1. DisplaySoloist 空回调持续请求 vsync（API 12+，官方游戏/自绘通道）
- *   2. NativeWindow SetFrameRateRange（Surface buffer queue 帧率偏好，非公开 API）
- *   3. XComponent SetExpectedFrameRateRange + RegisterOnFrameCallback
- *      （ArkUI 框架层成对使用，由 MoonBridge 独立设置）
- *   帧率 hint 由 RefreshFrameRateHints 在渲染期间持续重申（2 秒节流），
- *   避免 Surface/布局变化或系统策略冲掉后失效。
+ * - DisplaySoloist 持续请求期望帧率，系统仍可按设备策略限制刷新率。
+ * - 每 2 秒检查请求状态、重试失败，并聚合回调频率诊断。
  */
 
 #ifndef NATIVE_RENDER_H
@@ -39,7 +34,7 @@
 #include <atomic>
 
 // DisplaySoloist 完整声明在 native_display_soloist.h；此处仅前向声明，
-// 实现通过 dlsym 动态加载符号，不引入头文件硬依赖
+// 实现包含 SDK 头文件校验类型，并通过 dlsym 动态加载符号。
 typedef struct OH_DisplaySoloist OH_DisplaySoloist;
 
 /**
@@ -75,14 +70,15 @@ public:
     void SetConfiguredFps(double fps);
 
     /**
-     * 启用/禁用帧率保活（DisplaySoloist 持续 vsync 请求 + 各层帧率 hint）。
-     * 禁用时停止 Soloist 并把 NativeWindow 帧率偏好复位为默认，
+     * 启用/禁用 DisplaySoloist 请求；displayHz 与串流调度 FPS 分开。
+     * 此通道仅支持 60 < displayHz <= 120，更高目标由 ArkUI 请求。
+     * 禁用时停止并释放 Soloist，
      * 避免高刷请求在流结束后残留耗电。
      */
-    void SetFrameRateKeepAlive(bool enabled);
+    void SetFrameRateKeepAlive(bool enabled, int32_t displayHz = 0);
 
     /**
-     * 重申当前帧率 hint（NativeWindow + DisplaySoloist）。
+     * 检查 DisplaySoloist 请求状态并聚合诊断；已有相同请求不重复设置。
      * @param force true 跳过节流立即重申；false 按 2 秒节流
      */
     void RefreshFrameRateHints(bool force);
@@ -148,13 +144,12 @@ private:
     // 配置 NativeWindow
     void ConfigureNativeWindow();
 
-    // 应用 NativeWindow 帧率（Surface buffer queue 级别，非公开 API，dlsym 加载）
-    void ApplyNativeWindowFrameRate();
+    static void SoloistFrameCallback(long long timestamp, long long targetTimestamp, void* data);
 
     // 按 keepAlive_ 与 configuredFps_ 状态启动/更新/停止 DisplaySoloist（须持有 frameRateMutex_）
     void EnsureDisplaySoloistLocked();
 
-    // 流结束/禁用保活时的复位（NativeWindow → 默认，停止 Soloist）
+    // 流结束/禁用时停止 Soloist 并复位诊断窗口
     void ResetFrameRateHintsToDefault();
 
     // 已持有 presentationMutex_ 时使用
@@ -196,12 +191,19 @@ private:
     int64_t vsyncLateFrameCount_ = 0;
     int64_t vsyncResyncCount_ = 0;
 
-    // 帧率保活状态（DisplaySoloist + 各层 hint 重申）
+    // DisplaySoloist 请求和诊断状态
     // 序列化 NativeWindow/Soloist 操作；SubmitFrame 热路径只读原子量
     std::mutex frameRateMutex_;
     std::atomic<bool> frameRateKeepAlive_{false};
+    std::atomic<int32_t> displayRequestHz_{0};
     std::atomic<int64_t> lastHintRefreshNs_{0};
     OH_DisplaySoloist* displaySoloist_ = nullptr;
+    int32_t soloistExpectedHz_ = 0;
+    std::atomic<uint64_t> soloistCallbacks_{0};
+    std::atomic<uint64_t> submittedFrames_{0};
+    int64_t diagnosticStartNs_ = 0;
+    uint64_t diagnosticCallbacks_ = 0;
+    uint64_t diagnosticSubmissions_ = 0;
 };
 
 #endif // NATIVE_RENDER_H
