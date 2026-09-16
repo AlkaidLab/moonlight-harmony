@@ -16,7 +16,9 @@
  */
 import { window } from '@kit.ArkUI';
 import { inputMethod } from '@kit.IMEKit';
+import { UI } from '../../common/UI';
 import { StreamViewModel } from '../../viewmodel/StreamViewModel';
+import { Logger } from '../../common/Logger';
 
 /**
  * StreamPage 需要实现的 IME 回调接口
@@ -95,7 +97,7 @@ export class StreamIMEManager {
       win = await window.getLastWindow(this.context);
       if (requestId !== this.showRequestId) return;
       win.on('keyboardHeightChange', (height: number) => {
-        this.callbacks?.onKeyboardHeightChanged(px2vp(height));
+        this.callbacks?.onKeyboardHeightChanged(UI.get().px2vp(height));
       });
 
       controller = inputMethod.getController();
@@ -140,7 +142,7 @@ export class StreamIMEManager {
           if (this.locked && this.imeController) {
             this.imeReadyTime = Date.now();
             this.imeController.showSoftKeyboard().catch((err: Error) => {
-              console.warn(`[StreamIME] re-show on locked failed: ${err.message}`);
+              Logger.warn('StreamIMEManager', `[StreamIME] re-show on locked failed: ${err.message}`);
             });
             return;
           }
@@ -153,19 +155,19 @@ export class StreamIMEManager {
       this.callbacks?.onKeyboardVisibilityChanged(true);
       this.imeReadyTime = Date.now();
     } catch (err) {
-      console.error(`[StreamPage] Failed to show IME: ${JSON.stringify(err)}`);
+      Logger.error('StreamIMEManager', `[StreamPage] Failed to show IME: ${JSON.stringify(err)}`);
       if (controller) {
         try {
           controller.detach();
         } catch (cleanupErr) {
-          console.warn(`[StreamIME] Failed to detach after show error: ${JSON.stringify(cleanupErr)}`);
+          Logger.warn('StreamIMEManager', `[StreamIME] Failed to detach after show error: ${JSON.stringify(cleanupErr)}`);
         }
       }
       if (win) {
         try {
           win.off('keyboardHeightChange');
         } catch (cleanupErr) {
-          console.warn(`[StreamIME] Failed to remove height listener: ${JSON.stringify(cleanupErr)}`);
+          Logger.warn('StreamIMEManager', `[StreamIME] Failed to remove height listener: ${JSON.stringify(cleanupErr)}`);
         }
       }
       this.imeController = null;
@@ -198,7 +200,7 @@ export class StreamIMEManager {
         win.off('keyboardHeightChange');
       });
     } catch (err) {
-      console.error(`[StreamPage] Failed to hide IME: ${JSON.stringify(err)}`);
+      Logger.error('StreamIMEManager', `[StreamPage] Failed to hide IME: ${JSON.stringify(err)}`);
     }
     this.callbacks?.onKeyboardVisibilityChanged(false);
     this.callbacks?.onKeyboardHeightChanged(0);

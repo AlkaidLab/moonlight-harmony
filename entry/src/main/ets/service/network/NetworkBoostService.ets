@@ -21,6 +21,7 @@
 import { netBoost, netQuality } from '@kit.NetworkBoostKit';
 import { Available, BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { StreamSocketFds } from '../streaming/MoonBridge';
+import { Logger } from '../../common/Logger';
 
 const STREAMING_SERVICE_TYPE: netQuality.ServiceType = 'realtimeGame';
 
@@ -141,7 +142,7 @@ export class NetworkBoostService {
       try {
         listener(this.latestQos);
       } catch (err) {
-        console.warn(`[NetworkBoost] listener 异常: ${(err as Error).message}`);
+        Logger.warn('NetworkBoostService', `[NetworkBoost] listener 异常: ${(err as Error).message}`);
       }
     }
   }
@@ -157,7 +158,7 @@ export class NetworkBoostService {
       try {
         listener(this.latestScene);
       } catch (err) {
-        console.warn(`[NetworkBoost] scene listener 异常: ${(err as Error).message}`);
+        Logger.warn('NetworkBoostService', `[NetworkBoost] scene listener 异常: ${(err as Error).message}`);
       }
     }
   }
@@ -191,7 +192,7 @@ export class NetworkBoostService {
       return;
     }
     if (deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API) {
-      console.info(`[NetworkBoost] API ${deviceInfo.sdkApiVersion} < ${DATA_FLOW_DESC_MIN_API},跳过流描述注册`);
+      Logger.info('NetworkBoostService', `[NetworkBoost] API ${deviceInfo.sdkApiVersion} < ${DATA_FLOW_DESC_MIN_API},跳过流描述注册`);
       return;
     }
 
@@ -214,7 +215,7 @@ export class NetworkBoostService {
 
   private registerOneFlow(name: string, fd: number): void {
     if (fd < 0) {
-      console.info(`[NetworkBoost] ${name} fd 不可用,跳过注册`);
+      Logger.info('NetworkBoostService', `[NetworkBoost] ${name} fd 不可用,跳过注册`);
       return;
     }
     try {
@@ -225,7 +226,7 @@ export class NetworkBoostService {
         expectations: { priority: netBoost.PriorityLevel.PRIO_HIGH }
       });
       this.registeredFlowFds.push(fd);
-      console.info(`[NetworkBoost] setDataFlowDesc ${name} fd=${fd} priority=HIGH`);
+      Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc ${name} fd=${fd} priority=HIGH`);
     } catch (err) {
       this.handleErr(`setDataFlowDesc(${name})`, err);
     }
@@ -241,9 +242,9 @@ export class NetworkBoostService {
           scene: STREAMING_SERVICE_TYPE,
           sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
         });
-        console.info(`[NetworkBoost] setDataFlowDesc fd=${fd} event=leave`);
+        Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc fd=${fd} event=leave`);
       } catch (err) {
-        console.warn(`[NetworkBoost] setDataFlowDesc(fd=${fd}) leave 失败: ${(err as Error).message}`);
+        Logger.warn('NetworkBoostService', `[NetworkBoost] setDataFlowDesc(fd=${fd}) leave 失败: ${(err as Error).message}`);
       }
     });
     if (!this.sceneEntered) {
@@ -256,9 +257,9 @@ export class NetworkBoostService {
         scene: STREAMING_SERVICE_TYPE,
         sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
       });
-      console.info('[NetworkBoost] setSceneDesc scene=realtimeGame event=leave');
+      Logger.info('NetworkBoostService', '[NetworkBoost] setSceneDesc scene=realtimeGame event=leave');
     } catch (err) {
-      console.warn(`[NetworkBoost] clearDataFlowDesc 失败: ${(err as Error).message}`);
+      Logger.warn('NetworkBoostService', `[NetworkBoost] clearDataFlowDesc 失败: ${(err as Error).message}`);
     }
   }
 
@@ -276,7 +277,7 @@ export class NetworkBoostService {
         qoeType
       };
       netQuality.reportQoe(appQoe);
-      console.info(`[NetworkBoost] reportQoe serviceType=realtimeGame qoeType=${qoeType}`);
+      Logger.info('NetworkBoostService', `[NetworkBoost] reportQoe serviceType=realtimeGame qoeType=${qoeType}`);
     } catch (err) {
       this.handleErr('reportQoe', err);
     }
@@ -310,7 +311,7 @@ export class NetworkBoostService {
         upBufferCongestionPercent: primary.linkUpBufferCongestionPercent ?? 0
       };
       this.latestQos = qos;
-      console.info(`[NetworkBoost] netQos path=${qos.pathType} rtt=${qos.rttMs}ms ` +
+      Logger.info('NetworkBoostService', `[NetworkBoost] netQos path=${qos.pathType} rtt=${qos.rttMs}ms ` +
         `bw=${(qos.upBandwidthBps / 1_000_000).toFixed(1)}/${(qos.downBandwidthBps / 1_000_000).toFixed(1)}Mbps ` +
         `rate=${(qos.upRateBps / 1_000_000).toFixed(1)}/${(qos.downRateBps / 1_000_000).toFixed(1)}Mbps ` +
         `bufDelay=${qos.upBufferDelayMs}ms cong=${qos.upBufferCongestionPercent}%`);
@@ -318,14 +319,14 @@ export class NetworkBoostService {
         try {
           listener(qos);
         } catch (err) {
-          console.warn(`[NetworkBoost] listener 异常: ${(err as Error).message}`);
+          Logger.warn('NetworkBoostService', `[NetworkBoost] listener 异常: ${(err as Error).message}`);
         }
       });
     };
     try {
       netQuality.on('netQosChange', cb);
       this.qosCallback = cb;
-      console.info('[NetworkBoost] 订阅 netQosChange');
+      Logger.info('NetworkBoostService', '[NetworkBoost] 订阅 netQosChange');
     } catch (err) {
       this.handleErr('on(netQosChange)', err);
     }
@@ -337,9 +338,9 @@ export class NetworkBoostService {
     }
     try {
       netQuality.off('netQosChange', this.qosCallback);
-      console.info('[NetworkBoost] 取消订阅 netQosChange');
+      Logger.info('NetworkBoostService', '[NetworkBoost] 取消订阅 netQosChange');
     } catch (err) {
-      console.warn(`[NetworkBoost] off(netQosChange) 失败: ${(err as Error).message}`);
+      Logger.warn('NetworkBoostService', `[NetworkBoost] off(netQosChange) 失败: ${(err as Error).message}`);
     }
     this.qosCallback = null;
   }
@@ -369,21 +370,21 @@ export class NetworkBoostService {
         weakSignalDurationSec: wspValid ? wsp!.duration : undefined
       };
       this.latestScene = scene;
-      console.info(`[NetworkBoost] netScene path=${scene.pathType} scene=${scene.scene} ` +
+      Logger.info('NetworkBoostService', `[NetworkBoost] netScene path=${scene.pathType} scene=${scene.scene} ` +
         `action=${scene.recommendedAction}` +
         (wspValid ? ` weakSignalIn=${scene.weakSignalStartSec}s for=${scene.weakSignalDurationSec}s` : ''));
       this.sceneListeners.forEach((listener) => {
         try {
           listener(scene);
         } catch (err) {
-          console.warn(`[NetworkBoost] scene listener 异常: ${(err as Error).message}`);
+          Logger.warn('NetworkBoostService', `[NetworkBoost] scene listener 异常: ${(err as Error).message}`);
         }
       });
     };
     try {
       netQuality.on('netSceneChange', cb);
       this.sceneCallback = cb;
-      console.info('[NetworkBoost] 订阅 netSceneChange');
+      Logger.info('NetworkBoostService', '[NetworkBoost] 订阅 netSceneChange');
     } catch (err) {
       this.handleErr('on(netSceneChange)', err);
     }
@@ -395,9 +396,9 @@ export class NetworkBoostService {
     }
     try {
       netQuality.off('netSceneChange', this.sceneCallback);
-      console.info('[NetworkBoost] 取消订阅 netSceneChange');
+      Logger.info('NetworkBoostService', '[NetworkBoost] 取消订阅 netSceneChange');
     } catch (err) {
-      console.warn(`[NetworkBoost] off(netSceneChange) 失败: ${(err as Error).message}`);
+      Logger.warn('NetworkBoostService', `[NetworkBoost] off(netSceneChange) 失败: ${(err as Error).message}`);
     }
     this.sceneCallback = null;
   }
@@ -406,9 +407,9 @@ export class NetworkBoostService {
     const error = err as BusinessError;
     if (error.code === 801) {
       this.supported = false;
-      console.info(`[NetworkBoost] 设备不支持 NetworkBoostKit (${api})，已禁用`);
+      Logger.info('NetworkBoostService', `[NetworkBoost] 设备不支持 NetworkBoostKit (${api})，已禁用`);
     } else {
-      console.warn(`[NetworkBoost] ${api} 失败 code=${error.code} msg=${error.message}`);
+      Logger.warn('NetworkBoostService', `[NetworkBoost] ${api} 失败 code=${error.code} msg=${error.message}`);
     }
   }
 }

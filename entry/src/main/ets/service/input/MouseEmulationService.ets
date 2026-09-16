@@ -20,6 +20,7 @@
  */
 
 import { GamepadState, MoonlightButton } from './GamepadTypes';
+import { Logger } from '../../common/Logger';
 
 // ==================== 类型定义 ====================
 
@@ -159,7 +160,7 @@ export class MouseEmulationService {
       this.tick();
     }, MOUSE_EMULATION_REPORT_PERIOD);
 
-    console.info('[MOUSE-EMU] 鼠标模拟模式已启动');
+    Logger.info('MouseEmulationService', '[MOUSE-EMU] 鼠标模拟模式已启动');
   }
 
   private stop(): void {
@@ -169,7 +170,7 @@ export class MouseEmulationService {
       this.timerId = -1;
     }
     this.lastButtons = 0;
-    console.info('[MOUSE-EMU] 鼠标模拟模式已停止');
+    Logger.info('MouseEmulationService', '[MOUSE-EMU] 鼠标模拟模式已停止');
   }
 
   /**

@@ -12,6 +12,7 @@ import { mdns } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { NvHttp } from '../streaming/NvHttp';
+import { Logger } from '../../common/Logger';
 
 /**
  * 发现的计算机信息
@@ -56,7 +57,7 @@ export class MdnsDiscovery {
    */
   async startDiscovery(): Promise<void> {
     if (this.isDiscovering) {
-      console.info('MdnsDiscovery: 已经在发现中');
+      Logger.info('MdnsDiscovery', 'MdnsDiscovery: 已经在发现中');
       return;
     }
 
@@ -64,7 +65,7 @@ export class MdnsDiscovery {
     this.disposed = false;
     this.discoveredComputers.clear();
 
-    console.info(`MdnsDiscovery: 开始发现服务类型 ${MdnsDiscovery.SERVICE_TYPE}`);
+    Logger.info('MdnsDiscovery', `MdnsDiscovery: 开始发现服务类型 ${MdnsDiscovery.SERVICE_TYPE}`);
 
     try {
       // 创建 mDNS 发现服务
@@ -72,24 +73,24 @@ export class MdnsDiscovery {
         this.context,
         MdnsDiscovery.SERVICE_TYPE
       );
-      console.info('MdnsDiscovery: 发现服务已创建');
+      Logger.info('MdnsDiscovery', 'MdnsDiscovery: 发现服务已创建');
 
       // 监听服务发现事件（参考 moonlight-ohos 使用 async 回调）
       this.discoveryService.on('serviceFound', async (serviceInfo: mdns.LocalServiceInfo) => {
-        console.info(`MdnsDiscovery: [serviceFound] 原始信息: ${JSON.stringify(serviceInfo)}`);
+        Logger.info('MdnsDiscovery', `MdnsDiscovery: [serviceFound] 原始信息: ${JSON.stringify(serviceInfo)}`);
         try {
           // 解析服务以获取完整信息（参考 moonlight-ohos）
           const resolvedInfo = await mdns.resolveLocalService(this.context, serviceInfo);
-          console.info(`MdnsDiscovery: [serviceFound] 解析后: ${JSON.stringify(resolvedInfo)}`);
+          Logger.info('MdnsDiscovery', `MdnsDiscovery: [serviceFound] 解析后: ${JSON.stringify(resolvedInfo)}`);
           await this.handleResolvedService(resolvedInfo);
         } catch (err) {
-          console.error(`MdnsDiscovery: [serviceFound] 解析失败: ${err}`);
+          Logger.error('MdnsDiscovery', `MdnsDiscovery: [serviceFound] 解析失败: ${err}`);
         }
       });
 
       // 监听服务丢失事件
       this.discoveryService.on('serviceLost', async (serviceInfo: mdns.LocalServiceInfo) => {
-        console.info(`MdnsDiscovery: [serviceLost] ${serviceInfo.serviceName}`);
+        Logger.info('MdnsDiscovery', `MdnsDiscovery: [serviceLost] ${serviceInfo.serviceName}`);
         try {
           const resolvedInfo = await mdns.resolveLocalService(this.context, serviceInfo);
           this.discoveredComputers.delete(resolvedInfo.serviceName);
@@ -101,10 +102,10 @@ export class MdnsDiscovery {
 
       // 监听 discoveryStart 事件
       this.discoveryService.on('discoveryStart', (info: mdns.DiscoveryEventInfo) => {
-        console.info(`MdnsDiscovery: 发现已开始 - ${JSON.stringify(info)}`);
+        Logger.info('MdnsDiscovery', `MdnsDiscovery: 发现已开始 - ${JSON.stringify(info)}`);
         // 检查是否有错误码（参考 moonlight-ohos 实现）
         if (info.errorCode !== undefined && info.errorCode !== 0) {
-          console.error(`MdnsDiscovery: 发现启动失败，错误码: ${info.errorCode}`);
+          Logger.error('MdnsDiscovery', `MdnsDiscovery: 发现启动失败，错误码: ${info.errorCode}`);
           this.isDiscovering = false;
           this.discoveryService?.stopSearchingMDNS();
         }
@@ -112,17 +113,17 @@ export class MdnsDiscovery {
 
       // 监听 discoveryStop 事件
       this.discoveryService.on('discoveryStop', (info: mdns.DiscoveryEventInfo) => {
-        console.info(`MdnsDiscovery: 发现已停止 - ${JSON.stringify(info)}`);
+        Logger.info('MdnsDiscovery', `MdnsDiscovery: 发现已停止 - ${JSON.stringify(info)}`);
       });
 
       // 开始搜索
-      console.info('MdnsDiscovery: 调用 startSearchingMDNS()');
+      Logger.info('MdnsDiscovery', 'MdnsDiscovery: 调用 startSearchingMDNS()');
       this.discoveryService.startSearchingMDNS();
-      console.info('MdnsDiscovery: startSearchingMDNS() 已调用');
+      Logger.info('MdnsDiscovery', 'MdnsDiscovery: startSearchingMDNS() 已调用');
 
     } catch (err) {
       const error = err as BusinessError;
-      console.error(`MdnsDiscovery: 启动发现失败 - ${error.code}: ${error.message}`);
+      Logger.error('MdnsDiscovery', `MdnsDiscovery: 启动发现失败 - ${error.code}: ${error.message}`);
       this.isDiscovering = false;
       throw new Error(`Failed to start mDNS discovery: ${error.message}`);
     }
@@ -137,14 +138,14 @@ export class MdnsDiscovery {
     }
 
     if (!resolvedInfo.host) {
-      console.warn('MdnsDiscovery: 解析的服务没有 host 信息');
+      Logger.warn('MdnsDiscovery', 'MdnsDiscovery: 解析的服务没有 host 信息');
       return;
     }
 
     const host = resolvedInfo.host;
     const port = host.port ?? NvHttp.DEFAULT_HTTP_PORT;
 
-    console.info(`MdnsDiscovery: 发现服务器 ${resolvedInfo.serviceName} @ ${host.address} (family=${host.family})`);
+    Logger.info('MdnsDiscovery', `MdnsDiscovery: 发现服务器 ${resolvedInfo.serviceName} @ ${host.address} (family=${host.family})`);
 
     // mDNS 返回的主地址
     let primaryAddress = host.address;
@@ -175,11 +176,11 @@ export class MdnsDiscovery {
     try {
       const resolvedService = await mdns.resolveLocalService(this.context, serviceInfo);
 
-      console.info(`MdnsDiscovery: 解析服务 ${resolvedService.serviceName}`);
-      console.info(`  - 主机地址: ${resolvedService.host?.address}`);
-      console.info(`  - 主机端口: ${resolvedService.host?.port}`);
-      console.info(`  - 服务端口: ${resolvedService.port}`);
-      console.info(`  - 完整信息: ${JSON.stringify(resolvedService)}`);
+      Logger.info('MdnsDiscovery', `MdnsDiscovery: 解析服务 ${resolvedService.serviceName}`);
+      Logger.info('MdnsDiscovery', `  - 主机地址: ${resolvedService.host?.address}`);
+      Logger.info('MdnsDiscovery', `  - 主机端口: ${resolvedService.host?.port}`);
+      Logger.info('MdnsDiscovery', `  - 服务端口: ${resolvedService.port}`);
+      Logger.info('MdnsDiscovery', `  - 完整信息: ${JSON.stringify(resolvedService)}`);
 
       if (resolvedService.host?.address) {
         // 优先使用 host.port（参考 moonlight-ohos 实现）
@@ -198,7 +199,7 @@ export class MdnsDiscovery {
           // HarmonyOS API 可能只返回一个地址，暂时使用 IPv6
         }
 
-        console.info(`MdnsDiscovery: 发现电脑 ${computer.name} @ ${computer.address}:${computer.port}`);
+        Logger.info('MdnsDiscovery', `MdnsDiscovery: 发现电脑 ${computer.name} @ ${computer.address}:${computer.port}`);
         this.discoveredComputers.set(computer.name, computer);
 
         // 通知回调
@@ -208,7 +209,7 @@ export class MdnsDiscovery {
       }
     } catch (err) {
       const error = err as BusinessError;
-      console.error(`MdnsDiscovery: 解析服务失败 - ${error.code}: ${error.message}`);
+      Logger.error('MdnsDiscovery', `MdnsDiscovery: 解析服务失败 - ${error.code}: ${error.message}`);
     }
   }
 
@@ -220,7 +221,7 @@ export class MdnsDiscovery {
       return;
     }
 
-    console.info('MdnsDiscovery: 停止发现');
+    Logger.info('MdnsDiscovery', 'MdnsDiscovery: 停止发现');
     this.disposed = true;
 
     try {
@@ -230,7 +231,7 @@ export class MdnsDiscovery {
       this.discoveryService.off('discoveryStart');
       this.discoveryService.off('discoveryStop');
     } catch (err) {
-      console.error('MdnsDiscovery: 停止发现失败', err);
+      Logger.error('MdnsDiscovery', 'MdnsDiscovery: 停止发现失败', err);
     }
 
     this.discoveryService = null;

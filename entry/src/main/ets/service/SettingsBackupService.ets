@@ -30,6 +30,7 @@ import { CryptoService } from './CryptoService';
 import { NvHttp } from './streaming/NvHttp';
 import { ComputerManager } from './ComputerManager';
 import { ToastQueue } from '../utils/ToastQueue';
+import { Logger } from '../common/Logger';
 
 const TAG = '[SettingsBackup]';
 
@@ -136,7 +137,7 @@ export class SettingsBackupService {
       fileIo.writeSync(file.fd, encoded.buffer);
       fileIo.closeSync(file);
     } catch (e) {
-      console.error(`${TAG} 写入文件失败 ${path}: ${JSON.stringify(e)}`);
+      Logger.error('SettingsBackupService', `${TAG} 写入文件失败 ${path}: ${JSON.stringify(e)}`);
     }
   }
 
@@ -148,7 +149,7 @@ export class SettingsBackupService {
     try {
       const backup = JSON.parse(json) as BackupData;
       if (!backup.version || !backup.settings) {
-        console.error(`${TAG} 无效的备份文件格式`);
+        Logger.error('SettingsBackupService', `${TAG} 无效的备份文件格式`);
         return -1;
       }
 
@@ -194,15 +195,15 @@ export class SettingsBackupService {
       if (filesDir) {
         if (backup.clientCert) {
           SettingsBackupService.writeFileText(`${filesDir}/client_cert.pem`, backup.clientCert);
-          console.info(`${TAG} 已恢复客户端证书`);
+          Logger.info('SettingsBackupService', `${TAG} 已恢复客户端证书`);
         }
         if (backup.clientKey) {
           SettingsBackupService.writeFileText(`${filesDir}/client_key.pem`, backup.clientKey);
-          console.info(`${TAG} 已恢复客户端私钥`);
+          Logger.info('SettingsBackupService', `${TAG} 已恢复客户端私钥`);
         }
         if (backup.uniqueId) {
           SettingsBackupService.writeFileText(`${filesDir}/unique_id.txt`, backup.uniqueId);
-          console.info(`${TAG} 已恢复客户端唯一标识`);
+          Logger.info('SettingsBackupService', `${TAG} 已恢复客户端唯一标识`);
         }
       }
 
@@ -222,17 +223,17 @@ export class SettingsBackupService {
               }
             }
             await shortcutPrefs.flush();
-            console.info(`${TAG} 已恢复快捷键配置 (${scKeys.length} 项)`);
+            Logger.info('SettingsBackupService', `${TAG} 已恢复快捷键配置 (${scKeys.length} 项)`);
           } catch (e) {
-            console.warn(`${TAG} 恢复快捷键配置失败: ${JSON.stringify(e)}`);
+            Logger.warn('SettingsBackupService', `${TAG} 恢复快捷键配置失败: ${JSON.stringify(e)}`);
           }
         }
       }
 
-      console.info(`${TAG} 已导入 ${count} 项设置`);
+      Logger.info('SettingsBackupService', `${TAG} 已导入 ${count} 项设置`);
       return count;
     } catch (e) {
-      console.error(`${TAG} 导入失败: ${JSON.stringify(e)}`);
+      Logger.error('SettingsBackupService', `${TAG} 导入失败: ${JSON.stringify(e)}`);
       return -1;
     }
   }
@@ -267,7 +268,7 @@ export class SettingsBackupService {
         return true;
       }
     } catch (e) {
-      console.error(`${TAG} 导出到文件失败: ${JSON.stringify(e)}`);
+      Logger.error('SettingsBackupService', `${TAG} 导出到文件失败: ${JSON.stringify(e)}`);
       ToastQueue.show({ message: '导出失败', duration: 2000 });
     }
     return false;
@@ -298,7 +299,7 @@ export class SettingsBackupService {
           try {
             json = await CryptoService.decrypt(rawData);
           } catch (e) {
-            console.error(`${TAG} 解密失败 (v${version}): ${JSON.stringify(e)}`);
+            Logger.error('SettingsBackupService', `${TAG} 解密失败 (v${version}): ${JSON.stringify(e)}`);
             const hint = version === 1
               ? '解密失败：该备份使用旧版加密（设备绑定密钥），卸载重装后无法恢复'
               : '解密失败：密钥不匹配或文件损坏';
@@ -320,7 +321,7 @@ export class SettingsBackupService {
         }
       }
     } catch (e) {
-      console.error(`${TAG} 从文件导入失败: ${JSON.stringify(e)}`);
+      Logger.error('SettingsBackupService', `${TAG} 从文件导入失败: ${JSON.stringify(e)}`);
       ToastQueue.show({ message: '导入失败', duration: 2000 });
     }
     return false;
@@ -357,9 +358,9 @@ export class SettingsBackupService {
             operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
           }];
           await fileShare.persistPermission(policies);
-          console.info(`${TAG} URI 权限已持久化: ${uri}`);
+          Logger.info('SettingsBackupService', `${TAG} URI 权限已持久化: ${uri}`);
         } catch (e) {
-          console.warn(`${TAG} persistPermission 失败（可能不支持），仍保存 URI: ${JSON.stringify(e)}`);
+          Logger.warn('SettingsBackupService', `${TAG} persistPermission 失败（可能不支持），仍保存 URI: ${JSON.stringify(e)}`);
         }
 
         // 保存 URI 到 Preferences
@@ -368,7 +369,7 @@ export class SettingsBackupService {
         return true;
       }
     } catch (e) {
-      console.error(`${TAG} 启用自动备份失败: ${JSON.stringify(e)}`);
+      Logger.error('SettingsBackupService', `${TAG} 启用自动备份失败: ${JSON.stringify(e)}`);
       ToastQueue.show({ message: '启用失败', duration: 2000 });
     }
     return false;
@@ -438,9 +439,9 @@ export class SettingsBackupService {
       const file = fileIo.openSync(uri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       fileIo.writeSync(file.fd, encrypted.buffer as ArrayBuffer);
       fileIo.closeSync(file);
-      console.info(`${TAG} 自动备份完成（已加密）`);
+      Logger.info('SettingsBackupService', `${TAG} 自动备份完成（已加密）`);
     } catch (e) {
-      console.warn(`${TAG} 自动备份失败（权限可能已过期）: ${JSON.stringify(e)}`);
+      Logger.warn('SettingsBackupService', `${TAG} 自动备份失败（权限可能已过期）: ${JSON.stringify(e)}`);
       // 不弹 toast，静默失败
     }
   }
@@ -472,9 +473,9 @@ export class SettingsBackupService {
       const mgr = ComputerManager.getInstance();
       await mgr.reloadFromPersistence();
 
-      console.info(`${TAG} 内存状态已重新加载`);
+      Logger.info('SettingsBackupService', `${TAG} 内存状态已重新加载`);
     } catch (e) {
-      console.warn(`${TAG} 重新加载内存状态失败: ${JSON.stringify(e)}`);
+      Logger.warn('SettingsBackupService', `${TAG} 重新加载内存状态失败: ${JSON.stringify(e)}`);
     }
   }
 }

@@ -19,6 +19,7 @@ import { AbstractXboxController } from './AbstractXboxController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, XboxOne, UsbClass, ControllerCapabilities } from './ControllerConstants';
 import { readShortLE, AXIS_MAX } from '../input/GamepadTypes';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[USB-XONE]';
 
@@ -112,7 +113,7 @@ export class XboxOneController extends AbstractXboxController {
       iface.protocol === XboxOne.IFACE_PROTOCOL;
     
     if (isXboxOne) {
-      console.info(`${TAG} 检测到 Xbox One 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+      Logger.info('XboxOneController', `${TAG} 检测到 Xbox One 控制器: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
     }
     
     return isXboxOne;
@@ -180,7 +181,7 @@ export class XboxOneController extends AbstractXboxController {
     switch (buffer[0]) {
       case 0x20: // 按钮/轴报告
         if (buffer.length < 18) {
-          console.warn(`${TAG} 按钮/轴报告太短: ${buffer.length}`);
+          Logger.warn('XboxOneController', `${TAG} 按钮/轴报告太短: ${buffer.length}`);
           return false;
         }
         this.processButtons(buffer, 4);
@@ -188,7 +189,7 @@ export class XboxOneController extends AbstractXboxController {
         
       case 0x07: // 模式报告
         if (buffer.length < 5) {
-          console.warn(`${TAG} 模式报告太短: ${buffer.length}`);
+          Logger.warn('XboxOneController', `${TAG} 模式报告太短: ${buffer.length}`);
           return false;
         }
         // Xbox One S 控制器需要确认模式报告
@@ -206,7 +207,7 @@ export class XboxOneController extends AbstractXboxController {
    * 初始化
    */
   protected doInit(): boolean {
-    console.info(`${TAG} 初始化 Xbox One 控制器`);
+    Logger.info('XboxOneController', `${TAG} 初始化 Xbox One 控制器`);
     
     // 发送初始化数据包
     for (const initPkt of INIT_PKTS) {

@@ -25,6 +25,7 @@ import {
 import { connection } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
+import { Logger } from '../common/Logger';
 
 /**
  * 地址解析结果
@@ -142,7 +143,7 @@ export class ComputerManager {
   async init(context: common.UIAbilityContext): Promise<void> {
     // 避免重复初始化
     if (this.isInitialized) {
-      console.info('ComputerManager: 已初始化，跳过');
+      Logger.info('ComputerManager', 'ComputerManager: 已初始化，跳过');
       return;
     }
     
@@ -164,7 +165,7 @@ export class ComputerManager {
     this.registerNetworkListener();
     
     this.isInitialized = true;
-    console.info('ComputerManager: 初始化完成');
+    Logger.info('ComputerManager', 'ComputerManager: 初始化完成');
 
     // 注意：不在这里触发刷新，让调用者设置好回调后再调用 refreshAllComputers()
   }
@@ -175,7 +176,7 @@ export class ComputerManager {
    */
   async reloadFromPersistence(): Promise<void> {
     this.computers = await ComputerPersistence.loadComputers();
-    console.info(`ComputerManager: 从持久化存储重新加载 ${this.computers.size} 台电脑`);
+    Logger.info('ComputerManager', `ComputerManager: 从持久化存储重新加载 ${this.computers.size} 台电脑`);
     this.notifyListChanged();
   }
 
@@ -194,7 +195,7 @@ export class ComputerManager {
    * 处理 mDNS 发现的电脑
    */
   private async handleDiscoveredComputer(discovered: DiscoveredComputer): Promise<void> {
-    console.info(`ComputerManager: mDNS 发现 ${discovered.name} @ ${discovered.address}:${discovered.port}`);
+    Logger.info('ComputerManager', `ComputerManager: mDNS 发现 ${discovered.name} @ ${discovered.address}:${discovered.port}`);
 
     const existing = this.findComputerByAddress(discovered.address);
 
@@ -209,7 +210,7 @@ export class ComputerManager {
           discoveredIpv6: discovered.ipv6Address
         });
       } catch (err) {
-        console.error(`ComputerManager: 无法添加电脑 ${discovered.name}: ${err}`);
+        Logger.error('ComputerManager', `ComputerManager: 无法添加电脑 ${discovered.name}: ${err}`);
       }
     }
 
@@ -272,7 +273,7 @@ export class ComputerManager {
 
       this.saveComputers();
     } catch (err) {
-      console.warn(`ComputerManager: mDNS 地址无法连接 ${computer.name}，回退轮询`);
+      Logger.warn('ComputerManager', `ComputerManager: mDNS 地址无法连接 ${computer.name}，回退轮询`);
       await this.pollComputer(computer);
     }
   }
@@ -291,7 +292,7 @@ export class ComputerManager {
 
     if (existingReal) {
       // 真实 UUID 条目已存在 → 合并到已有条目，删除临时条目
-      console.info(`ComputerManager: 合并临时条目 ${computer.uuid} → 已有条目 ${realUuid}`);
+      Logger.info('ComputerManager', `ComputerManager: 合并临时条目 ${computer.uuid} → 已有条目 ${realUuid}`);
       this.computers.delete(computer.uuid);
       if (computer.manualAddress && !existingReal.manualAddress) {
         existingReal.manualAddress = computer.manualAddress;
@@ -305,7 +306,7 @@ export class ComputerManager {
     }
 
     // 真实 UUID 不存在 → 重新映射
-    console.info(`ComputerManager: 临时条目 ${computer.uuid} 获得真实 UUID ${realUuid}`);
+    Logger.info('ComputerManager', `ComputerManager: 临时条目 ${computer.uuid} 获得真实 UUID ${realUuid}`);
     this.computers.delete(computer.uuid);
     computer.uuid = realUuid;
     this.computers.set(realUuid, computer);
@@ -329,9 +330,9 @@ export class ComputerManager {
       return this.reconcileUuid(computer, serverUniqueId!);
     }
     if (disposition === ServerIdentityDisposition.MISSING) {
-      console.warn(`ComputerManager: ${source}响应缺少主机 UUID`);
+      Logger.warn('ComputerManager', `ComputerManager: ${source}响应缺少主机 UUID`);
     } else {
-      console.warn(`ComputerManager: ${source}返回其他主机 expected=${computer.uuid}, actual=${serverUniqueId}`);
+      Logger.warn('ComputerManager', `ComputerManager: ${source}返回其他主机 expected=${computer.uuid}, actual=${serverUniqueId}`);
     }
     return null;
   }
@@ -492,7 +493,7 @@ export class ComputerManager {
   async updateComputer(uuid: string, updates: Partial<ComputerInfo>): Promise<void> {
     const computer = this.computers.get(uuid);
     if (!computer) {
-      console.warn(`ComputerManager: updateComputer 未找到电脑 ${uuid}`);
+      Logger.warn('ComputerManager', `ComputerManager: updateComputer 未找到电脑 ${uuid}`);
       return;
     }
     
@@ -517,7 +518,7 @@ export class ComputerManager {
       computer.preferredAddress = updates.preferredAddress || undefined;
     }
     
-    console.info(`ComputerManager: 更新电脑 ${computer.name} - pairState=${computer.pairState}, serverCert=${computer.serverCert ? '有' : '无'}`);
+    Logger.info('ComputerManager', `ComputerManager: 更新电脑 ${computer.name} - pairState=${computer.pairState}, serverCert=${computer.serverCert ? '有' : '无'}`);
     
     // 保存到持久化存储
     await this.saveComputers();
@@ -560,7 +561,7 @@ export class ComputerManager {
         // AAAA 解析也无果，把原错误抛出（含网络/超时信息）
         throw firstErr as Error;
       }
-      console.info(`ComputerManager: 域名 ${parsed.host} 直连失败，已解析 AAAA → ${ipv6}，用裸 IPv6 重试添加`);
+      Logger.info('ComputerManager', `ComputerManager: 域名 ${parsed.host} 直连失败，已解析 AAAA → ${ipv6}，用裸 IPv6 重试添加`);
       result = await this.addComputerInternal(ipv6, manualAddOptions);
       resolvedIpv6 = ipv6;
     }
@@ -640,7 +641,7 @@ export class ComputerManager {
       }
       ipv6Address = getBestIpv6Address(ipv6List);
     } catch (err) {
-      console.info(`ComputerManager: resolveAaaaLiteral('${host}') 失败: ${err}`);
+      Logger.info('ComputerManager', `ComputerManager: resolveAaaaLiteral('${host}') 失败: ${err}`);
     }
 
     // 网络已经切换：丢弃旧网络结果，调用方也不能把它写入 ComputerInfo。
@@ -692,7 +693,7 @@ export class ComputerManager {
         // 所有合并守卫（ZERO_MAC、127.x、HTTP paired 等）集中在 mergeServerInfo
         this.mergeServerInfo(existing, serverInfo, address, httpPort, discoveredIpv6);
 
-        console.info(`ComputerManager: 合并更新已有电脑 ${existing.name} (${existing.uuid}), 保留配对信息`);
+        Logger.info('ComputerManager', `ComputerManager: 合并更新已有电脑 ${existing.name} (${existing.uuid}), 保留配对信息`);
         this.computers.set(existing.uuid, existing);
         await this.saveComputers();
 
@@ -728,7 +729,7 @@ export class ComputerManager {
         this.lookupAndSetIpv6(computer, serverInfo.hostname, computer.manualAddress);
       }
 
-      console.info(`ComputerManager: 成功添加电脑 ${computer.name} (${computer.uuid}), localAddr=${computer.localAddress}, remoteAddr=${computer.remoteAddress}`);
+      Logger.info('ComputerManager', `ComputerManager: 成功添加电脑 ${computer.name} (${computer.uuid}), localAddr=${computer.localAddress}, remoteAddr=${computer.remoteAddress}`);
       return computer;
     } catch (err) {
       // 如果无法获取服务器信息，仍然添加但标记为未确认
@@ -748,7 +749,7 @@ export class ComputerManager {
           if (discoveredIpv6) {
             reused.ipv6Address = discoveredIpv6;
           }
-          console.info(`ComputerManager: 复用未确认条目 ${reused.name} (${tempUuid})`);
+          Logger.info('ComputerManager', `ComputerManager: 复用未确认条目 ${reused.name} (${tempUuid})`);
           return reused;
         }
         const computer = new ComputerInfoBuilder()
@@ -763,7 +764,7 @@ export class ComputerManager {
           .build();
 
         this.computers.set(computer.uuid, computer);
-        console.info(`ComputerManager: 添加未确认电脑 ${computer.name}`);
+        Logger.info('ComputerManager', `ComputerManager: 添加未确认电脑 ${computer.name}`);
         return computer;
       }
       throw new Error(`无法连接到 ${address}: ${err}`);
@@ -800,14 +801,14 @@ export class ComputerManager {
             await this.pollComputer(computer);
           } catch (err) {
             // pollComputer 内部已处理网络错误；意外异常仍按一次失败计数
-            console.warn(`ComputerManager: ${computer.name} 轮询异常:`, err);
+            Logger.warn('ComputerManager', `ComputerManager: ${computer.name} 轮询异常:`, err);
             this.handlePollFailure(computer);
           }
           this.notifyListChanged();
         })
       );
     } catch (err) {
-      console.error('ComputerManager: refreshAllComputers 异常:', err);
+      Logger.error('ComputerManager', 'ComputerManager: refreshAllComputers 异常:', err);
       // 如果 Promise.all 外层走了 catch（实际几乎不会跳到这里，内层已兑了一层），
       // 走 handlePollFailure 走阈值，避免绕过 INITIAL_POLL_TRIES 让所有 UNKNOWN 闪 OFFLINE
       this.computers.forEach(computer => {
@@ -829,7 +830,7 @@ export class ComputerManager {
     }
     
     this.isPollingActive = true;
-    console.info('ComputerManager: 启动状态轮询');
+    Logger.info('ComputerManager', 'ComputerManager: 启动状态轮询');
 
     // 重置离线计数：重新进入页面（如串流退出后）重新累计，
     // 避免历史计数让已恢复的 PC 仍被当作临近阈值、下一次失败立刻闪到离线
@@ -837,7 +838,7 @@ export class ComputerManager {
 
     // 立即执行一次刷新，然后定时轮询
     this.refreshAllComputers().catch((err: Error) => {
-      console.warn('ComputerManager: 初始刷新失败', err);
+      Logger.warn('ComputerManager', 'ComputerManager: 初始刷新失败', err);
     });
     
     this.pollingTimerId = setInterval(async () => {
@@ -860,14 +861,14 @@ export class ComputerManager {
 
       // 网络可用（WiFi 连接、蜂窝恢复等）→ 重置所有 PC 状态并立即重新轮询
       this.netConnection.on('netAvailable', () => {
-        console.info('ComputerManager: 网络变为可用，重置并重新轮询');
+        Logger.info('ComputerManager', 'ComputerManager: 网络变为可用，重置并重新轮询');
         this.invalidateDnsCache();
         this.computers.forEach(c => { c.state = ComputerState.UNKNOWN; });
         this.offlineCount.clear(); // 网络恢复，清空失败计数
 
         if (this.isPollingActive) {
           this.refreshAllComputers().catch((err: Error) => {
-            console.warn('ComputerManager: 网络恢复后刷新失败', err);
+            Logger.warn('ComputerManager', 'ComputerManager: 网络恢复后刷新失败', err);
           });
         }
         this.notifyListChanged();
@@ -875,7 +876,7 @@ export class ComputerManager {
 
       // 网络丢失 → 标记所有 PC 为离线
       this.netConnection.on('netLost', () => {
-        console.info('ComputerManager: 网络丢失，标记所有 PC 为离线');
+        Logger.info('ComputerManager', 'ComputerManager: 网络丢失，标记所有 PC 为离线');
         this.invalidateDnsCache();
         this.computers.forEach(c => { c.state = ComputerState.OFFLINE; });
         // 已强制 OFFLINE，计数不再被读取；同时避免网络恢复后“旧数”干扰阈值判定
@@ -886,13 +887,13 @@ export class ComputerManager {
       // 注册监听（开始接收回调）
       this.netConnection.register((err) => {
         if (err) {
-          console.error(`ComputerManager: 注册网络监听失败: ${JSON.stringify(err)}`);
+          Logger.error('ComputerManager', `ComputerManager: 注册网络监听失败: ${JSON.stringify(err)}`);
         } else {
-          console.info('ComputerManager: 网络变化监听已注册');
+          Logger.info('ComputerManager', 'ComputerManager: 网络变化监听已注册');
         }
       });
     } catch (err) {
-      console.error('ComputerManager: 注册网络监听异常', err);
+      Logger.error('ComputerManager', 'ComputerManager: 注册网络监听异常', err);
     }
   }
 
@@ -904,13 +905,13 @@ export class ComputerManager {
       try {
         this.netConnection.unregister((err) => {
           if (err) {
-            console.error(`ComputerManager: 取消网络监听失败: ${JSON.stringify(err)}`);
+            Logger.error('ComputerManager', `ComputerManager: 取消网络监听失败: ${JSON.stringify(err)}`);
           } else {
-            console.info('ComputerManager: 网络变化监听已取消');
+            Logger.info('ComputerManager', 'ComputerManager: 网络变化监听已取消');
           }
         });
       } catch (err) {
-        console.error('ComputerManager: 取消网络监听异常', err);
+        Logger.error('ComputerManager', 'ComputerManager: 取消网络监听异常', err);
       }
       this.netConnection = null;
     }
@@ -921,7 +922,7 @@ export class ComputerManager {
    */
   stopPolling(): void {
     if (this.pollingTimerId !== -1) {
-      console.info('ComputerManager: 停止状态轮询');
+      Logger.info('ComputerManager', 'ComputerManager: 停止状态轮询');
       clearInterval(this.pollingTimerId);
       this.pollingTimerId = -1;
     }
@@ -945,7 +946,7 @@ export class ComputerManager {
       return false;
     }
 
-    console.info(`ComputerManager: 轮询 ${computer.name}，地址: ${addresses.join(', ')}`);
+    Logger.info('ComputerManager', `ComputerManager: 轮询 ${computer.name}，地址: ${addresses.join(', ')}`);
 
     // 并行尝试所有地址，取第一个成功的结果
     const successResult = await this.raceForFirstSuccess(
@@ -981,9 +982,9 @@ export class ComputerManager {
 
     if (next >= threshold) {
       computer.state = ComputerState.OFFLINE;
-      console.info(`ComputerManager: ${computer.name} 连续失败 ${next} 次，标记 OFFLINE`);
+      Logger.info('ComputerManager', `ComputerManager: ${computer.name} 连续失败 ${next} 次，标记 OFFLINE`);
     } else {
-      console.info(`ComputerManager: ${computer.name} 失败 ${next}/${threshold} 次，保留原状态 ${computer.state}`);
+      Logger.info('ComputerManager', `ComputerManager: ${computer.name} 失败 ${next}/${threshold} 次，保留原状态 ${computer.state}`);
     }
   }
 
@@ -997,11 +998,11 @@ export class ComputerManager {
       const serverInfo = await nvHttp.getServerInfo(likelyOnline);
       const identity = classifyServerIdentity(computer.uuid, serverInfo.uniqueId);
       if (identity === ServerIdentityDisposition.MISSING) {
-        console.warn(`ComputerManager: 轮询 ${address} 的响应缺少主机 UUID`);
+        Logger.warn('ComputerManager', `ComputerManager: 轮询 ${address} 的响应缺少主机 UUID`);
         return { address, serverInfo: null };
       }
       if (identity === ServerIdentityDisposition.MISMATCH) {
-        console.warn(`ComputerManager: 轮询 ${address} 返回其他主机 expected=${computer.uuid}, actual=${serverInfo.uniqueId}`);
+        Logger.warn('ComputerManager', `ComputerManager: 轮询 ${address} 返回其他主机 expected=${computer.uuid}, actual=${serverInfo.uniqueId}`);
         return { address, serverInfo: null };
       }
       return { address, serverInfo };
@@ -1111,7 +1112,7 @@ export class ComputerManager {
     // 不限制 isIPv6Address(manualAddress)，DDNS 域名 ≠ IPv6 字面量但解析后是 IPv6
     this.lookupAndSetIpv6(target, info.hostname, target.manualAddress);
 
-    console.info(`ComputerManager: ${target.name} 在线 (${result.address}), game=${info.currentGame}, paired=${target.pairState}`);
+    Logger.info('ComputerManager', `ComputerManager: ${target.name} 在线 (${result.address}), game=${info.currentGame}, paired=${target.pairState}`);
     this.saveComputers();
 
     // 如果已配对且需要 boxArt，异步加载
@@ -1165,7 +1166,7 @@ export class ComputerManager {
         if (ipv6) {
           if (computer.ipv6Address !== ipv6) {
             computer.ipv6Address = ipv6;
-            console.info(`ComputerManager: 为 ${computer.name} 更新 IPv6 地址: ${ipv6} (源: ${host})`);
+            Logger.info('ComputerManager', `ComputerManager: 为 ${computer.name} 更新 IPv6 地址: ${ipv6} (源: ${host})`);
             this.saveComputers();
             this.notifyListChanged();
           }
@@ -1192,16 +1193,16 @@ export class ComputerManager {
         const cachedPath = await nvHttp.getAppAssetCached(apps[0].id);
         if (cachedPath) {
           computer.boxArtUrl = cachedPath;
-          console.info(`ComputerManager: ${computer.name} 已设置 boxArt 本地路径: ${cachedPath}`);
+          Logger.info('ComputerManager', `ComputerManager: ${computer.name} 已设置 boxArt 本地路径: ${cachedPath}`);
           // 保存更新并通知 UI
           await this.saveComputers();
           this.notifyListChanged();
         } else {
-          console.warn(`ComputerManager: ${computer.name} 无法缓存 boxArt`);
+          Logger.warn('ComputerManager', `ComputerManager: ${computer.name} 无法缓存 boxArt`);
         }
       }
     } catch (err) {
-      console.warn(`ComputerManager: 无法获取 ${computer.name} 的 boxArt: ${err}`);
+      Logger.warn('ComputerManager', `ComputerManager: 无法获取 ${computer.name} 的 boxArt: ${err}`);
     }
   }
 
@@ -1214,15 +1215,15 @@ export class ComputerManager {
    */
   async scanNetwork(): Promise<void> {
     if (!this.mdnsDiscovery) {
-      console.error('ComputerManager: mDNS 发现服务未初始化');
+      Logger.error('ComputerManager', 'ComputerManager: mDNS 发现服务未初始化');
       return;
     }
 
     try {
       const discovered = await this.mdnsDiscovery.discover(5000);
-      console.info(`ComputerManager: mDNS 扫描完成，发现 ${discovered.length} 台电脑`);
+      Logger.info('ComputerManager', `ComputerManager: mDNS 扫描完成，发现 ${discovered.length} 台电脑`);
     } catch (err) {
-      console.error('ComputerManager: 网络扫描失败', err);
+      Logger.error('ComputerManager', 'ComputerManager: 网络扫描失败', err);
     }
   }
 
@@ -1235,7 +1236,7 @@ export class ComputerManager {
     }
 
     this.mdnsDiscovery.startDiscovery().catch((err: Error) => {
-      console.error('ComputerManager: 后台扫描启动失败', err);
+      Logger.error('ComputerManager', 'ComputerManager: 后台扫描启动失败', err);
     });
   }
 

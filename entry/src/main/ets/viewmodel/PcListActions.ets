@@ -14,7 +14,9 @@
  * 封装电脑相关的业务操作，如唤醒、配对、退出游戏等。
  * 通过回调接口与 UI 层解耦。
  */
-import { router, promptAction } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
+import { AppNav } from '../common/AppNav';
+import { AppListPageParams, StreamPageParams } from '../common/PageParams';
 import { common } from '@kit.AbilityKit';
 import { buffer } from '@kit.ArkTS';
 import { ObservableComputer } from './ComputerViewModel';
@@ -70,7 +72,7 @@ export class PcListActions {
       return; // 调用方负责显示菜单
     }
     if (computer.isPaired) {
-      router.pushUrl({ url: 'pages/AppListPageV2', params: { computerId: computer.uuid } });
+      AppNav.push('AppListPageV2', { computerId: computer.uuid } as AppListPageParams);
       return;
     }
     this.pairWithComputer(computer);
@@ -95,16 +97,13 @@ export class PcListActions {
       if (computer.runningGameId > 0) {
         const runningApp = apps.find(a => a.id === computer.runningGameId);
         const cmdList = runningApp?.cmdList;
-        router.pushUrl({
-          url: 'pages/StreamPage',
-          params: {
-            computerId: computer.uuid,
-            appId: computer.runningGameId,
-            appName: runningApp?.name || '正在运行',
-            cmdList: cmdList && cmdList.length > 0 ? JSON.stringify(cmdList) : undefined,
-            resume: true
-          }
-        });
+        AppNav.push('StreamPage', {
+          computerId: computer.uuid,
+          appId: computer.runningGameId,
+          appName: runningApp?.name || '正在运行',
+          cmdList: cmdList && cmdList.length > 0 ? JSON.stringify(cmdList) : undefined,
+          resume: true
+        } as StreamPageParams);
         return;
       }
       if (apps.length === 0) {
@@ -112,16 +111,13 @@ export class PcListActions {
         return;
       }
       const firstApp = apps[0];
-      router.pushUrl({
-        url: 'pages/StreamPage',
-        params: {
-          computerId: computer.uuid,
-          appId: firstApp.id,
-          appName: firstApp.name,
-          cmdList: firstApp.cmdList && firstApp.cmdList.length > 0 ? JSON.stringify(firstApp.cmdList) : undefined,
-          resume: false
-        }
-      });
+      AppNav.push('StreamPage', {
+        computerId: computer.uuid,
+        appId: firstApp.id,
+        appName: firstApp.name,
+        cmdList: firstApp.cmdList && firstApp.cmdList.length > 0 ? JSON.stringify(firstApp.cmdList) : undefined,
+        resume: false
+      } as StreamPageParams);
     } catch (err) {
       ToastQueue.show({ message: `启动失败: ${(err as Error).message}` });
     }
@@ -153,7 +149,7 @@ export class PcListActions {
         });
         this.ui.syncViewModel();
         ToastQueue.show({ message: '配对成功！' });
-        router.pushUrl({ url: 'pages/AppListPageV2', params: { computerId: computer.uuid } });
+        AppNav.push('AppListPageV2', { computerId: computer.uuid } as AppListPageParams);
       } else if (result.state === PMPairState.PIN_WRONG) {
         ToastQueue.show({ message: 'PIN 码错误，请重试' });
       } else if (result.state === PMPairState.ALREADY_IN_PROGRESS) {
@@ -269,25 +265,19 @@ export class PcListActions {
         const apps = await nvHttp.getAppList();
         const runningApp = apps.find(a => a.id === computer.runningGameId);
         const cmdList = runningApp?.cmdList;
-        router.pushUrl({
-          url: 'pages/StreamPage',
-          params: {
-            computerId: computer.uuid,
-            appId: computer.runningGameId,
-            appName: runningApp?.name,
-            cmdList: cmdList && cmdList.length > 0 ? JSON.stringify(cmdList) : undefined,
-            resume: true
-          }
-        });
+        AppNav.push('StreamPage', {
+          computerId: computer.uuid,
+          appId: computer.runningGameId,
+          appName: runningApp?.name,
+          cmdList: cmdList && cmdList.length > 0 ? JSON.stringify(cmdList) : undefined,
+          resume: true
+        } as StreamPageParams);
         return;
       }
     } catch {
       // 获取失败时仍然恢复游戏，只是没有超级指令
     }
-    router.pushUrl({
-      url: 'pages/StreamPage',
-      params: { computerId: computer.uuid, appId: computer.runningGameId, resume: true }
-    });
+    AppNav.push('StreamPage', { computerId: computer.uuid, appId: computer.runningGameId, resume: true } as StreamPageParams);
   }
 
   /** 取消配对 */

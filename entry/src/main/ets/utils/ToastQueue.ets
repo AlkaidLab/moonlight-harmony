@@ -9,6 +9,7 @@
  */
 
 import { promptAction } from '@kit.ArkUI';
+import { Logger } from '../common/Logger';
 
 /**
  * Toast 队列：串行化 promptAction.showToast，避免多个初始化 toast 同时触发时
@@ -64,7 +65,7 @@ export class ToastQueue {
     try {
       promptAction.showToast({ message: next.message, duration: next.duration });
     } catch (e) {
-      console.warn(`ToastQueue: showToast failed: ${e}`);
+      Logger.warn('ToastQueue', `ToastQueue: showToast failed: ${e}`);
     }
     setTimeout(() => ToastQueue.pump(), next.duration + ToastQueue.GAP_MS);
   }

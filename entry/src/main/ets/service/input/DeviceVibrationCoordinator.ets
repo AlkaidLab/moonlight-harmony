@@ -10,6 +10,7 @@
 
 import { vibrator } from '@kit.SensorServiceKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { Logger } from '../../common/Logger';
 
 /**
  * 统一协调所有机身马达写入。
@@ -107,7 +108,7 @@ export class DeviceVibrationCoordinator {
     this.vibrationQueue = this.vibrationQueue
       .then(request)
       .catch((error: Error): void => {
-        console.warn('[VIBRATION] 机身振动队列异常: ' + error.message);
+        Logger.warn('DeviceVibrationCoordinator', '[VIBRATION] 机身振动队列异常: ' + error.message);
       });
   }
 
@@ -135,11 +136,11 @@ export class DeviceVibrationCoordinator {
           }, duration);
         }).catch((error: Error): void => {
           if (touchEpoch !== this.touchHapticEpoch || !this.touchHapticActive) return;
-          console.warn('[VIBRATION] 机身按键触感失败: ' + error.message);
+          Logger.warn('DeviceVibrationCoordinator', '[VIBRATION] 机身按键触感失败: ' + error.message);
           this.finishTouchHaptic(touchEpoch);
         });
       } catch (error) {
-        console.warn('[VIBRATION] 机身按键触感异常:', error);
+        Logger.warn('DeviceVibrationCoordinator', '[VIBRATION] 机身按键触感异常:', error);
         this.finishTouchHaptic(touchEpoch);
         return Promise.resolve();
       }
@@ -163,11 +164,11 @@ export class DeviceVibrationCoordinator {
         if (sourceEpoch !== this.sourceEpoch || this.isTouchHapticActive()) return;
       }).catch((error: Error): void => {
         if (sourceEpoch !== this.sourceEpoch || this.isTouchHapticActive()) return;
-        console.warn('[VIBRATION] 机身振动失败: ' + error.message);
+        Logger.warn('DeviceVibrationCoordinator', '[VIBRATION] 机身振动失败: ' + error.message);
         if (onRejected !== undefined) onRejected();
       });
     } catch (error) {
-      console.warn('[VIBRATION] 机身振动异常:', error);
+      Logger.warn('DeviceVibrationCoordinator', '[VIBRATION] 机身振动异常:', error);
       if (sourceEpoch === this.sourceEpoch &&
           !this.isTouchHapticActive() &&
           onRejected !== undefined) {
@@ -196,10 +197,10 @@ export class DeviceVibrationCoordinator {
           vibrator.stopVibration(),
           '机身振动停止'
         ).catch((error: Error): void => {
-          console.warn('[VIBRATION] 停止机身振动失败: ' + error.message);
+          Logger.warn('DeviceVibrationCoordinator', '[VIBRATION] 停止机身振动失败: ' + error.message);
         });
       } catch (error) {
-        console.warn('[VIBRATION] 停止机身振动异常:', error);
+        Logger.warn('DeviceVibrationCoordinator', '[VIBRATION] 停止机身振动异常:', error);
         return Promise.resolve();
       }
     }
@@ -211,7 +212,7 @@ export class DeviceVibrationCoordinator {
       const timeoutId: number = setTimeout((): void => {
         if (settled) return;
         settled = true;
-        console.warn('[VIBRATION] ' + operationName + '超时，继续处理后续请求');
+        Logger.warn('DeviceVibrationCoordinator', '[VIBRATION] ' + operationName + '超时，继续处理后续请求');
         resolve();
       }, DeviceVibrationCoordinator.NATIVE_OPERATION_TIMEOUT_MS);
 
@@ -269,9 +270,9 @@ export class DeviceVibrationCoordinator {
           this.hdHapticSupported = localVibrator.isHdHapticSupported;
         }
       }
-      console.info('[VIBRATION] 本地高清振动支持: ' + this.hdHapticSupported);
+      Logger.info('DeviceVibrationCoordinator', '[VIBRATION] 本地高清振动支持: ' + this.hdHapticSupported);
     } catch (error) {
-      console.warn('[VIBRATION] 查询本地马达失败:', error);
+      Logger.warn('DeviceVibrationCoordinator', '[VIBRATION] 查询本地马达失败:', error);
       this.hdHapticSupported = false;
     }
   }

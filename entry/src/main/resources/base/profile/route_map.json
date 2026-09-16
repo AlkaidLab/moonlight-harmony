@@ -1,0 +1,39 @@
+{
+  "routerMap": [
+    {
+      "name": "PcListPageV2",
+      "pageSourceFile": "src/main/ets/pages/PcListPageV2.ets",
+      "buildFunction": "PcListPageV2Builder"
+    },
+    {
+      "name": "AppListPageV2",
+      "pageSourceFile": "src/main/ets/pages/AppListPageV2.ets",
+      "buildFunction": "AppListPageV2Builder"
+    },
+    {
+      "name": "StreamPage",
+      "pageSourceFile": "src/main/ets/pages/StreamPage.ets",
+      "buildFunction": "StreamPageBuilder"
+    },
+    {
+      "name": "HostWebUiPage",
+      "pageSourceFile": "src/main/ets/pages/HostWebUiPage.ets",
+      "buildFunction": "HostWebUiPageBuilder"
+    },
+    {
+      "name": "AddPcPageV2",
+      "pageSourceFile": "src/main/ets/pages/AddPcPageV2.ets",
+      "buildFunction": "AddPcPageV2Builder"
+    },
+    {
+      "name": "SettingsPageV2",
+      "pageSourceFile": "src/main/ets/pages/SettingsPageV2.ets",
+      "buildFunction": "SettingsPageV2Builder"
+    },
+    {
+      "name": "ControllerTestPage",
+      "pageSourceFile": "src/main/ets/pages/ControllerTestPage.ets",
+      "buildFunction": "ControllerTestPageBuilder"
+    }
+  ]
+}

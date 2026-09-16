@@ -47,6 +47,7 @@ import {
   SpecialActionId,
   generateKeyId,
 } from '../customkey/CustomKeyTypes';
+import { Logger } from '../../common/Logger';
 
 export interface QrCodeResult {
   pixelMap: image.PixelMap | null;
@@ -596,13 +597,13 @@ export class QrShareService {
     const json = QrShareService.serialize(profileName, keys);
     try {
       const compressed = await compressToBase64(json);
-      console.info(`[QrShareService] 压缩: ${json.length} -> ${compressed.length} (${Math.round(compressed.length * 100 / json.length)}%)`);
+      Logger.info('QrShareService', `[QrShareService] 压缩: ${json.length} -> ${compressed.length} (${Math.round(compressed.length * 100 / json.length)}%)`);
       // 只有压缩后更小才使用压缩格式
       if (compressed.length < json.length) {
         return compressed;
       }
     } catch (e) {
-      console.warn('[QrShareService] 压缩失败，回退到未压缩:', JSON.stringify(e));
+      Logger.warn('QrShareService', '[QrShareService] 压缩失败，回退到未压缩:', JSON.stringify(e));
     }
     return json;
   }
@@ -617,7 +618,7 @@ export class QrShareService {
       try {
         json = await decompressFromBase64(data);
       } catch (e) {
-        console.error('[QrShareService] 解压失败:', JSON.stringify(e));
+        Logger.error('QrShareService', '[QrShareService] 解压失败:', JSON.stringify(e));
         return null;
       }
     }
@@ -692,23 +693,23 @@ export class QrShareService {
           level: scanEcLevel,
         };
         const pixelMap: image.PixelMap = await generateBarcode.createBarcode(content, options);
-        console.info(`[QrShareService] ScanKit 生成 QR: ${content.length} chars, ECLevel=${level}`);
+        Logger.info('QrShareService', `[QrShareService] ScanKit 生成 QR: ${content.length} chars, ECLevel=${level}`);
         return { pixelMap };
       } catch (e) {
-        console.warn('[QrShareService] ScanKit 生成失败，回退到自定义生成器:', JSON.stringify(e));
+        Logger.warn('QrShareService', '[QrShareService] ScanKit 生成失败，回退到自定义生成器:', JSON.stringify(e));
       }
     }
 
     // 回退到自定义 QR 生成器（支持大数据量）
     try {
       const pixelMap = await generateQrPixelMap(content, size, level);
-      console.info(`[QrShareService] 自定义生成 QR: ${content.length} chars, ECLevel=${level}`);
+      Logger.info('QrShareService', `[QrShareService] 自定义生成 QR: ${content.length} chars, ECLevel=${level}`);
       return { pixelMap };
     } catch (e) {
       const errMsg = (e as Record<string, Object>)?.message as string
         ?? (e as Record<string, Object>)?.code as string
         ?? JSON.stringify(e);
-      console.error('[QrShareService] 生成二维码失败:', errMsg);
+      Logger.error('QrShareService', '[QrShareService] 生成二维码失败:', errMsg);
       return { pixelMap: null, error: errMsg };
     }
   }
@@ -719,7 +720,7 @@ export class QrShareService {
    */
   static async scanQrCode(): Promise<string | null> {
     if (!QrShareService.isScanQrCodeSupported()) {
-      console.warn('[QrShareService] 当前设备不支持 ScanBarcode 系统能力');
+      Logger.warn('QrShareService', '[QrShareService] 当前设备不支持 ScanBarcode 系统能力');
       return null;
     }
 
@@ -735,7 +736,7 @@ export class QrShareService {
       }
       return null;
     } catch (e) {
-      console.error('[QrShareService] 扫码失败:', JSON.stringify(e));
+      Logger.error('QrShareService', '[QrShareService] 扫码失败:', JSON.stringify(e));
       return null;
     }
   }

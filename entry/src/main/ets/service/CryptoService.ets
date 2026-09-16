@@ -22,6 +22,7 @@
 import { huks } from '@kit.UniversalKeystoreKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
+import { Logger } from '../common/Logger';
 
 const TAG = '[CryptoService]';
 const KEY_ALIAS = 'moonlight_backup_aes256';
@@ -137,7 +138,7 @@ export class CryptoService {
     }
     result.set(authTag, pos);
 
-    console.info(`${TAG} v2 加密完成: ${plaintext.length} chars → ${result.length} bytes`);
+    Logger.info('CryptoService', `${TAG} v2 加密完成: ${plaintext.length} chars → ${result.length} bytes`);
     return result;
   }
 
@@ -196,7 +197,7 @@ export class CryptoService {
 
     const decoder = new util.TextDecoder('utf-8');
     const plaintext = decoder.decodeToString(plainData);
-    console.info(`${TAG} v2 解密完成: ${data.length} bytes → ${plaintext.length} chars`);
+    Logger.info('CryptoService', `${TAG} v2 解密完成: ${data.length} bytes → ${plaintext.length} chars`);
     return plaintext;
   }
 
@@ -269,7 +270,7 @@ export class CryptoService {
 
     const decoder = new util.TextDecoder('utf-8');
     const plaintext = decoder.decodeToString(plainData);
-    console.info(`${TAG} v1 解密完成: ${data.length} bytes → ${plaintext.length} chars`);
+    Logger.info('CryptoService', `${TAG} v1 解密完成: ${data.length} bytes → ${plaintext.length} chars`);
     return plaintext;
   }
 

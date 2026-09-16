@@ -13,6 +13,7 @@ import {
   GITHUB_STAR_REPO_NAME,
   GITHUB_STAR_REPO_OWNER
 } from '../config/GitHubOAuthConfig';
+import { Logger } from '../common/Logger';
 
 type JsonPrimitive = string | number | boolean | null | undefined;
 type JsonMap = Record<string, JsonPrimitive>;
@@ -216,7 +217,7 @@ export class GitHubStarVerifier {
         return GitHubStarVerifier.optionalStringValue(GitHubStarVerifier.parseJson(response.body), 'login');
       }
     } catch (err) {
-      console.warn(`GitHubStarVerifier: 获取 GitHub 登录名失败: ${err}`);
+      Logger.warn('GitHubStarVerifier', `GitHubStarVerifier: 获取 GitHub 登录名失败: ${err}`);
     }
     return undefined;
   }

@@ -42,6 +42,7 @@ import {
   DPadAction,
   sendShortcutKeys,
 } from './CustomKeyTypes';
+import { Logger } from '../../common/Logger';
 
 // =============================================================================
 // 回调接口
@@ -364,7 +365,7 @@ export class CustomKeyManager {
         ToastQueue.show({ message: `配置 "${profileName}" 已导出`, duration: 2000 });
       }
     } catch (e) {
-      console.error('[CustomKeyManager] 导出失败:', JSON.stringify(e));
+      Logger.error('CustomKeyManager', '[CustomKeyManager] 导出失败:', JSON.stringify(e));
       ToastQueue.show({ message: '导出失败', duration: 2000 });
     }
   }
@@ -401,7 +402,7 @@ export class CustomKeyManager {
         }
       }
     } catch (e) {
-      console.error('[CustomKeyManager] 导入失败:', JSON.stringify(e));
+      Logger.error('CustomKeyManager', '[CustomKeyManager] 导入失败:', JSON.stringify(e));
       ToastQueue.show({ message: '导入失败', duration: 2000 });
     }
     return false;

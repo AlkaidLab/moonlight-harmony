@@ -11,7 +11,6 @@
 /**
  * PC 列表页面标题栏组件
  */
-import { router } from '@kit.ArkUI';
 import { AppColors, AppSizes, AppSpacing } from '../common/Theme';
 
 /**

@@ -18,6 +18,7 @@ import { GamepadManager } from '../../service/input/GamepadManager';
 import { UsbDriverService } from '../../service/usbdriver';
 import { gcButtonMap, AXIS_MAX, TRIGGER_MAX, MoonlightButton } from '../../service/input/GamepadTypes';
 import { AppColors } from '../../common/Theme';
+import { Logger } from '../../common/Logger';
 
 // @Builder 按引用传参接口
 interface ButtonIndicatorParams {
@@ -337,7 +338,7 @@ export struct GameControllerTestView {
     try {
       GamepadManager.getInstance().reattachInputCallbacks();
     } catch (err) {
-      console.error('[GameControllerTest] 恢复 GamepadManager 回调失败:', err);
+      Logger.error('GameControllerTestView', '[GameControllerTest] 恢复 GamepadManager 回调失败:', err);
     }
   }
   

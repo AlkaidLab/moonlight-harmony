@@ -21,6 +21,7 @@ import { image } from '@kit.ImageKit';
 import { systemShare } from '@kit.ShareKit';
 import { ToastQueue } from '../utils/ToastQueue';
 import { StreamConfig } from '../model/StreamConfig';
+import { Logger } from '../common/Logger';
 
 const COLOR_GOOD = '#FF8BC34A';
 const COLOR_WARN = '#FFFFB74D';
@@ -648,24 +649,24 @@ export struct StreamSessionReport {
     this.heartScale = 1;
     this.sparkleDrift = 0;
     setTimeout(() => {
-      animateTo({ duration: 360, curve: Curve.FastOutSlowIn }, () => {
+      this.getUIContext().animateTo({ duration: 360, curve: Curve.FastOutSlowIn }, () => {
         this.overlayOpacity = 1;
         this.cardScale = 1;
         this.cardOffsetY = 0;
       });
     }, 30);
     setTimeout(() => {
-      animateTo({ duration: 920, curve: Curve.FastOutSlowIn }, () => {
+      this.getUIContext().animateTo({ duration: 920, curve: Curve.FastOutSlowIn }, () => {
         this.metricReveal = 1;
       });
     }, 260);
     setTimeout(() => {
-      animateTo({ duration: 900, curve: Curve.EaseInOut, iterations: -1, playMode: PlayMode.Alternate }, () => {
+      this.getUIContext().animateTo({ duration: 900, curve: Curve.EaseInOut, iterations: -1, playMode: PlayMode.Alternate }, () => {
         this.mascotBounce = -8;
       });
     }, 420);
     setTimeout(() => {
-      animateTo({ duration: 1100, curve: Curve.EaseInOut, iterations: -1, playMode: PlayMode.Alternate }, () => {
+      this.getUIContext().animateTo({ duration: 1100, curve: Curve.EaseInOut, iterations: -1, playMode: PlayMode.Alternate }, () => {
         this.sparkleSpin = 12;
         this.heartScale = 1.18;
         this.sparkleDrift = -10;
@@ -718,7 +719,7 @@ export struct StreamSessionReport {
         previewMode: systemShare.SharePreviewMode.DEFAULT
       });
     } catch (err) {
-      console.error('[StreamSessionReport] 分享战报失败:', JSON.stringify(err));
+      Logger.error('StreamSessionReport', '[StreamSessionReport] 分享战报失败:', JSON.stringify(err));
       ToastQueue.show({ message: '分享图片生成失败', duration: 1600 });
     } finally {
       this.isSharing = false;
@@ -736,7 +737,7 @@ export struct StreamSessionReport {
       pasteboard.getSystemPasteboard().setDataSync(pasteData);
       ToastQueue.show({ message: '诊断数据已复制', duration: 1500 });
     } catch (err) {
-      console.error('[StreamSessionReport] 复制诊断数据失败:', JSON.stringify(err));
+      Logger.error('StreamSessionReport', '[StreamSessionReport] 复制诊断数据失败:', JSON.stringify(err));
       ToastQueue.show({ message: '复制诊断数据失败', duration: 1600 });
     }
   }

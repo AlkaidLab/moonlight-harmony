@@ -9,6 +9,7 @@
  */
 
 import { rcp } from '@kit.RemoteCommunicationKit';
+import { Logger } from '../common/Logger';
 
 /**
  * Session 池条目
@@ -119,13 +120,13 @@ export class RcpSessionPool {
             // 忽略关闭异常
           }
         }
-        console.info(`RcpSessionPool: LRU 淘汰 ${oldestKey}`);
+        Logger.info('RcpSessionPool', `RcpSessionPool: LRU 淘汰 ${oldestKey}`);
       }
     }
 
     const session = RcpSessionPool.createSession(options);
     RcpSessionPool.entries.set(cacheKey, { session, lastUsedAt: Date.now() });
-    console.info(`RcpSessionPool: 新建 session ${cacheKey} (size=${RcpSessionPool.entries.size})`);
+    Logger.info('RcpSessionPool', `RcpSessionPool: 新建 session ${cacheKey} (size=${RcpSessionPool.entries.size})`);
     return session;
   }
 
@@ -150,7 +151,7 @@ export class RcpSessionPool {
     } catch (_e) {
       // 忽略
     }
-    console.warn(`RcpSessionPool: invalidate ${cacheKey}`);
+    Logger.warn('RcpSessionPool', `RcpSessionPool: invalidate ${cacheKey}`);
   }
 
   /**

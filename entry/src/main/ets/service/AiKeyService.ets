@@ -17,6 +17,7 @@ import {
   AnalogStickAction,
   createDefaultKeyDef,
 } from './customkey/CustomKeyTypes';
+import { Logger } from '../common/Logger';
 
 /**
  * AI 按键布局推荐结果
@@ -186,7 +187,7 @@ export class AiKeyService {
       description = parts.join(' · ');
     }
     if (parsed._thinking) {
-      console.info(`[AiKeyService] LLM thinking: ${parsed._thinking}`);
+      Logger.info('AiKeyService', `[AiKeyService] LLM thinking: ${parsed._thinking}`);
     }
 
     return {

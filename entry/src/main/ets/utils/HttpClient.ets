@@ -11,6 +11,7 @@
 import { rcp } from '@kit.RemoteCommunicationKit';
 import { StringUtil } from './StringUtil';
 import { RcpSessionPool, SessionAcquireOptions } from './RcpSessionPool';
+import { Logger } from '../common/Logger';
 
 /**
  * HTTP 客户端配置
@@ -172,7 +173,7 @@ export class HttpClient {
     const key = RcpSessionPool.keyFor(url, config?.clientCertPath);
     const session = RcpSessionPool.acquire(key, { skipServerValidation: skipValidation, clientCertPath: config?.clientCertPath, clientKeyPath: config?.clientKeyPath });
 
-    console.debug(`HttpClient: GET ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
+    Logger.debug('HttpClient', `HttpClient: GET ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
 
     const request = new rcp.Request(
       url,
@@ -186,7 +187,7 @@ export class HttpClient {
 
     try {
       const response = await session.fetch(request);
-      console.debug(`HttpClient: 响应状态码 = ${response.statusCode}`);
+      Logger.debug('HttpClient', `HttpClient: 响应状态码 = ${response.statusCode}`);
 
       if (response.statusCode !== 200) {
         throw new Error(`HTTP ${response.statusCode}`);
@@ -205,9 +206,9 @@ export class HttpClient {
       }
       const isTimeout = error.message?.includes('Timeout') || error.message?.includes('timeout');
       if (isTimeout) {
-        console.warn(`HttpClient: 请求超时 - ${url}`);
+        Logger.warn('HttpClient', `HttpClient: 请求超时 - ${url}`);
       } else {
-        console.error(`HttpClient: 请求失败 - ${error.message}`);
+        Logger.error('HttpClient', `HttpClient: 请求失败 - ${error.message}`);
       }
       throw new Error(`HTTP 请求失败: ${error.message}`);
     }
@@ -279,7 +280,7 @@ export class HttpClient {
       clientKeyPath: config?.clientKeyPath
     });
 
-    console.debug(`HttpClient: RAW ${method} ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
+    Logger.debug('HttpClient', `HttpClient: RAW ${method} ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
 
     const request = new rcp.Request(
       url,
@@ -300,7 +301,7 @@ export class HttpClient {
       if (HttpClient.isConnectionError(error.message)) {
         RcpSessionPool.invalidate(key);
       }
-      console.error(`HttpClient: RAW 请求失败 - ${error.message}`);
+      Logger.error('HttpClient', `HttpClient: RAW 请求失败 - ${error.message}`);
       throw new Error(`HTTP 请求失败: ${error.message}`);
     }
   }
@@ -338,7 +339,7 @@ export class HttpClient {
     const key = RcpSessionPool.keyFor(url, config?.clientCertPath);
     const session = RcpSessionPool.acquire(key, { skipServerValidation: skipValidation, clientCertPath: config?.clientCertPath, clientKeyPath: config?.clientKeyPath });
 
-    console.info(`HttpClient: 二进制 GET ${url} (sessionKey=${key})`);
+    Logger.info('HttpClient', `HttpClient: 二进制 GET ${url} (sessionKey=${key})`);
 
     const request = new rcp.Request(
       url,
@@ -358,14 +359,14 @@ export class HttpClient {
       if (!response.body) {
         throw new Error('响应体为空');
       }
-      console.info(`HttpClient: 二进制响应大小 = ${response.body.byteLength} 字节`);
+      Logger.info('HttpClient', `HttpClient: 二进制响应大小 = ${response.body.byteLength} 字节`);
       return response.body;
     } catch (err) {
       const error = err as Error;
       if (HttpClient.isConnectionError(error.message)) {
         RcpSessionPool.invalidate(key);
       }
-      console.error(`HttpClient: 二进制请求失败 - ${error.message}`);
+      Logger.error('HttpClient', `HttpClient: 二进制请求失败 - ${error.message}`);
       throw new Error(`HTTP 请求失败: ${error.message}`);
     }
   }
@@ -404,7 +405,7 @@ export class HttpClient {
     const key = RcpSessionPool.keyFor(url, config?.clientCertPath);
     const session = RcpSessionPool.acquire(key, { skipServerValidation: skipValidation, clientCertPath: config?.clientCertPath, clientKeyPath: config?.clientKeyPath });
 
-    console.debug(`HttpClient: POST ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
+    Logger.debug('HttpClient', `HttpClient: POST ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
 
     const request = new rcp.Request(
       url,
@@ -418,7 +419,7 @@ export class HttpClient {
 
     try {
       const response = await session.fetch(request);
-      console.debug(`HttpClient: POST 响应状态码 = ${response.statusCode}`);
+      Logger.debug('HttpClient', `HttpClient: POST 响应状态码 = ${response.statusCode}`);
       if (!response.body) {
         throw new Error('响应体为空');
       }
@@ -429,7 +430,7 @@ export class HttpClient {
       if (HttpClient.isConnectionError(error.message)) {
         RcpSessionPool.invalidate(key);
       }
-      console.error(`HttpClient: POST 请求失败 - ${error.message}`);
+      Logger.error('HttpClient', `HttpClient: POST 请求失败 - ${error.message}`);
       throw new Error(`HTTP POST 请求失败: ${error.message}`);
     }
   }
@@ -444,7 +445,7 @@ export class HttpClient {
     const key = RcpSessionPool.keyFor(url, config?.clientCertPath);
     const session = RcpSessionPool.acquire(key, { skipServerValidation: skipValidation, clientCertPath: config?.clientCertPath, clientKeyPath: config?.clientKeyPath });
 
-    console.debug(`HttpClient: POST(binary) ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
+    Logger.debug('HttpClient', `HttpClient: POST(binary) ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
 
     const requestBody = HttpClient.toExactArrayBuffer(body);
     const request = new rcp.Request(
@@ -459,7 +460,7 @@ export class HttpClient {
 
     try {
       const response = await session.fetch(request);
-      console.debug(`HttpClient: POST(binary) 响应状态码 = ${response.statusCode}`);
+      Logger.debug('HttpClient', `HttpClient: POST(binary) 响应状态码 = ${response.statusCode}`);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw new Error(`HTTP ${response.statusCode}`);
       }
@@ -470,7 +471,7 @@ export class HttpClient {
       if (HttpClient.isConnectionError(error.message)) {
         RcpSessionPool.invalidate(key);
       }
-      console.error(`HttpClient: POST(binary) 请求失败 - ${error.message}`);
+      Logger.error('HttpClient', `HttpClient: POST(binary) 请求失败 - ${error.message}`);
       throw new Error(`HTTP POST 请求失败: ${error.message}`);
     }
   }

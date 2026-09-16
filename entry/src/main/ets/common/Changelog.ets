@@ -13,6 +13,7 @@
 
 import { common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
+import { Logger } from './Logger';
 
 /**
  * 单条变更项
@@ -175,7 +176,7 @@ export async function loadChangelog(context: common.Context): Promise<ChangelogE
     const markdown = decoder.decodeToString(rawData);
     return parseChangelog(markdown);
   } catch (err) {
-    console.error('加载更新日志失败:', err);
+    Logger.error('Changelog', '加载更新日志失败:', err);
     return [];
   }
 }

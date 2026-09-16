@@ -8,7 +8,8 @@
  * (at your option) any later version.
  */
 
-import { router } from '@kit.ArkUI';
+import { AppNav } from '../common/AppNav';
+import { HostWebUiPageParams } from '../common/PageParams';
 import { common, Want } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { webview } from '@kit.ArkWeb';
@@ -18,11 +19,7 @@ import { AppColors, AppSizes, AppSpacing, AppShadows } from '../common/Theme';
 import { buildHostWebUiUrl } from '../utils/HostWebUiUtil';
 import { ToastQueue } from '../utils/ToastQueue';
 
-interface HostWebUiPageParams {
-  computerId: string;
-}
 
-@Entry
 @Component
 struct HostWebUiPage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 56;
@@ -54,7 +51,7 @@ struct HostWebUiPage {
   }
 
   private async loadHost(): Promise<void> {
-    const params = router.getParams() as HostWebUiPageParams;
+    const params = AppNav.stack.getParamByIndex(AppNav.stack.size() - 1) as HostWebUiPageParams;
     if (!params?.computerId) {
       this.isLoading = false;
       this.loadError = '缺少主机信息';
@@ -166,6 +163,7 @@ struct HostWebUiPage {
   }
 
   build() {
+    NavDestination() {
     Column() {
       this.NavBar()
 
@@ -235,6 +233,8 @@ struct HostWebUiPage {
     .width('100%')
     .height('100%')
     .backgroundColor(AppColors.Background)
+    }
+    .hideTitleBar(true)
   }
 
   @Builder
@@ -250,7 +250,7 @@ struct HostWebUiPage {
       .height(36)
       .backgroundColor(AppColors.CardBackground)
       .shadow(AppShadows.Small)
-      .onClick(() => router.back())
+      .onClick(() => AppNav.pop())
 
       Column() {
         Text(this.computerName)
@@ -474,4 +474,10 @@ struct HostWebUiAuthDialog {
     .height('100%')
     .backgroundColor('#66000000')
   }
+}
+
+
+@Builder
+export function HostWebUiPageBuilder() {
+  HostWebUiPage()
 }

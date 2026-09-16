@@ -29,6 +29,7 @@
  */
 
 import { DeviceSensorService, LI_MOTION_TYPE_GYRO, SensorDataCallback } from './DeviceSensorService';
+import { Logger } from '../../common/Logger';
 
 // ==================== 常量 ====================
 
@@ -392,7 +393,7 @@ export class GyroAssistService {
   private startListening(): void {
     if (this.sensorListening) return;
     if (!this.sensorService.hasGyroscope()) {
-      console.warn('[GyroAssist] 设备没有陀螺仪');
+      Logger.warn('GyroAssistService', '[GyroAssist] 设备没有陀螺仪');
       return;
     }
 
@@ -416,7 +417,7 @@ export class GyroAssistService {
       this.holdActive = true;
     }
 
-    console.info(`[GyroAssist] 体感助手已启动 (灵敏度: ${this._sensitivityMultiplier}x, ` +
+    Logger.info('GyroAssistService', `[GyroAssist] 体感助手已启动 (灵敏度: ${this._sensitivityMultiplier}x, ` +
       `激活键: ${this._activationKey === GYRO_ACTIVATION_ALWAYS ? '始终' :
         this._activationKey === GYRO_ACTIVATION_LT ? 'LT' : 'RT'})`);
   }
@@ -433,7 +434,7 @@ export class GyroAssistService {
     this.gyroStickX = 0;
     this.gyroStickY = 0;
 
-    console.info('[GyroAssist] 体感助手已停止');
+    Logger.info('GyroAssistService', '[GyroAssist] 体感助手已停止');
   }
 
   /**

@@ -8,10 +8,12 @@
  * (at your option) any later version.
  */
 
-import { curves, router } from '@kit.ArkUI';
+import { curves } from '@kit.ArkUI';
+import { AppNav } from '../common/AppNav';
 import { AppColors } from '../common/Theme';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { common } from '@kit.AbilityKit';
+import { Logger } from '../common/Logger';
 
 /** 隐私政策同意状态持久化 key */
 const PRIVACY_ACCEPTED_KEY = 'privacy_policy_accepted';
@@ -99,19 +101,19 @@ struct Index {
         this.startAnimation();
       } else {
         // 未同意，先显示 Logo 再弹出隐私政策
-        animateTo({ duration: 500, curve: Curve.EaseOut }, () => {
+        this.getUIContext().animateTo({ duration: 500, curve: Curve.EaseOut }, () => {
           this.logoOpacity = 1;
           this.logoScale = 1;
         });
         setTimeout(() => {
           this.showPrivacyConsent = true;
-          animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
             this.privacyDialogOpacity = 1;
           });
         }, 600);
       }
     } catch (err) {
-      console.error('Index: 检查隐私政策状态失败', err);
+      Logger.error('Index', 'Index: 检查隐私政策状态失败', err);
       // 出错时也显示弹窗（安全起见）
       this.showPrivacyConsent = true;
       this.privacyDialogOpacity = 1;
@@ -125,10 +127,10 @@ struct Index {
     try {
       await PreferencesUtil.put(PRIVACY_ACCEPTED_KEY, true);
     } catch (err) {
-      console.error('Index: 保存隐私政策同意状态失败', err);
+      Logger.error('Index', 'Index: 保存隐私政策同意状态失败', err);
     }
     // 关闭弹窗，进入主页面
-    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.privacyDialogOpacity = 0;
     });
     setTimeout(() => {
@@ -149,7 +151,7 @@ struct Index {
    * 同意后快速过渡并跳转到主页面
    */
   private proceedToMain(): void {
-    animateTo({ duration: 400, curve: Curve.EaseOut }, () => {
+    this.getUIContext().animateTo({ duration: 400, curve: Curve.EaseOut }, () => {
       this.moonlightOpacity = 1;
       this.moonlightTranslateY = 0;
       this.vplusOpacity = 1;
@@ -161,16 +163,16 @@ struct Index {
     setTimeout(() => {
       this.isLoading = false;
       try {
-        router.replaceUrl({ url: 'pages/PcListPageV2' });
+        AppNav.push('PcListPageV2');
       } catch (e) {
-        console.error('Index: navigation failed - ' + e);
+        Logger.error('Index', 'Index: navigation failed - ' + e);
       }
     }, 800);
   }
 
   startAnimation(): void {
     // Logo 弹入
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 600,
       curve: Curve.EaseOut,
     }, () => {
@@ -180,7 +182,7 @@ struct Index {
 
     // "Moonlight" 滑入
     setTimeout(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 450,
         curve: Curve.EaseOut,
       }, () => {
@@ -191,7 +193,7 @@ struct Index {
 
     // "V+" 弹出
     setTimeout(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 350,
         curve: curves.springMotion(0.6, 0.8),
       }, () => {
@@ -202,7 +204,7 @@ struct Index {
 
     // "for HarmonyOS" 滑入
     setTimeout(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 400,
         curve: Curve.EaseOut,
       }, () => {
@@ -213,7 +215,7 @@ struct Index {
 
     // 底部淡入
     setTimeout(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 400,
         curve: Curve.EaseOut,
       }, () => {
@@ -225,14 +227,15 @@ struct Index {
     setTimeout(() => {
       this.isLoading = false;
       try {
-        router.replaceUrl({ url: 'pages/PcListPageV2' });
+        AppNav.push('PcListPageV2');
       } catch (e) {
-        console.error('Index: navigation failed - ' + e);
+        Logger.error('Index', 'Index: navigation failed - ' + e);
       }
     }, 2000);
   }
 
   build() {
+    Navigation(AppNav.stack) {
     Stack() {
       // ── 原有的启动页内容 ──
       Column() {
@@ -419,5 +422,8 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor(AppColors.Background)
+    }
+    .mode(NavigationMode.Stack)
+    .hideTitleBar(true)
   }
 }

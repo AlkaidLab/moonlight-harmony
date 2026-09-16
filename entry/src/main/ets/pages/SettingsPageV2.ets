@@ -8,7 +8,8 @@
  * (at your option) any later version.
  */
 
-import { router, promptAction, display } from '@kit.ArkUI';
+import { promptAction, display } from '@kit.ArkUI';
+import { AppNav } from '../common/AppNav';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { common, Want, bundleManager } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
@@ -43,6 +44,7 @@ import { GitHubDeviceCode } from '../utils/GitHubStarVerifier';
 import { ToastQueue } from '../utils/ToastQueue';
 import { METERED_BANDWIDTH_PROBE_MAX_BYTES } from '../service/network/BandwidthProbeService';
 import { GYRO_SENSITIVITY_MIN, GYRO_SENSITIVITY_MAX } from '../service/input/GyroAssistService';
+import { Logger } from '../common/Logger';
 
 /**
  * 选择器选项接口
@@ -146,7 +148,6 @@ interface SidebarGroupMeta {
 /**
  * 设置页面 (现代化版本)
  */
-@Entry
 @Component
 struct SettingsPageV2 {
   @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
@@ -372,7 +373,7 @@ struct SettingsPageV2 {
   }
 
   onBackPress(): boolean {
-    router.back();
+    AppNav.pop();
     return true;
   }
 
@@ -400,9 +401,9 @@ struct SettingsPageV2 {
         this.nativeWidth = displayInfo.height;
         this.nativeHeight = displayInfo.width;
       }
-      console.info(`本地分辨率 (横屏): ${this.nativeWidth}x${this.nativeHeight}`);
+      Logger.info('SettingsPageV2', `本地分辨率 (横屏): ${this.nativeWidth}x${this.nativeHeight}`);
     } catch (e) {
-      console.error(`获取本地分辨率失败: ${e}`);
+      Logger.error('SettingsPageV2', `获取本地分辨率失败: ${e}`);
       this.nativeWidth = 0;
       this.nativeHeight = 0;
     }
@@ -423,9 +424,9 @@ struct SettingsPageV2 {
   private loadDecoderCapabilities(): void {
     try {
       this.decoderCapabilities = StreamingSession.getDecoderCapabilities();
-      console.info(`解码器能力: H264=${this.decoderCapabilities.supportsH264}, HEVC=${this.decoderCapabilities.supportsHEVC}, AV1=${this.decoderCapabilities.supportsAV1}`);
+      Logger.info('SettingsPageV2', `解码器能力: H264=${this.decoderCapabilities.supportsH264}, HEVC=${this.decoderCapabilities.supportsHEVC}, AV1=${this.decoderCapabilities.supportsAV1}`);
     } catch (e) {
-      console.error(`获取解码器能力失败: ${e}`);
+      Logger.error('SettingsPageV2', `获取解码器能力失败: ${e}`);
       // 默认假设只支持 H.264
       this.decoderCapabilities = {
         supportsH264: true,
@@ -640,7 +641,7 @@ struct SettingsPageV2 {
       // 备份
       this.autoBackupEnabled = await SettingsBackupService.isAutoBackupEnabled();
     } catch (error) {
-      console.error('Failed to load settings:', error);
+      Logger.error('SettingsPageV2', 'Failed to load settings:', error);
     } finally {
       this.isLoading = false;
       setTimeout(() => {
@@ -707,7 +708,7 @@ struct SettingsPageV2 {
       await PreferencesUtil.put(key, value);
       SettingsBackupService.scheduleAutoSave();
     } catch (error) {
-      console.error('Failed to save setting:', error);
+      Logger.error('SettingsPageV2', 'Failed to save setting:', error);
       this.showToast('保存设置失败');
     }
   }
@@ -716,8 +717,8 @@ struct SettingsPageV2 {
    * 显示自定义选择器弹窗 - 使用 CustomDialogController
    */
   private showPicker(config: PickerConfig): void {
-    console.info(`SettingsPageV2: showPicker 被调用, title=${config.title}`);
-    console.info(`SettingsPageV2: options count = ${config.options?.length}`);
+    Logger.info('SettingsPageV2', `SettingsPageV2: showPicker 被调用, title=${config.title}`);
+    Logger.info('SettingsPageV2', `SettingsPageV2: options count = ${config.options?.length}`);
     
     // 转换为 DialogOptionItem 格式
     const options: DialogOptionItem[] = config.options.map((option: PickerOption) => {
@@ -735,7 +736,7 @@ struct SettingsPageV2 {
       options: options,
       selectedValue: config.selectedValue,
       onSelect: (option: DialogOptionItem) => {
-        console.info(`SettingsPageV2: 选中了 ${option.title}`);
+        Logger.info('SettingsPageV2', `SettingsPageV2: 选中了 ${option.title}`);
         const pickerOption: PickerOption = {
           title: option.title,
           subtitle: option.subtitle,
@@ -1012,6 +1013,7 @@ struct SettingsPageV2 {
   }
 
   build() {
+    NavDestination() {
     Column() {
       // 标题栏
       if (this.isWideScreen) {
@@ -1748,7 +1750,7 @@ struct SettingsPageV2 {
                 subtitle: '测试 USB 和蓝牙/系统手柄',
                 type: 'action',
                 action: () => {
-                  router.pushUrl({ url: 'pages/ControllerTestPage' });
+                  AppNav.push('ControllerTestPage');
                 }
               }
             ]
@@ -2506,6 +2508,8 @@ struct SettingsPageV2 {
         }
       }
     } as SheetOptions)
+    }
+    .hideTitleBar(true)
   }
 
   @Builder
@@ -2522,7 +2526,7 @@ struct SettingsPageV2 {
       .backgroundColor(AppColors.Surface)
       .borderWidth(1)
       .borderColor(AppColors.CardBorder)
-      .onClick(() => router.back())
+      .onClick(() => AppNav.pop())
 
       Column() {
         Text('设置')
@@ -2983,9 +2987,9 @@ struct SettingsPageV2 {
       })
       .onClick(() => {
         if (item.disabled) return;
-        console.info(`SettingsPageV2: 点击设置项 ${item.title}, type=${item.type}, hasAction=${!!item.action}`);
+        Logger.info('SettingsPageV2', `SettingsPageV2: 点击设置项 ${item.title}, type=${item.type}, hasAction=${!!item.action}`);
         if (item.type !== 'toggle' && item.action) {
-          console.info(`SettingsPageV2: 执行 action`);
+          Logger.info('SettingsPageV2', `SettingsPageV2: 执行 action`);
           item.action();
         }
       })
@@ -3663,7 +3667,7 @@ struct SettingsPageV2 {
       };
       context.startAbility(want);
     } catch (err) {
-      console.error('打开链接失败:', err);
+      Logger.error('SettingsPageV2', '打开链接失败:', err);
       ToastQueue.show({ message: '打开链接失败', duration: 2000 });
     }
   }
@@ -4019,7 +4023,7 @@ struct SettingsPageV2 {
       }
     }).catch((err: Error) => {
       this.developerPendingDialogVisible = false;
-      console.warn(`DeveloperUnlockService: 授权弹窗已关闭: ${err}`);
+      Logger.warn('SettingsPageV2', `DeveloperUnlockService: 授权弹窗已关闭: ${err}`);
     });
   }
 
@@ -4118,7 +4122,7 @@ struct SettingsPageV2 {
       pasteboard.getSystemPasteboard().setDataSync(pasteData);
       this.showToast('上次串流诊断已复制');
     } catch (err) {
-      console.error('[SettingsPage] 复制串流诊断失败:', JSON.stringify(err));
+      Logger.error('SettingsPageV2', '[SettingsPage] 复制串流诊断失败:', JSON.stringify(err));
       this.showToast('复制串流诊断失败');
     }
   }
@@ -4192,14 +4196,14 @@ function loadOpenSourceLibraries(context: common.Context): OpenSourceLibrary[] {
     const manifest = JSON.parse(
       decoder.decodeToString(rawData)) as OpenSourceManifest;
     if (manifest.schemaVersion !== 1) {
-      console.error(
+      Logger.error('SettingsPageV2', 
         `[OpenSource] 不支持的清单版本: ${manifest.schemaVersion}`);
       return [];
     }
     return manifest.libraries.filter(
       (library: OpenSourceLibrary): boolean => library.showInAbout);
   } catch (error) {
-    console.error(`[OpenSource] 加载开源库清单失败: ${error}`);
+    Logger.error('SettingsPageV2', `[OpenSource] 加载开源库清单失败: ${error}`);
     return [];
   }
 }
@@ -4527,4 +4531,10 @@ struct ChangelogDialog {
     .transition(TransitionEffect.OPACITY.animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })
       .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }).animation({ duration: AppAnimation.Normal, curve: Curve.EaseOut })))
   }
+}
+
+
+@Builder
+export function SettingsPageV2Builder() {
+  SettingsPageV2()
 }

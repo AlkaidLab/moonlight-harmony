@@ -9,6 +9,7 @@
  */
 
 import { AppEntry, NvHttp, SuperCmd } from '../service/streaming/NvHttp';
+import { Logger } from '../common/Logger';
 
 /**
  * 可观察的应用数据类
@@ -100,7 +101,7 @@ export class AppListViewModel {
   setApps(entries: AppEntry[], nvHttp?: NvHttp): void {
     // 查找正在运行的应用
     const runningApps = entries.filter(e => e.isRunning);
-    console.info(`AppListViewModel: 加载 ${entries.length} 个应用, 正在运行: ${runningApps.map(a => `${a.name}(${a.id})`).join(', ') || '无'}`);
+    Logger.info('AppViewModel', `AppListViewModel: 加载 ${entries.length} 个应用, 正在运行: ${runningApps.map(a => `${a.name}(${a.id})`).join(', ') || '无'}`);
 
     const existing: Map<number, ObservableApp> = new Map();
     for (const app of this.apps) {
@@ -145,7 +146,7 @@ export class AppListViewModel {
    */
   cancelIconLoading(): void {
     this.iconLoadGeneration++;
-    console.info(`AppListViewModel: 图标加载已取消`);
+    Logger.info('AppViewModel', `AppListViewModel: 图标加载已取消`);
   }
 
   /**
@@ -157,13 +158,13 @@ export class AppListViewModel {
     if (pending.length === 0) {
       return;
     }
-    console.info(`AppListViewModel: 开始加载 ${pending.length} 个应用图标`);
+    Logger.info('AppViewModel', `AppListViewModel: 开始加载 ${pending.length} 个应用图标`);
 
     // 串行加载图标，避免并发过多导致卡顿
     for (const app of pending) {
       // 检查是否已被更新的一轮加载取代
       if (this.iconLoadGeneration !== generation) {
-        console.info(`AppListViewModel: 图标加载被取消，停止加载`);
+        Logger.info('AppViewModel', `AppListViewModel: 图标加载被取消，停止加载`);
         return;
       }
 
@@ -171,15 +172,15 @@ export class AppListViewModel {
         const localPath = await nvHttp.getAppAssetCached(app.id);
         if (localPath && this.iconLoadGeneration === generation) {
           app.setLocalIconPath(localPath);
-          console.info(`AppListViewModel: 图标加载成功 ${app.name}`);
+          Logger.info('AppViewModel', `AppListViewModel: 图标加载成功 ${app.name}`);
         }
       } catch (err) {
-        console.warn(`AppListViewModel: 图标加载失败 ${app.name}`, err);
+        Logger.warn('AppViewModel', `AppListViewModel: 图标加载失败 ${app.name}`, err);
       }
     }
 
     if (this.iconLoadGeneration === generation) {
-      console.info(`AppListViewModel: 所有图标加载完成`);
+      Logger.info('AppViewModel', `AppListViewModel: 所有图标加载完成`);
     }
   }
   

@@ -20,6 +20,7 @@ import { AbstractController } from './AbstractController';
 import { UsbDriverListener } from './UsbDriverListener';
 import { ButtonFlags, UsbClass, ControllerType, ControllerCapabilities } from './ControllerConstants';
 import { isHardwareError, createUsbError, UsbError } from './UsbErrorCodes';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[USB-HID]';
 
@@ -83,7 +84,7 @@ export class GenericHidController extends AbstractController {
   static canClaimDevice(device: usbManager.USBDevice): boolean {
     // 检查是否是已知的通用 HID 厂商
     if (GenericHidVendors.SUPPORTED_VENDORS.includes(device.vendorId)) {
-      console.info(`${TAG} 检测到通用 HID 手柄: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+      Logger.info('GenericHidController', `${TAG} 检测到通用 HID 手柄: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
       return true;
     }
     
@@ -101,7 +102,7 @@ export class GenericHidController extends AbstractController {
     for (let i = 0; i < config.interfaces.length; i++) {
       const iface = config.interfaces[i];
       if (iface.clazz === UsbClass.USB_CLASS_HID) {
-        console.info(`${TAG} 检测到 HID 接口的设备: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
+        Logger.info('GenericHidController', `${TAG} 检测到 HID 接口的设备: VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)}`);
         // 返回 false，让其他更具体的驱动先尝试
         // 只有在明确知道厂商时才返回 true
         return false;
@@ -141,17 +142,17 @@ export class GenericHidController extends AbstractController {
         try {
           const ret = usbManager.claimInterface(this.pipe, iface, true);
           if (ret === 0) {
-            console.info(`${TAG} 成功声明 HID 接口`);
+            Logger.info('GenericHidController', `${TAG} 成功声明 HID 接口`);
           }
         } catch (err) {
-          console.error(`${TAG} 声明接口失败:`, err);
+          Logger.error('GenericHidController', `${TAG} 声明接口失败:`, err);
         }
         
         break;
       }
     }
     
-    console.info(`${TAG} 端点配置: IN=0x${this.inputEndpoint.toString(16)}, OUT=0x${this.outputEndpoint.toString(16)}, MaxPacket=${this.inputMaxPacketSize}`);
+    Logger.info('GenericHidController', `${TAG} 端点配置: IN=0x${this.inputEndpoint.toString(16)}, OUT=0x${this.outputEndpoint.toString(16)}, MaxPacket=${this.inputMaxPacketSize}`);
   }
   
   start(): boolean {
@@ -160,7 +161,7 @@ export class GenericHidController extends AbstractController {
     }
     
     if (this.inputEndpoint === 0) {
-      console.error(`${TAG} 无法启动: 未找到输入端点`);
+      Logger.error('GenericHidController', `${TAG} 无法启动: 未找到输入端点`);
       return false;
     }
     
@@ -170,7 +171,7 @@ export class GenericHidController extends AbstractController {
     // 开始轮询输入
     this.inputLoop();
     
-    console.info(`${TAG} 控制器已启动: ${this.deviceName}`);
+    Logger.info('GenericHidController', `${TAG} 控制器已启动: ${this.deviceName}`);
     return true;
   }
   
@@ -191,13 +192,13 @@ export class GenericHidController extends AbstractController {
             const iface = config.interfaces[i];
             if (iface.clazz === UsbClass.USB_CLASS_HID) {
               usbManager.releaseInterface(this.pipe, iface);
-              console.info(`${TAG} 已释放 HID 接口`);
+              Logger.info('GenericHidController', `${TAG} 已释放 HID 接口`);
               break;
             }
           }
         }
       } catch (err) {
-        console.error(`${TAG} 释放接口失败:`, err);
+        Logger.error('GenericHidController', `${TAG} 释放接口失败:`, err);
       }
     }
     
@@ -205,10 +206,10 @@ export class GenericHidController extends AbstractController {
     try {
       usbManager.closePipe(this.pipe);
     } catch (err) {
-      console.error(`${TAG} 关闭管道失败:`, err);
+      Logger.error('GenericHidController', `${TAG} 关闭管道失败:`, err);
     }
     
-    console.info(`${TAG} 控制器已停止: ${this.deviceName}`);
+    Logger.info('GenericHidController', `${TAG} 控制器已停止: ${this.deviceName}`);
   }
   
   private async inputLoop(): Promise<void> {
@@ -236,23 +237,23 @@ export class GenericHidController extends AbstractController {
           if (errorCode === -8) {  // USB_ERROR_TIMEOUT
             consecutiveTimeouts++;
             if (consecutiveTimeouts >= MAX_CONSECUTIVE_TIMEOUTS) {
-              console.warn(`${TAG} 连续 ${consecutiveTimeouts} 次超时，设备可能进入省电模式`);
+              Logger.warn('GenericHidController', `${TAG} 连续 ${consecutiveTimeouts} 次超时，设备可能进入省电模式`);
               isSleepMode = true;
               break;
             }
             // 单次超时不做处理，继续轮询
             continue;
           } else if (errorCode === -4) {  // USB_ERROR_NO_DEVICE
-            console.warn(`${TAG} 设备不可达: ${err}`);
+            Logger.warn('GenericHidController', `${TAG} 设备不可达: ${err}`);
             isSleepMode = true;
             break;
           } else if (isHardwareError(errorCode)) {
-            console.error(`${TAG} 检测到硬件错误: ${err}`);
+            Logger.error('GenericHidController', `${TAG} 检测到硬件错误: ${err}`);
             hardwareError = true;
             // 硬件错误 - 立即停止
             break;
           } else {
-            console.error(`${TAG} 输入读取错误: ${err}`);
+            Logger.error('GenericHidController', `${TAG} 输入读取错误: ${err}`);
             // 其他错误 - 如果标记为可重试则继续，否则停止
             if (!retryable) {
               break;
@@ -267,15 +268,15 @@ export class GenericHidController extends AbstractController {
     // 根据错误类型决定是否通知设备移除
     if (this.running) {
       if (hardwareError) {
-        console.error(`${TAG} 由于硬件错误，自动停止控制器`);
+        Logger.error('GenericHidController', `${TAG} 由于硬件错误，自动停止控制器`);
         this.stop();
       } else if (isSleepMode) {
-        console.info(`${TAG} 设备进入省电模式，等待自动重连...`);
+        Logger.info('GenericHidController', `${TAG} 设备进入省电模式，等待自动重连...`);
         // 省电模式：只停止 I/O 循环但不立即移除，让 UsbDriverService 定时器处理重连
         this.notifyDeviceRemoved();
       } else {
         // 其他错误
-        console.warn(`${TAG} 由于 IO 错误，自动停止控制器`);
+        Logger.warn('GenericHidController', `${TAG} 由于 IO 错误，自动停止控制器`);
         this.stop();
       }
     }
@@ -343,11 +344,11 @@ export class GenericHidController extends AbstractController {
     // 只有当数据与上次不同时才打印
     const currentHex = hexStr;
     if (this.lastHexReport !== currentHex) {
-      console.info(`${TAG} 原始报告: ${currentHex}`);
+      Logger.info('GenericHidController', `${TAG} 原始报告: ${currentHex}`);
       
       // 详细打印每个字节的含义
       if (length >= 10) {
-        console.info(`${TAG} 解析: LX=${data[1]} LY=${data[2]} RX=${data[3]} RY=${data[4]} ` +
+        Logger.info('GenericHidController', `${TAG} 解析: LX=${data[1]} LY=${data[2]} RX=${data[3]} RY=${data[4]} ` +
           `B5=0x${data[5].toString(16)} B6=0x${data[6].toString(16)} ` +
           `B7=0x${data[7].toString(16)} B8=0x${data[8].toString(16)} B9=0x${data[9].toString(16)}`);
       }
@@ -403,7 +404,7 @@ export class GenericHidController extends AbstractController {
         
         // 调试：打印最终的按钮标志
         if (this.buttonFlags !== 0 || buttons1 !== 0 || buttons2 !== 0) {
-          console.info(`${TAG} B7=0x${buttons1.toString(16)} B8=0x${buttons2.toString(16)} ` +
+          Logger.info('GenericHidController', `${TAG} B7=0x${buttons1.toString(16)} B8=0x${buttons2.toString(16)} ` +
             `flags: 0x${beforeFlags.toString(16)} -> 0x${this.buttonFlags.toString(16)}`);
         }
       }

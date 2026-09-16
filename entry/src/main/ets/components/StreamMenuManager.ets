@@ -23,6 +23,7 @@ import { UsbForwardingService } from '../service/usbdriver/UsbForwardingService'
 
 // VirtualKey 统一定义在 CustomKeyTypes 中，此处 re-export 保持向后兼容
 import { VirtualKey } from '../service/customkey/CustomKeyTypes';
+import { Logger } from '../common/Logger';
 export { VirtualKey } from '../service/customkey/CustomKeyTypes';
 
 /**
@@ -65,7 +66,7 @@ export class StreamMenuManager {
         duration: 1500
       });
     } catch (e) {
-      console.warn('showToast failed:', e);
+      Logger.warn('StreamMenuManager', 'showToast failed:', e);
     }
   }
 
@@ -145,7 +146,7 @@ export class StreamMenuManager {
         this.showToast(enableSetting ? '已开启 USB 直通，正在转发' : '正在重试 USB 直通');
       })
       .catch((err: Error): void => {
-        console.warn(`USB 直通菜单操作失败: ${err.message}`);
+        Logger.warn('StreamMenuManager', `USB 直通菜单操作失败: ${err.message}`);
       });
   }
 

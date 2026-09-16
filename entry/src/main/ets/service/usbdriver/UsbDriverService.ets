@@ -28,6 +28,7 @@ import { SwitchProController } from './SwitchProController';
 import { NativeHidController } from './NativeHidController';
 import { SettingsService } from '../../service/SettingsService';
 import nativeLib from 'libmoonlight_nativelib.so';
+import { Logger } from '../../common/Logger';
 
 /**
  * Native USB Helper 接口
@@ -102,7 +103,7 @@ export class UsbDriverService implements UsbDriverListener {
   private forwardedDeviceKeys: Set<string> = new Set();
   
   private constructor() {
-    console.info(`${TAG} 创建 USB 驱动服务实例`);
+    Logger.info('UsbDriverService', `${TAG} 创建 USB 驱动服务实例`);
   }
   
   /**
@@ -150,7 +151,7 @@ export class UsbDriverService implements UsbDriverListener {
       controller.setForceProtocolType(protocolType);
       return true;
     }
-    console.warn(`${TAG} 未找到控制器 ID=${controllerId} 或不支持协议切换`);
+    Logger.warn('UsbDriverService', `${TAG} 未找到控制器 ID=${controllerId} 或不支持协议切换`);
     return false;
   }
   
@@ -163,7 +164,7 @@ export class UsbDriverService implements UsbDriverListener {
     if (!this.isLifecycleActive(requestGeneration)) {
       return;
     }
-    console.info(`${TAG} 手动触发设备重新扫描`);
+    Logger.info('UsbDriverService', `${TAG} 手动触发设备重新扫描`);
     // 清空已处理设备列表，强制重新枚举所有设备
     this.processedDevices.clear();
     await this.enumerateDevices(requestGeneration);
@@ -193,7 +194,7 @@ export class UsbDriverService implements UsbDriverListener {
       return;
     }
     if (this.started) {
-      console.info(`${TAG} 服务已启动`);
+      Logger.info('UsbDriverService', `${TAG} 服务已启动`);
       return;
     }
 
@@ -229,7 +230,7 @@ export class UsbDriverService implements UsbDriverListener {
       return;
     }
 
-    console.info(`${TAG} 启动 USB 驱动服务`);
+    Logger.info('UsbDriverService', `${TAG} 启动 USB 驱动服务`);
     
     // 订阅 USB 设备插拔事件
     await this.subscribeUsbEvents(requestGeneration);
@@ -263,7 +264,7 @@ export class UsbDriverService implements UsbDriverListener {
       return;
     }
     
-    console.info(`${TAG} 启动设备重新扫描定时器，间隔 ${UsbDriverService.RESCAN_INTERVAL_MS}ms`);
+    Logger.info('UsbDriverService', `${TAG} 启动设备重新扫描定时器，间隔 ${UsbDriverService.RESCAN_INTERVAL_MS}ms`);
     this.rescanTimerId = setInterval(() => {
       this.checkAndRescanDevices(requestGeneration);
     }, UsbDriverService.RESCAN_INTERVAL_MS);
@@ -276,7 +277,7 @@ export class UsbDriverService implements UsbDriverListener {
     if (this.rescanTimerId !== null) {
       clearInterval(this.rescanTimerId);
       this.rescanTimerId = null;
-      console.info(`${TAG} 停止设备重新扫描定时器`);
+      Logger.info('UsbDriverService', `${TAG} 停止设备重新扫描定时器`);
     }
   }
   
@@ -307,7 +308,7 @@ export class UsbDriverService implements UsbDriverListener {
           const shouldReenumerate = !controller || !controller.isConnected();
           
           if (shouldReenumerate) {
-            console.info(`${TAG} 检测到设备存在但控制器已断开，准备重新枚举: ${deviceKey}`);
+            Logger.info('UsbDriverService', `${TAG} 检测到设备存在但控制器已断开，准备重新枚举: ${deviceKey}`);
             this.processedDevices.delete(deviceKey);
           }
         }
@@ -320,11 +321,11 @@ export class UsbDriverService implements UsbDriverListener {
       });
       
       if (hasUnprocessedDevices) {
-        console.info(`${TAG} 检测到未处理的设备，执行重新枚举`);
+        Logger.info('UsbDriverService', `${TAG} 检测到未处理的设备，执行重新枚举`);
         await this.enumerateDevices(requestGeneration);
       }
     } catch (err) {
-      console.error(`${TAG} 检查设备状态失败:`, err);
+      Logger.error('UsbDriverService', `${TAG} 检查设备状态失败:`, err);
     }
   }
   
@@ -346,31 +347,31 @@ export class UsbDriverService implements UsbDriverListener {
       
       commonEventManager.subscribe(subscriber, (err, data) => {
         if (err) {
-          console.error(`${TAG} USB 事件接收错误:`, err);
+          Logger.error('UsbDriverService', `${TAG} USB 事件接收错误:`, err);
           return;
         }
         if (!this.isLifecycleActive(requestGeneration)) {
           return;
         }
         
-        console.info(`${TAG} 收到 USB 事件: ${data.event}`);
+        Logger.info('UsbDriverService', `${TAG} 收到 USB 事件: ${data.event}`);
         
         if (data.event === USB_DEVICE_ATTACHED) {
           // 设备插入，延迟处理以等待系统稳定
-          console.info(`${TAG} USB 设备已插入，延迟 500ms 后枚举设备`);
+          Logger.info('UsbDriverService', `${TAG} USB 设备已插入，延迟 500ms 后枚举设备`);
           setTimeout(() => {
             this.enumerateDevices(requestGeneration);
           }, 500);
         } else if (data.event === USB_DEVICE_DETACHED) {
           // 设备拔出，检查控制器状态
-          console.info(`${TAG} USB 设备已拔出，检查控制器状态`);
+          Logger.info('UsbDriverService', `${TAG} USB 设备已拔出，检查控制器状态`);
           this.checkDetachedControllers(requestGeneration);
         }
       });
       
-      console.info(`${TAG} 已订阅 USB 设备插拔事件`);
+      Logger.info('UsbDriverService', `${TAG} 已订阅 USB 设备插拔事件`);
     } catch (err) {
-      console.error(`${TAG} 订阅 USB 事件失败:`, err);
+      Logger.error('UsbDriverService', `${TAG} 订阅 USB 事件失败:`, err);
     }
   }
   
@@ -381,9 +382,9 @@ export class UsbDriverService implements UsbDriverListener {
     if (this.usbSubscriber) {
       try {
         commonEventManager.unsubscribe(this.usbSubscriber);
-        console.info(`${TAG} 已取消订阅 USB 事件`);
+        Logger.info('UsbDriverService', `${TAG} 已取消订阅 USB 事件`);
       } catch (err) {
-        console.error(`${TAG} 取消订阅 USB 事件失败:`, err);
+        Logger.error('UsbDriverService', `${TAG} 取消订阅 USB 事件失败:`, err);
       }
       this.usbSubscriber = null;
     }
@@ -413,7 +414,7 @@ export class UsbDriverService implements UsbDriverListener {
       for (const controller of this.controllers) {
         const deviceKey = controller.getDeviceKey();
         if (!currentDeviceKeys.has(deviceKey)) {
-          console.info(`${TAG} 检测到控制器已断开: ${deviceKey}`);
+          Logger.info('UsbDriverService', `${TAG} 检测到控制器已断开: ${deviceKey}`);
           controllersToRemove.push(controller);
         }
       }
@@ -423,7 +424,7 @@ export class UsbDriverService implements UsbDriverListener {
         controller.stop();
       }
     } catch (err) {
-      console.error(`${TAG} 检查断开设备失败:`, err);
+      Logger.error('UsbDriverService', `${TAG} 检查断开设备失败:`, err);
     }
   }
   
@@ -441,7 +442,7 @@ export class UsbDriverService implements UsbDriverListener {
     }
     
     const controllerCount = this.controllers.length;
-    console.info(`${TAG} 停止 USB 驱动服务，需释放 ${controllerCount} 个控制器`);
+    Logger.info('UsbDriverService', `${TAG} 停止 USB 驱动服务，需释放 ${controllerCount} 个控制器`);
     this.started = false;
     
     // 停止定期重新扫描定时器
@@ -463,7 +464,7 @@ export class UsbDriverService implements UsbDriverListener {
     while (this.controllers.length > 0) {
       const controller = this.controllers.shift();
       if (controller) {
-        console.info(`${TAG} 释放控制器: ${controller.getName()} (VID=0x${controller.getVendorId().toString(16)}, PID=0x${controller.getProductId().toString(16)})`);
+        Logger.info('UsbDriverService', `${TAG} 释放控制器: ${controller.getName()} (VID=0x${controller.getVendorId().toString(16)}, PID=0x${controller.getProductId().toString(16)})`);
         controller.stop();
         stopPromises.push(controller.waitForStop());
         stoppedCount++;
@@ -472,14 +473,14 @@ export class UsbDriverService implements UsbDriverListener {
     this.pendingControllerStops = Promise.all(stopPromises).then((): void => {});
     
     this.processedDevices.clear();
-    console.info(`${TAG} USB 驱动服务已停止，已释放 ${stoppedCount} 个控制器的 USB 独占`);
+    Logger.info('UsbDriverService', `${TAG} USB 驱动服务已停止，已释放 ${stoppedCount} 个控制器的 USB 独占`);
     
     // 尝试触发内核 HID 驱动重新绑定。DDK 模式下跳过重绑定，避免下次
     // 启动时 ClaimInterface 竞争；待后续非 DDK 停止时再处理保留的 key。
     if (!this.ddkEnabled) {
       this.schedulePendingReset();
     } else {
-      console.info(`${TAG} DDK 模式，跳过内核 HID 驱动重绑定`);
+      Logger.info('UsbDriverService', `${TAG} DDK 模式，跳过内核 HID 驱动重绑定`);
     }
     
     this.ddkEnabled = false;
@@ -538,7 +539,7 @@ export class UsbDriverService implements UsbDriverListener {
   private resetReleasedUsbDevices(releasedKeys: Set<string>): Set<string> {
     const completedKeys: Set<string> = new Set();
     if (!usbHelper) {
-      console.warn(`${TAG} UsbHelper native 模块不可用，无法重绑定内核驱动`);
+      Logger.warn('UsbDriverService', `${TAG} UsbHelper native 模块不可用，无法重绑定内核驱动`);
       return completedKeys;
     }
     
@@ -569,7 +570,7 @@ export class UsbDriverService implements UsbDriverListener {
         try {
           // 检查权限（之前已授权，应该仍然有效）
           if (!usbManager.hasRight(device.name)) {
-            console.warn(`${TAG} 设备重置跳过（无权限）: ${device.name}`);
+            Logger.warn('UsbDriverService', `${TAG} 设备重置跳过（无权限）: ${device.name}`);
             continue;
           }
           
@@ -597,14 +598,14 @@ export class UsbDriverService implements UsbDriverListener {
           usbManager.closePipe(pipe);
           resetCount++;
           completedKeys.add(key);
-          console.info(`${TAG} USB 设备内核驱动重绑定完成: ${device.name}`);
+          Logger.info('UsbDriverService', `${TAG} USB 设备内核驱动重绑定完成: ${device.name}`);
         } catch (e) {
-          console.warn(`${TAG} USB 设备重置失败 (${device.name}):`, e);
+          Logger.warn('UsbDriverService', `${TAG} USB 设备重置失败 (${device.name}):`, e);
         }
       }
       
       if (resetCount > 0) {
-        console.info(`${TAG} 已尝试重绑定 ${resetCount} 个 USB 设备的内核 HID 驱动`);
+        Logger.info('UsbDriverService', `${TAG} 已尝试重绑定 ${resetCount} 个 USB 设备的内核 HID 驱动`);
       }
       releasedKeys.forEach((deviceKey: string): void => {
         if (!presentKeys.has(deviceKey)) {
@@ -612,7 +613,7 @@ export class UsbDriverService implements UsbDriverListener {
         }
       });
     } catch (e) {
-      console.warn(`${TAG} resetReleasedUsbDevices 异常:`, e);
+      Logger.warn('UsbDriverService', `${TAG} resetReleasedUsbDevices 异常:`, e);
     }
     return completedKeys;
   }
@@ -642,7 +643,7 @@ export class UsbDriverService implements UsbDriverListener {
 
     try {
       const devices: usbManager.USBDevice[] = usbManager.getDevices();
-      console.info(`${TAG} 发现 ${devices.length} 个 USB 设备`);
+      Logger.info('UsbDriverService', `${TAG} 发现 ${devices.length} 个 USB 设备`);
       
       for (let i: number = 0; i < devices.length; i++) {
         if (!this.isLifecycleActive(requestGeneration)) {
@@ -652,7 +653,7 @@ export class UsbDriverService implements UsbDriverListener {
         await this.handleUsbDevice(device, requestGeneration);
       }
     } catch (err) {
-      console.error(`${TAG} 枚举设备失败:`, err);
+      Logger.error('UsbDriverService', `${TAG} 枚举设备失败:`, err);
     }
   }
   
@@ -680,11 +681,11 @@ export class UsbDriverService implements UsbDriverListener {
     if (existingController) {
       if (existingController.isConnected()) {
         // 控制器仍然连接，跳过
-        console.info(`${TAG} 设备已有活跃控制器，跳过: ${deviceKey}`);
+        Logger.info('UsbDriverService', `${TAG} 设备已有活跃控制器，跳过: ${deviceKey}`);
         return;
       } else {
         // 控制器已断开；等待异步输出复位和 pipe 释放后再重建。
-        console.info(`${TAG} 检测到旧控制器已断开，等待释放后重新创建: ${deviceKey}`);
+        Logger.info('UsbDriverService', `${TAG} 检测到旧控制器已断开，等待释放后重新创建: ${deviceKey}`);
         existingController.stop();
         await existingController.waitForStop();
         if (!this.isLifecycleActive(requestGeneration)) return;
@@ -696,13 +697,13 @@ export class UsbDriverService implements UsbDriverListener {
       return;
     }
     
-    console.info(`${TAG} 检测到可驱动的设备: ${device.name} (VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)})`);
+    Logger.info('UsbDriverService', `${TAG} 检测到可驱动的设备: ${device.name} (VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)})`);
     
     // 检查权限
     const hasPermission = usbManager.hasRight(device.name);
     
     if (!hasPermission) {
-      console.info(`${TAG} 请求 USB 设备权限: ${device.name}`);
+      Logger.info('UsbDriverService', `${TAG} 请求 USB 设备权限: ${device.name}`);
       
       if (this.stateListener) {
         this.stateListener.onUsbPermissionPromptStarting();
@@ -720,13 +721,13 @@ export class UsbDriverService implements UsbDriverListener {
         }
         
         if (!granted) {
-          console.warn(`${TAG} 用户拒绝了 USB 权限: ${device.name}`);
+          Logger.warn('UsbDriverService', `${TAG} 用户拒绝了 USB 权限: ${device.name}`);
           // 标记为已处理，避免 rescan 反复弹出权限对话框
           this.processedDevices.add(deviceKey);
           return;
         }
       } catch (err) {
-        console.error(`${TAG} 请求权限失败:`, err);
+        Logger.error('UsbDriverService', `${TAG} 请求权限失败:`, err);
         if (this.stateListener) {
           this.stateListener.onUsbPermissionPromptCompleted();
         }
@@ -736,7 +737,7 @@ export class UsbDriverService implements UsbDriverListener {
     
     // 异步操作后检查服务是否已停止（权限弹窗期间用户可能退出）
     if (!this.isLifecycleActive(requestGeneration)) {
-      console.info(`${TAG} 服务已停止，放弃处理设备: ${device.name}`);
+      Logger.info('UsbDriverService', `${TAG} 服务已停止，放弃处理设备: ${device.name}`);
       return;
     }
 
@@ -751,9 +752,9 @@ export class UsbDriverService implements UsbDriverListener {
     let pipe: usbManager.USBDevicePipe;
     try {
       pipe = usbManager.connectDevice(device);
-      console.info(`${TAG} 成功连接设备: ${device.name}`);
+      Logger.info('UsbDriverService', `${TAG} 成功连接设备: ${device.name}`);
     } catch (err) {
-      console.error(`${TAG} 连接设备失败:`, err);
+      Logger.error('UsbDriverService', `${TAG} 连接设备失败:`, err);
       return;
     }
     
@@ -787,16 +788,16 @@ export class UsbDriverService implements UsbDriverListener {
       controller.setDeviceLocation(device.busNum, device.devAddress, device.serial || '', device.name || '');
 
       // 应用 DDK 高速轮询设置
-      console.info(`${TAG} DDK 高速轮询设置: ${inputSettings.ddkHighSpeedPolling}`);
+      Logger.info('UsbDriverService', `${TAG} DDK 高速轮询设置: ${inputSettings.ddkHighSpeedPolling}`);
       if (inputSettings.ddkHighSpeedPolling) {
         this.ddkEnabled = true;
         controller.setDdkPollingEnabled(true);
-        console.info(`${TAG} 设备 ${device.name} 已启用 DDK 高速轮询`);
+        Logger.info('UsbDriverService', `${TAG} 设备 ${device.name} 已启用 DDK 高速轮询`);
       }
       
-      console.info(`${TAG} 使用驱动 [${driverName}] 处理设备: ${device.name}, Key=${controller.getDeviceKey()}`);
+      Logger.info('UsbDriverService', `${TAG} 使用驱动 [${driverName}] 处理设备: ${device.name}, Key=${controller.getDeviceKey()}`);
     } else {
-      console.warn(`${TAG} 无法为设备创建控制器: ${device.name}`);
+      Logger.warn('UsbDriverService', `${TAG} 无法为设备创建控制器: ${device.name}`);
       usbManager.closePipe(pipe);
       return;
     }
@@ -807,7 +808,7 @@ export class UsbDriverService implements UsbDriverListener {
     
     // 启动控制器
     if (!controller.start()) {
-      console.error(`${TAG} 启动控制器失败`);
+      Logger.error('UsbDriverService', `${TAG} 启动控制器失败`);
       this.controllers.pop();
       this.processedDevices.delete(deviceKey);
       usbManager.closePipe(pipe);
@@ -816,7 +817,7 @@ export class UsbDriverService implements UsbDriverListener {
 
     this.pendingResetDeviceKeys.delete(deviceKey);
     
-    console.info(`${TAG} 控制器已启动: ID=${controller.getControllerId()}, Key=${deviceKey}`);
+    Logger.info('UsbDriverService', `${TAG} 控制器已启动: ID=${controller.getControllerId()}, Key=${deviceKey}`);
   }
   
   /**
@@ -829,7 +830,7 @@ export class UsbDriverService implements UsbDriverListener {
     keys.forEach((key: string): void => {
       listed = listed === '' ? key : `${listed}, ${key}`;
     });
-    console.info(`${TAG} 转发排除列表更新: ${listed === '' ? '(空)' : listed}`);
+    Logger.info('UsbDriverService', `${TAG} 转发排除列表更新: ${listed === '' ? '(空)' : listed}`);
   }
 
   /**
@@ -839,7 +840,7 @@ export class UsbDriverService implements UsbDriverListener {
     if (this.forwardedDeviceKeys.size > 0) {
       const deviceKey = `${device.vendorId}:${device.productId}:${device.busNum}:${device.devAddress}`;
       if (this.forwardedDeviceKeys.has(deviceKey)) {
-        console.info(`${TAG} 设备 ${deviceKey} 已由 USB/IP 转发接管，跳过本地驱动`);
+        Logger.info('UsbDriverService', `${TAG} 设备 ${deviceKey} 已由 USB/IP 转发接管，跳过本地驱动`);
         return false;
       }
     }
@@ -884,7 +885,7 @@ export class UsbDriverService implements UsbDriverListener {
         }
       }
     } catch (err) {
-      console.warn(`${TAG} listKnownUsbGamepads 异常:`, err);
+      Logger.warn('UsbDriverService', `${TAG} listKnownUsbGamepads 异常:`, err);
     }
     return result;
   }
@@ -911,7 +912,7 @@ export class UsbDriverService implements UsbDriverListener {
       return;
     }
     
-    console.info(`${TAG} 刷新 USB 设备列表`);
+    Logger.info('UsbDriverService', `${TAG} 刷新 USB 设备列表`);
     await this.enumerateDevices(requestGeneration);
   }
   
@@ -1013,7 +1014,7 @@ export class UsbDriverService implements UsbDriverListener {
       this.processedDevices.delete(deviceKey);
     }
     
-    console.info(`${TAG} 控制器已移除: ID=${controller.getControllerId()}, Key=${deviceKey}`);
+    Logger.info('UsbDriverService', `${TAG} 控制器已移除: ID=${controller.getControllerId()}, Key=${deviceKey}`);
     
     if (this.listener) {
       this.listener.deviceRemoved(controller);
@@ -1021,7 +1022,7 @@ export class UsbDriverService implements UsbDriverListener {
   }
   
   deviceAdded(controller: AbstractController): void {
-    console.info(`${TAG} 控制器已添加: ID=${controller.getControllerId()}, Key=${controller.getDeviceKey()}`);
+    Logger.info('UsbDriverService', `${TAG} 控制器已添加: ID=${controller.getControllerId()}, Key=${controller.getDeviceKey()}`);
     
     if (this.listener) {
       this.listener.deviceAdded(controller);

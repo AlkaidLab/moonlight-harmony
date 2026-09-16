@@ -8,7 +8,7 @@
  * (at your option) any later version.
  */
 
-import { router } from '@kit.ArkUI';
+import { AppNav } from '../common/AppNav';
 import { ComputerManager } from '../service/ComputerManager';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
 import { parseAddressAndPort } from '../utils/NetHelper';
@@ -17,7 +17,6 @@ import { ToastQueue } from '../utils/ToastQueue';
 /**
  * 添加电脑页面 - 清新风格
  */
-@Entry
 @Component
 struct AddPcPageV2 {
   @StorageProp('topSafeHeight') topSafeHeight: number = 56;  // 动态状态栏安全区高度
@@ -57,7 +56,7 @@ struct AddPcPageV2 {
 
     // 入场动画
     setTimeout(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: AppAnimation.Slow,
         curve: Curve.EaseOut
       }, () => {
@@ -73,6 +72,7 @@ struct AddPcPageV2 {
   }
 
   build() {
+    NavDestination() {
 
     Column() {
       // 顶部导航
@@ -103,6 +103,8 @@ struct AddPcPageV2 {
     .width('100%')
     .height('100%')
     .backgroundColor(AppColors.Background)
+    }
+    .hideTitleBar(true)
   }
 
   @Builder
@@ -118,7 +120,7 @@ struct AddPcPageV2 {
       .height(36)
       .backgroundColor(AppColors.CardBackground)
       .shadow(AppShadows.Small)
-      .onClick(() => router.back())
+      .onClick(() => AppNav.pop())
 
       Blank()
     }
@@ -183,7 +185,7 @@ struct AddPcPageV2 {
         .borderColor(AppColors.Primary)
         .onClick(() => {
           // 点击切换语录
-          animateTo({
+          this.getUIContext().animateTo({
             duration: 300,
             curve: Curve.EaseOut
           }, () => {
@@ -260,7 +262,7 @@ struct AddPcPageV2 {
         .offset({ y: this.headerOffset })
         .opacity(this.headerOpacity)
         .onClick(() => {
-          animateTo({
+          this.getUIContext().animateTo({
             duration: 200,
             curve: Curve.EaseOut
           }, () => {
@@ -283,7 +285,7 @@ struct AddPcPageV2 {
    */
   private startDianLaoBounce(): void {
     // 渐变脉冲效果
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 2000,
       curve: Curve.EaseInOut,
       iterations: -1,
@@ -297,14 +299,14 @@ struct AddPcPageV2 {
    * 点击弹跳反馈
    */
   private triggerBounce(): void {
-    animateTo({
+    this.getUIContext().animateTo({
       duration: 150,
       curve: Curve.EaseOut
     }, () => {
       this.dianLaoBounce = -6;
     });
     setTimeout(() => {
-      animateTo({
+      this.getUIContext().animateTo({
         duration: 200,
         curve: Curve.EaseInOut
       }, () => {
@@ -580,7 +582,7 @@ struct AddPcPageV2 {
       const result = await this.computerManager.addComputer(this.ipAddress.trim());
 
       if (result) {
-        animateTo({ duration: AppAnimation.Normal, curve: Curve.EaseOut }, () => {
+        this.getUIContext().animateTo({ duration: AppAnimation.Normal, curve: Curve.EaseOut }, () => {
           this.showSuccess = true;
           this.isAdding = false;
         });
@@ -591,7 +593,7 @@ struct AddPcPageV2 {
         });
 
         setTimeout(() => {
-          router.back();
+          AppNav.pop();
         }, 800);
       } else {
         this.errorMessage = '无法连接到主机，请检查地址是否正确';
@@ -602,4 +604,10 @@ struct AddPcPageV2 {
       this.isAdding = false;
     }
   }
+}
+
+
+@Builder
+export function AddPcPageV2Builder() {
+  AddPcPageV2()
 }

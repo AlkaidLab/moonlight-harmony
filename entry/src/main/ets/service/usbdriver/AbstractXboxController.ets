@@ -21,6 +21,7 @@ import { UsbDriverListener } from './UsbDriverListener';
 import { ControllerType, ControllerCapabilities, ButtonFlags, UsbDirection } from './ControllerConstants';
 import { createUsbError, UsbError } from './UsbErrorCodes';
 import { DdkUsbPoller } from './DdkUsbPoller';
+import { Logger } from '../../common/Logger';
 
 const TAG = '[USB-XBOX]';
 
@@ -65,13 +66,13 @@ export abstract class AbstractXboxController extends AbstractController {
    */
   private findEndpoints(): boolean {
     if (!this.device.configs || this.device.configs.length === 0) {
-      console.error(`${TAG} 设备没有配置`);
+      Logger.error('AbstractXboxController', `${TAG} 设备没有配置`);
       return false;
     }
     
     const config = this.device.configs[0];
     if (!config.interfaces || config.interfaces.length === 0) {
-      console.error(`${TAG} 配置没有接口`);
+      Logger.error('AbstractXboxController', `${TAG} 配置没有接口`);
       return false;
     }
     
@@ -79,7 +80,7 @@ export abstract class AbstractXboxController extends AbstractController {
     this.usbInterface = config.interfaces[0];
     
     if (!this.usbInterface.endpoints || this.usbInterface.endpoints.length === 0) {
-      console.error(`${TAG} 接口没有端点`);
+      Logger.error('AbstractXboxController', `${TAG} 接口没有端点`);
       return false;
     }
     
@@ -89,24 +90,24 @@ export abstract class AbstractXboxController extends AbstractController {
       
       if (direction === usbManager.USBRequestDirection.USB_REQUEST_DIR_FROM_DEVICE) {
         if (this.inEndpoint !== null) {
-          console.warn(`${TAG} 发现重复的输入端点`);
+          Logger.warn('AbstractXboxController', `${TAG} 发现重复的输入端点`);
           return false;
         }
         this.inEndpoint = endpoint;
-        console.info(`${TAG} 找到输入端点: address=0x${endpoint.address.toString(16)}`);
+        Logger.info('AbstractXboxController', `${TAG} 找到输入端点: address=0x${endpoint.address.toString(16)}`);
       } else if (direction === usbManager.USBRequestDirection.USB_REQUEST_DIR_TO_DEVICE) {
         if (this.outEndpoint !== null) {
-          console.warn(`${TAG} 发现重复的输出端点`);
+          Logger.warn('AbstractXboxController', `${TAG} 发现重复的输出端点`);
           return false;
         }
         this.outEndpoint = endpoint;
-        console.info(`${TAG} 找到输出端点: address=0x${endpoint.address.toString(16)}`);
+        Logger.info('AbstractXboxController', `${TAG} 找到输出端点: address=0x${endpoint.address.toString(16)}`);
       }
     }
     
     // 确保找到了必要的端点
     if (this.inEndpoint === null || this.outEndpoint === null) {
-      console.warn(`${TAG} 缺少必要的端点: in=${this.inEndpoint !== null}, out=${this.outEndpoint !== null}`);
+      Logger.warn('AbstractXboxController', `${TAG} 缺少必要的端点: in=${this.inEndpoint !== null}, out=${this.outEndpoint !== null}`);
       return false;
     }
     
@@ -124,13 +125,13 @@ export abstract class AbstractXboxController extends AbstractController {
     try {
       const result = usbManager.claimInterface(this.pipe, this.usbInterface, true);
       if (result !== 0) {
-        console.error(`${TAG} 声明接口失败: ${result}`);
+        Logger.error('AbstractXboxController', `${TAG} 声明接口失败: ${result}`);
         return false;
       }
-      console.info(`${TAG} 成功声明接口`);
+      Logger.info('AbstractXboxController', `${TAG} 成功声明接口`);
       return true;
     } catch (err) {
-      console.error(`${TAG} 声明接口异常:`, err);
+      Logger.error('AbstractXboxController', `${TAG} 声明接口异常:`, err);
       return false;
     }
   }
@@ -166,7 +167,7 @@ export abstract class AbstractXboxController extends AbstractController {
     if (this.useDdkPolling && this.ddkPoller) {
       const ret = this.ddkPoller.sendOutput(data);
       if (ret < 0) {
-        console.error(`${TAG} DDK sendOutput 失败: ret=${ret}, dataLen=${data.length}`);
+        Logger.error('AbstractXboxController', `${TAG} DDK sendOutput 失败: ret=${ret}, dataLen=${data.length}`);
       }
       return ret;
     }
@@ -181,7 +182,7 @@ export abstract class AbstractXboxController extends AbstractController {
       const result = await usbManager.bulkTransfer(this.pipe, this.outEndpoint, data, timeout);
       return typeof result === 'number' ? result : data.length;
     } catch (err) {
-      console.error(`${TAG} 批量写入失败:`, err);
+      Logger.error('AbstractXboxController', `${TAG} 批量写入失败:`, err);
       return -1;
     }
   }
@@ -190,7 +191,7 @@ export abstract class AbstractXboxController extends AbstractController {
    * 输入读取线程 (ArkTS 后备方案)
    */
   private async inputLoop(): Promise<void> {
-    console.info(`${TAG} 输入循环启动`);
+    Logger.info('AbstractXboxController', `${TAG} 输入循环启动`);
     
     // 初始化完成，标记就绪并通知
     this.notifyDeviceAdded();
@@ -213,7 +214,7 @@ export abstract class AbstractXboxController extends AbstractController {
         if (buffer && buffer.length > 0) {
           // 读取成功 — 如果正在恢复，重置状态
           if (recovering) {
-            console.info(`${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
+            Logger.info('AbstractXboxController', `${TAG} 设备已恢复，累计错误 ${consecutiveErrors} 次`);
             consecutiveErrors = 0;
             recovering = false;
           }
@@ -236,12 +237,12 @@ export abstract class AbstractXboxController extends AbstractController {
           
           if (consecutiveErrors >= 3 && !recovering) {
             recovering = true;
-            console.warn(`${TAG} 连续 ${consecutiveErrors} 次设备错误 (code=${errorCode})，尝试恢复: ${err}`);
+            Logger.warn('AbstractXboxController', `${TAG} 连续 ${consecutiveErrors} 次设备错误 (code=${errorCode})，尝试恢复: ${err}`);
           }
           
           // 超过恢复上限 → 归零输入并放弃
           if (consecutiveErrors >= MAX_RECOVERY_ERRORS) {
-            console.error(`${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
+            Logger.error('AbstractXboxController', `${TAG} 连续 ${consecutiveErrors} 次错误，恢复超时，停止控制器`);
             this.buttonFlags = 0;
             this.leftStickX = 0;
             this.leftStickY = 0;
@@ -260,11 +261,11 @@ export abstract class AbstractXboxController extends AbstractController {
       }
     }
     
-    console.info(`${TAG} 输入循环结束`);
+    Logger.info('AbstractXboxController', `${TAG} 输入循环结束`);
     
     // 根据错误类型决定是否通知设备移除
     if (!this.stopped) {
-      console.warn(`${TAG} 由于设备断开/IO错误，自动停止控制器`);
+      Logger.warn('AbstractXboxController', `${TAG} 由于设备断开/IO错误，自动停止控制器`);
       this.stop();
     }
   }
@@ -273,36 +274,36 @@ export abstract class AbstractXboxController extends AbstractController {
    * 启动控制器
    */
   start(): boolean {
-    console.info(`${TAG} 启动控制器: VID=0x${this.vendorId.toString(16)}, PID=0x${this.productId.toString(16)}, DDK=${this.ddkPollingEnabled}`);
+    Logger.info('AbstractXboxController', `${TAG} 启动控制器: VID=0x${this.vendorId.toString(16)}, PID=0x${this.productId.toString(16)}, DDK=${this.ddkPollingEnabled}`);
     this.markInitializing();
 
     // 查找端点
     if (!this.findEndpoints()) {
-      console.error(`${TAG} 查找端点失败`);
+      Logger.error('AbstractXboxController', `${TAG} 查找端点失败`);
       return false;
     }
 
     // ====== 优先尝试 DDK 路径 (绕过 usbManager IPC 瓶颈) ======
-    console.info(`${TAG} DDK 条件: enabled=${this.ddkPollingEnabled}, available=${DdkUsbPoller.isAvailable()}, inEp=${this.inEndpoint !== null}`);
+    Logger.info('AbstractXboxController', `${TAG} DDK 条件: enabled=${this.ddkPollingEnabled}, available=${DdkUsbPoller.isAvailable()}, inEp=${this.inEndpoint !== null}`);
     if (this.ddkPollingEnabled && DdkUsbPoller.isAvailable() && this.inEndpoint) {
       const ddkStarted = this.tryDdkPath();
       if (ddkStarted) {
         return true;
       }
-      console.warn(`${TAG} DDK 路径失败，回退到 usbManager 路径`);
+      Logger.warn('AbstractXboxController', `${TAG} DDK 路径失败，回退到 usbManager 路径`);
     }
 
     // ====== 回退: usbManager 路径 ======
 
     // 声明接口
     if (!this.claimInterface()) {
-      console.error(`${TAG} 声明接口失败`);
+      Logger.error('AbstractXboxController', `${TAG} 声明接口失败`);
       return false;
     }
 
     // 执行初始化
     if (!this.doInit()) {
-      console.error(`${TAG} 初始化失败`);
+      Logger.error('AbstractXboxController', `${TAG} 初始化失败`);
       return false;
     }
 
@@ -323,12 +324,12 @@ export abstract class AbstractXboxController extends AbstractController {
    * @returns 是否成功
    */
   private tryDdkPath(): boolean {
-    console.info(`${TAG} 尝试 DDK 路径...`);
+    Logger.info('AbstractXboxController', `${TAG} 尝试 DDK 路径...`);
 
     // Step 1: 初始化 DDK
     const initResult = DdkUsbPoller.init();
     if (initResult.code !== 0) {
-      console.warn(`${TAG} DDK init 失败: ${initResult.error}`);
+      Logger.warn('AbstractXboxController', `${TAG} DDK init 失败: ${initResult.error}`);
       return false;
     }
 
@@ -341,7 +342,7 @@ export abstract class AbstractXboxController extends AbstractController {
       ddkDeviceId = findResult.deviceId;
     } else {
       // 方式 B: 从 busNum/devAddress 构造 deviceId
-      console.info(`${TAG} GetDevices 未找到设备，尝试 makeDeviceId...`);
+      Logger.info('AbstractXboxController', `${TAG} GetDevices 未找到设备，尝试 makeDeviceId...`);
       const makeResult = DdkUsbPoller.makeDeviceId(this.device.busNum, this.device.devAddress);
       if (makeResult.found && makeResult.deviceId !== undefined) {
         ddkDeviceId = makeResult.deviceId;
@@ -349,7 +350,7 @@ export abstract class AbstractXboxController extends AbstractController {
     }
 
     if (ddkDeviceId === undefined) {
-      console.warn(`${TAG} DDK 无法获取 deviceId`);
+      Logger.warn('AbstractXboxController', `${TAG} DDK 无法获取 deviceId`);
       return false;  // pipe 未关闭，无需恢复
     }
     const ifaceIndex = this.usbInterface?.id ?? 0;
@@ -357,15 +358,15 @@ export abstract class AbstractXboxController extends AbstractController {
     const outEp = this.outEndpoint?.address ?? 0;
     const maxPkt = this.inEndpoint!.maxPacketSize || 64;
 
-    console.info(`${TAG} DDK 设备已匹配: deviceId=${ddkDeviceId}, iface=${ifaceIndex}, inEp=0x${inEp.toString(16)}, outEp=0x${outEp.toString(16)}`);
+    Logger.info('AbstractXboxController', `${TAG} DDK 设备已匹配: deviceId=${ddkDeviceId}, iface=${ifaceIndex}, inEp=0x${inEp.toString(16)}, outEp=0x${outEp.toString(16)}`);
 
     // Step 3: 关闭 usbManager 管道 (DDK 无法在 usbManager 已连接的设备上 ClaimInterface)
     if (this.pipe) {
-      console.info(`${TAG} 关闭 usbManager 管道以释放设备给 DDK...`);
+      Logger.info('AbstractXboxController', `${TAG} 关闭 usbManager 管道以释放设备给 DDK...`);
       try {
         usbManager.closePipe(this.pipe);
       } catch (err) {
-        console.warn(`${TAG} closePipe 异常: ${err}`);
+        Logger.warn('AbstractXboxController', `${TAG} closePipe 异常: ${err}`);
       }
       this.pipe = null;
     }
@@ -393,7 +394,7 @@ export abstract class AbstractXboxController extends AbstractController {
         // -2 = 设备已恢复，输入将自动恢复
         // 正值 = 致命错误（恢复超时或非 IO 错误），停止控制器
         if (errorCode === -1) {
-          console.warn(`${TAG} DDK 设备暂时丢失，释放所有输入`);
+          Logger.warn('AbstractXboxController', `${TAG} DDK 设备暂时丢失，释放所有输入`);
           this.buttonFlags = 0;
           this.leftStickX = 0;
           this.leftStickY = 0;
@@ -406,18 +407,18 @@ export abstract class AbstractXboxController extends AbstractController {
         }
         
         if (errorCode === -2) {
-          console.info(`${TAG} DDK 设备已恢复，输入将自动恢复`);
+          Logger.info('AbstractXboxController', `${TAG} DDK 设备已恢复，输入将自动恢复`);
           return;
         }
         
-        console.error(`${TAG} DDK 轮询致命错误: ${errorCode}, 停止控制器`);
+        Logger.error('AbstractXboxController', `${TAG} DDK 轮询致命错误: ${errorCode}, 停止控制器`);
         this.stop();
       },
       100  // 100ms timeout per read
     );
 
     if (!started) {
-      console.warn(`${TAG} DDK startPoller 失败`);
+      Logger.warn('AbstractXboxController', `${TAG} DDK startPoller 失败`);
       this.ddkPoller = null;
       // 恢复 usbManager 管道 (DDK 失败后需要回退到 usbManager)
       this.reconnectPipe();
@@ -430,14 +431,14 @@ export abstract class AbstractXboxController extends AbstractController {
     this.ddkActive = true;
 
     if (!this.doInit()) {
-      console.warn(`${TAG} DDK 路径下 doInit 失败`);
+      Logger.warn('AbstractXboxController', `${TAG} DDK 路径下 doInit 失败`);
       // doInit 失败不一定要终止 — 某些控制器不需要 init
     }
 
     // DDK 已启动，标记就绪并通知
     this.notifyDeviceAdded();
 
-    console.info(`${TAG} 控制器已启动 (DDK 高速轮询)`);
+    Logger.info('AbstractXboxController', `${TAG} 控制器已启动 (DDK 高速轮询)`);
     return true;
   }
   
@@ -449,7 +450,7 @@ export abstract class AbstractXboxController extends AbstractController {
       return;
     }
     
-    console.info(`${TAG} 停止控制器`);
+    Logger.info('AbstractXboxController', `${TAG} 停止控制器`);
     this.stopped = true;
     this.markStopped();
 
@@ -469,7 +470,7 @@ export abstract class AbstractXboxController extends AbstractController {
       try {
         usbManager.releaseInterface(this.pipe, this.usbInterface);
       } catch (err) {
-        console.error(`${TAG} 释放接口失败:`, err);
+        Logger.error('AbstractXboxController', `${TAG} 释放接口失败:`, err);
       }
     }
     
@@ -478,7 +479,7 @@ export abstract class AbstractXboxController extends AbstractController {
       try {
         usbManager.closePipe(this.pipe);
       } catch (err) {
-        console.error(`${TAG} 关闭管道失败:`, err);
+        Logger.error('AbstractXboxController', `${TAG} 关闭管道失败:`, err);
       }
       this.pipe = null;
     }
@@ -500,11 +501,11 @@ export abstract class AbstractXboxController extends AbstractController {
   private reconnectPipe(): void {
     if (this.pipe) return; // 已有管道
     try {
-      console.info(`${TAG} 恢复 usbManager 管道...`);
+      Logger.info('AbstractXboxController', `${TAG} 恢复 usbManager 管道...`);
       this.pipe = usbManager.connectDevice(this.device);
-      console.info(`${TAG} usbManager 管道已恢复`);
+      Logger.info('AbstractXboxController', `${TAG} usbManager 管道已恢复`);
     } catch (err) {
-      console.error(`${TAG} 恢复管道失败: ${err}`);
+      Logger.error('AbstractXboxController', `${TAG} 恢复管道失败: ${err}`);
     }
   }
   

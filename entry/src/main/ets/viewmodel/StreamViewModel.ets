@@ -21,6 +21,7 @@ import { OverlayConfig, getDefaultOverlayConfig, SnapPosition, calculateSnapPosi
 import { CONTROLLER_TYPE_XBOX, CONN_STATUS_POOR, CONN_STATUS_OKAY } from '../service/streaming/MoonBridge';
 import { common } from '@kit.AbilityKit';
 import { inputDevice } from '@kit.InputKit';
+import { Logger } from '../common/Logger';
 
 /**
  * 串流连接状态
@@ -268,9 +269,9 @@ export class StreamViewModel {
       this.touchMode = hasKeyboardOrMouse ? TouchMode.TRACKPAD : TouchMode.DIRECT;
     }
     
-    console.info(`StreamViewModel: 配置加载完成 - ${this.streamConfig.width}x${this.streamConfig.height}@${this.streamConfig.fps}fps`);
-    console.info(`StreamViewModel: 触摸模式=${this.touchMode}`);
-    console.info(`StreamViewModel: 性能覆盖层=${this.showOverlay}, 虚拟控制器=${this.showController}`);
+    Logger.info('StreamViewModel', `StreamViewModel: 配置加载完成 - ${this.streamConfig.width}x${this.streamConfig.height}@${this.streamConfig.fps}fps`);
+    Logger.info('StreamViewModel', `StreamViewModel: 触摸模式=${this.touchMode}`);
+    Logger.info('StreamViewModel', `StreamViewModel: 性能覆盖层=${this.showOverlay}, 虚拟控制器=${this.showController}`);
     
     // 配置串流游戏震动；100% 以上作为外接手柄 app 侧放大，设备马达仍按 100% 封顶。
     GamepadManager.getInstance().setGameVibration(
@@ -311,19 +312,19 @@ export class StreamViewModel {
       
       // 设置 HDR 状态回调，当 drSetup 检测到实际 HDR 状态时更新 UI
       this.streamingSession.setHdrStateCallback((isHdr: boolean) => {
-        console.info(`StreamViewModel: HDR 状态回调 actualHdr=${isHdr}`);
+        Logger.info('StreamViewModel', `StreamViewModel: HDR 状态回调 actualHdr=${isHdr}`);
         this.actualHdr = isHdr;
       });
 
       // 设置编解码器状态回调，当 drSetup 检测到实际编解码器时更新 UI
       this.streamingSession.setCodecStateCallback((codec: string) => {
-        console.info(`StreamViewModel: 编解码器状态回调 actualCodec=${codec}`);
+        Logger.info('StreamViewModel', `StreamViewModel: 编解码器状态回调 actualCodec=${codec}`);
         this.actualCodec = codec;
       });
       
       // 设置连接终止回调
       this.streamingSession.setConnectionTerminatedCallback((errorCode: number) => {
-        console.info(`StreamViewModel: 连接终止回调 errorCode=${errorCode}`);
+        Logger.info('StreamViewModel', `StreamViewModel: 连接终止回调 errorCode=${errorCode}`);
         this.stopFirstFrameWatcher();
         this.connectionState = StreamConnectionState.DISCONNECTED;
         if (this.connectionTerminatedCallback) {
@@ -333,7 +334,7 @@ export class StreamViewModel {
       
       // 设置分辨率变化回调（服务端分辨率/旋转同步）
       this.streamingSession.setResolutionChangedCallback((width: number, height: number) => {
-        console.info(`StreamViewModel: 服务端分辨率变化 ${width}x${height}`);
+        Logger.info('StreamViewModel', `StreamViewModel: 服务端分辨率变化 ${width}x${height}`);
         // 更新串流分辨率
         this.displayInfo.streamWidth = width;
         this.displayInfo.streamHeight = height;
@@ -358,7 +359,7 @@ export class StreamViewModel {
             this.poorWarnTimer = setTimeout(() => {
               this.poorWarnTimer = -1;
               AppStorage.setOrCreate('connectionPoor', true);
-              console.info('StreamViewModel: connectionPoor -> true (debounced show)');
+              Logger.info('StreamViewModel', 'StreamViewModel: connectionPoor -> true (debounced show)');
             }, StreamViewModel.POOR_WARN_SHOW_DELAY_MS);
           }
         } else {
@@ -368,7 +369,7 @@ export class StreamViewModel {
           }
           if (AppStorage.get<boolean>('connectionPoor') ?? false) {
             AppStorage.setOrCreate('connectionPoor', false);
-            console.info('StreamViewModel: connectionPoor -> false (immediate clear)');
+            Logger.info('StreamViewModel', 'StreamViewModel: connectionPoor -> false (immediate clear)');
           }
         }
         if (this.connectionStatusCallback) {
@@ -417,11 +418,11 @@ export class StreamViewModel {
       if (effectiveConfig) {
         // 更新关键配置项以确保 UI 显示正确
         if (this.streamConfig!.hdr !== effectiveConfig.hdr) {
-          console.info(`StreamViewModel: HDR 状态同步 ${this.streamConfig!.hdr} -> ${effectiveConfig.hdr}`);
+          Logger.info('StreamViewModel', `StreamViewModel: HDR 状态同步 ${this.streamConfig!.hdr} -> ${effectiveConfig.hdr}`);
           this.streamConfig!.hdr = effectiveConfig.hdr;
         }
         if (this.streamConfig!.codec !== effectiveConfig.codec) {
-          console.info(`StreamViewModel: Codec 状态同步 ${this.streamConfig!.codec} -> ${effectiveConfig.codec}`);
+          Logger.info('StreamViewModel', `StreamViewModel: Codec 状态同步 ${this.streamConfig!.codec} -> ${effectiveConfig.codec}`);
           this.streamConfig!.codec = effectiveConfig.codec;
         }
       }
@@ -441,7 +442,7 @@ export class StreamViewModel {
       if (abrEnabled) {
         const abrMode = await PreferencesUtil.get<string>(SettingsKeys.ABR_MODE, 'balanced');
         await this.startAbr(abrMode);
-        console.info(`StreamViewModel: 智能码率已自动启动 (mode=${abrMode})`);
+        Logger.info('StreamViewModel', `StreamViewModel: 智能码率已自动启动 (mode=${abrMode})`);
       }
       
     } catch (err) {
@@ -593,7 +594,7 @@ export class StreamViewModel {
     this.overlayState.x = snapPos.x;
     this.overlayState.y = snapPos.y;
     
-    console.info(`StreamViewModel: 覆盖层初始位置 (${this.overlayState.x}, ${this.overlayState.y})`);
+    Logger.info('StreamViewModel', `StreamViewModel: 覆盖层初始位置 (${this.overlayState.x}, ${this.overlayState.y})`);
   }
   
   /**
@@ -604,9 +605,9 @@ export class StreamViewModel {
     this.streamingSession?.setDs5TouchpadEnabled(mode === TouchMode.DS5_TOUCHPAD);
     // 持久化用户在菜单中选择的触摸模式，断开重连后恢复
     PreferencesUtil.put(SettingsKeys.LAST_TOUCH_MODE, mode as string).catch((err: Error) => {
-      console.warn(`StreamViewModel: 保存触摸模式失败: ${err.message}`);
+      Logger.warn('StreamViewModel', `StreamViewModel: 保存触摸模式失败: ${err.message}`);
     });
-    console.info(`StreamViewModel: 触摸模式切换为 ${mode}`);
+    Logger.info('StreamViewModel', `StreamViewModel: 触摸模式切换为 ${mode}`);
   }
 
   isDs5TouchpadSupported(): boolean {
@@ -628,7 +629,7 @@ export class StreamViewModel {
         }
       }
     } catch (e) {
-      console.warn(`StreamViewModel: 检测输入设备失败: ${JSON.stringify(e)}`);
+      Logger.warn('StreamViewModel', `StreamViewModel: 检测输入设备失败: ${JSON.stringify(e)}`);
     }
     return false;
   }
@@ -638,7 +639,7 @@ export class StreamViewModel {
    */
   toggleOverlay(): void {
     this.showOverlay = !this.showOverlay;
-    console.info(`StreamViewModel: 性能覆盖层 ${this.showOverlay ? '显示' : '隐藏'}`);
+    Logger.info('StreamViewModel', `StreamViewModel: 性能覆盖层 ${this.showOverlay ? '显示' : '隐藏'}`);
   }
   
   /**
@@ -646,7 +647,7 @@ export class StreamViewModel {
    */
   toggleController(): void {
     this.showController = !this.showController;
-    console.info(`StreamViewModel: 虚拟控制器 ${this.showController ? '显示' : '隐藏'}`);
+    Logger.info('StreamViewModel', `StreamViewModel: 虚拟控制器 ${this.showController ? '显示' : '隐藏'}`);
   }
   
   /**
@@ -666,14 +667,14 @@ export class StreamViewModel {
       if (this.streamingSession) {
         const success = await this.streamingSession.quitApp();
         if (success) {
-          console.info('远程游戏已退出');
+          Logger.info('StreamViewModel', '远程游戏已退出');
         } else {
-          console.warn('退出远程游戏失败，但已断开连接');
+          Logger.warn('StreamViewModel', '退出远程游戏失败，但已断开连接');
         }
         this.streamingSession = null;
       }
     } catch (err) {
-      console.error('退出游戏失败:', err);
+      Logger.error('StreamViewModel', '退出游戏失败:', err);
     }
     
     this.connectionState = StreamConnectionState.DISCONNECTED;
@@ -745,7 +746,7 @@ export class StreamViewModel {
   setServerInitiatedRotation(value: boolean): void {
     this.isServerInitiatedRotation = value;
     if (value) {
-      console.info('StreamViewModel: 标记为服务器触发的旋转');
+      Logger.info('StreamViewModel', 'StreamViewModel: 标记为服务器触发的旋转');
     }
   }
   
@@ -758,20 +759,20 @@ export class StreamViewModel {
   handleRotationChange(isLandscape: boolean): void {
     // 检查是否启用了屏幕旋转同步
     if (!this.displaySettings?.rotableScreen) {
-      console.info('StreamViewModel: 屏幕旋转同步未启用');
+      Logger.info('StreamViewModel', 'StreamViewModel: 屏幕旋转同步未启用');
       return;
     }
     
     // 检查是否是服务器触发的旋转，避免循环通知
     if (this.isServerInitiatedRotation) {
-      console.info('StreamViewModel: 跳过服务器触发的旋转');
+      Logger.info('StreamViewModel', 'StreamViewModel: 跳过服务器触发的旋转');
       this.isServerInitiatedRotation = false;
       return;
     }
     
     // 检查连接状态
     if (!this.isConnected || !this.streamingSession) {
-      console.warn('StreamViewModel: handleRotationChange - 连接未就绪');
+      Logger.warn('StreamViewModel', 'StreamViewModel: handleRotationChange - 连接未就绪');
       return;
     }
     
@@ -780,7 +781,7 @@ export class StreamViewModel {
     // 首次调用，记录当前方向
     if (this.lastRotation === -1) {
       this.lastRotation = currentOrientation;
-      console.info(`StreamViewModel: 初始化旋转方向=${currentOrientation}`);
+      Logger.info('StreamViewModel', `StreamViewModel: 初始化旋转方向=${currentOrientation}`);
       return;
     }
     
@@ -793,7 +794,7 @@ export class StreamViewModel {
     this.lastRotation = currentOrientation;
     const angle = isLandscape ? 0 : 90;
     
-    console.info(`StreamViewModel: 检测到旋转变化 isLandscape=${isLandscape}, angle=${angle}`);
+    Logger.info('StreamViewModel', `StreamViewModel: 检测到旋转变化 isLandscape=${isLandscape}, angle=${angle}`);
     
     // 取消之前待处理的旋转请求（防抖）
     if (this.pendingRotationTimeoutId !== -1) {
@@ -802,17 +803,17 @@ export class StreamViewModel {
     
     // 延迟发送旋转请求（3秒防抖）
     this.pendingRotationTimeoutId = setTimeout(async () => {
-      console.info(`StreamViewModel: 通知服务器旋转，angle=${angle}`);
+      Logger.info('StreamViewModel', `StreamViewModel: 通知服务器旋转，angle=${angle}`);
       
       try {
         const success = await this.streamingSession?.rotateDisplay(angle);
         if (success) {
-          console.info(`StreamViewModel: 服务器旋转成功，角度=${angle}`);
+          Logger.info('StreamViewModel', `StreamViewModel: 服务器旋转成功，角度=${angle}`);
         } else {
-          console.warn('StreamViewModel: 服务器旋转失败');
+          Logger.warn('StreamViewModel', 'StreamViewModel: 服务器旋转失败');
         }
       } catch (err) {
-        console.error(`StreamViewModel: 旋转请求异常: ${err}`);
+        Logger.error('StreamViewModel', `StreamViewModel: 旋转请求异常: ${err}`);
       }
       
       this.pendingRotationTimeoutId = -1;
@@ -835,14 +836,14 @@ export class StreamViewModel {
     
     const serverIsLandscape = serverWidth > serverHeight;
     
-    console.info(`StreamViewModel: checkAndSyncOrientation - 客户端=${clientIsLandscape ? '横屏' : '竖屏'}, ` +
+    Logger.info('StreamViewModel', `StreamViewModel: checkAndSyncOrientation - 客户端=${clientIsLandscape ? '横屏' : '竖屏'}, ` +
       `服务端=${serverWidth}x${serverHeight}(${serverIsLandscape ? '横屏' : '竖屏'})`);
     
     if (clientIsLandscape !== serverIsLandscape) {
-      console.info('StreamViewModel: 方向不匹配，通知服务器同步');
+      Logger.info('StreamViewModel', 'StreamViewModel: 方向不匹配，通知服务器同步');
       this.handleRotationChange(clientIsLandscape);
     } else {
-      console.info('StreamViewModel: 方向匹配');
+      Logger.info('StreamViewModel', 'StreamViewModel: 方向匹配');
       // 初始化上次旋转方向
       if (this.lastRotation === -1) {
         this.lastRotation = clientIsLandscape ? 1 : 0;
@@ -875,19 +876,19 @@ export class StreamViewModel {
    * 当应用从后台切回前台时调用此方法
    */
   resumeFromBackground(): void {
-    console.info('[StreamViewModel] 从后台恢复串流');
+    Logger.info('StreamViewModel', '[StreamViewModel] 从后台恢复串流');
     
     if (!this.streamingSession) {
-      console.warn('[StreamViewModel] 没有活跃的串流会话，无需恢复');
+      Logger.warn('StreamViewModel', '[StreamViewModel] 没有活跃的串流会话，无需恢复');
       return;
     }
     
     // 通知 native 层恢复解码和渲染
     try {
       this.streamingSession.resumeDecoder();
-      console.info('[StreamViewModel] 解码器恢复成功');
+      Logger.info('StreamViewModel', '[StreamViewModel] 解码器恢复成功');
     } catch (err) {
-      console.error('[StreamViewModel] 恢复解码器失败:', err);
+      Logger.error('StreamViewModel', '[StreamViewModel] 恢复解码器失败:', err);
     }
   }
   
