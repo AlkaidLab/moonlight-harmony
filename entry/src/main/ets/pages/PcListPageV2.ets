@@ -526,9 +526,9 @@ struct PcListPageV2 {
     .onShown(() => this.onPageShow())
     .onHidden(() => this.onPageHide())
     .onBackPressed(() => {
-      // 根页面：返回键退出应用（保持旧 router.replaceUrl 首页语义）
+      // 根页面：返回键退到后台（router 时代首页按返回的系统默认行为，进程保活可秒恢复）
       if (AppNav.stack.size() <= 1) {
-        (UI.get().getHostContext() as common.UIAbilityContext).terminateSelf();
+        (UI.get().getHostContext() as common.UIAbilityContext).moveAbilityToBackground();
         return true;
       }
       return false;
