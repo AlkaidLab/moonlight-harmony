@@ -5,6 +5,9 @@
 #   注意：动态 import 的导出名不会被改写，工程中不得新增按名访问导出的动态 import，
 #   否则需为对应导出名追加 -keep-global-name）
 -enable-export-obfuscation
+# 已知坑（issue #137）：toplevel/export 混淆会改名 export namespace 的成员声明，
+# 但跨文件经 namespace 属性访问的调用点（含别名导入）不被改写 → 运行时 undefined。
+# 全工程禁止 export namespace，跨模块桥接一律用普通模块级导出（引用方由 arkg 统一改写）。
 # -remove-comments: 移除注释
 -remove-comments
 

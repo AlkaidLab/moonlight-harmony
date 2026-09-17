@@ -33,7 +33,7 @@ import { AdaptiveBitrateService } from './AdaptiveBitrateService';
 import { NetworkBoostService } from '../network/NetworkBoostService';
 import { BandwidthProbeService } from '../network/BandwidthProbeService';
 import { Ds5TouchpadInputSink } from '../input/Ds5TouchpadGestureHandler';
-import { MoonBridge as ClipboardNativeBridge } from '../jni/ClipboardBridge';
+import { onClipboardDataReceived } from '../jni/ClipboardBridge';
 import { sampleDisplayBrightness, MeasuredBrightnessProfile } from './BrightnessSampler';
 import {
   MoonBridge,
@@ -1559,7 +1559,13 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         }
       },
       clipboardData: (kind: number, token: number, payload: Uint8Array): void => {
-        ClipboardNativeBridge.onClipboardDataReceived(kind, token, payload);
+        // clipboardData 是独立 TSFN；回调内未捕获的异常会被系统判为 Js Error
+        // 直接杀进程（issue #137），这里必须兜底
+        try {
+          onClipboardDataReceived(kind, token, payload);
+        } catch (error) {
+          Logger.error('StreamingSession', `clipboardData 回调异常: ${error}`);
+        }
       },
       setHdrMode: (enabled: boolean, hasMetadata: boolean, maxDisplayLuminance: number,
         minDisplayLuminance: number, maxContentLightLevel: number, maxFrameAverageLightLevel: number,
