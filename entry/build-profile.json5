@@ -13,7 +13,9 @@
       "arkOptions": {
         "obfuscation": {
           "ruleOptions": {
-            "enable": true,
+            // 本项目为开源，混淆收益趋零（体积/性能收益仅及 native 库的零头，热路径在 C++），
+            // 且 release-only 断裂难排查（issue #137）。重开前先读 obfuscation-rules.txt 的坑。
+            "enable": false,
             "files": ["obfuscation-rules.txt"]
           }
         }

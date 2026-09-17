@@ -15,7 +15,7 @@
 |-----|-------------|-----------|
 | 配置类 | `PreferenceConfiguration` | `ClipboardSyncConfig` |
 | 主服务 | `ClipboardSyncManager` | `ClipboardSyncService` |
-| 桥接入口 | `MoonBridge` | `ClipboardBridge.MoonBridge` |
+| 桥接入口 | `MoonBridge` | `ClipboardBridge`（模块级导出） |
 | 系统剪贴板 | `ClipboardManager` | `@kit.BasicServicesKit` pasteboard |
 | 变化事件 | `OnPrimaryClipChangedListener` | `sysBoard.on('update', listener)` |
 | 文本写入 | `setPrimaryClip()` | `setDataSync(createData(...))` |

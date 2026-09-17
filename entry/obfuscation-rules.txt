@@ -1,14 +1,23 @@
-# Release 混淆规则（首次启用采用保守策略，详见下方注释）
+# Release 混淆规则 —— 当前已关闭（issue #137：混淆改名 export namespace 的成员声明，
+# 但跨文件调用点不改写，运行时 undefined 杀死前台串流；本项目为开源，收益趋零，
+# 随 PR #138 一并关闭）。本文件保留作为将来重开时的 checklist：
+# 在 entry/build-profile.json5 的 release obfuscation 块把 enable 改回 true 即生效。
+
 # -enable-toplevel-obfuscation: 混淆模块顶层标识符（类/函数/变量名）
 -enable-toplevel-obfuscation
 # -enable-export-obfuscation: 混淆导出名称（runtimeOnly 为空；引用方由 arkg 统一重命名。
 #   注意：动态 import 的导出名不会被改写，工程中不得新增按名访问导出的动态 import，
 #   否则需为对应导出名追加 -keep-global-name）
 -enable-export-obfuscation
+# 已知坑（issue #137）：toplevel/export 混淆会改名 export namespace 的成员声明，
+# 但跨文件经 namespace 属性访问的调用点（含别名导入）不被改写 → 运行时 undefined。
+# 重开混淆前须确认工程内无 export namespace（跨模块桥接一律用普通模块级导出，
+# 引用方由 arkg 统一改写）。
 # -remove-comments: 移除注释
 -remove-comments
 
-# 系统路由表（route_map.json）按名称在运行时反射加载页面 Builder，必须保留原名
+# 系统路由表（route_map.json）按名称在运行时反射加载页面 Builder，必须保留原名；
+# 新增页面须同步登记 buildFunction 到下面名单（debug 不混淆，漏登记只在 release 导航时崩）
 -keep-function-name
   PcListPageV2Builder
   AppListPageV2Builder
@@ -20,6 +29,8 @@
 
 # 后续增强项（需真机回归验证后再开启）：
 # -enable-property-obfuscation
-#   nativelib 通过 NAPI 按属性名调用 native 方法，开启前需 -keep-property-name 全量登记跨语言属性
+#   nativelib 通过 NAPI 按属性名调用 native 方法（callbacks.cpp 27 处 napi_get_named_property），
+#   且设置备份/HttpClient 依赖属性名的 Object.keys 逻辑；开启前需 -keep-property-name
+#   全量登记跨语言属性，不建议开启
 # -enable-filename-obfuscation
-#   route_map.json 的 pageSourceFile 按源码路径加载页面文件
+#   route_map.json 的 pageSourceFile 按源码路径加载页面文件，开启必炸

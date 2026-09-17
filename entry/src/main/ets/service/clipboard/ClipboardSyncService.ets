@@ -1,7 +1,7 @@
 import { pasteboard, BusinessError } from '@kit.BasicServicesKit'
 import { image } from '@kit.ImageKit'
 import { StringUtil } from '../../utils/StringUtil'
-import { MoonBridge } from '../jni/ClipboardBridge'
+import { setClipboardListener, sendClipboardData } from '../jni/ClipboardBridge'
 import { ClipboardBlobTransport } from './ClipboardBlobTransport'
 import {
   ClipboardSyncConfig,
@@ -137,11 +137,11 @@ export class ClipboardSyncService implements ClipboardSyncListener {
   }
 
   private registerWithMoonBridge(): void {
-    MoonBridge.setClipboardListener(this)
+    setClipboardListener(this)
   }
 
   private unregisterFromMoonBridge(): void {
-    MoonBridge.setClipboardListener(null)
+    setClipboardListener(null)
   }
 
   private async onPasteboardChanged(): Promise<void> {
@@ -318,7 +318,7 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     const frame = ClipboardWireFrame.build(kind, token, payload)
 
     try {
-      const result = MoonBridge.sendClipboardData(frame)
+      const result = sendClipboardData(frame)
       if (result !== 0) {
         logWarn(`sendClipboardData kind=${kind} size=${payload.length} rc=${result}`)
       }

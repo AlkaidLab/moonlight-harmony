@@ -105,7 +105,7 @@ Offset  Size    Field
 #### `StreamingSession.ets`
 
 - 在 native callback 类型中加入 `clipboardData`
-- 收到 native 回调后转发到 `ClipboardBridge.MoonBridge.onClipboardDataReceived(...)`
+- 收到 native 回调后转发到 `ClipboardBridge.onClipboardDataReceived(...)`
 
 #### `StreamPage.ets`
 
