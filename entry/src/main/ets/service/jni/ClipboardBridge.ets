@@ -5,9 +5,10 @@
  * through the Sunshine control stream (message type 0x5508).
  */
 
-// 不要把本模块的导出包进 export namespace：-enable-toplevel/export-obfuscation 会
-// 改名 namespace 成员声明，但不改写跨文件经 namespace 属性访问的调用点（含别名导入），
-// 运行时即为 undefined is not callable（issue #137）。跨模块桥接一律用普通模块级导出。
+// 不要把本模块的导出包进 export namespace：release 混淆（当前已关闭；若重开见
+// obfuscation-rules.txt）会改名 namespace 成员声明，但不改写跨文件经 namespace
+// 属性访问的调用点（含别名导入），运行时即为 undefined is not callable（issue #137）。
+// 跨模块桥接一律用普通模块级导出。
 import nativeLib from 'libmoonlight_nativelib.so'
 import { ClipboardSyncListener } from '../clipboard/ClipboardSyncConfig'
 import { Logger } from '../../common/Logger';
