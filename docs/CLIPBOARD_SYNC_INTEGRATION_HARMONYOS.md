@@ -137,7 +137,7 @@ sysBoard.off('update', listener)
 ### 发送路径
 
 - ArkTS 构建完整 wire frame
-- `ClipboardBridge.MoonBridge.sendClipboardData(frame)` 调用 native
+- `ClipboardBridge.sendClipboardData(frame)` 调用 native
 - native `MoonBridge_SendClipboardData(...)` 接受 `ArrayBuffer` / `TypedArray`
 - 继续调用 `LiSendClipboardData(...)`
 
@@ -146,7 +146,7 @@ sysBoard.off('update', listener)
 - `moonlight-common-c` 收到 `0x5508`
 - `ListenerCallbacks.clipboardData` 被触发
 - `callbacks.cpp` 解析 frame 后通过 `napi_threadsafe_function` 回到 ArkTS
-- `StreamingSession.ets` 把回调转发给 `ClipboardBridge.MoonBridge.onClipboardDataReceived(...)`
+- `StreamingSession.ets` 把回调转发给 `ClipboardBridge.onClipboardDataReceived(...)`
 - `ClipboardSyncService.ets` 最终消费 `kind/token/payload`
 
 ## 7. 图片同步当前策略
