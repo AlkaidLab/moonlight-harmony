@@ -1,0 +1,28 @@
+name: USB/IP protocol tests
+
+on:
+  pull_request:
+    branches: [ master, main ]
+  push:
+    branches: [ master, main ]
+
+permissions:
+  contents: read
+
+jobs:
+  usbip-protocol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build USB/IP server regression tests
+        run: |
+          g++ -std=c++17 -pthread \
+            -Inativelib/src/test/cpp/usbip_stubs -Inativelib/src/main/cpp \
+            nativelib/src/test/cpp/usbip_server_test.cpp \
+            nativelib/src/main/cpp/usbip_server.cpp -ldl \
+            -o /tmp/moonlight-usbip-server-test
+      - name: Run USB/IP server regression tests
+        run: /tmp/moonlight-usbip-server-test

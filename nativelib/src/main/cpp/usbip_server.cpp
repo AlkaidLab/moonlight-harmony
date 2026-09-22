@@ -108,6 +108,11 @@ void appendU32(std::vector<uint8_t> &out, uint32_t v) {
 uint16_t readU16(const uint8_t *p) {
     return (uint16_t(p[0]) << 8) | uint16_t(p[1]);
 }
+// USB/IP headers use network byte order, but setup[8] contains the original
+// USB setup packet. Its three 16-bit fields retain USB little-endian order.
+uint16_t readUsbU16(const uint8_t *p) {
+    return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
+}
 uint32_t readU32(const uint8_t *p) {
     return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
            (uint32_t(p[2]) << 8) | uint32_t(p[3]);
@@ -814,9 +819,9 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
                 UsbControlRequestSetup setup{};
                 setup.bmRequestType = pdu[kSetupOffset];
                 setup.bRequest = pdu[kSetupOffset + 1];
-                setup.wValue = readU16(pdu + kSetupOffset + 2);
-                setup.wIndex = readU16(pdu + kSetupOffset + 4);
-                setup.wLength = readU16(pdu + kSetupOffset + 6);
+                setup.wValue = readUsbU16(pdu + kSetupOffset + 2);
+                setup.wIndex = readUsbU16(pdu + kSetupOffset + 4);
+                setup.wLength = readUsbU16(pdu + kSetupOffset + 6);
 
                 // Class requests carry the target interface in wIndex.
                 const uint64_t handle =
@@ -833,6 +838,11 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
                     uint32_t got = setup.wLength;
                     rc = ddk_->SendControlReadRequest(handle, &setup, kControlTimeoutMs,
                                                       data, &got);
+                    if (rc != 0) {
+                        LOGW("[%{public}s] control IN request=0x%{public}02x value=0x%{public}04x "
+                             "index=0x%{public}04x length=%{public}u DDK rc=%{public}d",
+                             LOG_TAG, setup.bRequest, setup.wValue, setup.wIndex, setup.wLength, rc);
+                    }
                     actual = (rc == 0) ? static_cast<int32_t>(got) : 0;
                     if (rc == kDdkTimeout) rc = kUsbErrTimedout;
                     else if (rc != 0) rc = kUsbErrIo;
@@ -847,15 +857,22 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
                 }
                 rc = ddk_->SendControlWriteRequest(handle, &setup, kControlTimeoutMs,
                                                    data, static_cast<uint32_t>(len));
+                if (rc != 0) {
+                    LOGW("[%{public}s] control OUT request=0x%{public}02x value=0x%{public}04x "
+                         "index=0x%{public}04x length=%{public}u DDK rc=%{public}d",
+                         LOG_TAG, setup.bRequest, setup.wValue, setup.wIndex, setup.wLength, rc);
+                }
                 if (rc == kDdkTimeout) rc = kUsbErrTimedout;
                 else if (rc != 0) rc = kUsbErrIo;
                 return sendRetSubmit(seqnum, rc, rc == 0 ? len : 0);
             }
 
             // Bulk / interrupt transfer.
-            const uint8_t epAddr = static_cast<uint8_t>(endpoint & 0xFF);
-            const uint64_t handle = handleForEp(epAddr);
             const bool isIn = (direction == 1);
+            // USB/IP ep is a number; DDK and descriptor lookup need a USB
+            // endpoint address, including bit 7 for an IN transfer.
+            const uint8_t epAddr = static_cast<uint8_t>((endpoint & 0x0F) | (isIn ? 0x80 : 0));
+            const uint64_t handle = handleForEp(epAddr);
 
             if (isIn) {
                 if (pendingIn.size() >= kMaxPendingIn) {
@@ -863,7 +880,7 @@ void Server::PumpUrbLoop(int clientFd, const DeviceInfo &device,
                 }
                 PendingIn p;
                 p.seqnum = seqnum;
-                p.endpoint = endpoint;
+                p.endpoint = epAddr;
                 p.handle = handle;
                 p.length = transferLength;
                 pendingIn.push_back(std::move(p));
