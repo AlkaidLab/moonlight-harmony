@@ -71,6 +71,9 @@ import { SunshineClipboardBlobTransport } from '../service/clipboard/SunshineCli
 import { ThreeFingerImeGestureHandler, ThreeFingerImeGestureResult } from '../service/input/ThreeFingerImeGestureHandler';
 import { Logger } from '../common/Logger';
 
+/** 串流根 Stack 的焦点 key（.id()），供 requestStreamFocus 拉回键盘焦点 */
+const STREAM_FOCUS_KEY = 'streamKeyRoot';
+
 /** MouseEmulationCallback 的具体实现，桥接 MoonBridge 鼠标 API */
 class MoonBridgeMouseCallback implements MouseEmulationCallback {
   sendMouseMove(deltaX: number, deltaY: number): void {
@@ -362,7 +365,9 @@ struct StreamPage {
         this.inputHandler.stopMouseInterceptor();
         this.stopMouseKeepAlive();
       } else {
-        // 焦点恢复：对账仍被物理按住的按键（补发差量事件），再恢复鼠标
+        // 焦点恢复：对账仍被物理按住的按键（补发差量事件），再恢复鼠标；
+        // 焦点可能已被系统弹窗/切走时重置，重新拉回本页以保证键盘可达
+        this.requestStreamFocus();
         this.inputHandler.reconcileKeyState();
         if (!this.mouseInputSuspended) {
           this.resumeMouseInterceptor();
@@ -480,6 +485,8 @@ struct StreamPage {
         // IME 真正关闭时同步释放锁定状态
         if (!visible) {
           this.imePanelLocked = false;
+          // IME 收起会让焦点悬空，延迟等其 teardown 完成后拉回本页
+          setTimeout(() => this.requestStreamFocus(), 120);
         }
       },
       onKeyboardHeightChanged: (height: number) => {
@@ -1024,6 +1031,8 @@ struct StreamPage {
 
   private handleGameMenuDismissed(): void {
     this.gameMenuDialogController = null;
+    // 菜单（CustomDialog）关闭后焦点可能滞留弹层，拉回本页保证键盘可达
+    this.requestStreamFocus();
     if (!this.mouseInputSuspended) return;
     this.mouseInputSuspended = false;
     // 菜单打开期间按键被强制释放过，恢复前对账仍按下的键
@@ -1419,6 +1428,29 @@ struct StreamPage {
   }
 
   /**
+   * 把焦点拉回串流根 Stack。
+   *
+   * StreamPage 迁移到 Navigation/NavDestination 后不再是 @Entry 路由页，
+   * NavDestination 内容不会自动持有焦点，defaultFocus 也只在宿主页面首次
+   * 创建时生效——物理键盘的 .onKeyEvent 会因无焦点整条失灵，且未消费的
+   * ESC 会被系统按默认行为当作"返回"。凡可能改变焦点的节点（串流(重)启动、
+   * 窗口重新获焦、菜单/IME 面板关闭）都需要显式复焦。
+   * 组件尚未挂树时 requestFocus 抛 150003，延迟重试一次。
+   */
+  private requestStreamFocus(retry: boolean = true): void {
+    if (this.pageDisposed) return;
+    try {
+      this.getUIContext().getFocusController().requestFocus(STREAM_FOCUS_KEY);
+      Logger.info('StreamPage', 'StreamPage: 串流键盘焦点已请求 (streamKeyRoot)');
+    } catch (e) {
+      Logger.warn('StreamPage', `StreamPage: 请求串流焦点失败: ${JSON.stringify(e)}`);
+      if (retry) {
+        setTimeout(() => this.requestStreamFocus(false), 300);
+      }
+    }
+  }
+
+  /**
    * 设置 XComponent 帧率 + 获取 surfaceId + 启动串流
    */
   private async launchStream(): Promise<void> {
@@ -1478,6 +1510,9 @@ struct StreamPage {
 
     // 串流启动后调度未识别 USB 手柄检测（延迟内 GCK 完成扫描）
     this.scheduleUnhandledUsbDetection();
+
+    // 会话就绪后把键盘焦点拉回本页（NavDestination 不会自动获焦）
+    this.requestStreamFocus();
   }
 
   async startStreaming(): Promise<void> {
@@ -2536,6 +2571,7 @@ struct StreamPage {
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Black)
+    .id(STREAM_FOCUS_KEY)
     .focusable(true)
     .defaultFocus(true)
     .onKeyEvent((event: KeyEvent) => {
