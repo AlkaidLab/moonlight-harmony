@@ -1031,8 +1031,9 @@ struct StreamPage {
 
   private handleGameMenuDismissed(): void {
     this.gameMenuDialogController = null;
-    // 菜单（CustomDialog）关闭后焦点可能滞留弹层，拉回本页保证键盘可达
-    this.requestStreamFocus();
+    // 键鼠状态在此恢复；焦点恢复不在此做——onWillDismiss/onDismiss 时
+    // CustomDialog 尚在移除中，过早抢焦会覆盖弹层，改由控制器
+    // onDidDisappear（弹窗真正移除后）触发 requestStreamFocus
     if (!this.mouseInputSuspended) return;
     this.mouseInputSuspended = false;
     // 菜单打开期间按键被强制释放过，恢复前对账仍按下的键
@@ -1073,6 +1074,10 @@ struct StreamPage {
       onWillDismiss: (action: DismissDialogAction): void => {
         action.dismiss();
         this.handleGameMenuDismissed();
+      },
+      // 弹窗真正从组件树移除后才把键盘焦点拉回串流画面
+      onDidDisappear: (): void => {
+        this.requestStreamFocus();
       }
     });
     this.gameMenuDialogController.open();
@@ -1428,6 +1433,14 @@ struct StreamPage {
   }
 
   /**
+   * 是否有正在展示的交互弹层（此时不应把焦点抢回串流画面）。
+   */
+  private hasInteractiveOverlay(): boolean {
+    return this.showVirtualKeyboard || this.showKeyboardPanel || this.customKeyEditMode ||
+      this.gameMenuDialogController !== null || this.showStreamReport;
+  }
+
+  /**
    * 把焦点拉回串流根 Stack。
    *
    * StreamPage 迁移到 Navigation/NavDestination 后不再是 @Entry 路由页，
@@ -1435,10 +1448,14 @@ struct StreamPage {
    * 创建时生效——物理键盘的 .onKeyEvent 会因无焦点整条失灵，且未消费的
    * ESC 会被系统按默认行为当作"返回"。凡可能改变焦点的节点（串流(重)启动、
    * 窗口重新获焦、菜单/IME 面板关闭）都需要显式复焦。
-   * 组件尚未挂树时 requestFocus 抛 150003，延迟重试一次。
+   * 仅在串流建立中/活跃且无交互弹层展示时执行（含延迟回调与重试路径），
+   * 避免覆盖弹层焦点或在会话结束后抢焦；启动路径 isConnected 要等首帧
+   * 解码才置位，故同时放行 isConnecting。组件尚未挂树时 requestFocus 抛
+   * 150003，延迟重试一次。
    */
   private requestStreamFocus(retry: boolean = true): void {
-    if (this.pageDisposed) return;
+    if (this.pageDisposed || this.hasInteractiveOverlay() ||
+      (!this.viewModel.isConnected && !this.viewModel.isConnecting)) return;
     try {
       this.getUIContext().getFocusController().requestFocus(STREAM_FOCUS_KEY);
       Logger.info('StreamPage', 'StreamPage: 串流键盘焦点已请求 (streamKeyRoot)');
