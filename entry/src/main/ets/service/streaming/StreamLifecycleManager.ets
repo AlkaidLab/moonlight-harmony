@@ -41,6 +41,8 @@ export interface LifecycleCallbacks {
   releaseAllKeys: () => void;
   /** 对账按键状态（回前台时调用，补发仍物理按住的键） */
   reconcileKeyState: () => void;
+  /** Pause/resume the native high-rate VSync request with app visibility. */
+  setNativeVSyncForeground: (foreground: boolean) => void;
 }
 
 export class StreamLifecycleManager {
@@ -109,12 +111,14 @@ export class StreamLifecycleManager {
       if (state === AppState.BACKGROUND) {
         Logger.info('StreamLifecycleManager', '[StreamPage] 应用进入后台');
         this.wasInBackground = true;
+        this.callbacks?.setNativeVSyncForeground(false);
         // 退后台时 KEY_UP 不会再送达应用，立即释放所有按键状态，
         // 防止 Windows 端 Alt/Ctrl 卡住（切回后无法打字、鼠标操作异常）
         this.callbacks?.releaseAllKeys();
       } else if (state === AppState.FOREGROUND && this.wasInBackground) {
         Logger.info('StreamLifecycleManager', '[StreamPage] 应用从后台恢复');
         this.wasInBackground = false;
+        this.callbacks?.setNativeVSyncForeground(true);
         // 回前台对账按键状态；与窗口焦点恢复回调先后到达时均可安全重复调用
         // （未连接时 reconcileKeyState 不消费记录，留给重连后的焦点恢复）
         this.callbacks?.reconcileKeyState();
@@ -122,6 +126,12 @@ export class StreamLifecycleManager {
       }
     };
     this.appStateService.addListener(this.appStateListener);
+    if (this.appStateService.getCurrentState() === AppState.BACKGROUND) {
+      this.wasInBackground = true;
+      this.callbacks?.setNativeVSyncForeground(false);
+    } else {
+      this.callbacks?.setNativeVSyncForeground(true);
+    }
   }
 
   /**

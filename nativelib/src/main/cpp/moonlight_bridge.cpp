@@ -2319,3 +2319,15 @@ napi_value MoonBridge_SetFrameRateKeepAlive(napi_env env, napi_callback_info inf
     NativeRender::GetInstance()->SetFrameRateKeepAlive(enabled, FrameRateRequestHz(displayHz));
     return GetUndefined(env);
 }
+
+napi_value MoonBridge_SetNativeVSyncForeground(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    if (argc < 1) return GetUndefined(env);
+    bool foreground = false;
+    if (napi_get_value_bool(env, argv[0], &foreground) == napi_ok) {
+        NativeRender::GetInstance()->SetNativeVSyncForeground(foreground);
+    }
+    return GetUndefined(env);
+}

@@ -357,11 +357,12 @@ napi_value MoonBridge_SetAudioHapticsConfig(napi_env env, napi_callback_info inf
 napi_value MoonBridge_SetXComponentFrameRate(napi_env env, napi_callback_info info);
 
 /**
- * 启用/禁用帧率保活（DisplaySoloist 持续 vsync 请求 + NativeWindow hint 重申）
+ * 启用/禁用帧率请求（DisplaySoloist + NativeVSync 持续请求）
  * 串流期间启用，流结束禁用（内部会复位各层帧率请求避免残留耗电）
  * @param enabled boolean 是否启用
  */
 napi_value MoonBridge_SetFrameRateKeepAlive(napi_env env, napi_callback_info info);
+napi_value MoonBridge_SetNativeVSyncForeground(napi_env env, napi_callback_info info);
 
 // =============================================================================
 // 常量定义

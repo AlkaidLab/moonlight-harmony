@@ -17,6 +17,7 @@
  * - 直接渲染模式（低延迟）
  * - VSync 渲染模式（使用 RenderOutputBufferAtTime）
  * - DisplaySoloist 持续请求期望帧率，系统仍可按设备策略限制刷新率。
+ * - NativeVSync 在前台串流 Surface 有效期间持续请求帧回调及期望帧率。
  * - 每 2 秒检查请求状态、重试失败，并聚合回调频率诊断。
  */
 
@@ -32,6 +33,8 @@
 #include <cstdint>
 #include <mutex>
 #include <atomic>
+#include <condition_variable>
+#include <thread>
 
 // DisplaySoloist 完整声明在 native_display_soloist.h；此处仅前向声明，
 // 实现包含 SDK 头文件校验类型，并通过 dlsym 动态加载符号。
@@ -76,6 +79,8 @@ public:
      * 避免高刷请求在流结束后残留耗电。
      */
     void SetFrameRateKeepAlive(bool enabled, int32_t displayHz = 0);
+    /** Pause only the NativeVSync request loop while the app is in background. */
+    void SetNativeVSyncForeground(bool foreground);
 
     /**
      * 检查 DisplaySoloist 请求状态并聚合诊断；已有相同请求不重复设置。
@@ -145,6 +150,10 @@ private:
     void ConfigureNativeWindow();
 
     static void SoloistFrameCallback(long long timestamp, long long targetTimestamp, void* data);
+    static void NativeVSyncFrameCallback(long long timestamp, void* data);
+    void NativeVSyncLoop(int32_t expectedHz);
+    // Called with frameRateMutex_ held; the worker never takes that mutex.
+    void UpdateNativeVSyncLocked();
 
     // 按 keepAlive_ 与 configuredFps_ 状态启动/更新/停止 DisplaySoloist（须持有 frameRateMutex_）
     void EnsureDisplaySoloistLocked();
@@ -204,6 +213,15 @@ private:
     int64_t diagnosticStartNs_ = 0;
     uint64_t diagnosticCallbacks_ = 0;
     uint64_t diagnosticSubmissions_ = 0;
+
+    // Same NativeVSync request cadence as VintagePomeloPro, scoped to a live stream Surface.
+    std::thread nativeVsyncThread_;
+    std::atomic<bool> nativeVsyncRunning_{false};
+    bool nativeVsyncForeground_ = true; // guarded by frameRateMutex_
+    int32_t nativeVsyncExpectedHz_ = 0;
+    std::mutex nativeVsyncMutex_;
+    std::condition_variable nativeVsyncCv_;
+    uint64_t nativeVsyncSequence_ = 0;
 };
 
 #endif // NATIVE_RENDER_H

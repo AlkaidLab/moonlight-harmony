@@ -707,12 +707,16 @@ class MoonBridgeClass {
   }
 
   /**
-   * 启用/禁用 native DisplaySoloist 持续请求，displayHz 不改变串流 FPS。
+   * 启用/禁用 native DisplaySoloist 和 NativeVSync 持续请求，displayHz 不改变串流 FPS。
    * 系统可限制实际刷新率；流结束时禁用以免高刷请求残留耗电。
    * @param enabled 是否启用
    */
   setFrameRateKeepAlive(enabled: boolean, displayHz: number = 0): void {
     nativeLib.setFrameRateKeepAlive(enabled, displayHz);
+  }
+
+  setNativeVSyncForeground(foreground: boolean): void {
+    nativeLib.setNativeVSyncForeground(foreground);
   }
 
   // ==========================================================================

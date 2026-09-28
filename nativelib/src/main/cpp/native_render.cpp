@@ -22,6 +22,9 @@
 #include "native_render.h"
 #include "frame_rate_request.h"
 #include <native_display_soloist/native_display_soloist.h>
+#include <native_vsync/native_vsync.h>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
 #include <time.h>
@@ -75,6 +78,26 @@ static PFN_OH_DisplaySoloist_Stop g_pfnSoloistStop = nullptr;
 static PFN_OH_DisplaySoloist_SetExpectedFrameRateRange g_pfnSoloistSetRange = nullptr;
 static std::once_flag g_soloistOnce;
 
+// SetExpectedFrameRateRange arrived in API 20; keep API 12 devices loadable.
+using PFN_NativeVSyncSetRange = decltype(&OH_NativeVSync_SetExpectedFrameRateRange);
+static PFN_NativeVSyncSetRange g_nativeVsyncSetRange = nullptr;
+static std::once_flag g_nativeVsyncRateOnce;
+
+static PFN_NativeVSyncSetRange GetNativeVSyncSetRange() {
+    std::call_once(g_nativeVsyncRateOnce, [] {
+        g_nativeVsyncSetRange = reinterpret_cast<PFN_NativeVSyncSetRange>(
+            dlsym(RTLD_DEFAULT, "OH_NativeVSync_SetExpectedFrameRateRange"));
+        if (!g_nativeVsyncSetRange) {
+            void* handle = dlopen("libnative_vsync.so", RTLD_NOW);
+            if (handle) {
+                g_nativeVsyncSetRange = reinterpret_cast<PFN_NativeVSyncSetRange>(
+                    dlsym(handle, "OH_NativeVSync_SetExpectedFrameRateRange"));
+            }
+        }
+    });
+    return g_nativeVsyncSetRange;
+}
+
 static bool CheckAndLoadSoloistApis() {
     std::call_once(g_soloistOnce, [] {
 
@@ -127,6 +150,109 @@ void NativeRender::SoloistFrameCallback(long long, long long, void* data) {
     render->soloistCallbacks_.fetch_add(1, std::memory_order_relaxed);
 }
 
+void NativeRender::NativeVSyncFrameCallback(long long, void* data) {
+    auto* render = static_cast<NativeRender*>(data);
+    {
+        std::lock_guard<std::mutex> lock(render->nativeVsyncMutex_);
+        ++render->nativeVsyncSequence_;
+    }
+    render->nativeVsyncCv_.notify_one();
+}
+
+void NativeRender::NativeVSyncLoop(int32_t expectedHz) {
+    const char name[] = "MoonlightStream";
+    OH_NativeVSync* vsync = OH_NativeVSync_Create(name, sizeof(name) - 1);
+    if (!vsync) {
+        OH_LOG_WARN(LOG_APP, "NativeVSync create failed");
+        nativeVsyncRunning_.store(false);
+        return;
+    }
+
+    // Match VintagePomeloPro at 120 Hz; cap the range at the selected display target.
+    OH_NativeVSync_ExpectedRateRange range{60, expectedHz, expectedHz};
+    auto setRange = GetNativeVSyncSetRange();
+    const int rateResult = setRange ? setRange(vsync, &range) : -1;
+    OH_LOG_INFO(LOG_APP, "NativeVSync request min=%{public}d max=%{public}d expected=%{public}d result=%{public}d",
+                range.min, range.max, range.expected, rateResult);
+    if (rateResult != 0) {
+        OH_NativeVSync_Destroy(vsync);
+        nativeVsyncRunning_.store(false);
+        return;
+    }
+
+    auto sampleStart = std::chrono::steady_clock::now();
+    uint32_t callbacks = 0;
+    uint32_t failures = 0;
+    long long loggedPeriod = 0;
+    while (nativeVsyncRunning_.load()) {
+        uint64_t sequence;
+        {
+            std::lock_guard<std::mutex> lock(nativeVsyncMutex_);
+            sequence = nativeVsyncSequence_;
+        }
+        const int requestResult = OH_NativeVSync_RequestFrame(vsync, NativeVSyncFrameCallback, this);
+        if (requestResult == 0) {
+            std::unique_lock<std::mutex> lock(nativeVsyncMutex_);
+            const bool signaled = nativeVsyncCv_.wait_for(lock, std::chrono::milliseconds(100), [&] {
+                return !nativeVsyncRunning_.load() || nativeVsyncSequence_ != sequence;
+            });
+            lock.unlock();
+            if (!nativeVsyncRunning_.load()) break;
+            if (signaled) {
+                failures = 0;
+                ++callbacks;
+                long long period = 0;
+                if (OH_NativeVSync_GetPeriod(vsync, &period) == 0 && period > 0 &&
+                    (loggedPeriod == 0 || std::llabs(period - loggedPeriod) >= 500000)) {
+                    OH_LOG_INFO(LOG_APP, "NativeVSync period=%{public}lldns rate=%{public}.2fHz",
+                                period, 1000000000.0 / static_cast<double>(period));
+                    loggedPeriod = period;
+                }
+            }
+        } else {
+            std::unique_lock<std::mutex> lock(nativeVsyncMutex_);
+            nativeVsyncCv_.wait_for(lock, std::chrono::milliseconds(100), [&] {
+                return !nativeVsyncRunning_.load();
+            });
+        }
+        if (requestResult != 0 && nativeVsyncRunning_.load() &&
+            (++failures == 1 || failures % 120 == 0)) {
+            OH_LOG_WARN(LOG_APP, "NativeVSync RequestFrame failed: %{public}d failures=%{public}u",
+                        requestResult, failures);
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const double seconds = std::chrono::duration<double>(now - sampleStart).count();
+        if (seconds >= 5.0) {
+            OH_LOG_INFO(LOG_APP, "NativeVSync callbackHz=%{public}.1f expected=%{public}d (not scanout FPS)",
+                        callbacks / seconds, expectedHz);
+            callbacks = 0;
+            sampleStart = now;
+        }
+    }
+    OH_NativeVSync_Destroy(vsync);
+}
+
+void NativeRender::UpdateNativeVSyncLocked() {
+    const int32_t requestedHz = displayRequestHz_.load();
+    const int32_t expectedHz = DisplaySoloistRequestHz(
+        requestedHz > 0 ? requestedHz : configuredFps_.load());
+    const bool shouldRun = frameRateKeepAlive_.load() && nativeVsyncForeground_ &&
+        window_ && expectedHz > 60;
+    if (nativeVsyncThread_.joinable() &&
+        (!shouldRun || nativeVsyncExpectedHz_ != expectedHz || !nativeVsyncRunning_.load())) {
+        nativeVsyncRunning_.store(false);
+        nativeVsyncCv_.notify_one();
+        nativeVsyncThread_.join();
+        nativeVsyncExpectedHz_ = 0;
+        OH_LOG_INFO(LOG_APP, "NativeVSync request stopped");
+    }
+    if (shouldRun && !nativeVsyncThread_.joinable()) {
+        nativeVsyncExpectedHz_ = expectedHz;
+        nativeVsyncRunning_.store(true);
+        nativeVsyncThread_ = std::thread(&NativeRender::NativeVSyncLoop, this, expectedHz);
+    }
+}
+
 // =============================================================================
 // 静态成员初始化
 // =============================================================================
@@ -162,6 +288,8 @@ NativeRender::~NativeRender() {
     OH_LOG_INFO(LOG_APP, "NativeRender destroyed");
     {
         std::lock_guard<std::mutex> lock(frameRateMutex_);
+        frameRateKeepAlive_.store(false);
+        UpdateNativeVSyncLocked();
         if (displaySoloist_ != nullptr && g_pfnSoloistStop && g_pfnSoloistDestroy) {
             g_pfnSoloistStop(displaySoloist_);
             g_pfnSoloistDestroy(displaySoloist_);
@@ -200,6 +328,7 @@ void NativeRender::SetNativeWindow(OHNativeWindow* window, uint64_t width, uint6
         surfaceReady_ = false;
         std::lock_guard<std::mutex> lock(frameRateMutex_);
         window_ = nullptr;
+        UpdateNativeVSyncLocked();
         EnsureDisplaySoloistLocked();
         diagnosticStartNs_ = 0;
         OH_LOG_INFO(LOG_APP, "NativeWindow cleared");
@@ -366,6 +495,7 @@ void NativeRender::RefreshFrameRateHints(bool force) {
     }
 
     std::lock_guard<std::mutex> lock(frameRateMutex_);
+    UpdateNativeVSyncLocked();
     EnsureDisplaySoloistLocked();
     if (!frameRateKeepAlive_.load()) return;
     const uint64_t callbacks = soloistCallbacks_.load(std::memory_order_relaxed);
@@ -399,8 +529,17 @@ void NativeRender::SetFrameRateKeepAlive(bool enabled, int32_t displayHz) {
     }
 }
 
+void NativeRender::SetNativeVSyncForeground(bool foreground) {
+    std::lock_guard<std::mutex> lock(frameRateMutex_);
+    if (nativeVsyncForeground_ == foreground) return;
+    nativeVsyncForeground_ = foreground;
+    UpdateNativeVSyncLocked();
+}
+
 void NativeRender::ResetFrameRateHintsToDefault() {
     std::lock_guard<std::mutex> lock(frameRateMutex_);
+
+    UpdateNativeVSyncLocked();
 
     if (displaySoloist_ != nullptr && g_pfnSoloistStop && g_pfnSoloistDestroy) {
         g_pfnSoloistStop(displaySoloist_);

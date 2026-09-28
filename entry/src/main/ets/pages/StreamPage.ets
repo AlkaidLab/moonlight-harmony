@@ -475,6 +475,11 @@ struct StreamPage {
       },
       reconcileKeyState: () => {
         this.inputHandler.reconcileKeyState();
+      },
+      setNativeVSyncForeground: (foreground: boolean) => {
+        try { MoonBridge.setNativeVSyncForeground(foreground); } catch (e) {
+          Logger.warn('StreamPage', `NativeVSync visibility update failed: ${e}`);
+        }
       }
     });
     
