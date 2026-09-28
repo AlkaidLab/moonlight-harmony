@@ -300,9 +300,11 @@ jobs:
     - name: Setup hvigor
       run: |
         set -euo pipefail
-        echo "@ohos:registry=https://repo.huaweicloud.com/repository/npm/" > ~/.npmrc
+        # @ohos/hvigor 只在华为开发者 npm 源发布（repo.harmonyos.com），
+        # huaweicloud 镜像没有该包（packument 404）
+        echo "@ohos:registry=https://repo.harmonyos.com/npm/" > ~/.npmrc
         # HarmonyOS 7.0(API 26) SDK 需要 hvigor 6.26+；cmdline-tools 5.1 内置的 6.24 不认识 26
-        # 从华为 npm 镜像安装与 SDK 匹配的 hvigor 插件，替换 cmdline-tools 内置版本
+        # 从 npm 安装与 SDK 匹配的 hvigor 插件，替换 cmdline-tools 内置版本
         npm install --prefix "$HOME/hvigor-dist" --no-audit --no-fund \
           "@ohos/hvigor@${{ env.HVIGOR_VERSION }}" \
           "@ohos/hvigor-ohos-plugin@${{ env.HVIGOR_VERSION }}"
