@@ -11,9 +11,9 @@
 ## 请求链路
 
 1. 串流页面在目标帧率高于 60 时仍按原流程设置 XComponent／DisplaySync，并调用 `setFrameRateKeepAlive(true, displayHz)`。Native 层根据显示目标决定是否启用 DisplaySoloist 和新增的 NativeVSync 请求。
-2. NativeVSync 只在请求开启、Surface 存在、应用处于前台且显示目标为 61–120Hz 时运行。120Hz 目标使用 `{ min: 60, max: 120, expected: 120 }`；其他支持的目标使用 `{ min: 60, max: 目标, expected: 目标 }`。超过 120Hz 的显示目标继续由 ArkUI 路径处理，不被错误截成 NativeVSync 的 120Hz 请求。
+2. NativeVSync 只在请求开启、Surface 存在、应用处于前台且显示目标为 61–144Hz 时运行。120Hz 目标使用 `{ min: 60, max: 120, expected: 120 }`；其他支持的目标使用 `{ min: 60, max: 目标, expected: 目标 }`。其中 121–144Hz 目标由 NativeVSync 单独承载（DisplaySoloist 契约上限 120，不参与该档位）；高于 144Hz 的显示目标继续由 ArkUI 路径处理，不被截成 NativeVSync 的请求上限。
 3. NativeVSync 独立线程调用 `OH_NativeVSync_RequestFrame` 并等待回调。没有解码输出或触摸事件时，回调请求仍会继续；它不向 Surface 提交重复视频帧，也不改变原有视频解码、PTS 调度或送显方式。
-4. `OH_NativeVSync_SetExpectedFrameRateRange` 是 API 20 接口，使用运行时符号查找。旧系统缺少该接口或设置失败时，新增路径退出，原有 DisplaySoloist 与 ArkUI 请求路径仍可工作。
+4. `OH_NativeVSync_SetExpectedFrameRateRange` 是 API 20 接口，使用运行时符号查找。旧系统缺少该接口属于进程内永久失败：首次发现即锁存并停用 NativeVSync 通道，不再重试；接口存在但设置失败时按原节奏（约每 2 秒）重试。两种情况下原有 DisplaySoloist 与 ArkUI 请求路径仍可工作。
 
 ## 生命周期与资源清理
 
@@ -27,7 +27,7 @@
 
 前后台信号沿用 `AppStateService` → `StreamLifecycleManager` → `StreamPage` → NAPI 桥接传递，只控制新增的 NativeVSync 线程。后台串流、DisplaySoloist 和视频送显原有行为未更改。页面注册监听时会同步当前应用状态，避免在后台创建页面或回到页面后沿用过期的前后台标志。
 
-创建或设置失败后的周期重试沿用 `RefreshFrameRateHints`，由后续解码帧的 `SubmitFrame` 触发，约每 2 秒检查一次；完全没有解码输出时不会另起无帧重试计时器。
+创建或设置失败后的周期重试沿用 `RefreshFrameRateHints`，由后续解码帧的 `SubmitFrame` 触发，约每 2 秒检查一次；符号缺失已锁存时不再触发；完全没有解码输出时不会另起无帧重试计时器。
 
 ## 日志与排查
 
@@ -37,7 +37,7 @@ Native 层新增或使用以下日志：
 - `NativeVSync period=... rate=...Hz`：NativeVSync 报告的周期变化。
 - `NativeVSync callbackHz=...`：近 5 秒的回调频率，用于判断请求是否仍收到信号。
 - `NativeVSync request stopped`：实例因停止串流、Surface 变化、进入后台或目标变化而结束。
-- 串流页原有的 `FrameRateDiagnostics`：接收帧率、提交帧率、当前屏幕档位与 ArkUI 请求路径。
+- 串流页原有的 `FrameRateDiagnostics`：接收帧率、提交帧率、当前屏幕档位、ArkUI 请求路径及 `vsyncRunning`/`vsyncRequestedHz`。
 
 回调频率、视频提交帧率和实际物理上屏率是三个不同指标。判断是否解决自动降到 60Hz，应在同一设备上同时查看系统刷新率叠加层或 RenderService trace，并进行无触摸、触摸恢复、退后台和重连测试。
 
@@ -56,3 +56,9 @@ Native 层新增或使用以下日志：
 本次解决的是高刷请求的持续性，没有把视频输出改为 VSync 驱动，也没有改变设备系统的节能策略。持续回调会增加少量周期性工作，需继续观察长时间串流的功耗、温度与后台恢复表现。系统仍可按机型、屏幕模式及功耗策略调整实际刷新率。
 
 本地构建还需要 `entry/src/main/ets/config/DevKeySecret.ets` 和 `GitHubOAuthConfig.ets`。两者有 `.example` 模板，实际文件被 Git 忽略；它们是本地构建配置，不属于这次提交，也不会上传密钥或 OAuth 配置。
+
+## 后续调整（同日合入后补充）
+
+- **144 Hz 档**：`OH_NativeVSync_SetExpectedFrameRateRange` 官方取值上限为 144，NativeVSync 通道因此从 61–120 Hz 放宽到 61–144 Hz。121–144 Hz 目标由 NativeVSync 单独承载——DisplaySoloist 的公开契约仍为 [0,120]，不参与该档位；高于 144 的目标继续走 ArkUI 路径。新增 `NativeVSyncRequestHz`（`frame_rate_request.h`）并在单测中覆盖各档位。
+- **旧系统失败记忆**：`OH_NativeVSync_SetExpectedFrameRateRange` 符号缺失（API < 20 系统）属于进程内永久失败，现在首次发现即锁存 `nativeVsyncUnsupported_` 并停用该通道，避免此前每约 2 秒一次的 create/destroy 重试churn；SetRange 返回非 0 仍按原设计每约 2 秒重试。
+- **诊断**：`FrameRateDiagnostics` 增加 `vsyncRunning` / `vsyncRequestedHz` 字段，与 NativeVSync 自身的 `callbackHz` 日志配合，可在同一行确认两条请求通道的状态。

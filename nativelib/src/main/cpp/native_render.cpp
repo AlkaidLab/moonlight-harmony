@@ -168,10 +168,19 @@ void NativeRender::NativeVSyncLoop(int32_t expectedHz) {
         return;
     }
 
-    // Match VintagePomeloPro at 120 Hz; cap the range at the selected display target.
+    // Keep the range at the selected display target; API 20 accepts up to 144.
     OH_NativeVSync_ExpectedRateRange range{60, expectedHz, expectedHz};
     auto setRange = GetNativeVSyncSetRange();
-    const int rateResult = setRange ? setRange(vsync, &range) : -1;
+    if (!setRange) {
+        // The API 20 symbol will never appear on this OS build: latch it so the
+        // 2 s SubmitFrame retry stops churning create/destroy for the whole stream.
+        OH_LOG_INFO(LOG_APP, "NativeVSync SetExpectedFrameRateRange unavailable on this OS; requests disabled");
+        nativeVsyncUnsupported_.store(true);
+        OH_NativeVSync_Destroy(vsync);
+        nativeVsyncRunning_.store(false);
+        return;
+    }
+    const int rateResult = setRange(vsync, &range);
     OH_LOG_INFO(LOG_APP, "NativeVSync request min=%{public}d max=%{public}d expected=%{public}d result=%{public}d",
                 range.min, range.max, range.expected, rateResult);
     if (rateResult != 0) {
@@ -234,7 +243,9 @@ void NativeRender::NativeVSyncLoop(int32_t expectedHz) {
 
 void NativeRender::UpdateNativeVSyncLocked() {
     const int32_t requestedHz = displayRequestHz_.load();
-    const int32_t expectedHz = DisplaySoloistRequestHz(
+    // NativeVSync covers the 61–144 Hz tiers; 121–144 runs without DisplaySoloist,
+    // whose contract caps at 120. Higher targets stay on the ArkUI path.
+    const int32_t expectedHz = NativeVSyncRequestHz(
         requestedHz > 0 ? requestedHz : configuredFps_.load());
     const bool shouldRun = frameRateKeepAlive_.load() && nativeVsyncForeground_ &&
         window_ && expectedHz > 60;
@@ -246,7 +257,7 @@ void NativeRender::UpdateNativeVSyncLocked() {
         nativeVsyncExpectedHz_ = 0;
         OH_LOG_INFO(LOG_APP, "NativeVSync request stopped");
     }
-    if (shouldRun && !nativeVsyncThread_.joinable()) {
+    if (shouldRun && !nativeVsyncThread_.joinable() && !nativeVsyncUnsupported_.load()) {
         nativeVsyncExpectedHz_ = expectedHz;
         nativeVsyncRunning_.store(true);
         nativeVsyncThread_ = std::thread(&NativeRender::NativeVSyncLoop, this, expectedHz);
@@ -503,10 +514,12 @@ void NativeRender::RefreshFrameRateHints(bool force) {
     if (diagnosticStartNs_ != 0 && nowNs - diagnosticStartNs_ >= 5000000000LL) {
         const double seconds = static_cast<double>(nowNs - diagnosticStartNs_) / 1e9;
         OH_LOG_INFO(LOG_APP,
-            "FrameRateDiagnostics: streamFps=%{public}.3f requestedHz=%{public}d soloistRunning=%{public}d soloistRequestedHz=%{public}d callbackHz=%{public}.1f submitFps=%{public}.1f (not scanout FPS)",
+            "FrameRateDiagnostics: streamFps=%{public}.3f requestedHz=%{public}d soloistRunning=%{public}d soloistRequestedHz=%{public}d vsyncRunning=%{public}d vsyncRequestedHz=%{public}d callbackHz=%{public}.1f submitFps=%{public}.1f (not scanout FPS)",
             configuredFps_.load(), displayRequestHz_.load() > 0 ? displayRequestHz_.load() : FrameRateRequestHz(configuredFps_.load()),
             displaySoloist_ != nullptr,
             displaySoloist_ != nullptr ? soloistExpectedHz_ : 0,
+            nativeVsyncRunning_.load(),
+            nativeVsyncRunning_.load() ? nativeVsyncExpectedHz_ : 0,
             (callbacks - diagnosticCallbacks_) / seconds, (submissions - diagnosticSubmissions_) / seconds);
         diagnosticStartNs_ = nowNs;
         diagnosticCallbacks_ = callbacks;

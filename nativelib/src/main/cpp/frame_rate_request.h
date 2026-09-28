@@ -17,11 +17,20 @@ inline int32_t FrameRateRequestHz(double fps) {
 }
 
 // NativeDisplaySoloist's public contract limits ALL range fields to [0, 120].
-// Do not cast a >120 Hz display request as a 120 Hz Soloist request: leave that
-// target to ArkUI, whose range is bounded by the device's display capability.
+// Do not cast a >120 Hz display request as a 120 Hz Soloist request: 121–144 Hz
+// targets move to NativeVSyncRequestHz, and anything higher stays on ArkUI,
+// whose range is bounded by the device's display capability.
 inline int32_t DisplaySoloistRequestHz(double fps) {
     const int32_t expected = FrameRateRequestHz(fps);
     return expected <= 120 ? expected : 0;
+}
+
+// OH_NativeVSync_SetExpectedFrameRateRange (API 20) accepts ranges up to 144,
+// so the NativeVSync channel can carry the 144 Hz tier that DisplaySoloist
+// must leave out. Targets above 144 stay on the ArkUI path.
+inline int32_t NativeVSyncRequestHz(double fps) {
+    const int32_t expected = FrameRateRequestHz(fps);
+    return expected <= 144 ? expected : 0;
 }
 
 #endif
