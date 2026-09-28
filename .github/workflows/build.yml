@@ -28,8 +28,8 @@ env:
   CMDLINE_TOOLS_VERSION: '5.1.0.840'
   HVIGOR_VERSION: '6.26.8'
   CACHE_VERSION: 'v10'
-  # v0.6.0
-  AUDIO_HAPTICS_SDK_REF: 'b71b47a08fd400996ed374a97e1bff73bac2932e'
+  # float-to-int cast fix (PR moonlight-audio-haptics#5)
+  AUDIO_HAPTICS_SDK_REF: 'afbbedf19e8ca1616c5c0b6a63051cc1f1723818'
 
 jobs:
   build:
