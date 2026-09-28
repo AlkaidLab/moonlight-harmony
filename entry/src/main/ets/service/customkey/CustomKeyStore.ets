@@ -432,9 +432,15 @@ export class CustomKeyStore {
         Logger.warn('CustomKeyStore', '[CustomKeyStore] 导入中止: 旧坐标迁移失败，请稍后重试');
         return false;
       }
+      const prevActive = CustomKeyStore.activeProfileName;
       CustomKeyStore.profiles!.push(data.profile);
       CustomKeyStore.activeProfileName = name;
-      await CustomKeyStore.save();
+      if (!(await CustomKeyStore.save())) {
+        // 持久化失败回滚，调用方按导入失败处理（不显示"已导入"）
+        CustomKeyStore.profiles!.pop();
+        CustomKeyStore.activeProfileName = prevActive;
+        return false;
+      }
       return true;
     } catch (e) {
       Logger.error('CustomKeyStore', '[CustomKeyStore] import failed:', JSON.stringify(e));
@@ -461,6 +467,7 @@ export class CustomKeyStore {
         return -1;
       }
       const profile = await CustomKeyStore.getActiveProfile();
+      const prevKeyCount = profile.keys.length;
       let count = 0;
       for (const key of data.profile.keys) {
         key.id = generateKeyId();
@@ -470,7 +477,11 @@ export class CustomKeyStore {
         profile.keys.push(key);
         count++;
       }
-      await CustomKeyStore.save();
+      if (!(await CustomKeyStore.save())) {
+        // 持久化失败回滚追加的按键，按合并失败返回
+        profile.keys.length = prevKeyCount;
+        return -1;
+      }
       return count;
     } catch (e) {
       Logger.error('CustomKeyStore', '[CustomKeyStore] merge import failed:', JSON.stringify(e));
