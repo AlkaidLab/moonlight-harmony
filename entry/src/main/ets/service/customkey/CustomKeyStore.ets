@@ -121,6 +121,25 @@ export class CustomKeyStore {
   }
 
   /**
+   * 受 loadFailed 保护的直写：初始化读取失败的保护期内拒绝写盘，
+   * 防止内存态（默认配置/默认活跃名）覆盖盘上原数据
+   */
+  private static async persistIfLoaded(key: string, value: string): Promise<boolean> {
+    if (CustomKeyStore.loadFailed) {
+      Logger.warn('CustomKeyStore', `[CustomKeyStore] 拒绝写入 ${key}: 初始化读取失败保护期内`);
+      return false;
+    }
+    try {
+      await PreferencesUtil.put(key, value);
+      return true;
+    } catch (e) {
+      Logger.error('CustomKeyStore', `[CustomKeyStore] 写入 ${key} 失败:`, JSON.stringify(e));
+      ToastQueue.show({ message: '配置保存失败，重启后可能丢失本次修改', duration: 3000 });
+      return false;
+    }
+  }
+
+  /**
    * 持久化到 Preferences
    * @returns 是否成功落盘（读取失败保护期或写入失败返回 false）
    */
@@ -237,7 +256,7 @@ export class CustomKeyStore {
     const profile = CustomKeyStore.profiles!.find(p => p.name === name);
     if (!profile) return null;
     CustomKeyStore.activeProfileName = name;
-    await PreferencesUtil.put(STORAGE_KEY_ACTIVE, name);
+    await CustomKeyStore.persistIfLoaded(STORAGE_KEY_ACTIVE, name);
     return profile;
   }
 
@@ -249,7 +268,7 @@ export class CustomKeyStore {
     const nextIdx = (currentIdx + 1) % CustomKeyStore.profiles!.length;
     const next = CustomKeyStore.profiles![nextIdx];
     CustomKeyStore.activeProfileName = next.name;
-    await PreferencesUtil.put(STORAGE_KEY_ACTIVE, next.name);
+    await CustomKeyStore.persistIfLoaded(STORAGE_KEY_ACTIVE, next.name);
     return next;
   }
 
@@ -259,10 +278,16 @@ export class CustomKeyStore {
     if (CustomKeyStore.profiles!.find(p => p.name === name)) {
       return null; // 名称重复
     }
+    const prevActive = CustomKeyStore.activeProfileName;
     const profile = createDefaultProfile(name);
     CustomKeyStore.profiles!.push(profile);
     CustomKeyStore.activeProfileName = name;
-    await CustomKeyStore.save();
+    if (!(await CustomKeyStore.save())) {
+      // 持久化失败回滚内存变更，调用方按创建失败处理
+      CustomKeyStore.profiles!.pop();
+      CustomKeyStore.activeProfileName = prevActive;
+      return null;
+    }
     return profile;
   }
 
@@ -272,11 +297,17 @@ export class CustomKeyStore {
     if (CustomKeyStore.profiles!.length <= 1) return false;
     const idx = CustomKeyStore.profiles!.findIndex(p => p.name === name);
     if (idx === -1) return false;
+    const removed = CustomKeyStore.profiles![idx];
+    const prevActive = CustomKeyStore.activeProfileName;
     CustomKeyStore.profiles!.splice(idx, 1);
     if (CustomKeyStore.activeProfileName === name) {
       CustomKeyStore.activeProfileName = CustomKeyStore.profiles![0].name;
     }
-    await CustomKeyStore.save();
+    if (!(await CustomKeyStore.save())) {
+      CustomKeyStore.profiles!.splice(idx, 0, removed);
+      CustomKeyStore.activeProfileName = prevActive;
+      return false;
+    }
     return true;
   }
 
@@ -290,7 +321,13 @@ export class CustomKeyStore {
     if (CustomKeyStore.activeProfileName === oldName) {
       CustomKeyStore.activeProfileName = newName;
     }
-    await CustomKeyStore.save();
+    if (!(await CustomKeyStore.save())) {
+      profile.name = oldName;
+      if (CustomKeyStore.activeProfileName === newName) {
+        CustomKeyStore.activeProfileName = oldName;
+      }
+      return false;
+    }
     return true;
   }
 
@@ -309,9 +346,14 @@ export class CustomKeyStore {
         return copy;
       }),
     };
+    const prevActive = CustomKeyStore.activeProfileName;
     CustomKeyStore.profiles!.push(cloned);
     CustomKeyStore.activeProfileName = newName;
-    await CustomKeyStore.save();
+    if (!(await CustomKeyStore.save())) {
+      CustomKeyStore.profiles!.pop();
+      CustomKeyStore.activeProfileName = prevActive;
+      return null;
+    }
     return cloned;
   }
 
@@ -449,7 +491,7 @@ export class CustomKeyStore {
     // 验证配置仍然存在
     if (!CustomKeyStore.profiles!.find(p => p.name === name)) {
       CustomKeyStore.gameProfiles![String(appId)] = '';
-      await PreferencesUtil.put(STORAGE_KEY_GAME_PROFILES, JSON.stringify(CustomKeyStore.gameProfiles));
+      await CustomKeyStore.persistIfLoaded(STORAGE_KEY_GAME_PROFILES, JSON.stringify(CustomKeyStore.gameProfiles));
       return null;
     }
     return name;
@@ -464,7 +506,7 @@ export class CustomKeyStore {
       CustomKeyStore.gameProfiles = {};
     }
     CustomKeyStore.gameProfiles[String(appId)] = profileName;
-    await PreferencesUtil.put(STORAGE_KEY_GAME_PROFILES, JSON.stringify(CustomKeyStore.gameProfiles));
+    await CustomKeyStore.persistIfLoaded(STORAGE_KEY_GAME_PROFILES, JSON.stringify(CustomKeyStore.gameProfiles));
   }
 
   /**
