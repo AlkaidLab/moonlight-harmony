@@ -13,6 +13,10 @@
  * @brief HarmonyOS AVCodec 视频解码器实现
  */
 
+// LOG_TAG 须在所有 include 之前定义（hilog/log.h 经 video_decoder.h 间接引入，
+// 其 #ifndef 默认值会先定义 LOG_TAG，后定义会触发宏重定义警告）
+#define LOG_TAG "VideoDecoder"
+
 #include "video_decoder.h"
 #include "hdr_vivid_metadata_scanner.h"
 #include "native_render.h"
@@ -34,8 +38,6 @@
 extern "C" {
     void LiRequestIdrFrame(void);
 }
-
-#define LOG_TAG "VideoDecoder"
 
 // =============================================================================
 // 大核绑定 + QoS 线程优化
