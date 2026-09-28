@@ -2201,7 +2201,6 @@ export struct CustomKeyOverlay {
     }
   }
 
-  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   private async pasteFromClipboard(): Promise<void> {
     try {
       const granted = await this.ensureClipboardReadPermissionGranted();

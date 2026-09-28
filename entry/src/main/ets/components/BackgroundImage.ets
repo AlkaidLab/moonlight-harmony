@@ -22,7 +22,6 @@ import { fileIo } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ToastQueue } from '../utils/ToastQueue';
 import { Logger } from '../common/Logger';
-import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 
 /**
  * 背景图组件属性
@@ -92,7 +91,6 @@ export struct BackgroundImage {
    * SaveButton 点击回调处理
    * 使用安全控件授权后保存图片到相册
    */
-  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   handleSaveButtonClick: SaveButtonCallback = async (
     event: ClickEvent, 
     result: SaveButtonOnClickResult, 

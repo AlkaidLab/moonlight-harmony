@@ -15,7 +15,6 @@
  * 从 StreamPage 中解耦以降低单文件复杂度。
  */
 import { window } from '@kit.ArkUI';
-import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { inputMethod } from '@kit.IMEKit';
 import { UI } from '../../common/UI';
 import { StreamViewModel } from '../../viewmodel/StreamViewModel';
@@ -84,7 +83,6 @@ export class StreamIMEManager {
    * 使用 InputMethod API 直接显示系统键盘（无需 TextInput 组件）
    * 节省屏幕空间，串流画面完整可见
    */
-  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   async show(): Promise<void> {
     const session = this.viewModel?.getSession();
     if (!session || this.showInProgress || this.imeController) return;
