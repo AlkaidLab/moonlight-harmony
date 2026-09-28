@@ -6,6 +6,10 @@ set(CMAKE_CXX_STANDARD 17)
 
 # HarmonyOS 平台定义
 add_definitions(-D__OHOS__)
+# DevEco 26 的 BiSheng 工具链会向 clang++ 传入 --gcc-toolchain 参数，在显式指定
+# --sysroot/--target 时该参数不生效，每次编译都报 unused-command-line-argument。
+# 参数由构建系统传入、项目层无法控制，此处关闭这条无信息量警告。
+add_compile_options(-Wno-unused-command-line-argument)
 # ENet socket 选项 - 完整启用所有功能
 add_definitions(-DHAS_SOCKLEN_T=1)
 add_definitions(-DHAS_INET_PTON=1)
