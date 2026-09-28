@@ -23,6 +23,9 @@ import { Available, BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { StreamSocketFds } from '../streaming/MoonBridge';
 import { Logger } from '../../common/Logger';
 
+/** NetworkBoost Kit 系统能力（netBoost/netQuality 全部 API 共用同一 syscap） */
+const NETWORK_BOOST_SYSCAP = 'SystemCapability.Communication.NetworkBoost.Core';
+
 const STREAMING_SERVICE_TYPE: netQuality.ServiceType = 'realtimeGame';
 
 /** setDataFlowDesc 起始 API 版本 */
@@ -196,21 +199,23 @@ export class NetworkBoostService {
       return;
     }
 
-    try {
-      netBoost.setSceneDesc({
-        scene: STREAMING_SERVICE_TYPE,
-        sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER
-      });
-      this.sceneEntered = true;
-    } catch (err) {
-      this.handleErr('registerStreamingFlows/setSceneDesc', err);
-      return;
-    }
+    if (canIUse(NETWORK_BOOST_SYSCAP)) {
+      try {
+        netBoost.setSceneDesc({
+          scene: STREAMING_SERVICE_TYPE,
+          sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER
+        });
+        this.sceneEntered = true;
+      } catch (err) {
+        this.handleErr('registerStreamingFlows/setSceneDesc', err);
+        return;
+      }
 
-    this.registeredFlowFds = [];
-    this.registerOneFlow('videoRtp', fds.videoRtp.fd);
-    this.registerOneFlow('audioRtp', fds.audioRtp.fd);
-    this.registerOneFlow('control', fds.control.fd);
+      this.registeredFlowFds = [];
+      this.registerOneFlow('videoRtp', fds.videoRtp.fd);
+      this.registerOneFlow('audioRtp', fds.audioRtp.fd);
+      this.registerOneFlow('control', fds.control.fd);
+    }
   }
 
   private registerOneFlow(name: string, fd: number): void {
@@ -218,17 +223,19 @@ export class NetworkBoostService {
       Logger.info('NetworkBoostService', `[NetworkBoost] ${name} fd 不可用,跳过注册`);
       return;
     }
-    try {
-      netBoost.setDataFlowDesc({
-        dataFlowInfo: fd,
-        scene: STREAMING_SERVICE_TYPE,
-        sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER,
-        expectations: { priority: netBoost.PriorityLevel.PRIO_HIGH }
-      });
-      this.registeredFlowFds.push(fd);
-      Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc ${name} fd=${fd} priority=HIGH`);
-    } catch (err) {
-      this.handleErr(`setDataFlowDesc(${name})`, err);
+    if (canIUse(NETWORK_BOOST_SYSCAP)) {
+      try {
+        netBoost.setDataFlowDesc({
+          dataFlowInfo: fd,
+          scene: STREAMING_SERVICE_TYPE,
+          sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER,
+          expectations: { priority: netBoost.PriorityLevel.PRIO_HIGH }
+        });
+        this.registeredFlowFds.push(fd);
+        Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc ${name} fd=${fd} priority=HIGH`);
+      } catch (err) {
+        this.handleErr(`setDataFlowDesc(${name})`, err);
+      }
     }
   }
 
@@ -236,15 +243,17 @@ export class NetworkBoostService {
     const fds = this.registeredFlowFds;
     this.registeredFlowFds = [];
     fds.forEach((fd) => {
-      try {
-        netBoost.setDataFlowDesc({
-          dataFlowInfo: fd,
-          scene: STREAMING_SERVICE_TYPE,
-          sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
-        });
-        Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc fd=${fd} event=leave`);
-      } catch (err) {
-        Logger.warn('NetworkBoostService', `[NetworkBoost] setDataFlowDesc(fd=${fd}) leave 失败: ${(err as Error).message}`);
+      if (canIUse(NETWORK_BOOST_SYSCAP)) {
+        try {
+          netBoost.setDataFlowDesc({
+            dataFlowInfo: fd,
+            scene: STREAMING_SERVICE_TYPE,
+            sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
+          });
+          Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc fd=${fd} event=leave`);
+        } catch (err) {
+          Logger.warn('NetworkBoostService', `[NetworkBoost] setDataFlowDesc(fd=${fd}) leave 失败: ${(err as Error).message}`);
+        }
       }
     });
     if (!this.sceneEntered) {
@@ -252,14 +261,16 @@ export class NetworkBoostService {
     }
     this.sceneEntered = false;
 
-    try {
-      netBoost.setSceneDesc({
-        scene: STREAMING_SERVICE_TYPE,
-        sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
-      });
-      Logger.info('NetworkBoostService', '[NetworkBoost] setSceneDesc scene=realtimeGame event=leave');
-    } catch (err) {
-      Logger.warn('NetworkBoostService', `[NetworkBoost] clearDataFlowDesc 失败: ${(err as Error).message}`);
+    if (canIUse(NETWORK_BOOST_SYSCAP)) {
+      try {
+        netBoost.setSceneDesc({
+          scene: STREAMING_SERVICE_TYPE,
+          sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
+        });
+        Logger.info('NetworkBoostService', '[NetworkBoost] setSceneDesc scene=realtimeGame event=leave');
+      } catch (err) {
+        Logger.warn('NetworkBoostService', `[NetworkBoost] clearDataFlowDesc 失败: ${(err as Error).message}`);
+      }
     }
   }
 
@@ -270,16 +281,18 @@ export class NetworkBoostService {
       return;
     }
     this.lastState = state;
-    const qoeType: netQuality.QoeType = state === 'good' ? 'good' : 'highLatency';
-    try {
-      const appQoe: netQuality.AppQoe = {
-        serviceType: STREAMING_SERVICE_TYPE,
-        qoeType
-      };
-      netQuality.reportQoe(appQoe);
-      Logger.info('NetworkBoostService', `[NetworkBoost] reportQoe serviceType=realtimeGame qoeType=${qoeType}`);
-    } catch (err) {
-      this.handleErr('reportQoe', err);
+    if (canIUse(NETWORK_BOOST_SYSCAP)) {
+      const qoeType: netQuality.QoeType = state === 'good' ? 'good' : 'highLatency';
+      try {
+        const appQoe: netQuality.AppQoe = {
+          serviceType: STREAMING_SERVICE_TYPE,
+          qoeType
+        };
+        netQuality.reportQoe(appQoe);
+        Logger.info('NetworkBoostService', `[NetworkBoost] reportQoe serviceType=realtimeGame qoeType=${qoeType}`);
+      } catch (err) {
+        this.handleErr('reportQoe', err);
+      }
     }
   }
 
@@ -293,42 +306,46 @@ export class NetworkBoostService {
       if (!list || list.length === 0) {
         return;
       }
-      // 优先取主路径（WIFI_PRIMARY=2 / CELLULAR_PRIMARY=0）；否则取第一条
-      let primary: netQuality.NetworkQos | undefined = list.find((q) =>
-        q.pathType === 2 /* WIFI_PRIMARY */ || q.pathType === 0 /* CELLULAR_PRIMARY */);
-      if (!primary) {
-        primary = list[0];
-      }
-      const qos: SystemNetQos = {
-        timestampMs: Date.now(),
-        pathType: (primary.pathType ?? -1) as number,
-        rttMs: primary.rttMs ?? 0,
-        upBandwidthBps: primary.linkUpBandwidth ?? 0,
-        downBandwidthBps: primary.linkDownBandwidth ?? 0,
-        upRateBps: primary.linkUpRate ?? 0,
-        downRateBps: primary.linkDownRate ?? 0,
-        upBufferDelayMs: primary.linkUpBufferDelayMs ?? 0,
-        upBufferCongestionPercent: primary.linkUpBufferCongestionPercent ?? 0
-      };
-      this.latestQos = qos;
-      Logger.info('NetworkBoostService', `[NetworkBoost] netQos path=${qos.pathType} rtt=${qos.rttMs}ms ` +
-        `bw=${(qos.upBandwidthBps / 1_000_000).toFixed(1)}/${(qos.downBandwidthBps / 1_000_000).toFixed(1)}Mbps ` +
-        `rate=${(qos.upRateBps / 1_000_000).toFixed(1)}/${(qos.downRateBps / 1_000_000).toFixed(1)}Mbps ` +
-        `bufDelay=${qos.upBufferDelayMs}ms cong=${qos.upBufferCongestionPercent}%`);
-      this.listeners.forEach((listener) => {
-        try {
-          listener(qos);
-        } catch (err) {
-          Logger.warn('NetworkBoostService', `[NetworkBoost] listener 异常: ${(err as Error).message}`);
+      if (canIUse(NETWORK_BOOST_SYSCAP)) {
+        // 优先取主路径（WIFI_PRIMARY=2 / CELLULAR_PRIMARY=0）；否则取第一条
+        let primary: netQuality.NetworkQos | undefined = list.find((q) =>
+          q.pathType === 2 /* WIFI_PRIMARY */ || q.pathType === 0 /* CELLULAR_PRIMARY */);
+        if (!primary) {
+          primary = list[0];
         }
-      });
+        const qos: SystemNetQos = {
+          timestampMs: Date.now(),
+          pathType: (primary.pathType ?? -1) as number,
+          rttMs: primary.rttMs ?? 0,
+          upBandwidthBps: primary.linkUpBandwidth ?? 0,
+          downBandwidthBps: primary.linkDownBandwidth ?? 0,
+          upRateBps: primary.linkUpRate ?? 0,
+          downRateBps: primary.linkDownRate ?? 0,
+          upBufferDelayMs: primary.linkUpBufferDelayMs ?? 0,
+          upBufferCongestionPercent: primary.linkUpBufferCongestionPercent ?? 0
+        };
+        this.latestQos = qos;
+        Logger.info('NetworkBoostService', `[NetworkBoost] netQos path=${qos.pathType} rtt=${qos.rttMs}ms ` +
+          `bw=${(qos.upBandwidthBps / 1_000_000).toFixed(1)}/${(qos.downBandwidthBps / 1_000_000).toFixed(1)}Mbps ` +
+          `rate=${(qos.upRateBps / 1_000_000).toFixed(1)}/${(qos.downRateBps / 1_000_000).toFixed(1)}Mbps ` +
+          `bufDelay=${qos.upBufferDelayMs}ms cong=${qos.upBufferCongestionPercent}%`);
+        this.listeners.forEach((listener) => {
+          try {
+            listener(qos);
+          } catch (err) {
+            Logger.warn('NetworkBoostService', `[NetworkBoost] listener 异常: ${(err as Error).message}`);
+          }
+        });
+      }
     };
-    try {
-      netQuality.on('netQosChange', cb);
-      this.qosCallback = cb;
-      Logger.info('NetworkBoostService', '[NetworkBoost] 订阅 netQosChange');
-    } catch (err) {
-      this.handleErr('on(netQosChange)', err);
+    if (canIUse(NETWORK_BOOST_SYSCAP)) {
+      try {
+        netQuality.on('netQosChange', cb);
+        this.qosCallback = cb;
+        Logger.info('NetworkBoostService', '[NetworkBoost] 订阅 netQosChange');
+      } catch (err) {
+        this.handleErr('on(netQosChange)', err);
+      }
     }
   }
 
@@ -336,11 +353,13 @@ export class NetworkBoostService {
     if (!this.qosCallback) {
       return;
     }
-    try {
-      netQuality.off('netQosChange', this.qosCallback);
-      Logger.info('NetworkBoostService', '[NetworkBoost] 取消订阅 netQosChange');
-    } catch (err) {
-      Logger.warn('NetworkBoostService', `[NetworkBoost] off(netQosChange) 失败: ${(err as Error).message}`);
+    if (canIUse(NETWORK_BOOST_SYSCAP)) {
+      try {
+        netQuality.off('netQosChange', this.qosCallback);
+        Logger.info('NetworkBoostService', '[NetworkBoost] 取消订阅 netQosChange');
+      } catch (err) {
+        Logger.warn('NetworkBoostService', `[NetworkBoost] off(netQosChange) 失败: ${(err as Error).message}`);
+      }
     }
     this.qosCallback = null;
   }
@@ -355,38 +374,42 @@ export class NetworkBoostService {
       if (!list || list.length === 0) {
         return;
       }
-      let primary: netQuality.NetworkScene | undefined = list.find((s) =>
-        s.pathType === 2 /* WIFI_PRIMARY */ || s.pathType === 0 /* CELLULAR_PRIMARY */);
-      if (!primary) {
-        primary = list[0];
-      }
-      const wsp = primary.weakSignalPrediction;
-      const wspValid = wsp && wsp.isLastPredictionValid && (wsp.duration ?? 0) > 0;
-      const scene: SystemNetScene = {
-        pathType: (primary.pathType ?? -1) as number,
-        scene: (primary.scene ?? 'normal') as NetSceneType,
-        recommendedAction: (primary.recommendedAction ?? 'keepData') as NetRecommendedAction,
-        weakSignalStartSec: wspValid ? wsp!.startTime : undefined,
-        weakSignalDurationSec: wspValid ? wsp!.duration : undefined
-      };
-      this.latestScene = scene;
-      Logger.info('NetworkBoostService', `[NetworkBoost] netScene path=${scene.pathType} scene=${scene.scene} ` +
-        `action=${scene.recommendedAction}` +
-        (wspValid ? ` weakSignalIn=${scene.weakSignalStartSec}s for=${scene.weakSignalDurationSec}s` : ''));
-      this.sceneListeners.forEach((listener) => {
-        try {
-          listener(scene);
-        } catch (err) {
-          Logger.warn('NetworkBoostService', `[NetworkBoost] scene listener 异常: ${(err as Error).message}`);
+      if (canIUse(NETWORK_BOOST_SYSCAP)) {
+        let primary: netQuality.NetworkScene | undefined = list.find((s) =>
+          s.pathType === 2 /* WIFI_PRIMARY */ || s.pathType === 0 /* CELLULAR_PRIMARY */);
+        if (!primary) {
+          primary = list[0];
         }
-      });
+        const wsp = primary.weakSignalPrediction;
+        const wspValid = wsp && wsp.isLastPredictionValid && (wsp.duration ?? 0) > 0;
+        const scene: SystemNetScene = {
+          pathType: (primary.pathType ?? -1) as number,
+          scene: (primary.scene ?? 'normal') as NetSceneType,
+          recommendedAction: (primary.recommendedAction ?? 'keepData') as NetRecommendedAction,
+          weakSignalStartSec: wspValid ? wsp!.startTime : undefined,
+          weakSignalDurationSec: wspValid ? wsp!.duration : undefined
+        };
+        this.latestScene = scene;
+        Logger.info('NetworkBoostService', `[NetworkBoost] netScene path=${scene.pathType} scene=${scene.scene} ` +
+          `action=${scene.recommendedAction}` +
+          (wspValid ? ` weakSignalIn=${scene.weakSignalStartSec}s for=${scene.weakSignalDurationSec}s` : ''));
+        this.sceneListeners.forEach((listener) => {
+          try {
+            listener(scene);
+          } catch (err) {
+            Logger.warn('NetworkBoostService', `[NetworkBoost] scene listener 异常: ${(err as Error).message}`);
+          }
+        });
+      }
     };
-    try {
-      netQuality.on('netSceneChange', cb);
-      this.sceneCallback = cb;
-      Logger.info('NetworkBoostService', '[NetworkBoost] 订阅 netSceneChange');
-    } catch (err) {
-      this.handleErr('on(netSceneChange)', err);
+    if (canIUse(NETWORK_BOOST_SYSCAP)) {
+      try {
+        netQuality.on('netSceneChange', cb);
+        this.sceneCallback = cb;
+        Logger.info('NetworkBoostService', '[NetworkBoost] 订阅 netSceneChange');
+      } catch (err) {
+        this.handleErr('on(netSceneChange)', err);
+      }
     }
   }
 
@@ -394,11 +417,13 @@ export class NetworkBoostService {
     if (!this.sceneCallback) {
       return;
     }
-    try {
-      netQuality.off('netSceneChange', this.sceneCallback);
-      Logger.info('NetworkBoostService', '[NetworkBoost] 取消订阅 netSceneChange');
-    } catch (err) {
-      Logger.warn('NetworkBoostService', `[NetworkBoost] off(netSceneChange) 失败: ${(err as Error).message}`);
+    if (canIUse(NETWORK_BOOST_SYSCAP)) {
+      try {
+        netQuality.off('netSceneChange', this.sceneCallback);
+        Logger.info('NetworkBoostService', '[NetworkBoost] 取消订阅 netSceneChange');
+      } catch (err) {
+        Logger.warn('NetworkBoostService', `[NetworkBoost] off(netSceneChange) 失败: ${(err as Error).message}`);
+      }
     }
     this.sceneCallback = null;
   }

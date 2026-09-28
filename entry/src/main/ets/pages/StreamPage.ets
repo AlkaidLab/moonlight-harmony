@@ -14,6 +14,7 @@
  * 显示远程游戏画面并处理用户输入
  */
 import { LengthMetrics } from '@kit.ArkUI';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { AppNav } from '../common/AppNav';
 import { StreamPageParams } from '../common/PageParams';
 import { display } from '@kit.ArkUI';
@@ -70,6 +71,7 @@ import { ClipboardSyncConfig } from '../service/clipboard/ClipboardSyncConfig';
 import { SunshineClipboardBlobTransport } from '../service/clipboard/SunshineClipboardBlobTransport';
 import { ThreeFingerImeGestureHandler, ThreeFingerImeGestureResult } from '../service/input/ThreeFingerImeGestureHandler';
 import { Logger } from '../common/Logger';
+import { UI } from '../common/UI';
 
 /** 串流 NavDestination 的焦点 key，供 requestStreamFocus 拉回键盘焦点 */
 const STREAM_FOCUS_KEY = 'streamNavDestination';
@@ -240,7 +242,8 @@ struct StreamPage {
   // ── 解耦的处理器/管理器 ──
   private inputHandler: StreamInputHandler = new StreamInputHandler();
   private lifecycleManager: StreamLifecycleManager = new StreamLifecycleManager();
-  private imeManager: StreamIMEManager = new StreamIMEManager(getContext(this) as common.UIAbilityContext);
+  // 字段初始化阶段组件未挂载，this.getUIContext() 不可用，走全局 UI 载体取 context
+  private imeManager: StreamIMEManager = new StreamIMEManager(UI.get().getHostContext() as common.UIAbilityContext);
   private clipboardSyncService: ClipboardSyncService | null = null;
   
   // 对话框控制器
@@ -263,7 +266,7 @@ struct StreamPage {
   // 组件控制器和服务
   private xComponentController: XComponentController = new XComponentController();
   @State aihdrModifier: AihdrModifier = new AihdrModifier();
-  private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+  private context: common.UIAbilityContext = UI.get().getHostContext() as common.UIAbilityContext;
   private touchInputHandler: TouchInputHandler = new TouchInputHandler();
   private windowManager: StreamWindowManager | null = null;
   private menuManager: StreamMenuManager | null = null;
@@ -662,7 +665,8 @@ struct StreamPage {
       const first = list[0];
       const extra = list.length > 1 ? `（共 ${list.length} 个）` : '';
       this.unhandledUsbHintShownThisSession = true;
-      promptAction.showDialog({
+      // 官方替代 API：UIContext 作用域的 showDialog（全局 promptAction.showDialog 已废弃）
+      this.getUIContext().getPromptAction().showDialog({
         title: '检测到未识别的 USB 手柄',
         message: `已识别为 ${first.name}${extra}，但系统未将其注册为手柄，可能导致按键无响应。\n\n是否切换到 USB 驱动模式？`,
         buttons: [
@@ -2368,6 +2372,7 @@ struct StreamPage {
     }
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   build() {
     NavDestination() {
     Stack() {
@@ -2607,6 +2612,7 @@ struct StreamPage {
 
   // ==================== UI Builders ====================
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   Ds5TouchpadFeedbackOverlay() {
     Stack() {
@@ -2661,6 +2667,7 @@ struct StreamPage {
       .hitTestBehavior(HitTestMode.None)
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   KeyboardInputPanel() {
     // 紧贴 IME 上方的浮动工具条：快捷键 + 服务端指令 + 主机键盘

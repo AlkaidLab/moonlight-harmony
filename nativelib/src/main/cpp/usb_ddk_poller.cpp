@@ -19,6 +19,7 @@
  *   - 输出 (rumble) 不阻塞 JS 主线程
  */
 
+#define LOG_TAG "USB-DDK-Poller"
 #include "usb_ddk_poller.h"
 
 #include <pthread.h>
@@ -35,7 +36,6 @@
 #define MOONLIGHT_HAS_OFFICIAL_USB_DDK 1
 #endif
 
-#define LOG_TAG "USB-DDK-Poller"
 
 // ============================================================
 // USB DDK 类型定义 (通过 dlopen 调用，优先使用官方头文件)

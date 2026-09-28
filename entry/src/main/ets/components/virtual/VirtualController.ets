@@ -13,6 +13,7 @@
  * 现代化设计，支持完整的游戏手柄功能
  */
 import { InputEvent, InputType, ControllerButton, ControllerButtonEvent, ControllerAxis, ControllerAxisEvent } from '../../model/InputEvent';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { AnalogStick, AnalogStickConfig } from './AnalogStick';
 import { DeviceVibrationCoordinator } from '../../service/input/DeviceVibrationCoordinator';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
@@ -318,6 +319,7 @@ export struct VirtualController {
   // 当前 DPad 方向状态（位标志），用于在 Move 事件中跟踪变化
   private dpadDirection: number = 0;
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   buildCrossDpad() {
     // 采用 Android 风格的单一触摸区域 + 九宫格坐标判定

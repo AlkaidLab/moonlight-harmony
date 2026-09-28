@@ -29,6 +29,8 @@
  * 权限: ohos.permission.INPUT_MONITORING
  */
 
+#define LOG_TAG "MouseInterceptor"
+#define LOG_DOMAIN 0xFF11
 #include "mouse_interceptor.h"
 #include <dlfcn.h>
 #include <multimodalinput/oh_input_manager.h>
@@ -39,8 +41,6 @@
 
 #include "moonlight-common-c/src/Limelight.h"
 
-#define LOG_TAG "MouseInterceptor"
-#define LOG_DOMAIN 0xFF11
 #define LOGI(...) OH_LOG_Print(LOG_APP, LOG_INFO, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) OH_LOG_Print(LOG_APP, LOG_WARN, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)

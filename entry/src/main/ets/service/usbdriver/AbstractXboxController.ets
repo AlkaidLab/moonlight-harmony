@@ -146,8 +146,15 @@ export abstract class AbstractXboxController extends AbstractController {
     
     // 创建读取缓冲区
     const buffer = new Uint8Array(64);
-    const result = await usbManager.bulkTransfer(this.pipe, this.inEndpoint, buffer, timeout);
-    
+    let result: number;
+    try {
+      result = await usbManager.bulkTransfer(this.pipe, this.inEndpoint, buffer, timeout);
+    } catch (err) {
+      // 传输异常向上抛出，由轮询层按读取失败处理
+      Logger.error('AbstractXboxController', `${TAG} 批量读取异常:`, err);
+      throw err instanceof Error ? err : new Error(String(err));
+    }
+
     // 负数表示错误
     if (result < 0) {
       throw createUsbError(result);

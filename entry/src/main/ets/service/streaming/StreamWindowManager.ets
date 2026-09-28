@@ -14,6 +14,7 @@
  * 管理串流页面的窗口配置、屏幕方向和视频尺寸计算
  */
 import { window, display } from '@kit.ArkUI';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { common } from '@kit.AbilityKit';
 import { Logger } from '../../common/Logger';
 
@@ -145,6 +146,7 @@ export class StreamWindowManager {
   /**
    * 恢复窗口设置（串流结束时调用）
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   async restoreWindow(): Promise<void> {
     try {
       const win = await window.getLastWindow(this.context);
@@ -176,6 +178,7 @@ export class StreamWindowManager {
    * 全屏 → 窗口化：退出沉浸式 + recover() 恢复悬浮窗
    * 窗口化 → 全屏：隐藏装饰栏 + 沉浸式最大化
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   async toggleWindowMode(): Promise<void> {
     try {
       const win = await window.getLastWindow(this.context);
@@ -323,6 +326,7 @@ export class StreamWindowManager {
   /**
    * 退出沉浸式全屏：退出沉浸式 → 显示系统栏 → 显示装饰栏 → 退出沉浸式最大化
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   private async exitImmersiveFullscreen(win: window.Window): Promise<void> {
     // 1. 退出沉浸式模式
     try { win.setImmersiveModeEnabledState(false); } catch (_e) {}
@@ -349,6 +353,7 @@ export class StreamWindowManager {
    * 2. ENTER_IMMERSIVE (API 12+) + setTitleAndDockHoverShown(false)
    * 3. maximize() + setTitleAndDockHoverShown(false)
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   private async maximizeImmersive(win: window.Window): Promise<void> {
     try {
       await win.maximize(window.MaximizePresentation.ENTER_IMMERSIVE_DISABLE_TITLE_AND_DOCK_HOVER);
@@ -365,6 +370,7 @@ export class StreamWindowManager {
   /**
    * 设置系统栏（状态栏 + 导航栏）可见性
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   private async setSystemBarsVisible(win: window.Window, visible: boolean): Promise<void> {
     try {
       await win.setSpecificSystemBarEnabled('status', visible);
@@ -382,6 +388,7 @@ export class StreamWindowManager {
   /**
    * 设置窗口装饰栏（标题栏：放大/缩小/关闭按钮）可见性
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   private setDecorVisible(win: window.Window, visible: boolean): void {
     try { win.setWindowDecorVisible(visible); } catch (_e) {}
   }
@@ -391,6 +398,7 @@ export class StreamWindowManager {
   /**
    * 根据串流分辨率设置屏幕方向
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   async configureOrientation(): Promise<void> {
     try {
       const win = await window.getLastWindow(this.context);
@@ -442,6 +450,7 @@ export class StreamWindowManager {
    * @param enableHdr 是否启用 HDR
    * @param hdrHighBrightness 是否启用 HDR 高亮度模式
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   async setHdrBrightness(enableHdr: boolean, hdrHighBrightness: boolean): Promise<void> {
     try {
       const win = await window.getLastWindow(this.context);

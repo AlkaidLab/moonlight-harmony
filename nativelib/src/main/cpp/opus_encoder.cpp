@@ -25,13 +25,13 @@
  * 6. OPUS_SET_PACKET_LOSS_PERC(1) — 预估丢包率
  */
 
+#define LOG_TAG "OpusEncoder"
 #include "opus_encoder.h"
 #include <opus.h>
 #include <hilog/log.h>
 #include <cstring>
 #include <algorithm>
 
-#define LOG_TAG "OpusEncoder"
 
 // =============================================================================
 // OhosOpusEncoder 实现

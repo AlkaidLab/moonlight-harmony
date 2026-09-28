@@ -29,6 +29,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { image } from '@kit.ImageKit';
 import { Logger } from '../../common/Logger';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 
 const TAG = '[BackgroundStreamService]';
 const BACKGROUND_PLAY_MODE_ENABLE = 0; // avSession.BackgroundPlayMode.ENABLE_BACKGROUND_PLAY (API 24+)
@@ -153,6 +154,7 @@ export class BackgroundStreamService {
    * 创建并激活 AVSession
    * 设置封面图片、元数据、播控命令以满足播控中心规范
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   private async createAVSession(gameName: string): Promise<void> {
     try {
       // 创建 audio 类型的 AVSession
@@ -323,6 +325,7 @@ export class BackgroundStreamService {
   /**
    * 清理所有资源
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   private async cleanup(): Promise<void> {
     // 取消监听
     this.unregisterCancelListener();

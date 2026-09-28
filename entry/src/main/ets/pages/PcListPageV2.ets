@@ -9,6 +9,7 @@
  */
 
 import { AppNav } from '../common/AppNav';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { AppListPageParams, HostWebUiPageParams } from '../common/PageParams';
 import { ComputerInfo, PairState, selectBestAddress } from '../model/ComputerInfo';
 import { ComputerManager } from '../service/ComputerManager';
@@ -130,8 +131,8 @@ struct PcListPageV2 {
   }
 
   aboutToAppear(): void {
-    // 先设置 context 以便后续使用本地缓存
-    const context = getContext(this) as common.UIAbilityContext;
+    // 先设置 context 以便后续使用本地缓存（aboutToAppear 期间组件未挂载，走全局 UI 载体取 context）
+    const context = UI.get().getHostContext() as common.UIAbilityContext;
     this.backgroundUtil.setContext(context);
     this.canScanQrCode = QrShareService.isScanQrCodeSupported();
 
@@ -257,7 +258,7 @@ struct PcListPageV2 {
 
   private async initializeAsync(): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = UI.get().getHostContext() as common.UIAbilityContext;
       await this.computerManager.init(context);
 
       this.computerManager.setOnComputerListChangedListener(() => {
@@ -458,6 +459,17 @@ struct PcListPageV2 {
     }
   }
 
+  // moveAbilityToBackground 在 2in1/早期 tablet 上不可用，返回键兜底由系统默认行为接管
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
+  private moveSelfToBackground(): void {
+    try {
+      (UI.get().getHostContext() as common.UIAbilityContext).moveAbilityToBackground();
+    } catch (err) {
+      // 退后台失败时保持前台，系统返回键行为不受影响
+      Logger.warn('PcListPageV2', `moveAbilityToBackground failed: ${JSON.stringify(err)}`);
+    }
+  }
+
   build() {
     NavDestination() {
     Stack() {
@@ -528,7 +540,7 @@ struct PcListPageV2 {
     .onBackPressed(() => {
       // 根页面：返回键退到后台（router 时代首页按返回的系统默认行为，进程保活可秒恢复）
       if (AppNav.stack.size() <= 1) {
-        (UI.get().getHostContext() as common.UIAbilityContext).moveAbilityToBackground();
+        this.moveSelfToBackground();
         return true;
       }
       return false;
@@ -714,6 +726,7 @@ struct PcListPageV2 {
     })
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   BottomBar() {
     Row() {
@@ -801,6 +814,7 @@ struct PcListPageV2 {
    * SaveButton 保存壁纸点击回调
    * 使用安全控件授权后保存图片到相册
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   handleSaveWallpaperClick: SaveButtonCallback = async (
     event: ClickEvent,
     result: SaveButtonOnClickResult,
@@ -814,7 +828,7 @@ struct PcListPageV2 {
       }
 
       try {
-        const context = getContext(this) as common.UIAbilityContext;
+        const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
         ToastQueue.show({ message: '正在保存壁纸...' });
 
         // 读取本地缓存文件
@@ -963,7 +977,7 @@ struct PcListPageV2 {
 
       // 2. 使用 QR 码中的 PIN 自动配对（服务端已 preset，无需用户输入）
       ToastQueue.show({ message: `正在与 ${serverName} 配对...`, duration: 2000 });
-      const context = getContext() as common.UIAbilityContext;
+      const context = UI.get().getHostContext() as common.UIAbilityContext;
       const pairingManager = new PairingManager(
         selectBestAddress(computer), computer.uuid, context, computer.httpPort
       );

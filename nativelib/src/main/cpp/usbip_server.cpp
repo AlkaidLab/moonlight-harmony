@@ -9,6 +9,7 @@
  * cross-checked against Sunshine's loopback_usbip_bridge.
  */
 
+#define LOG_TAG "UsbIpServer"
 #include "usbip_server.h"
 
 #include <algorithm>
@@ -27,7 +28,6 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#define LOG_TAG "UsbIpServer"
 #define LOGI(...) OH_LOG_INFO(LOG_APP, __VA_ARGS__)
 #define LOGW(...) OH_LOG_WARN(LOG_APP, __VA_ARGS__)
 #define LOGE(...) OH_LOG_ERROR(LOG_APP, __VA_ARGS__)

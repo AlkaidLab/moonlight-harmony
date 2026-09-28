@@ -15,6 +15,7 @@
  * 支持拖动、吸附、布局切换等功能
  */
 import { promptAction } from '@kit.ArkUI';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { batteryInfo } from '@kit.BasicServicesKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './dialogs/OptionPickerDialog';
 import { ToastQueue } from '../utils/ToastQueue';
@@ -266,9 +267,11 @@ export struct PerformanceOverlay {
 
   private updateBattery(): void {
     try {
-      this.perfBatteryLevel = batteryInfo.batterySOC;
-      this.perfIsCharging = batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE ||
-        batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.FULL;
+      if (canIUse('SystemCapability.PowerManager.BatteryManager.Core')) {
+        this.perfBatteryLevel = batteryInfo.batterySOC;
+        this.perfIsCharging = batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE ||
+          batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.FULL;
+      }
     } catch (e) {
       // 忽略电池信息获取失败
     }
@@ -319,6 +322,7 @@ export struct PerformanceOverlay {
   }
 
   /** 自绘极简时钟（时针+分针+刻度） */
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   MiniClock(size: number) {
     Stack() {

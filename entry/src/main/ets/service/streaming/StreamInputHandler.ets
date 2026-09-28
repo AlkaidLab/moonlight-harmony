@@ -15,6 +15,7 @@
  * 从 StreamPage 中解耦以降低单文件复杂度。
  */
 import { display, window } from '@kit.ArkUI';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { common } from '@kit.AbilityKit';
 import { StreamViewModel } from '../../viewmodel/StreamViewModel';
 import { GamepadManager } from '../input/GamepadManager';
@@ -39,6 +40,7 @@ import {
 import { KeyboardTranslator } from '../input/KeyboardTranslator';
 import { InputInterceptorService, MouseInterceptorService } from '../input/InputInterceptorService';
 import { Logger } from '../../common/Logger';
+import { UI } from '../../common/UI';
 
 export class StreamInputHandler {
   // ── 键盘修饰键状态追踪（位掩码：Shift=0x01, Ctrl=0x02, Alt=0x04, Meta=0x08）──
@@ -357,7 +359,7 @@ export class StreamInputHandler {
    */
   private fetchAndUpdateWindowRect(): void {
     try {
-      const context = getContext() as common.UIAbilityContext;
+      const context = UI.get().getHostContext() as common.UIAbilityContext;
       window.getLastWindow(context).then((win: window.Window) => {
         const rect = win.getWindowProperties().windowRect;
         if (rect && this.mouseInterceptorActive) {
@@ -395,6 +397,7 @@ export class StreamInputHandler {
    * 处理物理鼠标事件（挂载在 XComponent 上以获取原生 Surface 级事件频率）
    * 当鼠标拦截器启用时，鼠标事件由 C++ 层直接处理，此方法不再执行。
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   handleMouseEvent(event: MouseEvent): void {
     if (!this.viewModel?.isConnected) return;
 
@@ -436,6 +439,7 @@ export class StreamInputHandler {
   /**
    * 处理鼠标滚轮事件（挂载在 XComponent 上以确保 native surface 能接收轴事件）
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   handleAxisEvent(event: AxisEvent): void {
     if (!this.viewModel?.isConnected) return;
 

@@ -7,6 +7,7 @@
   "author": "",
   "license": "GPL-3.0",
   "dependencies": {
-    "nativelib": "file:../nativelib"
+    "nativelib": "file:../nativelib",
+    "libmoonlight_nativelib.so": "file:../nativelib/src/main/cpp/types/libmoonlight_nativelib"
   }
 }

@@ -9,6 +9,7 @@
  * releaseInterface() 不会自动重绑定的问题。
  */
 
+#define LOG_TAG "USB-Helper"
 #include "usb_helper.h"
 
 #include <sys/ioctl.h>
@@ -16,7 +17,6 @@
 #include <string.h>
 #include <hilog/log.h>
 
-#define LOG_TAG "USB-Helper"
 
 // ============================================================
 // Linux USB ioctl 定义

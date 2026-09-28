@@ -12,6 +12,7 @@ import {
   CLIPBOARD_BLOB_MAX_BYTES
 } from './ClipboardSyncConfig'
 import { Logger } from '../../common/Logger';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 
 const TAG = 'ClipboardSyncService'
 const MAX_CLIPBOARD_FRAME_BYTES = 65500 - ClipboardWireFrame.HEADER_SIZE
@@ -144,6 +145,7 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     setClipboardListener(null)
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   private async onPasteboardChanged(): Promise<void> {
     if (this.pendingSelfWrites > 0) {
       this.pendingSelfWrites--
@@ -235,7 +237,7 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     let packer: image.ImagePacker | null = null
     try {
       packer = image.createImagePacker()
-      const packed = await packer.packing(pixelMap, { format: 'image/png', quality: 100 }) as ArrayBuffer
+      const packed = await packer.packToData(pixelMap, { format: 'image/png', quality: 100 })
       const payload = new Uint8Array(packed)
 
       if (payload.length === 0) {
@@ -305,7 +307,17 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     const createPixelMapData = pasteboard.createData as (mimeType: string, value: image.PixelMap) => pasteboard.PasteData
     const sysBoard = pasteboard.getSystemPasteboard()
     const pasteData = createPixelMapData(pasteboard.MIMETYPE_PIXELMAP, pixelMap)
-    sysBoard.setDataSync(pasteData)
+    try {
+      sysBoard.setDataSync(pasteData)
+    } catch (err) {
+      // 写入失败不会触发剪贴板变化事件，需回滚调用方预置的自写计数并上报，静默降级
+      if (this.pendingSelfWrites > 0) {
+        this.pendingSelfWrites--
+      }
+      const message = formatError(err as Object)
+      logError(`Failed to set local clipboard pixelmap: ${message}`)
+      this.observer?.onError?.(`写入本地剪贴板图片失败：${message}`)
+    }
   }
 
   private sendPayload(kind: number, token: number, payload: Uint8Array): void {
@@ -483,7 +495,17 @@ export class ClipboardSyncService implements ClipboardSyncListener {
   private writeTextToPasteboard(text: string): void {
     const sysBoard = pasteboard.getSystemPasteboard()
     const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text)
-    sysBoard.setDataSync(pasteData)
+    try {
+      sysBoard.setDataSync(pasteData)
+    } catch (err) {
+      // 写入失败不会触发剪贴板变化事件，需回滚调用方预置的自写计数并上报，静默降级
+      if (this.pendingSelfWrites > 0) {
+        this.pendingSelfWrites--
+      }
+      const message = formatError(err as Object)
+      logError(`Failed to set local clipboard text: ${message}`)
+      this.observer?.onError?.(`写入本地剪贴板失败：${message}`)
+    }
   }
 
   private isTextMime(mime: string): boolean {

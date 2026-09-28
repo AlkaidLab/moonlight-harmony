@@ -44,7 +44,12 @@ struct HostWebUiPage {
 
   onBackPress(): boolean {
     if (this.safeCanGoBack()) {
-      this.controller.backward();
+      try {
+        this.controller.backward();
+      } catch (_e) {
+        // 后退失败按未消费返回键处理，交回系统默认返回行为
+        return false;
+      }
       return true;
     }
     return false;
@@ -100,7 +105,13 @@ struct HostWebUiPage {
       this.controller.refresh();
     } catch (_e) {
       if (this.webUiUrl) {
-        this.controller.loadUrl(this.webUiUrl);
+        try {
+          this.controller.loadUrl(this.webUiUrl);
+        } catch (_e2) {
+          // 兜底加载也失败：停止 loading 并展示错误面板
+          this.isLoading = false;
+          this.loadError = 'WebUI 加载失败';
+        }
       }
     }
   }
@@ -110,8 +121,12 @@ struct HostWebUiPage {
       return;
     }
     const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.webUiUrl);
-    pasteboard.getSystemPasteboard().setDataSync(pasteData);
-    ToastQueue.show({ message: 'WebUI 地址已复制' });
+    try {
+      pasteboard.getSystemPasteboard().setDataSync(pasteData);
+      ToastQueue.show({ message: 'WebUI 地址已复制' });
+    } catch (_e) {
+      ToastQueue.show({ message: '复制失败' });
+    }
   }
 
   private async openInBrowser(): Promise<void> {
@@ -119,7 +134,8 @@ struct HostWebUiPage {
       return;
     }
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      // getContext 已废弃，改用 UIContext 获取宿主上下文
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const want: Want = { action: 'ohos.want.action.viewData', uri: this.webUiUrl };
       await context.startAbility(want);
     } catch (_e) {

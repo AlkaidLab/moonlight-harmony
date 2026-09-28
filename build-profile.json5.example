@@ -52,10 +52,7 @@
       "srcPath": "./nativelib",
       "targets": [
         {
-          "name": "default",
-          "applyToProducts": [
-            "default"
-          ]
+          "name": "default"
         }
       ]
     }

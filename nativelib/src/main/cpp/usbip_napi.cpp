@@ -5,6 +5,7 @@
  * usbip_napi.cpp - NAPI glue for the USB/IP server + reverse tunnel.
  */
 
+#define LOG_TAG "UsbIpNapi"
 #include "usbip_napi.h"
 
 #include <cstring>
@@ -18,7 +19,6 @@
 #include "usbip_server.h"
 #include "usbip_tunnel.h"
 
-#define LOG_TAG "UsbIpNapi"
 #define LOGI(...) OH_LOG_INFO(LOG_APP, __VA_ARGS__)
 
 namespace usbip {

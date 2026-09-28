@@ -890,7 +890,8 @@ export class GamepadManager implements UsbDriverListener {
    */
   private async scanConnectedDevices(): Promise<void> {
     try {
-      const deviceIds = await inputDevice.getDeviceIds();
+      // getDeviceIds 已废弃，官方替代 API 为 getDeviceList
+      const deviceIds = await inputDevice.getDeviceList();
       
       Logger.info('GamepadManager', `[GAMEPAD] ============ 开始扫描输入设备 ============`);
       Logger.info('GamepadManager', `[GAMEPAD] 发现 ${deviceIds.length} 个输入设备`);
@@ -1426,8 +1427,8 @@ export class GamepadManager implements UsbDriverListener {
    */
   private async verifyAndRegisterGCDevice(deviceId: string, info: GameControllerDeviceInfo): Promise<void> {
     try {
-      // 通过名称或 vendor/product 匹配 InputDevice
-      const deviceIds = await inputDevice.getDeviceIds();
+      // 通过名称或 vendor/product 匹配 InputDevice（getDeviceIds 已废弃，改用 getDeviceList）
+      const deviceIds = await inputDevice.getDeviceList();
       let hasJoystickSource = false;
 
       for (const id of deviceIds) {

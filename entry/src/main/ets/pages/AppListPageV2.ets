@@ -26,6 +26,7 @@ import { UiSettings, SettingsService } from '../service/SettingsService';
 import { StreamingSession } from '../service/streaming/StreamingSession';
 import { BandwidthProbeService } from '../service/network/BandwidthProbeService';
 import { Logger } from '../common/Logger';
+import { UI } from '../common/UI';
 
 
 /**
@@ -290,7 +291,8 @@ struct AppListPageV2 {
       
       this.computerName = computer.name;
       
-      const context = getContext(this) as common.UIAbilityContext;
+      // loadApps 会被 aboutToAppear 同步进入，此时组件未挂载，走全局 UI 载体取 context
+      const context = UI.get().getHostContext() as common.UIAbilityContext;
       this.nvHttp = NvHttp.fromComputer(computer, context);
 
       const apps = await this.getAppListWithRetry('加载');

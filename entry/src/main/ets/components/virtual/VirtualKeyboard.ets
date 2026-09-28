@@ -23,8 +23,9 @@
  *   - 支持自定义背景图片
  */
 
-import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { common } from '@kit.AbilityKit';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceVibrationCoordinator } from '../../service/input/DeviceVibrationCoordinator';
 import { display } from '@kit.ArkUI';
@@ -630,15 +631,16 @@ export struct VirtualKeyboard {
 
   private async pickBackgroundImage(): Promise<void> {
     try {
-      const photoPicker = new picker.PhotoViewPicker();
-      const options = new picker.PhotoSelectOptions();
-      options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
+      // picker.PhotoViewPicker 已废弃，官方推荐 photoAccessHelper.PhotoViewPicker
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
+      const options = new photoAccessHelper.PhotoSelectOptions();
+      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
       options.maxSelectNumber = 1;
       const result = await photoPicker.select(options);
       if (result.photoUris && result.photoUris.length > 0) {
         const srcUri = result.photoUris[0];
         // 复制到应用沙箱以持久保存
-        const context = getContext(this);
+        const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
         const destPath = context.filesDir + '/keyboard_bg.jpg';
         const srcFile = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
         const destFile = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);

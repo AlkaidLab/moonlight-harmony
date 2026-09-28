@@ -145,8 +145,16 @@ struct Index {
    * 用户拒绝隐私政策 → 退出应用
    */
   private onPrivacyDeclined(): void {
-    const context = getContext(this) as common.UIAbilityContext;
-    context.terminateSelf();
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      context.terminateSelf().catch((err: Error) => {
+        // 异步退出失败仅记录日志，避免未处理的 Promise 拒绝
+        Logger.error('Index', 'Index: 退出应用失败', err);
+      });
+    } catch (err) {
+      // 同步抛出（如上下文状态异常）同样只记录日志，避免崩溃
+      Logger.error('Index', 'Index: 退出应用失败', err);
+    }
   }
 
   /**

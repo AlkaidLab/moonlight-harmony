@@ -619,7 +619,8 @@ export class StreamViewModel {
    */
   private async detectKeyboardOrMouse(): Promise<boolean> {
     try {
-      const deviceIds = await inputDevice.getDeviceIds();
+      // getDeviceIds 已废弃，官方替代 API 为 getDeviceList
+      const deviceIds = await inputDevice.getDeviceList();
       for (const id of deviceIds) {
         const info = await inputDevice.getDeviceInfo(id);
         const sources: inputDevice.SourceType[] = info.sources;

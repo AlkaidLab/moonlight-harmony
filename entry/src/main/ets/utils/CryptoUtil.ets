@@ -10,6 +10,7 @@
 
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { Logger } from '../common/Logger';
 
 /**
@@ -26,14 +27,24 @@ interface Asn1ElementInfo {
  * 用于证书生成、加密通信等
  * 参考 Android PairingManager 实现
  */
+@SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
 export class CryptoUtil {
   /**
    * 生成随机字节数组（使用加密安全的随机数）
    */
   static generateRandomBytes(length: number): Uint8Array {
-    const random = cryptoFramework.createRandom();
-    const dataBlob = random.generateRandomSync(length);
-    return new Uint8Array(dataBlob.data);
+    try {
+      if (canIUse('SystemCapability.Security.CryptoFramework.Rand')) {
+        const random = cryptoFramework.createRandom();
+        const dataBlob = random.generateRandomSync(length);
+        return new Uint8Array(dataBlob.data);
+      }
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持随机数系统能力');
+    } catch (err) {
+      Logger.error('CryptoUtil', 'CryptoUtil: 生成随机字节失败', err);
+    }
+    // 失败时返回空数组，由调用方按失败处理
+    return new Uint8Array(0);
   }
 
   /**
@@ -94,22 +105,42 @@ export class CryptoUtil {
    * SHA-256 哈希
    */
   static async sha256(data: Uint8Array): Promise<Uint8Array> {
-    const md = cryptoFramework.createMd('SHA256');
-    const blob = CryptoUtil.createDataBlob(data);
-    await md.update(blob);
-    const result = await md.digest();
-    return new Uint8Array(result.data);
+    if (canIUse('SystemCapability.Security.CryptoFramework.MessageDigest')) {
+      try {
+        const md = cryptoFramework.createMd('SHA256');
+        const blob = CryptoUtil.createDataBlob(data);
+        await md.update(blob);
+        const result = await md.digest();
+        return new Uint8Array(result.data);
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: SHA-256 计算失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持哈希系统能力');
+    }
+    // 失败时返回空数组，配对流程会因哈希不匹配而失败
+    return new Uint8Array(0);
   }
 
   /**
    * SHA-1 哈希（用于旧版本服务器）
    */
   static async sha1(data: Uint8Array): Promise<Uint8Array> {
-    const md = cryptoFramework.createMd('SHA1');
-    const blob = CryptoUtil.createDataBlob(data);
-    await md.update(blob);
-    const result = await md.digest();
-    return new Uint8Array(result.data);
+    if (canIUse('SystemCapability.Security.CryptoFramework.MessageDigest')) {
+      try {
+        const md = cryptoFramework.createMd('SHA1');
+        const blob = CryptoUtil.createDataBlob(data);
+        await md.update(blob);
+        const result = await md.digest();
+        return new Uint8Array(result.data);
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: SHA-1 计算失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持哈希系统能力');
+    }
+    // 失败时返回空数组，配对流程会因哈希不匹配而失败
+    return new Uint8Array(0);
   }
 
   /**
@@ -123,12 +154,22 @@ export class CryptoUtil {
    * 生成随机 AES 密钥（16字节）
    */
   static generateAesKey(): ArrayBuffer {
-    const random = cryptoFramework.createRandom();
-    const dataBlob = random.generateRandomSync(16);
-    // dataBlob.data 是 Uint8Array，需要返回其底层的 ArrayBuffer
-    // 使用 slice() 创建一个新的 ArrayBuffer 副本以确保数据完整性
-    const uint8Array = new Uint8Array(dataBlob.data);
-    return uint8Array.buffer.slice(uint8Array.byteOffset, uint8Array.byteOffset + uint8Array.byteLength);
+    if (canIUse('SystemCapability.Security.CryptoFramework.Rand')) {
+      try {
+        const random = cryptoFramework.createRandom();
+        const dataBlob = random.generateRandomSync(16);
+        // dataBlob.data 是 Uint8Array，需要返回其底层的 ArrayBuffer
+        // 使用 slice() 创建一个新的 ArrayBuffer 副本以确保数据完整性
+        const uint8Array = new Uint8Array(dataBlob.data);
+        return uint8Array.buffer.slice(uint8Array.byteOffset, uint8Array.byteOffset + uint8Array.byteLength);
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: 生成随机 AES 密钥失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持随机数系统能力');
+    }
+    // 失败时返回空 ArrayBuffer
+    return new ArrayBuffer(0);
   }
 
   /**
@@ -142,17 +183,40 @@ export class CryptoUtil {
     paddedData.set(plaintext);
 
     // 创建 AES 密钥
-    const symKeyGenerator = cryptoFramework.createSymKeyGenerator('AES128');
-    const keyBlob = CryptoUtil.createDataBlob(key);
-    const symKey = await symKeyGenerator.convertKey(keyBlob);
+    let symKey: cryptoFramework.SymKey | null = null;
+    if (canIUse('SystemCapability.Security.CryptoFramework.Key.SymKey')) {
+      try {
+        const symKeyGenerator = cryptoFramework.createSymKeyGenerator('AES128');
+        const keyBlob = CryptoUtil.createDataBlob(key);
+        symKey = await symKeyGenerator.convertKey(keyBlob);
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: AES 密钥转换失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持对称密钥系统能力');
+    }
+    if (!symKey) {
+      // 密钥转换失败，返回空数组由调用方按失败处理
+      return new Uint8Array(0);
+    }
 
     // 创建 Cipher（ECB 模式，无填充）
-    const cipher = cryptoFramework.createCipher('AES128|ECB|NoPadding');
-    await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, symKey, null);
+    if (canIUse('SystemCapability.Security.CryptoFramework.Cipher')) {
+      try {
+        const cipher = cryptoFramework.createCipher('AES128|ECB|NoPadding');
+        await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, symKey, null);
 
-    const inputBlob = CryptoUtil.createDataBlob(paddedData);
-    const result = await cipher.doFinal(inputBlob);
-    return new Uint8Array(result.data);
+        const inputBlob = CryptoUtil.createDataBlob(paddedData);
+        const result = await cipher.doFinal(inputBlob);
+        return new Uint8Array(result.data);
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: AES 加密失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持加解密系统能力');
+    }
+    // 失败时返回空数组，配对流程会因数据不完整而失败
+    return new Uint8Array(0);
   }
 
   /**
@@ -160,50 +224,101 @@ export class CryptoUtil {
    */
   static async aesDecrypt(ciphertext: Uint8Array, key: Uint8Array): Promise<Uint8Array> {
     // 创建 AES 密钥
-    const symKeyGenerator = cryptoFramework.createSymKeyGenerator('AES128');
-    const keyBlob = CryptoUtil.createDataBlob(key);
-    const symKey = await symKeyGenerator.convertKey(keyBlob);
+    let symKey: cryptoFramework.SymKey | null = null;
+    if (canIUse('SystemCapability.Security.CryptoFramework.Key.SymKey')) {
+      try {
+        const symKeyGenerator = cryptoFramework.createSymKeyGenerator('AES128');
+        const keyBlob = CryptoUtil.createDataBlob(key);
+        symKey = await symKeyGenerator.convertKey(keyBlob);
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: AES 密钥转换失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持对称密钥系统能力');
+    }
+    if (!symKey) {
+      // 密钥转换失败，返回空数组由调用方按失败处理
+      return new Uint8Array(0);
+    }
 
     // 创建 Cipher（ECB 模式，无填充）
-    const cipher = cryptoFramework.createCipher('AES128|ECB|NoPadding');
-    await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, null);
+    if (canIUse('SystemCapability.Security.CryptoFramework.Cipher')) {
+      try {
+        const cipher = cryptoFramework.createCipher('AES128|ECB|NoPadding');
+        await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, null);
 
-    const inputBlob = CryptoUtil.createDataBlob(ciphertext);
-    const result = await cipher.doFinal(inputBlob);
-    return new Uint8Array(result.data);
+        const inputBlob = CryptoUtil.createDataBlob(ciphertext);
+        const result = await cipher.doFinal(inputBlob);
+        return new Uint8Array(result.data);
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: AES 解密失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持加解密系统能力');
+    }
+    // 失败时返回空数组，配对流程会因哈希不匹配而失败
+    return new Uint8Array(0);
   }
 
   /**
    * 生成 RSA 2048 密钥对
    */
-  static async generateRsaKeyPair(): Promise<cryptoFramework.KeyPair> {
-    const generator = cryptoFramework.createAsyKeyGenerator('RSA2048|PRIMES_2');
-    return await generator.generateKeyPair();
+  static async generateRsaKeyPair(): Promise<cryptoFramework.KeyPair | null> {
+    if (canIUse('SystemCapability.Security.CryptoFramework.Key.AsymKey')) {
+      try {
+        const generator = cryptoFramework.createAsyKeyGenerator('RSA2048|PRIMES_2');
+        return await generator.generateKeyPair();
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: 生成 RSA 密钥对失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持非对称密钥系统能力');
+    }
+    return null;
   }
 
   /**
    * RSA SHA256 签名
    */
-  static async rsaSign(data: Uint8Array, privateKey: cryptoFramework.PriKey): Promise<Uint8Array> {
-    const signer = cryptoFramework.createSign('RSA2048|PKCS1|SHA256');
-    await signer.init(privateKey);
-    const dataBlob = CryptoUtil.createDataBlob(data);
-    await signer.update(dataBlob);
-    const signData = await signer.sign(null);
-    return new Uint8Array(signData.data);
+  static async rsaSign(data: Uint8Array, privateKey: cryptoFramework.PriKey): Promise<Uint8Array | null> {
+    if (canIUse('SystemCapability.Security.CryptoFramework.Signature')) {
+      try {
+        const signer = cryptoFramework.createSign('RSA2048|PKCS1|SHA256');
+        await signer.init(privateKey);
+        const dataBlob = CryptoUtil.createDataBlob(data);
+        await signer.update(dataBlob);
+        const signData = await signer.sign(null);
+        return new Uint8Array(signData.data);
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: RSA 签名失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持签名系统能力');
+    }
+    return null;
   }
 
   /**
    * RSA SHA256 验签
    */
   static async rsaVerify(data: Uint8Array, signature: Uint8Array, publicKey: cryptoFramework.PubKey): Promise<boolean> {
-    const verifier = cryptoFramework.createVerify('RSA2048|PKCS1|SHA256');
-    await verifier.init(publicKey);
-    const dataBlob = CryptoUtil.createDataBlob(data);
-    await verifier.update(dataBlob);
-    const sigBlob = CryptoUtil.createDataBlob(signature);
-    const result = await verifier.verify(null, sigBlob);
-    return result;
+    if (canIUse('SystemCapability.Security.CryptoFramework.Signature')) {
+      try {
+        const verifier = cryptoFramework.createVerify('RSA2048|PKCS1|SHA256');
+        await verifier.init(publicKey);
+        const dataBlob = CryptoUtil.createDataBlob(data);
+        await verifier.update(dataBlob);
+        const sigBlob = CryptoUtil.createDataBlob(signature);
+        const result = await verifier.verify(null, sigBlob);
+        return result;
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: RSA 验签失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持签名系统能力');
+    }
+    // 失败一律视为验签不通过
+    return false;
   }
 
   /**
@@ -220,11 +335,15 @@ export class CryptoUtil {
       }
 
       // 转换为 PubKey 对象
-      const generator = cryptoFramework.createAsyKeyGenerator('RSA2048');
-      const keyPair = await generator.convertKey({ data: pubKeyDer }, null);
+      if (canIUse('SystemCapability.Security.CryptoFramework.Key.AsymKey')) {
+        const generator = cryptoFramework.createAsyKeyGenerator('RSA2048');
+        const keyPair = await generator.convertKey({ data: pubKeyDer }, null);
 
-      // 验证签名
-      return await CryptoUtil.rsaVerify(data, signature, keyPair.pubKey);
+        // 验证签名
+        return await CryptoUtil.rsaVerify(data, signature, keyPair.pubKey);
+      }
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持非对称密钥系统能力，验签失败');
+      return false;
     } catch (err) {
       Logger.error('CryptoUtil', 'CryptoUtil: verifyWithCert 失败', err);
       return false;
@@ -351,9 +470,18 @@ export class CryptoUtil {
   /**
    * 导出公钥为 DER 格式
    */
-  static async exportPublicKeyDer(publicKey: cryptoFramework.PubKey): Promise<Uint8Array> {
-    const blob = publicKey.getEncoded();
-    return new Uint8Array(blob.data);
+  static async exportPublicKeyDer(publicKey: cryptoFramework.PubKey): Promise<Uint8Array | null> {
+    if (canIUse('SystemCapability.Security.CryptoFramework.Key')) {
+      try {
+        const blob = publicKey.getEncoded();
+        return new Uint8Array(blob.data);
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: 导出公钥 DER 失败', err);
+      }
+    } else {
+      Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持密钥导出系统能力');
+    }
+    return null;
   }
 
   /**
@@ -361,40 +489,57 @@ export class CryptoUtil {
    * 由于 HarmonyOS 没有直接的 X.509 API，我们手动构造 DER 格式
    * 证书结构参考 RFC 5280
    */
-  static async generateSelfSignedCert(keyPair: cryptoFramework.KeyPair): Promise<Uint8Array> {
-    const pubKeyDer = await CryptoUtil.exportPublicKeyDer(keyPair.pubKey);
+  static async generateSelfSignedCert(keyPair: cryptoFramework.KeyPair): Promise<Uint8Array | null> {
+    if (canIUse('SystemCapability.Security.CryptoFramework.Key.AsymKey')) {
+      try {
+        const pubKeyDer = await CryptoUtil.exportPublicKeyDer(keyPair.pubKey);
+        if (!pubKeyDer) {
+          Logger.error('CryptoUtil', 'CryptoUtil: 导出公钥失败，无法生成证书');
+          return null;
+        }
 
-    // 构造简化的 X.509 v3 证书
-    // 这是一个最小化的证书结构，包含：版本、序列号、签名算法、颁发者、有效期、主题、公钥、签名
+        // 构造简化的 X.509 v3 证书
+        // 这是一个最小化的证书结构，包含：版本、序列号、签名算法、颁发者、有效期、主题、公钥、签名
 
-    // 序列号（随机 8 字节）
-    const serialNumber = CryptoUtil.generateRandomBytes(8);
+        // 序列号（随机 8 字节）
+        const serialNumber = CryptoUtil.generateRandomBytes(8);
 
-    // 有效期：当前时间到 20 年后
-    const now = new Date();
-    const notBefore = CryptoUtil.dateToUtcTime(now);
-    const expiry = new Date(now.getTime() + 20 * 365 * 24 * 60 * 60 * 1000);
-    const notAfter = CryptoUtil.dateToUtcTime(expiry);
+        // 有效期：当前时间到 20 年后
+        const now = new Date();
+        const notBefore = CryptoUtil.dateToUtcTime(now);
+        const expiry = new Date(now.getTime() + 20 * 365 * 24 * 60 * 60 * 1000);
+        const notAfter = CryptoUtil.dateToUtcTime(expiry);
 
-    // Common Name: "NVIDIA GameStream Client"
-    const cn = 'NVIDIA GameStream Client';
+        // Common Name: "NVIDIA GameStream Client"
+        const cn = 'NVIDIA GameStream Client';
 
-    // 构造 TBS (To Be Signed) Certificate
-    const tbsCert = CryptoUtil.buildTbsCertificate(
-      serialNumber,
-      notBefore,
-      notAfter,
-      cn,
-      pubKeyDer
-    );
+        // 构造 TBS (To Be Signed) Certificate
+        const tbsCert = CryptoUtil.buildTbsCertificate(
+          serialNumber,
+          notBefore,
+          notAfter,
+          cn,
+          pubKeyDer
+        );
 
-    // 签名 TBS 证书
-    const signature = await CryptoUtil.rsaSign(tbsCert, keyPair.priKey);
+        // 签名 TBS 证书
+        const signature = await CryptoUtil.rsaSign(tbsCert, keyPair.priKey);
+        if (!signature) {
+          Logger.error('CryptoUtil', 'CryptoUtil: TBS 证书签名失败，无法生成证书');
+          return null;
+        }
 
-    // 构造完整证书
-    const cert = CryptoUtil.buildCertificate(tbsCert, signature);
+        // 构造完整证书
+        const cert = CryptoUtil.buildCertificate(tbsCert, signature);
 
-    return cert;
+        return cert;
+      } catch (err) {
+        Logger.error('CryptoUtil', 'CryptoUtil: 生成自签名证书失败', err);
+        return null;
+      }
+    }
+    Logger.error('CryptoUtil', 'CryptoUtil: 当前设备不支持非对称密钥系统能力，无法生成证书');
+    return null;
   }
 
   /**

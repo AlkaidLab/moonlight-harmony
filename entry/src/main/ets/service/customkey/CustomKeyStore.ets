@@ -129,7 +129,13 @@ export class CustomKeyStore {
     if (!CustomKeyStore.profiles) return false;
 
     // 获取当前屏幕尺寸作为参考（假设旧数据是在当前设备上保存的）
-    const displayInfo = display.getDefaultDisplaySync();
+    let displayInfo: display.Display;
+    try {
+      displayInfo = display.getDefaultDisplaySync();
+    } catch (e) {
+      // 获取屏幕信息失败：跳过本次迁移，保留旧数据等下次启动重试
+      return false;
+    }
     const screenWVp = UI.get().px2vp(displayInfo.width);
     const screenHVp = UI.get().px2vp(displayInfo.height);
     if (screenWVp <= 0 || screenHVp <= 0) return false;
@@ -148,7 +154,13 @@ export class CustomKeyStore {
    * @returns true 如果有按键被迁移
    */
   private static migrateProfileKeys(profile: CustomKeyProfile): boolean {
-    const displayInfo = display.getDefaultDisplaySync();
+    let displayInfo: display.Display;
+    try {
+      displayInfo = display.getDefaultDisplaySync();
+    } catch (e) {
+      // 获取屏幕信息失败：跳过本档案迁移，保留旧数据等下次启动重试
+      return false;
+    }
     const screenWVp = UI.get().px2vp(displayInfo.width);
     const screenHVp = UI.get().px2vp(displayInfo.height);
     if (screenWVp <= 0 || screenHVp <= 0) return false;

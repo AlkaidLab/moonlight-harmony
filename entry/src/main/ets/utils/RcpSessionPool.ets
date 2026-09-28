@@ -109,7 +109,13 @@ export class RcpSessionPool {
         maxTotalConnections: RcpSessionPool.MAX_TOTAL_CONN
       }
     };
-    return rcp.createSession(sessionConfig);
+    try {
+      return rcp.createSession(sessionConfig);
+    } catch (e) {
+      // 创建失败（如参数非法/系统会话资源不足）：记录后向上抛出，由请求发起方感知
+      Logger.error('RcpSessionPool', 'RcpSessionPool: createSession 失败', e);
+      throw e instanceof Error ? e : new Error(String(e));
+    }
   }
 
   /**

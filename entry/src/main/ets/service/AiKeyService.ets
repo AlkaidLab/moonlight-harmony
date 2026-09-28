@@ -75,9 +75,14 @@ export class AiKeyService {
   /** 加载并缓存 system prompt */
   private loadSystemPrompt(): string {
     if (cachedPrompt !== null) return cachedPrompt;
-    const raw: Uint8Array = this.context.resourceManager.getRawFileContentSync(PROMPT_RAWFILE);
-    const decoder = util.TextDecoder.create('utf-8');
-    cachedPrompt = decoder.decodeToString(raw);
+    try {
+      const raw: Uint8Array = this.context.resourceManager.getRawFileContentSync(PROMPT_RAWFILE);
+      const decoder = util.TextDecoder.create('utf-8');
+      cachedPrompt = decoder.decodeToString(raw);
+    } catch (e) {
+      // 读取失败向上抛出，由调用方提示 AI 推荐不可用；不写缓存以便下次重试
+      throw new Error(`加载 AI 提示词文件失败: ${e instanceof Error ? e.message : String(e)}`);
+    }
     return cachedPrompt;
   }
 

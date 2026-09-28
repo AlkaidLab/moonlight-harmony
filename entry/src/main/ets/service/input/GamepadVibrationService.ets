@@ -18,6 +18,7 @@
  */
 
 import { vibrator } from '@kit.SensorServiceKit';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { UsbDriverService, AbstractController } from '../usbdriver/index';
 import { AudioHapticFrameFlag } from '../AudioHapticFrame';
 import { RUMBLE_MAX } from './GamepadTypes';
@@ -1131,6 +1132,7 @@ export class GamepadVibrationService {
     this.isVibrating = false;
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   private triggerMixedPattern(lowIntensity: number, highIntensity: number,
     mixedContinuous: number, mixedTransient: number,
     hasAudioTransient: boolean, renderEpoch: number): void {

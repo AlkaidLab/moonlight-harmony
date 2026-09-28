@@ -17,14 +17,14 @@
  * ArkTS 层可以判断按键类型并做相应处理（转发给 GamepadManager 等）。
  */
 
+#define LOG_TAG "InputInterceptor"
+#define LOG_DOMAIN 0xFF10
 #include "input_interceptor.h"
 #include <multimodalinput/oh_input_manager.h>
 #include <hilog/log.h>
 #include <cstring>
 #include <dlfcn.h>
 
-#define LOG_TAG "InputInterceptor"
-#define LOG_DOMAIN 0xFF10
 #define LOGI(...) OH_LOG_Print(LOG_APP, LOG_INFO, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) OH_LOG_Print(LOG_APP, LOG_WARN, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)

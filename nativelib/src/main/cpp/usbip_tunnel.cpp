@@ -5,6 +5,7 @@
  * usbip_tunnel.cpp - Reverse tunnel client, native port from moonlight-qt.
  */
 
+#define LOG_TAG "UsbIpTunnel"
 #include "usbip_tunnel.h"
 
 #include <cstring>
@@ -26,7 +27,6 @@
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 
-#define LOG_TAG "UsbIpTunnel"
 #define LOGI(...) OH_LOG_INFO(LOG_APP, __VA_ARGS__)
 #define LOGW(...) OH_LOG_WARN(LOG_APP, __VA_ARGS__)
 #define LOGE(...) OH_LOG_ERROR(LOG_APP, __VA_ARGS__)

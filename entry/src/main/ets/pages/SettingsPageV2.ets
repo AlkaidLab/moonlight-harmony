@@ -8,7 +8,7 @@
  * (at your option) any later version.
  */
 
-import { promptAction, display } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { AppNav } from '../common/AppNav';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { common, Want, bundleManager } from '@kit.AbilityKit';
@@ -3297,45 +3297,56 @@ struct SettingsPageV2 {
       return;
     }
 
-    promptAction.showDialog({
-      title: '确认清空',
-      message: `确定要清空所有 ${this.customResolutions.length} 个自定义分辨率吗？`,
-      buttons: [
-        { text: '确定', color: AppColors.Error },
-        { text: '取消', color: AppColors.TextSecondary }
-      ]
-    }).then((result) => {
-      if (result.index === 0) {
-        this.customResolutions = [];
-        this.saveCustomResolutions();
-        this.showToast('已清空所有自定义分辨率');
-      }
-    });
+    try {
+      // 官方替代 API：UIContext 作用域的 showDialog（全局 promptAction.showDialog 已废弃）
+      this.getUIContext().getPromptAction().showDialog({
+        title: '确认清空',
+        message: `确定要清空所有 ${this.customResolutions.length} 个自定义分辨率吗？`,
+        buttons: [
+          { text: '确定', color: AppColors.Error },
+          { text: '取消', color: AppColors.TextSecondary }
+        ]
+      }).then((result) => {
+        if (result.index === 0) {
+          this.customResolutions = [];
+          this.saveCustomResolutions();
+          this.showToast('已清空所有自定义分辨率');
+        }
+      });
+    } catch (e) {
+      // 弹窗唤起失败仅记录日志，不影响页面其它功能
+      Logger.warn('SettingsPageV2', `清空自定义分辨率确认弹窗唤起失败: ${e}`);
+    }
   }
 
   /**
    * 确认还原默认设置
    */
   private confirmResetSettings(): void {
-    promptAction.showDialog({
-      title: '还原默认设置',
-      message: '确定要将所有设置恢复为默认值吗？此操作不可撤销。\n\n已添加的电脑和配对信息不会受到影响。',
-      buttons: [
-        { text: '还原', color: AppColors.Error },
-        { text: '取消', color: AppColors.TextSecondary }
-      ]
-    }).then(async (result) => {
-      if (result.index === 0) {
-        try {
-          const context = getContext(this) as common.UIAbilityContext;
-          await PreferencesUtil.clear(context);
-          this.loadSettings();
-          this.showToast('已还原默认设置');
-        } catch (e) {
-          this.showToast('还原失败，请重试');
+    try {
+      this.getUIContext().getPromptAction().showDialog({
+        title: '还原默认设置',
+        message: '确定要将所有设置恢复为默认值吗？此操作不可撤销。\n\n已添加的电脑和配对信息不会受到影响。',
+        buttons: [
+          { text: '还原', color: AppColors.Error },
+          { text: '取消', color: AppColors.TextSecondary }
+        ]
+      }).then(async (result) => {
+        if (result.index === 0) {
+          try {
+            const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+            await PreferencesUtil.clear(context);
+            this.loadSettings();
+            this.showToast('已还原默认设置');
+          } catch (e) {
+            this.showToast('还原失败，请重试');
+          }
         }
-      }
-    });
+      });
+    } catch (e) {
+      // 弹窗唤起失败仅记录日志，不影响页面其它功能
+      Logger.warn('SettingsPageV2', `还原默认设置确认弹窗唤起失败: ${e}`);
+    }
   }
 
   /**
@@ -3623,7 +3634,8 @@ struct SettingsPageV2 {
    * 显示更新日志对话框
    */
   private async showChangelog(): Promise<void> {
-    const context = getContext(this) as common.Context;
+    // getContext 已废弃，改用 UIContext 获取宿主 Context
+    const context = this.getUIContext().getHostContext() as common.Context;
     const entries = await loadChangelog(context);
     this.changelogDialogController = new CustomDialogController({
       builder: ChangelogDialog({ entries: entries }),
@@ -3652,7 +3664,7 @@ struct SettingsPageV2 {
    */
   private openUrl(url: string): void {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const want: Want = {
         action: 'ohos.want.action.viewData',
         uri: url
@@ -3927,24 +3939,29 @@ struct SettingsPageV2 {
       return;
     }
 
-    promptAction.showDialog({
-      title: '激活开发者模式',
-      message: `开发者功能面向项目支持者开放。登录 GitHub 后，应用会验证当前账号是否 Star 了 ${DeveloperUnlockService.projectFullName()}。\n\n说明：该验证会跳转 GitHub，并仅用于确认 Star 状态。`,
-      buttons: [
-        { text: '验证 Star', color: AppColors.Primary },
-        { text: '打开项目', color: AppColors.TextSecondary },
-        { text: '激活码', color: AppColors.TextSecondary }
-      ]
-    }).then((result) => {
-      if (result.index === 0) {
-        this.startDeveloperUnlockVerification();
-      } else if (result.index === 1) {
-        this.openUrl(DeveloperUnlockService.projectUrl());
-      } else if (result.index === 2) {
-        this.developerMode = true;
-        this.showDevKeyActivation();
-      }
-    });
+    try {
+      this.getUIContext().getPromptAction().showDialog({
+        title: '激活开发者模式',
+        message: `开发者功能面向项目支持者开放。登录 GitHub 后，应用会验证当前账号是否 Star 了 ${DeveloperUnlockService.projectFullName()}。\n\n说明：该验证会跳转 GitHub，并仅用于确认 Star 状态。`,
+        buttons: [
+          { text: '验证 Star', color: AppColors.Primary },
+          { text: '打开项目', color: AppColors.TextSecondary },
+          { text: '激活码', color: AppColors.TextSecondary }
+        ]
+      }).then((result) => {
+        if (result.index === 0) {
+          this.startDeveloperUnlockVerification();
+        } else if (result.index === 1) {
+          this.openUrl(DeveloperUnlockService.projectUrl());
+        } else if (result.index === 2) {
+          this.developerMode = true;
+          this.showDevKeyActivation();
+        }
+      });
+    } catch (e) {
+      // 弹窗唤起失败仅记录日志，不影响页面其它功能
+      Logger.warn('SettingsPageV2', `开发者模式激活弹窗唤起失败: ${e}`);
+    }
   }
 
   private async startDeveloperUnlockVerification(): Promise<void> {
@@ -3996,27 +4013,33 @@ struct SettingsPageV2 {
     }
 
     this.developerPendingDialogVisible = true;
-    promptAction.showDialog({
-      title: 'GitHub Star 验证',
-      message: `1. 打开授权页并输入代码：${deviceCode.userCode}\n2. 确认已 Star ${DeveloperUnlockService.projectFullName()}\n3. 回到这里点击“我已授权”\n\n授权页：${deviceCode.verificationUri}`,
-      buttons: [
-        { text: '打开授权页', color: AppColors.Primary },
-        { text: '我已授权', color: AppColors.Primary },
-        { text: '打开项目', color: AppColors.TextSecondary }
-      ]
-    }).then((result) => {
+    try {
+      this.getUIContext().getPromptAction().showDialog({
+        title: 'GitHub Star 验证',
+        message: `1. 打开授权页并输入代码：${deviceCode.userCode}\n2. 确认已 Star ${DeveloperUnlockService.projectFullName()}\n3. 回到这里点击“我已授权”\n\n授权页：${deviceCode.verificationUri}`,
+        buttons: [
+          { text: '打开授权页', color: AppColors.Primary },
+          { text: '我已授权', color: AppColors.Primary },
+          { text: '打开项目', color: AppColors.TextSecondary }
+        ]
+      }).then((result) => {
+        this.developerPendingDialogVisible = false;
+        if (result.index === 0) {
+          this.openUrl(deviceCode.verificationUriComplete ?? deviceCode.verificationUri);
+        } else if (result.index === 1) {
+          this.pollDeveloperPendingDeviceCode(true, false);
+        } else if (result.index === 2) {
+          this.openUrl(DeveloperUnlockService.projectUrl());
+        }
+      }).catch((err: Error) => {
+        this.developerPendingDialogVisible = false;
+        Logger.warn('SettingsPageV2', `DeveloperUnlockService: 授权弹窗已关闭: ${err}`);
+      });
+    } catch (e) {
+      // 唤起失败时复位标志，避免阻塞后续弹窗
       this.developerPendingDialogVisible = false;
-      if (result.index === 0) {
-        this.openUrl(deviceCode.verificationUriComplete ?? deviceCode.verificationUri);
-      } else if (result.index === 1) {
-        this.pollDeveloperPendingDeviceCode(true, false);
-      } else if (result.index === 2) {
-        this.openUrl(DeveloperUnlockService.projectUrl());
-      }
-    }).catch((err: Error) => {
-      this.developerPendingDialogVisible = false;
-      Logger.warn('SettingsPageV2', `DeveloperUnlockService: 授权弹窗已关闭: ${err}`);
-    });
+      Logger.warn('SettingsPageV2', `GitHub 授权引导弹窗唤起失败: ${e}`);
+    }
   }
 
   private async pollDeveloperPendingDeviceCode(
@@ -4082,18 +4105,23 @@ struct SettingsPageV2 {
     this.devKeyActivated = false;
     await this.saveSetting(SettingsKeys.DEVELOPER_MODE, false);
     await this.saveSetting(SettingsKeys.DEV_KEY_ACTIVATED, false);
-    promptAction.showDialog({
-      title: '未检测到 Star',
-      message: `GitHub 授权成功，但当前账号尚未 Star ${DeveloperUnlockService.projectFullName()}。如果刚刚 Star，请稍等片刻后重新验证。`,
-      buttons: [
-        { text: '打开项目', color: AppColors.Primary },
-        { text: '取消', color: AppColors.TextSecondary }
-      ]
-    }).then((result) => {
-      if (result.index === 0) {
-        this.openUrl(DeveloperUnlockService.projectUrl());
-      }
-    });
+    try {
+      this.getUIContext().getPromptAction().showDialog({
+        title: '未检测到 Star',
+        message: `GitHub 授权成功，但当前账号尚未 Star ${DeveloperUnlockService.projectFullName()}。如果刚刚 Star，请稍等片刻后重新验证。`,
+        buttons: [
+          { text: '打开项目', color: AppColors.Primary },
+          { text: '取消', color: AppColors.TextSecondary }
+        ]
+      }).then((result) => {
+        if (result.index === 0) {
+          this.openUrl(DeveloperUnlockService.projectUrl());
+        }
+      });
+    } catch (e) {
+      // 弹窗唤起失败仅记录日志，不影响页面其它功能
+      Logger.warn('SettingsPageV2', `未 Star 提示弹窗唤起失败: ${e}`);
+    }
   }
 
   private async failDeveloperUnlockVerification(message: string): Promise<void> {
@@ -4123,7 +4151,8 @@ struct SettingsPageV2 {
    * 显示开发者模式激活码输入
    */
   private showDevKeyActivation(): void {
-    const context = getContext(this) as common.Context;
+    // getContext 已废弃，改用 UIContext 获取宿主 Context
+    const context = this.getUIContext().getHostContext() as common.Context;
     const deviceId = DevKeyVerifier.getDeviceId(context);
     if (!deviceId) {
       this.developerMode = false;
@@ -4131,9 +4160,13 @@ struct SettingsPageV2 {
       return;
     }
     const displayId = deviceId.toUpperCase();
-    // 自动复制设备 ID 到剪贴板
-    const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, displayId);
-    pasteboard.getSystemPasteboard().setDataSync(pasteData);
+    // 自动复制设备 ID 到剪贴板（复制失败不阻断激活流程）
+    try {
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, displayId);
+      pasteboard.getSystemPasteboard().setDataSync(pasteData);
+    } catch (e) {
+      Logger.warn('SettingsPageV2', `复制设备 ID 到剪贴板失败: ${e}`);
+    }
     this.textInputTitle = `激活开发者模式\n设备 ID: ${displayId}（已复制）`;
     this.textInputPlaceholder = '请输入 8 位激活码';
     this.textInputValue = '';
@@ -4218,7 +4251,8 @@ struct OpenSourceLicensesDialog {
   @State private libraries: OpenSourceLibrary[] = [];
 
   aboutToAppear(): void {
-    const context = getContext(this) as common.Context;
+    // getContext 已废弃，改用 UIContext 获取宿主 Context
+    const context = this.getUIContext().getHostContext() as common.Context;
     this.libraries = loadOpenSourceLibraries(context);
   }
 

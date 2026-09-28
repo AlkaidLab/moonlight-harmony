@@ -16,7 +16,8 @@
  * 参照 Android 的 simplejni.c 实现
  */
 
-// 首先包含 moonlight-common-c 的头文件以避免宏重定义警告
+// LOG_TAG 必须在所有 include 之前定义（hilog/log.h 用 #ifndef 提供默认值，后定义会触发宏重定义警告）
+#define LOG_TAG "MoonlightBridge"
 extern "C" {
 #include "moonlight-common-c/src/Limelight.h"
 
@@ -51,7 +52,6 @@ int LiSendClipboardData(const void* payload, int length);
 #include <cerrno>
 #include <mutex>
 
-#define LOG_TAG "MoonlightBridge"
 
 // =============================================================================
 // 全局状态

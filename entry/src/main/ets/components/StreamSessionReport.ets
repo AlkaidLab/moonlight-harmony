@@ -13,7 +13,8 @@
  *
  * 轻量分析本次串流统计，展示可爱的结论、改进建议，并生成可分享 PNG 卡片。
  */
-import { componentSnapshot, display } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { common, bundleManager } from '@kit.AbilityKit';
 import { deviceInfo, pasteboard } from '@kit.BasicServicesKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
@@ -22,6 +23,7 @@ import { systemShare } from '@kit.ShareKit';
 import { ToastQueue } from '../utils/ToastQueue';
 import { StreamConfig } from '../model/StreamConfig';
 import { Logger } from '../common/Logger';
+import { UI } from '../common/UI';
 
 const COLOR_GOOD = '#FF8BC34A';
 const COLOR_WARN = '#FFFFB74D';
@@ -701,14 +703,15 @@ export struct StreamSessionReport {
     try {
       this.metricReveal = 1;
       ToastQueue.show({ message: '正在生成分享图片…', duration: 1200 });
-      const context = getContext(this) as common.UIAbilityContext;
-      const cardPixelMap = await componentSnapshot.createFromBuilder((): void => {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      // 改走 UIContext 作用域的 componentSnapshot API
+      const cardPixelMap = await UI.get().getComponentSnapshot().createFromBuilder((): void => {
         this.ShareCardBuilder(this.data);
       }, 300, true);
 
       const tempPath = `${context.tempDir}/moonlight_stream_report_${Date.now()}.png`;
       const packer = image.createImagePacker();
-      const buffer = await packer.packing(cardPixelMap, { format: 'image/png', quality: 100 });
+      const buffer = await packer.packToData(cardPixelMap, { format: 'image/png', quality: 100 });
       packer.release();
       cardPixelMap.release();
 
@@ -868,6 +871,7 @@ export struct StreamSessionReport {
     .transition(TransitionEffect.OPACITY.animation({ duration: 260 }))
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   ReportCard(snapshotMode: boolean) {
     Stack() {

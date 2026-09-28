@@ -14,6 +14,7 @@
  * 处理触摸事件并转换为相应的输入指令
  */
 import nativeLib from 'libmoonlight_nativelib.so';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { PointXY } from './PanZoomHandler';
 import { TrackpadGestureHandler, TrackpadInputSink, TrackpadConfig } from './TrackpadGestureHandler';
 import {
@@ -465,6 +466,7 @@ export class TouchInputHandler {
    * 处理多点触控事件（DIRECT 模式）
    * 支持高采样率：处理历史触摸点 + 当前触摸点
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   private handleMultiTouchEvent(event: TouchEvent): void {
     const touches = event.touches;
     const changedTouches = event.changedTouches;
@@ -942,6 +944,7 @@ export class TouchInputHandler {
    * 获取手写笔旋转角度（0-359度）
    * ArkUI BaseEvent.rollAngle 为 Z 轴旋转角（API 17+）
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   private computePenRotation(event: TouchEvent): number {
     // rollAngle 是 API 17+ 的可选属性
     const rollAngle = event.rollAngle;
@@ -959,6 +962,7 @@ export class TouchInputHandler {
    * 处理手写笔事件（仅 DIRECT 模式）
    * 将手写笔触摸事件转化为 Moonlight 的 PenEvent
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP, SuppressWarningsType.COMPATIBILITY] })
   private handlePenEvent(event: TouchEvent): void {
     const touches = event.touches;
     const changedTouches = event.changedTouches;

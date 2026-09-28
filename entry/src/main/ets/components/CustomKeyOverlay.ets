@@ -18,7 +18,8 @@
  *   - 父层使用 hitTestReady 延迟刷新命中测试区域
  */
 
-import { componentSnapshot, display, LengthMetrics, window } from '@kit.ArkUI';
+import { display, LengthMetrics, window } from '@kit.ArkUI';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { ToastQueue } from '../utils/ToastQueue';
 import {
   CustomKeyDef,
@@ -70,6 +71,7 @@ import {
 import { CustomKeyBtn } from './CustomKeyBtn';
 import { AiKeyRecommendation } from '../service/AiKeyService';
 import { Logger } from '../common/Logger';
+import { UI } from '../common/UI';
 
 // =============================================================================
 // 主覆盖层组件
@@ -301,10 +303,15 @@ export struct CustomKeyOverlay {
   private captureAnimTimers: number[] = [];
 
   async aboutToAppear(): Promise<void> {
-    // 获取屏幕尺寸
-    const displayInfo = display.getDefaultDisplaySync();
-    this.screenWidthVp = this.getUIContext().px2vp(displayInfo.width);
-    this.screenHeightVp = this.getUIContext().px2vp(displayInfo.height);
+    // 获取屏幕尺寸（getDefaultDisplaySync 可能抛错；失败时保持初值 0，
+    // 后续由 display.on('change') 监听在屏幕信息可获取时补偿更新）
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      this.screenWidthVp = this.getUIContext().px2vp(displayInfo.width);
+      this.screenHeightVp = this.getUIContext().px2vp(displayInfo.height);
+    } catch (e) {
+      Logger.warn('CustomKeyOverlay', '[CustomKeyOverlay] 获取屏幕尺寸失败:', e);
+    }
 
     // 监听屏幕变化（折叠屏展开/折叠、旋转等），动态更新坐标基准
     this.displayChangeCallback = (_displayId: number): void => {
@@ -1569,7 +1576,7 @@ export struct CustomKeyOverlay {
     await new Promise<void>((resolve) => setTimeout(resolve, 150));
 
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const win = await window.getLastWindow(context);
       const pixelMap = await win.snapshot();
 
@@ -2009,7 +2016,7 @@ export struct CustomKeyOverlay {
   /** 通过系统分享面板分享美化卡片（含二维码 + 标题） */
   private async shareToFriend(): Promise<void> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const profileName = await CustomKeyStore.getActiveProfileName();
       const keyCount = this.keys.length;
       const qrPixel = this.qrPixelMap;
@@ -2020,14 +2027,14 @@ export struct CustomKeyOverlay {
       let shareData: systemShare.SharedData;
 
       if (qrPixel) {
-        // 用 componentSnapshot 渲染美化卡片
-        const cardPixelMap = await componentSnapshot.createFromBuilder((): void => {
+        // 用 componentSnapshot 渲染美化卡片（改走 UIContext 作用域 API）
+        const cardPixelMap = await UI.get().getComponentSnapshot().createFromBuilder((): void => {
           this.ShareCardBuilder(qrPixel, profileName, keyCount);
         }, 300, true);
 
         const tempPath = context.tempDir + '/moonlight_share_card.png';
         const packer = image.createImagePacker();
-        const buf = await packer.packing(cardPixelMap, { format: 'image/png', quality: 100 });
+        const buf = await packer.packToData(cardPixelMap, { format: 'image/png', quality: 100 });
         packer.release();
         const file = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
         fileIo.writeSync(file.fd, buf);
@@ -2059,6 +2066,7 @@ export struct CustomKeyOverlay {
     }
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   ShareCardBuilder(qrPixel: image.PixelMap, profileName: string, keyCount: number) {
     Stack() {
@@ -2169,7 +2177,7 @@ export struct CustomKeyOverlay {
   /** 从剪贴板粘贴导入 */
   private async ensureClipboardReadPermissionGranted(): Promise<boolean> {
     try {
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const atManager = abilityAccessCtrl.createAtManager();
       const bundleInfo = await bundleManager.getBundleInfoForSelf(
         bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION
@@ -2193,6 +2201,7 @@ export struct CustomKeyOverlay {
     }
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   private async pasteFromClipboard(): Promise<void> {
     try {
       const granted = await this.ensureClipboardReadPermissionGranted();
