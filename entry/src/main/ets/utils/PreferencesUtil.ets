@@ -93,8 +93,9 @@ export class PreferencesUtil {
       await prefs.put(key, value);
       await prefs.flush();
     } catch (e) {
-      // 写入失败丢弃本次保存，不影响调用方主流程
+      // 写入失败上抛，调用方可感知（CustomKeyStore.save 等依赖此契约）
       Logger.error('PreferencesUtil', `PreferencesUtil: put(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: put(${key}) 失败: ${e}`);
     }
   }
 
@@ -116,8 +117,9 @@ export class PreferencesUtil {
       await prefs.put(key, value);
       await prefs.flush();
     } catch (e) {
-      // 写入失败丢弃本次保存，不影响调用方主流程
+      // 写入失败上抛，调用方可感知
       Logger.error('PreferencesUtil', `PreferencesUtil: setString(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: setString(${key}) 失败: ${e}`);
     }
   }
 
@@ -139,8 +141,9 @@ export class PreferencesUtil {
       await prefs.put(key, value);
       await prefs.flush();
     } catch (e) {
-      // 写入失败丢弃本次保存，不影响调用方主流程
+      // 写入失败上抛，调用方可感知
       Logger.error('PreferencesUtil', `PreferencesUtil: setNumber(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: setNumber(${key}) 失败: ${e}`);
     }
   }
 
@@ -162,8 +165,9 @@ export class PreferencesUtil {
       await prefs.put(key, value);
       await prefs.flush();
     } catch (e) {
-      // 写入失败丢弃本次保存，不影响调用方主流程
+      // 写入失败上抛，调用方可感知
       Logger.error('PreferencesUtil', `PreferencesUtil: setBoolean(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: setBoolean(${key}) 失败: ${e}`);
     }
   }
 
@@ -173,8 +177,9 @@ export class PreferencesUtil {
       await prefs.delete(key);
       await prefs.flush();
     } catch (e) {
-      // 删除失败丢弃本次操作，不影响调用方主流程
+      // 删除失败上抛，调用方可感知
       Logger.error('PreferencesUtil', `PreferencesUtil: remove(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: remove(${key}) 失败: ${e}`);
     }
   }
 
@@ -184,8 +189,9 @@ export class PreferencesUtil {
       await prefs.clear();
       await prefs.flush();
     } catch (e) {
-      // 清空失败丢弃本次操作，不影响调用方主流程
+      // 清空失败上抛，调用方可感知
       Logger.error('PreferencesUtil', 'PreferencesUtil: clear 失败', e);
+      throw new Error(`PreferencesUtil: clear 失败: ${e}`);
     }
   }
 }

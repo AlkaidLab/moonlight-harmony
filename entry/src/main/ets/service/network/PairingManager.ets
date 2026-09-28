@@ -418,12 +418,18 @@ export class PairingManager {
    * @returns 配对结果
    */
   async pair(pin: string): Promise<PairResult> {
-    await this.initialize();
-
-    // 自动检测服务器版本号（Gen 7+ 使用 SHA-256，之前使用 SHA-1）
-    const serverMajorVersion = await this.fetchServerMajorVersion();
-    const useSha256 = serverMajorVersion >= 7;
-    Logger.info('PairingManager', `PairingManager: 服务器版本 ${serverMajorVersion}, 使用 ${useSha256 ? 'SHA-256' : 'SHA-1'} 哈希算法`);
+    // 初始化/版本探测失败按配对失败终止，异常不再外溢到调用方
+    let useSha256 = false;
+    try {
+      await this.initialize();
+      // 自动检测服务器版本号（Gen 7+ 使用 SHA-256，之前使用 SHA-1）
+      const serverMajorVersion = await this.fetchServerMajorVersion();
+      useSha256 = serverMajorVersion >= 7;
+      Logger.info('PairingManager', `PairingManager: 服务器版本 ${serverMajorVersion}, 使用 ${useSha256 ? 'SHA-256' : 'SHA-1'} 哈希算法`);
+    } catch (e) {
+      Logger.error('PairingManager', `PairingManager: 初始化或版本探测失败: ${e}`);
+      return { state: PairState.FAILED };
+    }
 
     try {
       // ============ 步骤 1: 发送 salt 和客户端证书，获取服务器证书 ============

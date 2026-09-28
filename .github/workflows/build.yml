@@ -210,7 +210,7 @@ jobs:
             {
               "name": "nativelib",
               "srcPath": "./nativelib",
-              "targets": [{ "name": "default", "applyToProducts": ["default"] }]
+              "targets": [{ "name": "default" }]
             }
           ]
         }
@@ -279,7 +279,7 @@ jobs:
             {
               "name": "nativelib",
               "srcPath": "./nativelib",
-              "targets": [{ "name": "default", "applyToProducts": ["default"] }]
+              "targets": [{ "name": "default" }]
             }
           ]
         }

@@ -160,7 +160,7 @@ export struct PerformanceOverlay {
             this.dismissGuide();
           }, 5000);
         }, 500);
-        PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_GUIDE_SHOWN, true);
+        PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_GUIDE_SHOWN, true).catch(() => {});
       }
     } catch (_) {
       // 忽略
@@ -458,7 +458,7 @@ export struct PerformanceOverlay {
           this.overlayLocked = true;
           this.viewModel.overlayState.config.isLocked = true;
           this.viewModel.overlayState.configVersion++;
-          PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, true);
+          PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, true).catch(() => {});
           this.playLockFlash();
           try {
             ToastQueue.show({ message: '� 已锁定，触摸将透传至游戏', duration: 1500 });
@@ -1099,7 +1099,7 @@ export struct PerformanceOverlay {
     // 同步 @State 数组，触发 UI 重新渲染
     this.enabledItemsList = Array.from(config.enabledItems);
     // 持久化
-    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_ITEMS, this.enabledItemsList.join(','));
+    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_ITEMS, this.enabledItemsList.join(',')).catch(() => {});
   }
 
   /**
@@ -1108,6 +1108,6 @@ export struct PerformanceOverlay {
   private updateBgOpacity(value: number): void {
     this.overlayBgOpacity = value;
     this.viewModel.overlayState.config.bgOpacity = value;
-    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_BG_OPACITY, value);
+    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_BG_OPACITY, value).catch(() => {});
   }
 }

@@ -726,7 +726,7 @@ export struct VirtualControllerOverlay {
    * 静态方法：保存缩放值
    */
   static saveScale(value: number): void {
-    PreferencesUtil.put(SCALE_KEY, value);
+    PreferencesUtil.put(SCALE_KEY, value).catch(() => {});
   }
 
   /**
@@ -740,6 +740,6 @@ export struct VirtualControllerOverlay {
    * 静态方法：保存透明度值
    */
   static saveOpacity(value: number): void {
-    PreferencesUtil.put(OPACITY_KEY, value);
+    PreferencesUtil.put(OPACITY_KEY, value).catch(() => {});
   }
 }

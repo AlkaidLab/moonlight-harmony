@@ -3312,6 +3312,8 @@ struct SettingsPageV2 {
           this.saveCustomResolutions();
           this.showToast('已清空所有自定义分辨率');
         }
+      }).catch((err: Error) => {
+        Logger.warn('SettingsPageV2', `清空自定义分辨率弹窗交互失败: ${err.message}`);
       });
     } catch (e) {
       // 弹窗唤起失败仅记录日志，不影响页面其它功能
@@ -3342,6 +3344,8 @@ struct SettingsPageV2 {
             this.showToast('还原失败，请重试');
           }
         }
+      }).catch((err: Error) => {
+        Logger.warn('SettingsPageV2', `还原默认设置弹窗交互失败: ${err.message}`);
       });
     } catch (e) {
       // 弹窗唤起失败仅记录日志，不影响页面其它功能
@@ -3957,6 +3961,8 @@ struct SettingsPageV2 {
           this.developerMode = true;
           this.showDevKeyActivation();
         }
+      }).catch((err: Error) => {
+        Logger.warn('SettingsPageV2', `开发者模式激活弹窗交互失败: ${err.message}`);
       });
     } catch (e) {
       // 弹窗唤起失败仅记录日志，不影响页面其它功能
@@ -4117,6 +4123,8 @@ struct SettingsPageV2 {
         if (result.index === 0) {
           this.openUrl(DeveloperUnlockService.projectUrl());
         }
+      }).catch((err: Error) => {
+        Logger.warn('SettingsPageV2', `未 Star 提示弹窗交互失败: ${err.message}`);
       });
     } catch (e) {
       // 弹窗唤起失败仅记录日志，不影响页面其它功能
@@ -4160,14 +4168,16 @@ struct SettingsPageV2 {
       return;
     }
     const displayId = deviceId.toUpperCase();
-    // 自动复制设备 ID 到剪贴板（复制失败不阻断激活流程）
+    // 自动复制设备 ID 到剪贴板（复制失败不阻断激活流程，但标题不再声称已复制）
+    let copySuffix = '（已复制）';
     try {
       const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, displayId);
       pasteboard.getSystemPasteboard().setDataSync(pasteData);
     } catch (e) {
+      copySuffix = '（复制失败，请手动复制）';
       Logger.warn('SettingsPageV2', `复制设备 ID 到剪贴板失败: ${e}`);
     }
-    this.textInputTitle = `激活开发者模式\n设备 ID: ${displayId}（已复制）`;
+    this.textInputTitle = `激活开发者模式\n设备 ID: ${displayId}${copySuffix}`;
     this.textInputPlaceholder = '请输入 8 位激活码';
     this.textInputValue = '';
     this.textInputCallback = (value: string) => {

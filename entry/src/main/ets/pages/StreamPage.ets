@@ -1005,7 +1005,7 @@ struct StreamPage {
         this.viewModel.overlayState.config.isLocked = false;
         this.viewModel.overlayState.configVersion++;
         AppStorage.setOrCreate('perf_overlay_locked', false);
-        PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, false);
+        PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, false).catch(() => {});
         ToastQueue.show({ message: '已解锁覆盖层', duration: 1500 });
         this.gameMenuDialogController?.close();
       },
@@ -1758,7 +1758,7 @@ struct StreamPage {
       return;
     }
     try {
-      await PreferencesUtil.put(SettingsKeys.LAST_STREAM_DIAGNOSTICS, text);
+      await PreferencesUtil.put(SettingsKeys.LAST_STREAM_DIAGNOSTICS, text).catch(() => {});
     } catch (err) {
       Logger.warn('StreamPage', '[StreamPage] 保存串流诊断失败:', JSON.stringify(err));
     }

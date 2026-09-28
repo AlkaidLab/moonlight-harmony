@@ -345,6 +345,9 @@ export struct GameMenuDialog {
         } else if (result.index === 1) {
           this.showRestoreBuiltinMenu(deletedBuiltins);
         }
+      }).catch((e: Error) => {
+        // 弹窗异步失败（如参数校验 401）不中断菜单
+        Logger.warn('GameMenuDialog', `添加快捷键弹窗交互失败: ${e.message}`);
       });
     } catch (e) {
       // 弹窗唤起失败仅记录日志，不打断菜单交互
@@ -375,6 +378,9 @@ export struct GameMenuDialog {
           }
           this.shortcuts = this.shortcutManager.getShortcuts();
         }
+      }).catch((e: Error) => {
+        // 恢复失败（弹窗异常或 restoreBuiltinShortcut 出错）记录并保持菜单可用
+        Logger.warn('GameMenuDialog', `恢复预置快捷键失败: ${e.message}`);
       });
     } catch (e) {
       // 弹窗唤起失败仅记录日志，不打断菜单交互
@@ -691,19 +697,19 @@ export struct GameMenuDialog {
     PreferencesUtil.put(
       SettingsKeys.ENABLE_AUDIO_VIBRATION,
       this.audioVibrationEnabled
-    ).catch((error: Error) => {
+    ).catch(() => {}).catch((error: Error) => {
       Logger.error('GameMenuDialog', '[AudioVibration] 保存启用状态失败:', error);
     });
     PreferencesUtil.put(
       SettingsKeys.AUDIO_VIBRATION_STRENGTH,
       this.audioVibrationStrength
-    ).catch((error: Error) => {
+    ).catch(() => {}).catch((error: Error) => {
       Logger.error('GameMenuDialog', '[AudioVibration] 保存强度失败:', error);
     });
     PreferencesUtil.put(
       SettingsKeys.AUDIO_VIBRATION_SCENE_MODE,
       this.audioVibrationSceneMode
-    ).catch((error: Error) => {
+    ).catch(() => {}).catch((error: Error) => {
       Logger.error('GameMenuDialog', '[AudioVibration] 保存场景失败:', error);
     });
   }

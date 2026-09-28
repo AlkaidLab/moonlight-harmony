@@ -218,7 +218,7 @@ export struct AboutDialogView {
       ToastQueue.show({ message: `群号 ${QQ_GROUP_NUMBER} 已复制，请在 QQ 中搜索加入` });
     } catch (_e) {
       // 复制失败降级提示，便于用户手动记录群号
-      ToastQueue.show({ message: '复制失败，请手动记录群号' });
+      ToastQueue.show({ message: `复制失败，请手动记录群号 ${QQ_GROUP_NUMBER}` });
     }
   }
 }

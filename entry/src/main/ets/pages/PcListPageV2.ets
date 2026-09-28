@@ -463,7 +463,12 @@ struct PcListPageV2 {
   @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   private moveSelfToBackground(): void {
     try {
-      (UI.get().getHostContext() as common.UIAbilityContext).moveAbilityToBackground();
+      // Promise 拒绝单独兜底（try-catch 只覆盖同步异常）；失败保持前台，
+      // 返回键语义不变（return true 拦截系统默认退出）
+      (UI.get().getHostContext() as common.UIAbilityContext).moveAbilityToBackground()
+        .catch((err: Error) => {
+          Logger.warn('PcListPageV2', `moveAbilityToBackground failed: ${err.message}`);
+        });
     } catch (err) {
       // 退后台失败时保持前台，系统返回键行为不受影响
       Logger.warn('PcListPageV2', `moveAbilityToBackground failed: ${JSON.stringify(err)}`);

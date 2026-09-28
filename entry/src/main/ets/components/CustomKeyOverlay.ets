@@ -844,6 +844,16 @@ export struct CustomKeyOverlay {
     .width('100%')
     .height('100%')
     .hitTestBehavior(HitTestMode.Transparent)
+    // 布局尺寸就绪后校准屏幕基准（覆盖 aboutToAppear 阶段 getDefaultDisplaySync
+    // 失败的补偿场景，旋转/折叠时也直接跟随组件实际区域）
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      const w = newValue.width as number;
+      const h = newValue.height as number;
+      if (w > 0 && h > 0 && (w !== this.screenWidthVp || h !== this.screenHeightVp)) {
+        this.screenWidthVp = w;
+        this.screenHeightVp = h;
+      }
+    })
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

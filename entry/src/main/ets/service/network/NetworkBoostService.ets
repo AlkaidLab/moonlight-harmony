@@ -181,7 +181,7 @@ export class NetworkBoostService {
 
   /** 设备是否支持 NetworkBoostKit（一次失败后置 false） */
   isSupported(): boolean {
-    return this.supported;
+    return this.supported && canIUse(NETWORK_BOOST_SYSCAP);
   }
 
   /**

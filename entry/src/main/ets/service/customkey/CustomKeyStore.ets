@@ -62,13 +62,16 @@ export class CustomKeyStore {
    */
   static async init(): Promise<void> {
     try {
-      const json = await PreferencesUtil.get<string>(STORAGE_KEY_PROFILES, '');
+      // 直连 prefs 读取：读取失败（数据库异常）落入外层 catch 走内存默认且不落盘，
+      // 与"键不存在"（正常首次使用，建默认配置并保存）区分开
+      const prefs = await PreferencesUtil.getPreferences();
+      const json = await prefs.get(STORAGE_KEY_PROFILES, '') as string;
       if (json) {
         CustomKeyStore.profiles = JSON.parse(json) as CustomKeyProfile[];
       } else {
         CustomKeyStore.profiles = [];
       }
-      CustomKeyStore.activeProfileName = await PreferencesUtil.get<string>(STORAGE_KEY_ACTIVE, '');
+      CustomKeyStore.activeProfileName = await prefs.get(STORAGE_KEY_ACTIVE, '') as string;
 
       // 如果没有任何配置，创建一个默认的
       if (CustomKeyStore.profiles.length === 0) {
@@ -91,7 +94,7 @@ export class CustomKeyStore {
       }
 
       // 加载游戏→配置映射
-      const gameJson = await PreferencesUtil.get<string>(STORAGE_KEY_GAME_PROFILES, '');
+      const gameJson = await prefs.get(STORAGE_KEY_GAME_PROFILES, '') as string;
       if (gameJson) {
         CustomKeyStore.gameProfiles = JSON.parse(gameJson) as Record<string, string>;
       } else {
@@ -111,12 +114,17 @@ export class CustomKeyStore {
     }
   }
 
-  /** 持久化到 Preferences */
+  /** 持久化到 Preferences（失败记录日志，保留内存态待下次保存重试） */
   private static async save(): Promise<void> {
     const json = JSON.stringify(CustomKeyStore.profiles);
-    await PreferencesUtil.put(STORAGE_KEY_PROFILES, json);
-    await PreferencesUtil.put(STORAGE_KEY_ACTIVE, CustomKeyStore.activeProfileName);
-    SettingsBackupService.scheduleAutoSave();
+    try {
+      await PreferencesUtil.put(STORAGE_KEY_PROFILES, json);
+      await PreferencesUtil.put(STORAGE_KEY_ACTIVE, CustomKeyStore.activeProfileName);
+      SettingsBackupService.scheduleAutoSave();
+    } catch (e) {
+      // 保存失败时跳过备份调度（避免备份到旧数据），编辑操作不被打断
+      Logger.error('CustomKeyStore', '[CustomKeyStore] save failed:', JSON.stringify(e));
+    }
   }
 
   /**
@@ -178,6 +186,11 @@ export class CustomKeyStore {
       }
     }
     return migrated;
+  }
+
+  /** 档案中是否仍有未迁移的旧绝对坐标按键（迁移失败的标志） */
+  private static hasLegacyKeys(profile: CustomKeyProfile): boolean {
+    return profile.keys.some(k => k.x !== undefined && k.x > 1 && (k.xPercent === undefined || k.xPercent === 0));
   }
 
   // ── 配置档案管理 ──
@@ -354,8 +367,12 @@ export class CustomKeyStore {
         name = `${data.profile.name} (${suffix++})`;
       }
       data.profile.name = name;
-      // 导入数据也可能是旧的绝对坐标格式，做一次迁移
-      CustomKeyStore.migrateProfileKeys(data.profile);
+      // 导入数据也可能是旧的绝对坐标格式，做一次迁移；
+      // 迁移失败（屏幕信息暂不可用）时中止导入，避免旧坐标键落 0.5 兜底后永远失去迁移机会
+      if (!CustomKeyStore.migrateProfileKeys(data.profile) && CustomKeyStore.hasLegacyKeys(data.profile)) {
+        Logger.warn('CustomKeyStore', '[CustomKeyStore] 导入中止: 旧坐标迁移失败，请稍后重试');
+        return false;
+      }
       CustomKeyStore.profiles!.push(data.profile);
       CustomKeyStore.activeProfileName = name;
       await CustomKeyStore.save();
@@ -378,7 +395,12 @@ export class CustomKeyStore {
       if (!data.profile || !Array.isArray(data.profile.keys) || data.profile.keys.length === 0) {
         return -1;
       }
-      CustomKeyStore.migrateProfileKeys(data.profile);
+      // 迁移失败（屏幕信息暂不可用）时中止合并：0.5 兜底坐标一旦写入 xPercent，
+      // 下次启动便不再视为旧数据，导入按键位置将无法恢复
+      if (!CustomKeyStore.migrateProfileKeys(data.profile) && CustomKeyStore.hasLegacyKeys(data.profile)) {
+        Logger.warn('CustomKeyStore', '[CustomKeyStore] 合并导入中止: 旧坐标迁移失败，请稍后重试');
+        return -1;
+      }
       const profile = await CustomKeyStore.getActiveProfile();
       let count = 0;
       for (const key of data.profile.keys) {
