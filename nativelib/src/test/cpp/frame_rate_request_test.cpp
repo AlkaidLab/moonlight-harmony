@@ -22,6 +22,18 @@ int main() {
     assert(DisplaySoloistRequestHz(-120) == 0);
     assert(DisplaySoloistRequestHz(std::numeric_limits<double>::quiet_NaN()) == 0);
     assert(DisplaySoloistRequestHz(std::numeric_limits<double>::infinity()) == 0);
+    // NativeVSync (API 20) extends the requestable tiers to the 144 Hz display cap.
+    assert(NativeVSyncRequestHz(60) == 60);
+    assert(NativeVSyncRequestHz(90) == 90);
+    assert(NativeVSyncRequestHz(120) == 120);
+    assert(NativeVSyncRequestHz(144) == 144);
+    assert(NativeVSyncRequestHz(145) == 0);
+    assert(NativeVSyncRequestHz(165) == 0);
+    assert(NativeVSyncRequestHz(240) == 0);
+    assert(NativeVSyncRequestHz(0) == 0);
+    assert(NativeVSyncRequestHz(-144) == 0);
+    assert(NativeVSyncRequestHz(std::numeric_limits<double>::quiet_NaN()) == 0);
+    assert(NativeVSyncRequestHz(std::numeric_limits<double>::infinity()) == 0);
     assert(FrameRateRequestHz(0) == 0);
     assert(FrameRateRequestHz(-120) == 0);
     assert(FrameRateRequestHz(std::numeric_limits<double>::quiet_NaN()) == 0);

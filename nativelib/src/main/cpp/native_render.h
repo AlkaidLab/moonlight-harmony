@@ -17,7 +17,7 @@
  * - 直接渲染模式（低延迟）
  * - VSync 渲染模式（使用 RenderOutputBufferAtTime）
  * - DisplaySoloist 持续请求期望帧率，系统仍可按设备策略限制刷新率。
- * - NativeVSync 在前台串流 Surface 有效期间持续请求帧回调及期望帧率。
+ * - NativeVSync 在前台串流 Surface 有效期间持续请求帧回调及期望帧率（61–144 Hz 档；121–144 Hz 无 DisplaySoloist，后者契约上限 120）。
  * - 每 2 秒检查请求状态、重试失败，并聚合回调频率诊断。
  */
 
@@ -217,6 +217,9 @@ private:
     // Same NativeVSync request cadence as VintagePomeloPro, scoped to a live stream Surface.
     std::thread nativeVsyncThread_;
     std::atomic<bool> nativeVsyncRunning_{false};
+    // Latched when OH_NativeVSync_SetExpectedFrameRateRange (API 20) is absent:
+    // the symbol never appears mid-process, so stop retrying for good.
+    std::atomic<bool> nativeVsyncUnsupported_{false};
     bool nativeVsyncForeground_ = true; // guarded by frameRateMutex_
     int32_t nativeVsyncExpectedHz_ = 0;
     std::mutex nativeVsyncMutex_;
