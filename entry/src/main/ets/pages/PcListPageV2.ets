@@ -814,6 +814,7 @@ struct PcListPageV2 {
    * SaveButton 保存壁纸点击回调
    * 使用安全控件授权后保存图片到相册
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   handleSaveWallpaperClick: SaveButtonCallback = async (
     event: ClickEvent,
     result: SaveButtonOnClickResult,

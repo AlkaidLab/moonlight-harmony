@@ -12,6 +12,7 @@ import {
   CLIPBOARD_BLOB_MAX_BYTES
 } from './ClipboardSyncConfig'
 import { Logger } from '../../common/Logger';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 
 const TAG = 'ClipboardSyncService'
 const MAX_CLIPBOARD_FRAME_BYTES = 65500 - ClipboardWireFrame.HEADER_SIZE
@@ -144,6 +145,7 @@ export class ClipboardSyncService implements ClipboardSyncListener {
     setClipboardListener(null)
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   private async onPasteboardChanged(): Promise<void> {
     if (this.pendingSelfWrites > 0) {
       this.pendingSelfWrites--
