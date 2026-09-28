@@ -922,6 +922,12 @@ export class CryptoUtil {
    */
   static generatePin(): string {
     const bytes = CryptoUtil.generateRandomBytes(4);
+    if (bytes.length < 4) {
+      // 加密随机源不可用：降级用非加密随机数，保证 PIN 始终是合法数字
+      // （PIN 仅用于本次配对的短时展示/输入，降级可接受；NaN 会让配对直接失败）
+      Logger.warn('CryptoUtil', 'CryptoUtil: 加密随机数不可用，generatePin 降级 Math.random');
+      return Math.floor(1000 + Math.random() * 9000).toString();
+    }
     let pin = '';
     for (let i = 0; i < 4; i++) {
       pin += (bytes[i] % 10).toString();

@@ -552,6 +552,14 @@ export class PairingManager {
         useSha256
       );
 
+      // 长度守卫：哈希/解密失败会降级为空数组，空对空比较恒等会让配对误判成功
+      if (expectedServerResponse.length === 0 || serverResponse.length === 0) {
+        Logger.error('PairingManager',
+          `PairingManager: 响应数据为空（expected=${expectedServerResponse.length}, actual=${serverResponse.length}），按配对失败处理`);
+        await this.unpair();
+        return { state: PairState.FAILED, pairName };
+      }
+
       if (!this.arraysEqual(expectedServerResponse, serverResponse)) {
         await this.unpair();
         return { state: PairState.PIN_WRONG, pairName };

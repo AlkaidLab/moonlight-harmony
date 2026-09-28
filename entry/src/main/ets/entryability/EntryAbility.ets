@@ -172,13 +172,13 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       Logger.info(TAG, 'Succeeded in loading content.');
-      if (!UI.isReady()) {
-        try {
-          UI.init(windowStage.getMainWindowSync().getUIContext());
-          Logger.info(TAG, 'UI.init ready after loadContent');
-        } catch (e) {
-          Logger.error(TAG, 'UI.init failed after loadContent:', e);
-        }
+      // 无条件重新注入：窗口重建时 UI.isReady() 可能命中的是旧窗口残留实例，
+      // 不能作为跳过条件；UI.init 幂等，重复调用安全
+      try {
+        UI.init(windowStage.getMainWindowSync().getUIContext());
+        Logger.info(TAG, 'UI.init ready after loadContent');
+      } catch (e) {
+        Logger.error(TAG, 'UI.init failed after loadContent:', e);
       }
     });
 
@@ -256,6 +256,8 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageDestroy(): void {
     Logger.info(TAG, 'Ability onWindowStageDestroy');
+    // 清掉全局 UIContext（指向即将销毁的窗口），下次窗口重建时强制重新注入
+    UI.reset();
     // 注销 avoidAreaChange 监听，避免内存泄漏
     if (this.mainWindow) {
       try {

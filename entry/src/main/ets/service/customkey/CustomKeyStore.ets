@@ -23,6 +23,7 @@ import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { display } from '@kit.ArkUI';
 import { UI } from '../../common/UI';
 import { SettingsBackupService } from '../SettingsBackupService';
+import { ToastQueue } from '../../utils/ToastQueue';
 import {
   CustomKeyProfile,
   CustomKeyDef,
@@ -56,6 +57,8 @@ export class CustomKeyStore {
   private static activeProfileName: string = '';
   /** 游戏→配置映射缓存: { "appId": "profileName" } */
   private static gameProfiles: Record<string, string> | null = null;
+  /** 初始化读取失败标志：置位期间拒绝持久化，避免用内存默认配置覆盖盘上原数据 */
+  private static loadFailed: boolean = false;
 
   /**
    * 初始化：从持久化加载数据
@@ -100,10 +103,13 @@ export class CustomKeyStore {
       } else {
         CustomKeyStore.gameProfiles = {};
       }
+      CustomKeyStore.loadFailed = false;
     } catch (e) {
       Logger.error('CustomKeyStore', '[CustomKeyStore] init failed:', JSON.stringify(e));
       CustomKeyStore.profiles = [createDefaultProfile('默认')];
       CustomKeyStore.activeProfileName = '默认';
+      // 读取失败：内存态仅供本次会话展示，禁止写盘以防覆盖原有配置
+      CustomKeyStore.loadFailed = true;
     }
   }
 
@@ -114,16 +120,27 @@ export class CustomKeyStore {
     }
   }
 
-  /** 持久化到 Preferences（失败记录日志，保留内存态待下次保存重试） */
-  private static async save(): Promise<void> {
+  /**
+   * 持久化到 Preferences
+   * @returns 是否成功落盘（读取失败保护期或写入失败返回 false）
+   */
+  private static async save(): Promise<boolean> {
+    if (CustomKeyStore.loadFailed) {
+      Logger.warn('CustomKeyStore', '[CustomKeyStore] save 拒绝: 初始化读取失败，写盘会覆盖原数据，待下次启动重试读取');
+      ToastQueue.show({ message: '配置读取异常，本次修改暂不会保存（已保护原数据）', duration: 3000 });
+      return false;
+    }
     const json = JSON.stringify(CustomKeyStore.profiles);
     try {
       await PreferencesUtil.put(STORAGE_KEY_PROFILES, json);
       await PreferencesUtil.put(STORAGE_KEY_ACTIVE, CustomKeyStore.activeProfileName);
       SettingsBackupService.scheduleAutoSave();
+      return true;
     } catch (e) {
       // 保存失败时跳过备份调度（避免备份到旧数据），编辑操作不被打断
       Logger.error('CustomKeyStore', '[CustomKeyStore] save failed:', JSON.stringify(e));
+      ToastQueue.show({ message: '配置保存失败，重启后可能丢失本次修改', duration: 3000 });
+      return false;
     }
   }
 
