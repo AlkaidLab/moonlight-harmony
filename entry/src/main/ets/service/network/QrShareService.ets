@@ -48,6 +48,7 @@ import {
   generateKeyId,
 } from '../customkey/CustomKeyTypes';
 import { Logger } from '../../common/Logger';
+import { UI } from '../../common/UI';
 
 export interface QrCodeResult {
   pixelMap: image.PixelMap | null;
@@ -114,14 +115,20 @@ async function compressToBase64(json: string): Promise<string> {
 
   // 目标缓冲区：压缩数据通常不会比原始数据大
   const destBuffer = new ArrayBuffer(sourceBuffer.byteLength + 128);
-  const zip = zlib.createZipSync();
-  const result = await zip.compress2(destBuffer, sourceBuffer,
-    zlib.CompressLevel.COMPRESS_LEVEL_BEST_COMPRESSION);
+  try {
+    const zip = zlib.createZipSync();
+    const result = await zip.compress2(destBuffer, sourceBuffer,
+      zlib.CompressLevel.COMPRESS_LEVEL_BEST_COMPRESSION);
 
-  // 只取实际压缩后的有效数据
-  const compressedBytes = new Uint8Array(destBuffer, 0, result.destLen);
-  const buf = buffer.from(compressedBytes);
-  return COMPRESSED_PREFIX + buf.toString('base64');
+    // 只取实际压缩后的有效数据
+    const compressedBytes = new Uint8Array(destBuffer, 0, result.destLen);
+    const buf = buffer.from(compressedBytes);
+    return COMPRESSED_PREFIX + buf.toString('base64');
+  } catch (e) {
+    // 压缩失败返回原文，调用方比较长度后会回退到未压缩格式
+    Logger.warn('QrShareService', '[QrShareService] zlib 压缩失败，回退到未压缩:', JSON.stringify(e));
+    return json;
+  }
 }
 
 /**
@@ -134,12 +141,18 @@ async function decompressFromBase64(data: string): Promise<string> {
 
   // 解压缓冲区：预估原始数据最大为压缩数据的 10 倍
   const destBuffer = new ArrayBuffer(sourceBuffer.byteLength * 10);
-  const zip = zlib.createZipSync();
-  const result = await zip.uncompress(destBuffer, sourceBuffer);
+  try {
+    const zip = zlib.createZipSync();
+    const result = await zip.uncompress(destBuffer, sourceBuffer);
 
-  const decompressedBytes = new Uint8Array(destBuffer, 0, result.destLen);
-  const decoder = util.TextDecoder.create('utf-8');
-  return decoder.decodeToString(decompressedBytes);
+    const decompressedBytes = new Uint8Array(destBuffer, 0, result.destLen);
+    const decoder = util.TextDecoder.create('utf-8');
+    return decoder.decodeToString(decompressedBytes);
+  } catch (e) {
+    // 解压失败返回空串，调用方 parseData 解析失败返回 null，导入整体失败
+    Logger.error('QrShareService', '[QrShareService] zlib 解压失败:', JSON.stringify(e));
+    return '';
+  }
 }
 
 /** 检查是否为压缩格式 */
@@ -725,14 +738,19 @@ export class QrShareService {
     }
 
     try {
-      const options: scanBarcode.ScanOptions = {
-        scanTypes: [scanCore.ScanType.QR_CODE],
-        enableMultiMode: false,
-        enableAlbum: true,
-      };
-      const result = await scanBarcode.startScanForResult(getContext(), options);
-      if (result && result.originalValue) {
-        return result.originalValue;
+      if (canIUse(SCAN_BARCODE_SYSCAP)) {
+        const options: scanBarcode.ScanOptions = {
+          scanTypes: [scanCore.ScanType.QR_CODE],
+          enableMultiMode: false,
+          enableAlbum: true,
+        };
+        const hostContext = UI.get().getHostContext();
+        if (hostContext) {
+          const result = await scanBarcode.startScanForResult(hostContext, options);
+          if (result && result.originalValue) {
+            return result.originalValue;
+          }
+        }
       }
       return null;
     } catch (e) {

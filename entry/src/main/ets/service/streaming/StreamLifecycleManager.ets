@@ -14,7 +14,7 @@
  * 封装应用前后台状态、屏幕旋转、连接终止、延迟统计等生命周期逻辑，
  * 从 StreamPage 中解耦以降低单文件复杂度。
  */
-import { display, promptAction } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { StreamViewModel } from '../../viewmodel/StreamViewModel';
 import { StreamWindowManager } from './StreamWindowManager';
 import { AppStateService, AppState } from '../AppStateService';
@@ -23,6 +23,7 @@ import { common } from '@kit.AbilityKit';
 import { MoonBridge, ML_TEST_RESULT_INCONCLUSIVE, CONNECTION_TEST_SERVER } from './MoonBridge';
 import { ToastQueue } from '../../utils/ToastQueue';
 import { Logger } from '../../common/Logger';
+import { UI } from '../../common/UI';
 
 /**
  * StreamPage 需要实现的回调接口
@@ -502,15 +503,22 @@ export class StreamLifecycleManager {
         }
       }
 
-      promptAction.showDialog({
-        title: '连接已断开',
-        message: message,
-        buttons: [{ text: '确定', color: '#3B82F6' }]
-      }).then(() => {
+      try {
+        // 官方替代 API：UIContext 作用域的 showDialog（全局 promptAction.showDialog 已废弃）
+        UI.get().getPromptAction().showDialog({
+          title: '连接已断开',
+          message: message,
+          buttons: [{ text: '确定', color: '#3B82F6' }]
+        }).then(() => {
+          this.callbacks?.stopStreaming();
+        }).catch(() => {
+          this.callbacks?.stopStreaming();
+        });
+      } catch (e) {
+        // 弹窗唤起失败时同样停止串流，避免卡在串流页
+        Logger.warn('StreamLifecycleManager', `断连提示弹窗唤起失败: ${e}`);
         this.callbacks?.stopStreaming();
-      }).catch(() => {
-        this.callbacks?.stopStreaming();
-      });
+      }
     }
   }
 }

@@ -17,6 +17,7 @@ import { RcpSessionPool } from '../utils/RcpSessionPool';
 import { NetworkErrorClassifierSelfCheck } from '../utils/NetworkErrorClassifierSelfCheck';
 import { UI } from '../common/UI';
 import { Logger } from '../common/Logger';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 
 const TAG = 'EntryAbility';
 
@@ -118,11 +119,20 @@ export default class EntryAbility extends UIAbility {
     }
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   private updateSystemBarColors(): void {
     // 获取主窗口并更新状态栏颜色
     const windowStage = this.context.windowStage;
     if (windowStage) {
-      windowStage.getMainWindow().then((win) => {
+      let mainWindowPromise: Promise<window.Window>;
+      try {
+        mainWindowPromise = windowStage.getMainWindow();
+      } catch (err) {
+        // 获取主窗口失败：状态栏颜色留待下次配置变化时重试
+        Logger.warn(TAG, 'Failed to get main window:', err);
+        return;
+      }
+      mainWindowPromise.then((win) => {
         const statusBarContentColor = this.isDarkMode ? '#F5F0EB' : '#1A3A4A';
         const barProperties: window.SystemBarProperties = {
           statusBarColor: '#00000000',
@@ -135,10 +145,14 @@ export default class EntryAbility extends UIAbility {
         } catch (e) {
           Logger.warn(TAG, 'Failed to set system bar properties:', e);
         }
+      }).catch((err: Error): void => {
+        // 异步获取主窗口失败：状态栏颜色留待下次配置变化时重试
+        Logger.warn(TAG, 'Failed to get main window:', err);
       });
     }
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
   onWindowStageCreate(windowStage: window.WindowStage): void {
     Logger.info(TAG, 'Ability onWindowStageCreate');
 
@@ -158,18 +172,26 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       Logger.info(TAG, 'Succeeded in loading content.');
-      if (!UI.isReady()) {
-        try {
-          UI.init(windowStage.getMainWindowSync().getUIContext());
-          Logger.info(TAG, 'UI.init ready after loadContent');
-        } catch (e) {
-          Logger.error(TAG, 'UI.init failed after loadContent:', e);
-        }
+      // 无条件重新注入：窗口重建时 UI.isReady() 可能命中的是旧窗口残留实例，
+      // 不能作为跳过条件；UI.init 幂等，重复调用安全
+      try {
+        UI.init(windowStage.getMainWindowSync().getUIContext());
+        Logger.info(TAG, 'UI.init ready after loadContent');
+      } catch (e) {
+        Logger.error(TAG, 'UI.init failed after loadContent:', e);
       }
     });
 
     // 设置窗口属性
-    windowStage.getMainWindow().then((win) => {
+    let mainWindowPromise: Promise<window.Window>;
+    try {
+      mainWindowPromise = windowStage.getMainWindow();
+    } catch (err) {
+      // 获取主窗口失败：避让区域保持各页面 @StorageProp 默认值
+      Logger.error(TAG, 'Failed to get main window:', err);
+      return;
+    }
+    mainWindowPromise.then((win) => {
       this.mainWindow = win;
       // 设置全屏布局（内容延伸到系统栏区域）
       win.setWindowLayoutFullScreen(true);
@@ -226,11 +248,16 @@ export default class EntryAbility extends UIAbility {
       } catch (e) {
         Logger.warn(TAG, 'Failed to set system bar properties:', e);
       }
+    }).catch((err: Error): void => {
+      // 异步获取主窗口失败：避让区域保持各页面 @StorageProp 默认值
+      Logger.error(TAG, 'Failed to get main window:', err);
     });
   }
 
   onWindowStageDestroy(): void {
     Logger.info(TAG, 'Ability onWindowStageDestroy');
+    // 清掉全局 UIContext（指向即将销毁的窗口），下次窗口重建时强制重新注入
+    UI.reset();
     // 注销 avoidAreaChange 监听，避免内存泄漏
     if (this.mainWindow) {
       try {

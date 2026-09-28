@@ -4,6 +4,7 @@
  * 使用 SDL3 的 Gamepad/Joystick API
  */
 
+#define LOG_TAG "SDL3-Gamepad"
 #include "gamepad_manager.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_gamepad.h>
@@ -13,7 +14,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define LOG_TAG "SDL3-Gamepad"
 #define LOGD(...) OH_LOG_Print(LOG_APP, LOG_DEBUG, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) OH_LOG_Print(LOG_APP, LOG_INFO, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) OH_LOG_Print(LOG_APP, LOG_WARN, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)

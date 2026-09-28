@@ -33,6 +33,7 @@ import { ConfirmDialogConfig, InfoDialogConfig } from '../components/dialogs/Con
 import { AppColors } from '../common/Theme';
 import { isLoopbackIPv4 } from '../utils/NetHelper';
 import { ToastQueue } from '../utils/ToastQueue';
+import { UI } from '../common/UI';
 
 /** 单地址网络测试结果 */
 interface AddressTestResult {
@@ -91,7 +92,7 @@ export class PcListActions {
         ToastQueue.show({ message: '设备未配对' });
         return;
       }
-      const context = getContext() as common.UIAbilityContext;
+      const context = UI.get().getHostContext() as common.UIAbilityContext;
       const nvHttp = NvHttp.fromComputer(computerInfo, context);
       const apps = await nvHttp.getAppList();
       if (computer.runningGameId > 0) {
@@ -132,7 +133,7 @@ export class PcListActions {
     const pin = PairingManager.generatePin();
     this.ui.showPinDialog(pin, computer.name);
     try {
-      const context = getContext() as common.UIAbilityContext;
+      const context = UI.get().getHostContext() as common.UIAbilityContext;
       const pairingManager = new PairingManager(selectBestAddress(computer), computer.uuid, context, computer.httpPort);
       const result = await pairingManager.pair(pin);
       this.ui.hidePinDialog();
@@ -200,7 +201,7 @@ export class PcListActions {
         onClick: async () => {
           try {
             ToastQueue.show({ message: '正在退出游戏...' });
-            const context = getContext() as common.UIAbilityContext;
+            const context = UI.get().getHostContext() as common.UIAbilityContext;
             const nvHttp = NvHttp.fromComputer(computer, context);
             const success = await nvHttp.quitApp();
             if (success) {
@@ -236,7 +237,7 @@ export class PcListActions {
         onClick: async () => {
           try {
             ToastQueue.show({ message: '正在发送休眠命令...' });
-            const context = getContext() as common.UIAbilityContext;
+            const context = UI.get().getHostContext() as common.UIAbilityContext;
             const nvHttp = NvHttp.fromComputer(computer, context);
             const success = await nvHttp.pcSleep();
             if (success) {
@@ -260,7 +261,7 @@ export class PcListActions {
     try {
       const computerInfo = this.computerManager.getComputer(computer.uuid);
       if (computerInfo) {
-        const context = getContext() as common.UIAbilityContext;
+        const context = UI.get().getHostContext() as common.UIAbilityContext;
         const nvHttp = NvHttp.fromComputer(computerInfo, context);
         const apps = await nvHttp.getAppList();
         const runningApp = apps.find(a => a.id === computer.runningGameId);
@@ -326,7 +327,7 @@ export class PcListActions {
   async testNetwork(computer: ObservableComputer): Promise<void> {
     ToastQueue.show({ message: '正在检测网络…' });
     const computerInfo = computer.toComputerInfo();
-    const context = getContext() as common.UIAbilityContext;
+    const context = UI.get().getHostContext() as common.UIAbilityContext;
 
     // 诊断包含锁定地址，但过滤服务器自报的 127.x 回环地址。
     const addresses = collectKnownAddresses(computerInfo, {
@@ -542,7 +543,7 @@ export class PcListActions {
 
     if (dialogButtons.length === 0) return;
 
-    promptAction.showDialog({
+    UI.get().getPromptAction().showDialog({
       title: '锁定优先连接地址',
       message: currentPreferred ? `当前锁定: ${currentPreferred}` : '选择要锁定的地址',
       buttons: dialogButtons

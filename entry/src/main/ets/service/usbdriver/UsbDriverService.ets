@@ -700,7 +700,14 @@ export class UsbDriverService implements UsbDriverListener {
     Logger.info('UsbDriverService', `${TAG} 检测到可驱动的设备: ${device.name} (VID=0x${device.vendorId.toString(16)}, PID=0x${device.productId.toString(16)})`);
     
     // 检查权限
-    const hasPermission = usbManager.hasRight(device.name);
+    let hasPermission = false;
+    try {
+      hasPermission = usbManager.hasRight(device.name);
+    } catch (err) {
+      // 查询权限异常：跳过该设备，避免中断整个枚举流程
+      Logger.error('UsbDriverService', `${TAG} 查询 USB 设备权限失败:`, err);
+      return;
+    }
     
     if (!hasPermission) {
       Logger.info('UsbDriverService', `${TAG} 请求 USB 设备权限: ${device.name}`);
@@ -798,7 +805,12 @@ export class UsbDriverService implements UsbDriverListener {
       Logger.info('UsbDriverService', `${TAG} 使用驱动 [${driverName}] 处理设备: ${device.name}, Key=${controller.getDeviceKey()}`);
     } else {
       Logger.warn('UsbDriverService', `${TAG} 无法为设备创建控制器: ${device.name}`);
-      usbManager.closePipe(pipe);
+      try {
+        usbManager.closePipe(pipe);
+      } catch (err) {
+        // 清理路径上的关闭失败只记录，不影响返回
+        Logger.warn('UsbDriverService', `${TAG} 关闭管道失败:`, err);
+      }
       return;
     }
     
@@ -811,7 +823,12 @@ export class UsbDriverService implements UsbDriverListener {
       Logger.error('UsbDriverService', `${TAG} 启动控制器失败`);
       this.controllers.pop();
       this.processedDevices.delete(deviceKey);
-      usbManager.closePipe(pipe);
+      try {
+        usbManager.closePipe(pipe);
+      } catch (err) {
+        // 清理路径上的关闭失败只记录，不影响返回
+        Logger.warn('UsbDriverService', `${TAG} 关闭管道失败:`, err);
+      }
       return;
     }
 

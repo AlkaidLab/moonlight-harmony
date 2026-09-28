@@ -12,7 +12,11 @@ import { fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { DEV_KEY_SALT } from '../config/DevKeySecret';
 import { Logger } from '../common/Logger';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 
+// 证书签名校验依赖 CryptoFramework，部分设备形态无对应 syscap，编译器对双注解 API 误报；
+// 运行时已由 canIUse 探测 + try-catch 兜底，故类级压制 syscap 警告
+@SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
 export class DevKeyVerifier {
   /**
    * 获取设备 ID（从 uniqueId 文件读取，与 NvHttp 共用）
@@ -55,15 +59,25 @@ export class DevKeyVerifier {
     const payload = DEV_KEY_SALT + deviceId.toLowerCase();
     const encoder = new util.TextEncoder();
     const data = encoder.encodeInto(payload);
-    const md = cryptoFramework.createMd('SHA256');
-    md.updateSync({ data } as cryptoFramework.DataBlob);
-    const digest = md.digestSync();
-    const bytes = new Uint8Array(digest.data);
-    // 取前 4 字节 = 8 位 hex
-    let hex = '';
-    for (let i = 0; i < 4; i++) {
-      hex += (bytes[i] & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+    if (canIUse('SystemCapability.Security.CryptoFramework.MessageDigest')) {
+      try {
+        const md = cryptoFramework.createMd('SHA256');
+        md.updateSync({ data } as cryptoFramework.DataBlob);
+        const digest = md.digestSync();
+        const bytes = new Uint8Array(digest.data);
+        // 取前 4 字节 = 8 位 hex
+        let hex = '';
+        for (let i = 0; i < 4; i++) {
+          hex += (bytes[i] & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+        }
+        return hex;
+      } catch (err) {
+        Logger.error('DevKeyVerifier', `DevKeyVerifier: 计算激活码失败: ${err}`);
+      }
+    } else {
+      Logger.error('DevKeyVerifier', 'DevKeyVerifier: 当前设备不支持哈希系统能力');
     }
-    return hex;
+    // 失败时返回空字符串，verify() 会因不匹配而拒绝激活
+    return '';
   }
 }

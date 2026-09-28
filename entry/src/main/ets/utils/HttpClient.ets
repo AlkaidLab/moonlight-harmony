@@ -68,7 +68,14 @@ export class BinaryHttpSession {
       undefined,
       HttpClient.createRequestConfig(connectTimeout, transferTimeout)
     );
-    const response = await session.fetch(request);
+    let response: rcp.Response;
+    try {
+      response = await session.fetch(request);
+    } catch (err) {
+      const error = err as Error;
+      Logger.error('HttpClient', `HttpClient: 二进制会话 GET 失败 - ${error.message}`);
+      throw new Error(`HTTP 请求失败: ${error.message}`);
+    }
     if (response.statusCode !== 200) {
       throw new Error('HTTP ' + response.statusCode.toString());
     }

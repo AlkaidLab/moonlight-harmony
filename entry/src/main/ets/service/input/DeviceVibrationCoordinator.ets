@@ -9,6 +9,7 @@
  */
 
 import { vibrator } from '@kit.SensorServiceKit';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { Logger } from '../../common/Logger';
 
@@ -238,6 +239,7 @@ export class DeviceVibrationCoordinator {
     };
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   private createSourceVibrateAttribute(usage: vibrator.Usage): vibrator.VibrateAttribute {
     this.ensureSourceVibrator();
     const attribute: vibrator.VibrateAttribute = {

@@ -23,9 +23,10 @@ concurrency:
 
 env:
   NODE_OPTIONS: '--max_old_space_size=8192'
-  SDK_VERSION: '6.1-Release'
-  CI_TARGET_API_VERSION: '24'
+  SDK_VERSION: '7.0-Release'
+  CI_TARGET_API_VERSION: '26'
   CMDLINE_TOOLS_VERSION: '5.1.0.840'
+  HVIGOR_VERSION: '6.26.8'
   CACHE_VERSION: 'v10'
   # v0.6.0
   AUDIO_HAPTICS_SDK_REF: 'b71b47a08fd400996ed374a97e1bff73bac2932e'
@@ -44,10 +45,10 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
-    - name: Setup Node.js 18
+    - name: Setup Node.js 22
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '22'
 
     - name: Run repository checks
       run: npm run check
@@ -117,15 +118,17 @@ jobs:
       if: steps.cache-sdk.outputs.cache-hit != 'true'
       run: |
         set -euo pipefail
-        SDK_URL="https://repo.huaweicloud.com/harmonyos/os/${{ env.SDK_VERSION }}/ohos-sdk-windows_linux-public.tar.gz"
+        SDK_URL="https://repo.huaweicloud.com/harmonyos/os/${{ env.SDK_VERSION }}/ohos-sdk-windows_linux-public_20260829.tar.gz"
         mkdir -p ~/ohos-sdk && cd ~/ohos-sdk
         curl -L --retry 3 --retry-delay 10 -o sdk.tar.gz "$SDK_URL" --progress-bar --fail
         tar -xzf sdk.tar.gz && rm sdk.tar.gz
-        if [ -d "linux" ]; then
-          for zip in linux/*.zip; do
+        # 7.0 包解压后组件 zip 在 ohos-sdk/linux/ 下（多一层顶层目录），6.x 直接在 linux/
+        LINUX_DIR=$(find . -maxdepth 2 -type d -name linux | head -1)
+        if [ -n "$LINUX_DIR" ]; then
+          for zip in "$LINUX_DIR"/*.zip; do
             [ -f "$zip" ] && unzip -q -o "$zip" -d .
           done
-          rm -rf linux windows
+          rm -rf ohos-sdk linux windows
         fi
 
     - name: Download command-line-tools
@@ -207,7 +210,7 @@ jobs:
             {
               "name": "nativelib",
               "srcPath": "./nativelib",
-              "targets": [{ "name": "default", "applyToProducts": ["default"] }]
+              "targets": [{ "name": "default" }]
             }
           ]
         }
@@ -276,7 +279,7 @@ jobs:
             {
               "name": "nativelib",
               "srcPath": "./nativelib",
-              "targets": [{ "name": "default", "applyToProducts": ["default"] }]
+              "targets": [{ "name": "default" }]
             }
           ]
         }
@@ -297,19 +300,19 @@ jobs:
     - name: Setup hvigor
       run: |
         set -euo pipefail
-        CMDTOOLS_HVIGOR="$HOME/cmdline-tools/hvigor"
-        echo "@ohos:registry=https://repo.huaweicloud.com/repository/npm/" > ~/.npmrc
-        mkdir -p "$CMDTOOLS_HVIGOR/node_modules/@ohos"
-        ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$CMDTOOLS_HVIGOR/node_modules/@ohos/hvigor"
-        ln -sf "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin" "$CMDTOOLS_HVIGOR/node_modules/@ohos/hvigor-ohos-plugin"
-        mkdir -p "$CMDTOOLS_HVIGOR/hvigor/node_modules/@ohos"
-        ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$CMDTOOLS_HVIGOR/hvigor/node_modules/@ohos/hvigor"
-        mkdir -p "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin/node_modules/@ohos"
-        ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin/node_modules/@ohos/hvigor"
+        # @ohos/hvigor 只在华为开发者 npm 源发布（repo.harmonyos.com），
+        # huaweicloud 镜像没有该包（packument 404）
+        echo "@ohos:registry=https://repo.harmonyos.com/npm/" > ~/.npmrc
+        # HarmonyOS 7.0(API 26) SDK 需要 hvigor 6.26+；cmdline-tools 5.1 内置的 6.24 不认识 26
+        # 从 npm 安装与 SDK 匹配的 hvigor 插件，替换 cmdline-tools 内置版本
+        npm install --prefix "$HOME/hvigor-dist" --no-audit --no-fund \
+          "@ohos/hvigor@${{ env.HVIGOR_VERSION }}" \
+          "@ohos/hvigor-ohos-plugin@${{ env.HVIGOR_VERSION }}"
+        HVIGOR_SRC="$HOME/hvigor-dist/node_modules/@ohos"
         for dir in . hvigor entry nativelib; do
           mkdir -p "$dir/node_modules/@ohos"
-          ln -sf "$CMDTOOLS_HVIGOR/hvigor" "$dir/node_modules/@ohos/hvigor"
-          ln -sf "$CMDTOOLS_HVIGOR/hvigor-ohos-plugin" "$dir/node_modules/@ohos/hvigor-ohos-plugin"
+          ln -sf "$HVIGOR_SRC/hvigor" "$dir/node_modules/@ohos/hvigor"
+          ln -sf "$HVIGOR_SRC/hvigor-ohos-plugin" "$dir/node_modules/@ohos/hvigor-ohos-plugin"
         done
 
     - name: Install ohpm dependencies

@@ -16,6 +16,7 @@
  * 参照 Android 的 callbacks.c 实现
  */
 
+#define LOG_TAG "MoonlightCallbacks"
 #include "callbacks.h"
 #include "opus_libopus.h"
 #include "video_decoder.h"
@@ -46,7 +47,6 @@ extern "C" {
 #include "moonlight-common-c/src/Limelight.h"
 }
 
-#define LOG_TAG "MoonlightCallbacks"
 
 // =============================================================================
 // 全局变量

@@ -40,6 +40,9 @@ const AUTO_BACKUP_URI_KEY = 'settings_auto_backup_uri';
 /** 不参与导出的内部 key */
 const INTERNAL_KEYS: string[] = [AUTO_BACKUP_URI_KEY, 'backup_restore_prompted'];
 
+/** URI 权限持久化系统能力（部分设备如 PC 不支持 FolderAuthorization） */
+const FOLDER_AUTHORIZATION_SYSCAP = 'SystemCapability.FileManagement.AppFileService.FolderAuthorization';
+
 /** 备份文件格式 */
 interface BackupData {
   version: number;
@@ -65,9 +68,22 @@ export class SettingsBackupService {
    */
   static async exportAll(): Promise<string> {
     const prefs = await PreferencesUtil.getPreferences();
-    const allObj = await prefs.getAll();
+    let allObj: Object;
+    try {
+      allObj = await prefs.getAll();
+    } catch (e) {
+      Logger.error('SettingsBackupService', `${TAG} 读取设置数据失败: ${JSON.stringify(e)}`);
+      throw new Error('exportAll: failed to read preferences');
+    }
     // 转为可索引的 Record（getAll 返回 Object，ArkTS 不支持直接索引访问）
-    const all = JSON.parse(JSON.stringify(allObj)) as Record<string, string | number | boolean>;
+    let all: Record<string, string | number | boolean> = {};
+    try {
+      all = JSON.parse(JSON.stringify(allObj)) as Record<string, string | number | boolean>;
+    } catch (e) {
+      // 序列化失败则整个导出失败，调用方（exportToFile/enableAutoBackup/doAutoSave）均有 catch 兜底
+      Logger.error('SettingsBackupService', `${TAG} 序列化设置数据失败: ${JSON.stringify(e)}`);
+      throw new Error('exportAll: failed to serialize settings');
+    }
 
     const settings: Record<string, string | number | boolean> = {};
     const keys = Object.keys(all);
@@ -352,15 +368,19 @@ export class SettingsBackupService {
         fileIo.closeSync(file);
 
         // 持久化文件 URI 访问权限
-        try {
-          const policies: fileShare.PolicyInfo[] = [{
-            uri: uri,
-            operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
-          }];
-          await fileShare.persistPermission(policies);
-          Logger.info('SettingsBackupService', `${TAG} URI 权限已持久化: ${uri}`);
-        } catch (e) {
-          Logger.warn('SettingsBackupService', `${TAG} persistPermission 失败（可能不支持），仍保存 URI: ${JSON.stringify(e)}`);
+        if (canIUse(FOLDER_AUTHORIZATION_SYSCAP)) {
+          try {
+            const policies: fileShare.PolicyInfo[] = [{
+              uri: uri,
+              operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
+            }];
+            await fileShare.persistPermission(policies);
+            Logger.info('SettingsBackupService', `${TAG} URI 权限已持久化: ${uri}`);
+          } catch (e) {
+            Logger.warn('SettingsBackupService', `${TAG} persistPermission 失败（可能不支持），仍保存 URI: ${JSON.stringify(e)}`);
+          }
+        } else {
+          Logger.warn('SettingsBackupService', `${TAG} 设备不支持 FolderAuthorization，跳过权限持久化，仍保存 URI`);
         }
 
         // 保存 URI 到 Preferences
@@ -381,13 +401,16 @@ export class SettingsBackupService {
   static async disableAutoBackup(): Promise<void> {
     const uri = await PreferencesUtil.get<string>(AUTO_BACKUP_URI_KEY, '');
     if (uri) {
-      try {
-        await fileShare.revokePermission([{
-          uri: uri,
-          operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
-        }]);
-      } catch {
-        // 忽略撤销失败
+      // 不支持 FolderAuthorization 的设备本来就无法持久化权限，无权限可撤销
+      if (canIUse(FOLDER_AUTHORIZATION_SYSCAP)) {
+        try {
+          await fileShare.revokePermission([{
+            uri: uri,
+            operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
+          }]);
+        } catch {
+          // 忽略撤销失败
+        }
       }
     }
     await PreferencesUtil.put(AUTO_BACKUP_URI_KEY, '');
@@ -424,14 +447,16 @@ export class SettingsBackupService {
     if (!uri) return;
 
     try {
-      // 尝试激活持久化权限
-      try {
-        await fileShare.activatePermission([{
-          uri: uri,
-          operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
-        }]);
-      } catch {
-        // activatePermission 失败不阻断，直接尝试写入
+      // 尝试激活持久化权限（不支持 FolderAuthorization 的设备直接尝试写入）
+      if (canIUse(FOLDER_AUTHORIZATION_SYSCAP)) {
+        try {
+          await fileShare.activatePermission([{
+            uri: uri,
+            operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
+          }]);
+        } catch {
+          // activatePermission 失败不阻断，直接尝试写入
+        }
       }
 
       const json = await SettingsBackupService.exportAll();

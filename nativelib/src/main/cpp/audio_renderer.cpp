@@ -18,6 +18,7 @@
  * - 始终设置 QoS USER_INTERACTIVE
  */
 
+#define LOG_TAG "AudioRenderer"
 #include "audio_renderer.h"
 #include <hilog/log.h>
 #include <cstring>
@@ -27,7 +28,6 @@
 #include <ctime>
 #include <memory>
 
-#define LOG_TAG "AudioRenderer"
 
 // =============================================================================
 // OHAudio 新式回调 API 动态加载（兼容旧设备缺失符号）

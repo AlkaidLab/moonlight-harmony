@@ -10,6 +10,7 @@
 
 import { preferences } from '@kit.ArkData';
 import { Context } from '@kit.AbilityKit';
+import { Logger } from '../common/Logger';
 
 /**
  * Preferences 工具类
@@ -64,7 +65,13 @@ export class PreferencesUtil {
    */
   static async get<T>(key: string, defaultValue: T): Promise<T> {
     const prefs = await PreferencesUtil.getPreferences();
-    const value = await prefs.get(key, defaultValue as preferences.ValueType);
+    let value: preferences.ValueType;
+    try {
+      value = await prefs.get(key, defaultValue as preferences.ValueType);
+    } catch (e) {
+      // 读取失败按默认值处理，保持调用方拿到可用的兜底值
+      return defaultValue;
+    }
     
     // 如果期望返回数字但得到字符串，尝试转换
     if (typeof defaultValue === 'number' && typeof value === 'string') {
@@ -82,52 +89,109 @@ export class PreferencesUtil {
    */
   static async put(key: string, value: preferences.ValueType): Promise<void> {
     const prefs = await PreferencesUtil.getPreferences();
-    await prefs.put(key, value);
-    await prefs.flush();
+    try {
+      await prefs.put(key, value);
+      await prefs.flush();
+    } catch (e) {
+      // 写入失败上抛，调用方可感知（CustomKeyStore.save 等依赖此契约）
+      Logger.error('PreferencesUtil', `PreferencesUtil: put(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: put(${key}) 失败: ${e}`);
+    }
   }
 
   static async getString(context: Context, key: string, defaultValue: string = ''): Promise<string> {
     const prefs = await PreferencesUtil.getPreferences(context);
-    return await prefs.get(key, defaultValue) as string;
+    let value: preferences.ValueType;
+    try {
+      value = await prefs.get(key, defaultValue);
+    } catch (e) {
+      // 读取失败按默认值处理，保持调用方拿到可用的兜底值
+      return defaultValue;
+    }
+    return value as string;
   }
 
   static async setString(context: Context, key: string, value: string): Promise<void> {
     const prefs = await PreferencesUtil.getPreferences(context);
-    await prefs.put(key, value);
-    await prefs.flush();
+    try {
+      await prefs.put(key, value);
+      await prefs.flush();
+    } catch (e) {
+      // 写入失败上抛，调用方可感知
+      Logger.error('PreferencesUtil', `PreferencesUtil: setString(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: setString(${key}) 失败: ${e}`);
+    }
   }
 
   static async getNumber(context: Context, key: string, defaultValue: number = 0): Promise<number> {
     const prefs = await PreferencesUtil.getPreferences(context);
-    return await prefs.get(key, defaultValue) as number;
+    let value: preferences.ValueType;
+    try {
+      value = await prefs.get(key, defaultValue);
+    } catch (e) {
+      // 读取失败按默认值处理，保持调用方拿到可用的兜底值
+      return defaultValue;
+    }
+    return value as number;
   }
 
   static async setNumber(context: Context, key: string, value: number): Promise<void> {
     const prefs = await PreferencesUtil.getPreferences(context);
-    await prefs.put(key, value);
-    await prefs.flush();
+    try {
+      await prefs.put(key, value);
+      await prefs.flush();
+    } catch (e) {
+      // 写入失败上抛，调用方可感知
+      Logger.error('PreferencesUtil', `PreferencesUtil: setNumber(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: setNumber(${key}) 失败: ${e}`);
+    }
   }
 
   static async getBoolean(context: Context, key: string, defaultValue: boolean = false): Promise<boolean> {
     const prefs = await PreferencesUtil.getPreferences(context);
-    return await prefs.get(key, defaultValue) as boolean;
+    let value: preferences.ValueType;
+    try {
+      value = await prefs.get(key, defaultValue);
+    } catch (e) {
+      // 读取失败按默认值处理，保持调用方拿到可用的兜底值
+      return defaultValue;
+    }
+    return value as boolean;
   }
 
   static async setBoolean(context: Context, key: string, value: boolean): Promise<void> {
     const prefs = await PreferencesUtil.getPreferences(context);
-    await prefs.put(key, value);
-    await prefs.flush();
+    try {
+      await prefs.put(key, value);
+      await prefs.flush();
+    } catch (e) {
+      // 写入失败上抛，调用方可感知
+      Logger.error('PreferencesUtil', `PreferencesUtil: setBoolean(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: setBoolean(${key}) 失败: ${e}`);
+    }
   }
 
   static async remove(context: Context, key: string): Promise<void> {
     const prefs = await PreferencesUtil.getPreferences(context);
-    await prefs.delete(key);
-    await prefs.flush();
+    try {
+      await prefs.delete(key);
+      await prefs.flush();
+    } catch (e) {
+      // 删除失败上抛，调用方可感知
+      Logger.error('PreferencesUtil', `PreferencesUtil: remove(${key}) 失败`, e);
+      throw new Error(`PreferencesUtil: remove(${key}) 失败: ${e}`);
+    }
   }
 
   static async clear(context: Context): Promise<void> {
     const prefs = await PreferencesUtil.getPreferences(context);
-    await prefs.clear();
-    await prefs.flush();
+    try {
+      await prefs.clear();
+      await prefs.flush();
+    } catch (e) {
+      // 清空失败上抛，调用方可感知
+      Logger.error('PreferencesUtil', 'PreferencesUtil: clear 失败', e);
+      throw new Error(`PreferencesUtil: clear 失败: ${e}`);
+    }
   }
 }

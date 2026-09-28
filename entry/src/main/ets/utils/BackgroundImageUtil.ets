@@ -21,6 +21,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { ToastQueue } from './ToastQueue';
 import { Logger } from '../common/Logger';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 
 const BACKGROUND_IMAGE_URL_KEY = 'settings_background_image_url';
 const BACKGROUND_IMAGE_TYPE_KEY = 'settings_background_image_type';
@@ -637,6 +638,7 @@ export class BackgroundImageUtil {
    * @param context 应用上下文
    * @returns 是否保存成功
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   async saveLocalCacheToGallery(context: common.UIAbilityContext): Promise<boolean> {
     if (!this.localCachePath) {
       ToastQueue.show({ message: '没有可保存的图片' });
@@ -699,6 +701,7 @@ export class BackgroundImageUtil {
    * @param context 应用上下文
    * @returns 是否保存成功
    */
+  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   async saveImageToGallery(imageUrl: string, context: common.UIAbilityContext): Promise<boolean> {
     if (!imageUrl || imageUrl.length === 0) {
       ToastQueue.show({ message: '没有可保存的图片' });

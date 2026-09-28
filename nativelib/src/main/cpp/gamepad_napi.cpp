@@ -15,6 +15,8 @@
  * 支持多种手柄: Xbox, PlayStation, Switch, 通用 HID
  */
 
+#define LOG_TAG "GamepadNAPI"
+#define LOG_DOMAIN 0xFF00
 #include "gamepad_napi.h"
 #include "sdl_gamecontrollerdb.h"
 #include <hilog/log.h>
@@ -22,8 +24,6 @@
 #include <stdlib.h>
 #include <cstdio>
 
-#define LOG_TAG "GamepadNAPI"
-#define LOG_DOMAIN 0xFF00
 #define LOGD(...) OH_LOG_Print(LOG_APP, LOG_DEBUG, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) OH_LOG_Print(LOG_APP, LOG_INFO, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) OH_LOG_Print(LOG_APP, LOG_WARN, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)

@@ -15,10 +15,10 @@
  * - PIN 码配对对话框
  * - 关于对话框
  */
-import { promptAction } from '@kit.ArkUI';
 import { common, bundleManager, Want } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { AppColors, AppSizes, AppSpacing, AppAnimation } from '../../common/Theme';
+import { UI } from '../../common/UI';
 import { ToastQueue } from '../../utils/ToastQueue';
 
 const GITHUB_URL = 'https://github.com/AlkaidLab/moonlight-harmony';
@@ -202,7 +202,8 @@ export struct AboutDialogView {
 
   static openUrl(url: string): void {
     try {
-      const context = getContext() as common.UIAbilityContext;
+      // getContext 已废弃；静态方法内无法用 this.getUIContext()，改用全局 UIContext 载体
+      const context = UI.get().getHostContext() as common.UIAbilityContext;
       const want: Want = { action: 'ohos.want.action.viewData', uri: url };
       context.startAbility(want);
     } catch (_e) {
@@ -211,8 +212,13 @@ export struct AboutDialogView {
   }
 
   static copyQQGroupNumber(): void {
-    const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, QQ_GROUP_NUMBER);
-    pasteboard.getSystemPasteboard().setDataSync(pasteData);
-    ToastQueue.show({ message: `群号 ${QQ_GROUP_NUMBER} 已复制，请在 QQ 中搜索加入` });
+    try {
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, QQ_GROUP_NUMBER);
+      pasteboard.getSystemPasteboard().setDataSync(pasteData);
+      ToastQueue.show({ message: `群号 ${QQ_GROUP_NUMBER} 已复制，请在 QQ 中搜索加入` });
+    } catch (_e) {
+      // 复制失败降级提示，便于用户手动记录群号
+      ToastQueue.show({ message: `复制失败，请手动记录群号 ${QQ_GROUP_NUMBER}` });
+    }
   }
 }

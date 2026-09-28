@@ -8,6 +8,7 @@
  * (at your option) any later version.
  */
 
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import {
   TOUCH_EVENT_CANCEL_ALL,
   TOUCH_EVENT_DOWN,
@@ -331,6 +332,7 @@ export class Ds5TouchpadGestureHandler {
       Math.abs(touch.y - state.startY) > TAP_MOVEMENT_THRESHOLD;
   }
 
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   private getPressure(touch: TouchObject, active: boolean): number {
     if (!active) return 0;
     const pressure = touch.pressure ?? 1.0;

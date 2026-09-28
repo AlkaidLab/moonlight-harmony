@@ -204,10 +204,10 @@ export struct GameMenuDialog {
   @State private controllerScaleLocal: number = 1.0;
   @State private touchPassthroughLocal: boolean = false;
 
-  // 弹窗控制器
-  private exitDialogController?: CustomDialogController;
-  private touchModeDialogController?: CustomDialogController;
-  private usbDriverDialogController?: CustomDialogController;
+  // 弹窗控制器（显式初始化，@CustomDialog 只允许 controller 一个未初始化字段）
+  private exitDialogController: CustomDialogController | undefined = undefined;
+  private touchModeDialogController: CustomDialogController | undefined = undefined;
+  private usbDriverDialogController: CustomDialogController | undefined = undefined;
 
   // 通用卡片样式
   @Styles cardStyle() {
@@ -333,17 +333,26 @@ export struct GameMenuDialog {
       { text: '恢复预置快捷键', color: '#5BA3D0' },
       { text: '取消', color: '#6B7280' }
     ];
-    promptAction.showDialog({
-      title: '添加快捷键',
-      message: `有 ${deletedBuiltins.length} 个预置快捷键可恢复`,
-      buttons: buttons
-    }).then((result) => {
-      if (result.index === 0) {
-        this.callbacks.onOpenShortcutEditor?.();
-      } else if (result.index === 1) {
-        this.showRestoreBuiltinMenu(deletedBuiltins);
-      }
-    });
+    try {
+      // 官方替代 API：UIContext 作用域的 showDialog（全局 promptAction.showDialog 已废弃）
+      this.getUIContext().getPromptAction().showDialog({
+        title: '添加快捷键',
+        message: `有 ${deletedBuiltins.length} 个预置快捷键可恢复`,
+        buttons: buttons
+      }).then((result) => {
+        if (result.index === 0) {
+          this.callbacks.onOpenShortcutEditor?.();
+        } else if (result.index === 1) {
+          this.showRestoreBuiltinMenu(deletedBuiltins);
+        }
+      }).catch((e: Error) => {
+        // 弹窗异步失败（如参数校验 401）不中断菜单
+        Logger.warn('GameMenuDialog', `添加快捷键弹窗交互失败: ${e.message}`);
+      });
+    } catch (e) {
+      // 弹窗唤起失败仅记录日志，不打断菜单交互
+      Logger.warn('GameMenuDialog', `添加快捷键弹窗唤起失败: ${e}`);
+    }
   }
 
   private showRestoreBuiltinMenu(deletedBuiltins: Shortcut[]): void {
@@ -353,22 +362,30 @@ export struct GameMenuDialog {
     });
     buttons.push({ text: '全部恢复', color: '#10B981' });
     buttons.push({ text: '取消', color: '#6B7280' });
-    promptAction.showDialog({
-      title: '恢复预置快捷键',
-      message: '选择要恢复的快捷键',
-      buttons: buttons
-    }).then(async (result) => {
-      if (result.index < deletedBuiltins.length) {
-        await this.shortcutManager.restoreBuiltinShortcut(deletedBuiltins[result.index].id);
-        this.shortcuts = this.shortcutManager.getShortcuts();
-      } else if (result.index === deletedBuiltins.length) {
-        // 全部恢复
-        for (const s of deletedBuiltins) {
-          await this.shortcutManager.restoreBuiltinShortcut(s.id);
+    try {
+      this.getUIContext().getPromptAction().showDialog({
+        title: '恢复预置快捷键',
+        message: '选择要恢复的快捷键',
+        buttons: buttons
+      }).then(async (result) => {
+        if (result.index < deletedBuiltins.length) {
+          await this.shortcutManager.restoreBuiltinShortcut(deletedBuiltins[result.index].id);
+          this.shortcuts = this.shortcutManager.getShortcuts();
+        } else if (result.index === deletedBuiltins.length) {
+          // 全部恢复
+          for (const s of deletedBuiltins) {
+            await this.shortcutManager.restoreBuiltinShortcut(s.id);
+          }
+          this.shortcuts = this.shortcutManager.getShortcuts();
         }
-        this.shortcuts = this.shortcutManager.getShortcuts();
-      }
-    });
+      }).catch((e: Error) => {
+        // 恢复失败（弹窗异常或 restoreBuiltinShortcut 出错）记录并保持菜单可用
+        Logger.warn('GameMenuDialog', `恢复预置快捷键失败: ${e.message}`);
+      });
+    } catch (e) {
+      // 弹窗唤起失败仅记录日志，不打断菜单交互
+      Logger.warn('GameMenuDialog', `恢复预置快捷键弹窗唤起失败: ${e}`);
+    }
   }
 
   // 码率辅助方法
@@ -680,19 +697,19 @@ export struct GameMenuDialog {
     PreferencesUtil.put(
       SettingsKeys.ENABLE_AUDIO_VIBRATION,
       this.audioVibrationEnabled
-    ).catch((error: Error) => {
+    ).catch(() => {}).catch((error: Error) => {
       Logger.error('GameMenuDialog', '[AudioVibration] 保存启用状态失败:', error);
     });
     PreferencesUtil.put(
       SettingsKeys.AUDIO_VIBRATION_STRENGTH,
       this.audioVibrationStrength
-    ).catch((error: Error) => {
+    ).catch(() => {}).catch((error: Error) => {
       Logger.error('GameMenuDialog', '[AudioVibration] 保存强度失败:', error);
     });
     PreferencesUtil.put(
       SettingsKeys.AUDIO_VIBRATION_SCENE_MODE,
       this.audioVibrationSceneMode
-    ).catch((error: Error) => {
+    ).catch(() => {}).catch((error: Error) => {
       Logger.error('GameMenuDialog', '[AudioVibration] 保存场景失败:', error);
     });
   }
@@ -827,7 +844,6 @@ export struct GameMenuDialog {
     }
   }
 
-  @Builder
   @Builder
   ButtonCardsRow() {
     Row({ space: 8 }) {

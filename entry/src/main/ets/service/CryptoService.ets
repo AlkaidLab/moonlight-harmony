@@ -22,6 +22,7 @@
 import { huks } from '@kit.UniversalKeystoreKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { Logger } from '../common/Logger';
 
 const TAG = '[CryptoService]';
@@ -40,6 +41,9 @@ const MAGIC_SIZE = 5;
 /** 默认密码 — 对用户透明，保证跨安装一致 */
 const DEFAULT_PASSWORD = 'moonlight-harmony-backup-2025';
 
+// CryptoFramework/huks 系加密 API 在部分设备形态上无 syscap，编译器对双注解 API 误报；
+// 运行时能力已由 canIUse 探测 + try-catch 兜底，故类级压制 syscap 警告
+@SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
 export class CryptoService {
 
   // ── v2: PBKDF2 密码派生（新格式，跨安装可用）──
@@ -47,21 +51,42 @@ export class CryptoService {
   /**
    * 从密码 + 盐派生 AES-256 密钥
    */
-  private static async deriveKey(password: string, salt: Uint8Array): Promise<cryptoFramework.SymKey> {
-    const kdf = cryptoFramework.createKdf('PBKDF2|SHA256');
-    const encoder = new util.TextEncoder();
-    const spec: cryptoFramework.PBKDF2Spec = {
-      algName: 'PBKDF2',
-      password: encoder.encodeInto(password),
-      salt: salt,
-      iterations: PBKDF2_ITERATIONS,
-      keySize: 32, // 256 bits
-    };
-    const secretBlob = await kdf.generateSecret(spec);
+  private static async deriveKey(password: string, salt: Uint8Array): Promise<cryptoFramework.SymKey | null> {
+    let secretBlob: cryptoFramework.DataBlob | null = null;
+    if (canIUse('SystemCapability.Security.CryptoFramework.Kdf')) {
+      try {
+        const kdf = cryptoFramework.createKdf('PBKDF2|SHA256');
+        const encoder = new util.TextEncoder();
+        const spec: cryptoFramework.PBKDF2Spec = {
+          algName: 'PBKDF2',
+          password: encoder.encodeInto(password),
+          salt: salt,
+          iterations: PBKDF2_ITERATIONS,
+          keySize: 32, // 256 bits
+        };
+        secretBlob = await kdf.generateSecret(spec);
+      } catch (err) {
+        Logger.error('CryptoService', `${TAG} PBKDF2 密钥派生失败`, err);
+      }
+    } else {
+      Logger.error('CryptoService', `${TAG} 当前设备不支持密钥派生系统能力`);
+    }
+    if (!secretBlob) {
+      return null;
+    }
 
     // 将派生的原始密钥材料包装为 SymKey
-    const generator = cryptoFramework.createSymKeyGenerator('AES256');
-    return await generator.convertKey({ data: secretBlob.data });
+    if (canIUse('SystemCapability.Security.CryptoFramework.Key.SymKey')) {
+      try {
+        const generator = cryptoFramework.createSymKeyGenerator('AES256');
+        return await generator.convertKey({ data: secretBlob.data });
+      } catch (err) {
+        Logger.error('CryptoService', `${TAG} 派生密钥转换失败`, err);
+      }
+    } else {
+      Logger.error('CryptoService', `${TAG} 当前设备不支持对称密钥系统能力`);
+    }
+    return null;
   }
 
   /**
@@ -71,75 +96,99 @@ export class CryptoService {
     const pwd = password || DEFAULT_PASSWORD;
 
     // 生成随机盐和 Nonce
-    const rand = cryptoFramework.createRandom();
-    const salt = new Uint8Array(rand.generateRandomSync(PBKDF2_SALT_SIZE).data);
-    const nonce = new Uint8Array(rand.generateRandomSync(GCM_NONCE_SIZE).data);
+    let salt: Uint8Array;
+    let nonce: Uint8Array;
+    if (canIUse('SystemCapability.Security.CryptoFramework.Rand')) {
+      try {
+        const rand = cryptoFramework.createRandom();
+        salt = new Uint8Array(rand.generateRandomSync(PBKDF2_SALT_SIZE).data);
+        nonce = new Uint8Array(rand.generateRandomSync(GCM_NONCE_SIZE).data);
+      } catch (err) {
+        Logger.error('CryptoService', `${TAG} 生成随机盐/Nonce 失败`, err);
+        throw new Error('生成随机盐/Nonce 失败');
+      }
+    } else {
+      Logger.error('CryptoService', `${TAG} 当前设备不支持随机数系统能力`);
+      throw new Error('当前设备不支持随机数系统能力');
+    }
 
     const symKey = await CryptoService.deriveKey(pwd, salt);
+    if (!symKey) {
+      throw new Error('密钥派生失败');
+    }
     const encoder = new util.TextEncoder();
     const plainData = encoder.encodeInto(plaintext);
 
     // AES-256-GCM 加密
-    const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
-    const gcmParams: cryptoFramework.GcmParamsSpec = {
-      iv: { data: nonce },
-      aad: { data: new Uint8Array(0) },
-      authTag: { data: new Uint8Array(GCM_TAG_SIZE) },
-      algName: 'GcmParamsSpec',
-    };
-    await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, symKey, gcmParams);
+    if (canIUse('SystemCapability.Security.CryptoFramework.Cipher')) {
+      try {
+        const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
+        const gcmParams: cryptoFramework.GcmParamsSpec = {
+          iv: { data: nonce },
+          aad: { data: new Uint8Array(0) },
+          authTag: { data: new Uint8Array(GCM_TAG_SIZE) },
+          algName: 'GcmParamsSpec',
+        };
+        await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, symKey, gcmParams);
 
-    const updateResult = await cipher.update({ data: plainData });
-    const finalResult = await cipher.doFinal(null);
+        const updateResult = await cipher.update({ data: plainData });
+        const finalResult = await cipher.doFinal(null);
 
-    // 收集密文（update + doFinal 输出）
-    const cipherChunks: Uint8Array[] = [];
-    let cipherLen = 0;
-    if (updateResult) {
-      const chunk = new Uint8Array(updateResult.data);
-      cipherChunks.push(chunk);
-      cipherLen += chunk.length;
-    }
-    if (finalResult) {
-      const chunk = new Uint8Array(finalResult.data);
-      cipherChunks.push(chunk);
-      cipherLen += chunk.length;
-    }
+        // 收集密文（update + doFinal 输出）
+        const cipherChunks: Uint8Array[] = [];
+        let cipherLen = 0;
+        if (updateResult) {
+          const chunk = new Uint8Array(updateResult.data);
+          cipherChunks.push(chunk);
+          cipherLen += chunk.length;
+        }
+        if (finalResult) {
+          const chunk = new Uint8Array(finalResult.data);
+          cipherChunks.push(chunk);
+          cipherLen += chunk.length;
+        }
 
-    // GCM authTag: 优先从 gcmParams 获取，fallback 从密文末尾提取
-    let authTag: Uint8Array;
-    if (gcmParams.authTag.data.length === GCM_TAG_SIZE &&
-        gcmParams.authTag.data.some((v: number) => v !== 0)) {
-      // framework 回写了 authTag
-      authTag = new Uint8Array(gcmParams.authTag.data);
-    } else {
-      // authTag 追加在密文末尾
-      const allCipher = new Uint8Array(cipherLen);
-      let off = 0;
-      for (const chunk of cipherChunks) {
-        allCipher.set(chunk, off); off += chunk.length;
+        // GCM authTag: 优先从 gcmParams 获取，fallback 从密文末尾提取
+        let authTag: Uint8Array;
+        if (gcmParams.authTag.data.length === GCM_TAG_SIZE &&
+            gcmParams.authTag.data.some((v: number) => v !== 0)) {
+          // framework 回写了 authTag
+          authTag = new Uint8Array(gcmParams.authTag.data);
+        } else {
+          // authTag 追加在密文末尾
+          const allCipher = new Uint8Array(cipherLen);
+          let off = 0;
+          for (const chunk of cipherChunks) {
+            allCipher.set(chunk, off); off += chunk.length;
+          }
+          authTag = allCipher.slice(allCipher.length - GCM_TAG_SIZE);
+          // 密文去掉末尾 tag
+          cipherChunks.length = 0;
+          cipherChunks.push(allCipher.slice(0, allCipher.length - GCM_TAG_SIZE));
+          cipherLen = cipherChunks[0].length;
+        }
+
+        // 拼接：MAGIC_V2(5) + SALT(16) + NONCE(12) + CIPHER(N) + TAG(16)
+        const totalLen = MAGIC_SIZE + PBKDF2_SALT_SIZE + GCM_NONCE_SIZE + cipherLen + GCM_TAG_SIZE;
+        const result = new Uint8Array(totalLen);
+        let pos = 0;
+        result.set(MAGIC_V2, pos); pos += MAGIC_SIZE;
+        result.set(salt, pos); pos += PBKDF2_SALT_SIZE;
+        result.set(nonce, pos); pos += GCM_NONCE_SIZE;
+        for (const chunk of cipherChunks) {
+          result.set(chunk, pos); pos += chunk.length;
+        }
+        result.set(authTag, pos);
+
+        Logger.info('CryptoService', `${TAG} v2 加密完成: ${plaintext.length} chars → ${result.length} bytes`);
+        return result;
+      } catch (err) {
+        Logger.error('CryptoService', `${TAG} v2 加密失败`, err);
+        throw new Error('v2 加密失败');
       }
-      authTag = allCipher.slice(allCipher.length - GCM_TAG_SIZE);
-      // 密文去掉末尾 tag
-      cipherChunks.length = 0;
-      cipherChunks.push(allCipher.slice(0, allCipher.length - GCM_TAG_SIZE));
-      cipherLen = cipherChunks[0].length;
     }
-
-    // 拼接：MAGIC_V2(5) + SALT(16) + NONCE(12) + CIPHER(N) + TAG(16)
-    const totalLen = MAGIC_SIZE + PBKDF2_SALT_SIZE + GCM_NONCE_SIZE + cipherLen + GCM_TAG_SIZE;
-    const result = new Uint8Array(totalLen);
-    let pos = 0;
-    result.set(MAGIC_V2, pos); pos += MAGIC_SIZE;
-    result.set(salt, pos); pos += PBKDF2_SALT_SIZE;
-    result.set(nonce, pos); pos += GCM_NONCE_SIZE;
-    for (const chunk of cipherChunks) {
-      result.set(chunk, pos); pos += chunk.length;
-    }
-    result.set(authTag, pos);
-
-    Logger.info('CryptoService', `${TAG} v2 加密完成: ${plaintext.length} chars → ${result.length} bytes`);
-    return result;
+    Logger.error('CryptoService', `${TAG} 当前设备不支持加解密系统能力`);
+    throw new Error('当前设备不支持加解密系统能力');
   }
 
   /**
@@ -160,45 +209,57 @@ export class CryptoService {
     const authTag = payload.slice(payload.length - GCM_TAG_SIZE);
 
     const symKey = await CryptoService.deriveKey(pwd, salt);
+    if (!symKey) {
+      throw new Error('密钥派生失败');
+    }
 
-    const decipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
-    const gcmParams: cryptoFramework.GcmParamsSpec = {
-      iv: { data: nonce },
-      aad: { data: new Uint8Array(0) },
-      authTag: { data: authTag },
-      algName: 'GcmParamsSpec',
-    };
-    await decipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, gcmParams);
+    if (canIUse('SystemCapability.Security.CryptoFramework.Cipher')) {
+      try {
+        const decipher = cryptoFramework.createCipher('AES256|GCM|NoPadding');
+        const gcmParams: cryptoFramework.GcmParamsSpec = {
+          iv: { data: nonce },
+          aad: { data: new Uint8Array(0) },
+          authTag: { data: authTag },
+          algName: 'GcmParamsSpec',
+        };
+        await decipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, gcmParams);
 
-    let plainChunks: Uint8Array[] = [];
-    let plainLen = 0;
-    if (ciphertext.length > 0) {
-      const updateResult = await decipher.update({ data: ciphertext });
-      if (updateResult) {
-        const chunk = new Uint8Array(updateResult.data);
-        plainChunks.push(chunk);
-        plainLen += chunk.length;
+        let plainChunks: Uint8Array[] = [];
+        let plainLen = 0;
+        if (ciphertext.length > 0) {
+          const updateResult = await decipher.update({ data: ciphertext });
+          if (updateResult) {
+            const chunk = new Uint8Array(updateResult.data);
+            plainChunks.push(chunk);
+            plainLen += chunk.length;
+          }
+        }
+        const finalResult = await decipher.doFinal(null);
+        if (finalResult) {
+          const chunk = new Uint8Array(finalResult.data);
+          plainChunks.push(chunk);
+          plainLen += chunk.length;
+        }
+
+        // 合并明文
+        const plainData = new Uint8Array(plainLen);
+        let offset = 0;
+        for (const chunk of plainChunks) {
+          plainData.set(chunk, offset);
+          offset += chunk.length;
+        }
+
+        const decoder = new util.TextDecoder('utf-8');
+        const plaintext = decoder.decodeToString(plainData);
+        Logger.info('CryptoService', `${TAG} v2 解密完成: ${data.length} bytes → ${plaintext.length} chars`);
+        return plaintext;
+      } catch (err) {
+        Logger.error('CryptoService', `${TAG} v2 解密失败`, err);
+        throw new Error('v2 解密失败');
       }
     }
-    const finalResult = await decipher.doFinal(null);
-    if (finalResult) {
-      const chunk = new Uint8Array(finalResult.data);
-      plainChunks.push(chunk);
-      plainLen += chunk.length;
-    }
-
-    // 合并明文
-    const plainData = new Uint8Array(plainLen);
-    let offset = 0;
-    for (const chunk of plainChunks) {
-      plainData.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    const decoder = new util.TextDecoder('utf-8');
-    const plaintext = decoder.decodeToString(plainData);
-    Logger.info('CryptoService', `${TAG} v2 解密完成: ${data.length} bytes → ${plaintext.length} chars`);
-    return plaintext;
+    Logger.error('CryptoService', `${TAG} 当前设备不支持加解密系统能力`);
+    throw new Error('当前设备不支持加解密系统能力');
   }
 
   // ── v1: HUKS 兼容（仅解密旧文件）──
@@ -208,22 +269,34 @@ export class CryptoService {
    */
   private static async ensureHuksKey(): Promise<void> {
     try {
-      const exists = await huks.isKeyItemExist(KEY_ALIAS, { properties: [] });
-      if (exists) return;
+      if (canIUse('SystemCapability.Security.Huks.Extension')) {
+        const exists = await huks.isKeyItemExist(KEY_ALIAS, { properties: [] });
+        if (exists) return;
+      }
     } catch {
       // 密钥不存在
     }
 
-    const properties: huks.HuksParam[] = [
-      { tag: huks.HuksTag.HUKS_TAG_ALGORITHM, value: huks.HuksKeyAlg.HUKS_ALG_AES },
-      { tag: huks.HuksTag.HUKS_TAG_KEY_SIZE, value: huks.HuksKeySize.HUKS_AES_KEY_SIZE_256 },
-      {
-        tag: huks.HuksTag.HUKS_TAG_PURPOSE,
-        value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_ENCRYPT |
-          huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_DECRYPT
-      },
-    ];
-    await huks.generateKeyItem(KEY_ALIAS, { properties });
+    if (canIUse('SystemCapability.Security.Huks.Extension')) {
+      const properties: huks.HuksParam[] = [
+        { tag: huks.HuksTag.HUKS_TAG_ALGORITHM, value: huks.HuksKeyAlg.HUKS_ALG_AES },
+        { tag: huks.HuksTag.HUKS_TAG_KEY_SIZE, value: huks.HuksKeySize.HUKS_AES_KEY_SIZE_256 },
+        {
+          tag: huks.HuksTag.HUKS_TAG_PURPOSE,
+          value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_ENCRYPT |
+            huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_DECRYPT
+        },
+      ];
+      try {
+        await huks.generateKeyItem(KEY_ALIAS, { properties });
+      } catch (err) {
+        Logger.error('CryptoService', `${TAG} 生成 HUKS 密钥失败`, err);
+        throw new Error('生成 HUKS 密钥失败');
+      }
+    } else {
+      Logger.error('CryptoService', `${TAG} 当前设备不支持 HUKS 系统能力`);
+      throw new Error('当前设备不支持 HUKS 系统能力');
+    }
   }
 
   /**
@@ -242,36 +315,45 @@ export class CryptoService {
     const ciphertext = cipherWithTag.slice(0, cipherWithTag.length - GCM_TAG_SIZE);
     const authTag = cipherWithTag.slice(cipherWithTag.length - GCM_TAG_SIZE);
 
-    const decryptProps: huks.HuksParam[] = [
-      { tag: huks.HuksTag.HUKS_TAG_ALGORITHM, value: huks.HuksKeyAlg.HUKS_ALG_AES },
-      { tag: huks.HuksTag.HUKS_TAG_KEY_SIZE, value: huks.HuksKeySize.HUKS_AES_KEY_SIZE_256 },
-      { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_DECRYPT },
-      { tag: huks.HuksTag.HUKS_TAG_PADDING, value: huks.HuksKeyPadding.HUKS_PADDING_NONE },
-      { tag: huks.HuksTag.HUKS_TAG_BLOCK_MODE, value: huks.HuksCipherMode.HUKS_MODE_GCM },
-      { tag: huks.HuksTag.HUKS_TAG_NONCE, value: nonce },
-      { tag: huks.HuksTag.HUKS_TAG_AE_TAG, value: authTag },
-    ];
+    if (canIUse('SystemCapability.Security.Huks.Extension')) {
+      try {
+        const decryptProps: huks.HuksParam[] = [
+          { tag: huks.HuksTag.HUKS_TAG_ALGORITHM, value: huks.HuksKeyAlg.HUKS_ALG_AES },
+          { tag: huks.HuksTag.HUKS_TAG_KEY_SIZE, value: huks.HuksKeySize.HUKS_AES_KEY_SIZE_256 },
+          { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_DECRYPT },
+          { tag: huks.HuksTag.HUKS_TAG_PADDING, value: huks.HuksKeyPadding.HUKS_PADDING_NONE },
+          { tag: huks.HuksTag.HUKS_TAG_BLOCK_MODE, value: huks.HuksCipherMode.HUKS_MODE_GCM },
+          { tag: huks.HuksTag.HUKS_TAG_NONCE, value: nonce },
+          { tag: huks.HuksTag.HUKS_TAG_AE_TAG, value: authTag },
+        ];
 
-    const initResult = await huks.initSession(KEY_ALIAS, { properties: decryptProps });
-    const handle = initResult.handle;
+        const initResult = await huks.initSession(KEY_ALIAS, { properties: decryptProps });
+        const handle = initResult.handle;
 
-    const CHUNK_SIZE = 60 * 1024;
-    let offset = 0;
-    while (offset + CHUNK_SIZE < ciphertext.length) {
-      const chunk = ciphertext.slice(offset, offset + CHUNK_SIZE);
-      await huks.updateSession(handle, { properties: decryptProps, inData: chunk });
-      offset += CHUNK_SIZE;
+        const CHUNK_SIZE = 60 * 1024;
+        let offset = 0;
+        while (offset + CHUNK_SIZE < ciphertext.length) {
+          const chunk = ciphertext.slice(offset, offset + CHUNK_SIZE);
+          await huks.updateSession(handle, { properties: decryptProps, inData: chunk });
+          offset += CHUNK_SIZE;
+        }
+
+        const remaining = ciphertext.slice(offset);
+        const finishOptions: huks.HuksOptions = { properties: decryptProps, inData: remaining };
+        const finishResult = await huks.finishSession(handle, finishOptions);
+        const plainData = finishResult.outData as Uint8Array;
+
+        const decoder = new util.TextDecoder('utf-8');
+        const plaintext = decoder.decodeToString(plainData);
+        Logger.info('CryptoService', `${TAG} v1 解密完成: ${data.length} bytes → ${plaintext.length} chars`);
+        return plaintext;
+      } catch (err) {
+        Logger.error('CryptoService', `${TAG} v1 解密失败`, err);
+        throw new Error('v1 解密失败');
+      }
     }
-
-    const remaining = ciphertext.slice(offset);
-    const finishOptions: huks.HuksOptions = { properties: decryptProps, inData: remaining };
-    const finishResult = await huks.finishSession(handle, finishOptions);
-    const plainData = finishResult.outData as Uint8Array;
-
-    const decoder = new util.TextDecoder('utf-8');
-    const plaintext = decoder.decodeToString(plainData);
-    Logger.info('CryptoService', `${TAG} v1 解密完成: ${data.length} bytes → ${plaintext.length} chars`);
-    return plaintext;
+    Logger.error('CryptoService', `${TAG} 当前设备不支持 HUKS 系统能力，v1 解密失败`);
+    throw new Error('当前设备不支持 HUKS 系统能力');
   }
 
   // ── 统一接口 ──

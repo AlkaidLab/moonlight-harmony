@@ -128,8 +128,13 @@ export class WakeOnLan {
   private static async sendBroadcast(payload: ArrayBuffer, ports: number[]): Promise<void> {
     const udpSocket: socket.UDPSocket = socket.constructUDPSocketInstance();
     try {
-      await udpSocket.bind({ address: '0.0.0.0', port: 0, family: 1 });
-      await udpSocket.setExtraOptions({ broadcast: true });
+      try {
+        await udpSocket.bind({ address: '0.0.0.0', port: 0, family: 1 });
+        await udpSocket.setExtraOptions({ broadcast: true });
+      } catch (e) {
+        // 绑定或开启广播失败：向上抛出，由调用方记录失败并继续尝试其他地址
+        throw e instanceof Error ? e : new Error(String(e));
+      }
 
       for (const port of ports) {
         try {
@@ -142,7 +147,11 @@ export class WakeOnLan {
         }
       }
     } finally {
-      udpSocket.close();
+      try {
+        udpSocket.close();
+      } catch (_e) {
+        // 关闭失败忽略：socket 可能已失效
+      }
     }
   }
 
@@ -153,7 +162,12 @@ export class WakeOnLan {
     const family = isIPv6 ? 2 : 1;
     const udpSocket: socket.UDPSocket = socket.constructUDPSocketInstance();
     try {
-      await udpSocket.bind({ address: isIPv6 ? '::' : '0.0.0.0', port: 0, family: family });
+      try {
+        await udpSocket.bind({ address: isIPv6 ? '::' : '0.0.0.0', port: 0, family: family });
+      } catch (e) {
+        // 绑定失败：向上抛出，由调用方记录失败并继续尝试其他地址
+        throw e instanceof Error ? e : new Error(String(e));
+      }
 
       let sent = 0;
       for (const port of ports) {
@@ -171,7 +185,11 @@ export class WakeOnLan {
         throw new Error(`WOL 发送失败: 所有端口均无法到达 ${address}`);
       }
     } finally {
-      udpSocket.close();
+      try {
+        udpSocket.close();
+      } catch (_e) {
+        // 关闭失败忽略：socket 可能已失效
+      }
     }
   }
 
@@ -187,7 +205,13 @@ export class WakeOnLan {
       return [address];
     }
     // 域名 → DNS 解析（connection 模块级方法）
-    const result: connection.NetAddress[] = await connection.getAddressesByName(address);
+    let result: connection.NetAddress[] = [];
+    try {
+      result = await connection.getAddressesByName(address);
+    } catch (e) {
+      // 解析失败向上抛出，由调用方降级为直接用原始地址发送
+      throw e instanceof Error ? e : new Error(String(e));
+    }
     const resolved: string[] = [];
     for (const addr of result) {
       if (addr.address) {

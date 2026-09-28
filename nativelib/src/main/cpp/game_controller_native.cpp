@@ -15,6 +15,8 @@
  * 提供统一的 USB/蓝牙手柄输入
  */
 
+#define LOG_TAG "GameControllerNative"
+#define LOG_DOMAIN 0xFF01
 #include "game_controller_native.h"
 #include <hilog/log.h>
 #include <string.h>
@@ -218,10 +220,6 @@ DECLARE_FUNC_PTR(OH_GameDevice_DestroyAllDeviceInfos)
 
 #endif // GAME_CONTROLLER_KIT_AVAILABLE
 
-#undef LOG_TAG
-#undef LOG_DOMAIN
-#define LOG_TAG "GameControllerNative"
-#define LOG_DOMAIN 0xFF01
 #define LOGD(...) OH_LOG_Print(LOG_APP, LOG_DEBUG, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) OH_LOG_Print(LOG_APP, LOG_INFO, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) OH_LOG_Print(LOG_APP, LOG_WARN, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)

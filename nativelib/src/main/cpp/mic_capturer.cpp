@@ -16,12 +16,12 @@
  * 直接完成 PCM → Opus 编码 → 网络发送，消除 ArkTS 层跨线程和 GC 开销。
  */
 
+#define LOG_TAG "MicCapturer"
 #include "mic_capturer.h"
 #include <hilog/log.h>
 #include <cstring>
 #include <dlfcn.h>
 
-#define LOG_TAG "MicCapturer"
 
 // =============================================================================
 // OHAudio Capturer 新式回调 API 动态加载（兼容旧设备缺失符号）

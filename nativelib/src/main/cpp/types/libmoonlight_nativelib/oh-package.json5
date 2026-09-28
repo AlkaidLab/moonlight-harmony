@@ -1,0 +1,6 @@
+{
+  "name": "libmoonlight_nativelib.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "Type declarations for the Moonlight native streaming library"
+}

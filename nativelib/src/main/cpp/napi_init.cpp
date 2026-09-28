@@ -15,6 +15,8 @@
  * 参照 Android JNI 层导出所有 moonlight-common-c 接口
  */
 
+#define LOG_TAG "MoonlightNative"
+#define LOG_DOMAIN 0x0000
 #include <napi/native_api.h>
 #include <hilog/log.h>
 
@@ -30,8 +32,6 @@
 // SDL3 库尚未移植到 HarmonyOS，暂时禁用
 // #include "sdl3/sdl3_gamepad_napi.h"
 
-#define LOG_TAG "MoonlightNative"
-#define LOG_DOMAIN 0x0000
 
 // 日志宏
 #define LOGI(...) OH_LOG_INFO(LOG_APP, __VA_ARGS__)

@@ -35,4 +35,10 @@ export class UI {
     }
     return UI.ctx;
   }
+
+  /** EntryAbility 在 onWindowStageDestroy 中调用：清掉旧窗口的 UIContext，
+   *  避免下次窗口重建时 isReady() 命中陈旧实例而跳过重新注入 */
+  static reset(): void {
+    UI.ctx = undefined;
+  }
 }

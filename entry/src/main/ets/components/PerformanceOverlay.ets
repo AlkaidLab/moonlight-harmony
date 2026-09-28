@@ -15,6 +15,7 @@
  * 支持拖动、吸附、布局切换等功能
  */
 import { promptAction } from '@kit.ArkUI';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { batteryInfo } from '@kit.BasicServicesKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem, SliderConfig } from './dialogs/OptionPickerDialog';
 import { ToastQueue } from '../utils/ToastQueue';
@@ -159,7 +160,7 @@ export struct PerformanceOverlay {
             this.dismissGuide();
           }, 5000);
         }, 500);
-        PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_GUIDE_SHOWN, true);
+        PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_GUIDE_SHOWN, true).catch(() => {});
       }
     } catch (_) {
       // 忽略
@@ -266,9 +267,11 @@ export struct PerformanceOverlay {
 
   private updateBattery(): void {
     try {
-      this.perfBatteryLevel = batteryInfo.batterySOC;
-      this.perfIsCharging = batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE ||
-        batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.FULL;
+      if (canIUse('SystemCapability.PowerManager.BatteryManager.Core')) {
+        this.perfBatteryLevel = batteryInfo.batterySOC;
+        this.perfIsCharging = batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE ||
+          batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.FULL;
+      }
     } catch (e) {
       // 忽略电池信息获取失败
     }
@@ -319,6 +322,7 @@ export struct PerformanceOverlay {
   }
 
   /** 自绘极简时钟（时针+分针+刻度） */
+  @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   MiniClock(size: number) {
     Stack() {
@@ -454,7 +458,7 @@ export struct PerformanceOverlay {
           this.overlayLocked = true;
           this.viewModel.overlayState.config.isLocked = true;
           this.viewModel.overlayState.configVersion++;
-          PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, true);
+          PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_LOCKED, true).catch(() => {});
           this.playLockFlash();
           try {
             ToastQueue.show({ message: '� 已锁定，触摸将透传至游戏', duration: 1500 });
@@ -1095,7 +1099,7 @@ export struct PerformanceOverlay {
     // 同步 @State 数组，触发 UI 重新渲染
     this.enabledItemsList = Array.from(config.enabledItems);
     // 持久化
-    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_ITEMS, this.enabledItemsList.join(','));
+    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_ITEMS, this.enabledItemsList.join(',')).catch(() => {});
   }
 
   /**
@@ -1104,6 +1108,6 @@ export struct PerformanceOverlay {
   private updateBgOpacity(value: number): void {
     this.overlayBgOpacity = value;
     this.viewModel.overlayState.config.bgOpacity = value;
-    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_BG_OPACITY, value);
+    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_BG_OPACITY, value).catch(() => {});
   }
 }

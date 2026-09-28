@@ -19,6 +19,7 @@ import { XmlUtil } from '../../utils/XmlUtil';
 import { NvHttp } from '../streaming/NvHttp';
 import { parseAddressAndPort, formatAddressForUrl } from '../../utils/NetHelper';
 import { Logger } from '../../common/Logger';
+import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 
 /**
  * 配对状态
@@ -46,6 +47,9 @@ export interface PairResult {
  * 实现与 NVIDIA GameStream / Sunshine 服务器的配对流程
  * 参考 Android PairingManager.java
  */
+// 配对加密依赖 CryptoFramework，部分设备形态无对应 syscap，编译器对双注解 API 误报；
+// 运行时已由 canIUse 探测 + try-catch 兜底，故类级压制 syscap 警告
+@SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
 export class PairingManager {
   private baseUrl: string;
   private address: string;
@@ -146,31 +150,34 @@ export class PairingManager {
           const keyPem = textDecoder.decodeToString(keyContent);
           
           // 从 PEM 格式加载私钥
-          const generator = cryptoFramework.createAsyKeyGenerator('RSA2048');
-          const keyPairResult = await generator.convertPemKey(null, keyPem);
-          this.keyPair = keyPairResult;
-          
-          // 读取证书文件
-          const certFile = await fileIo.open(this.certFilePath, fileIo.OpenMode.READ_ONLY);
-          const certStats = await fileIo.stat(this.certFilePath);
-          const certBuffer = new ArrayBuffer(certStats.size);
-          await fileIo.read(certFile.fd, certBuffer);
-          await fileIo.close(certFile);
-          
-          this.clientCertPem = new Uint8Array(certBuffer);
-          
-          // 从 PEM 转换为 DER（去掉 header 和 footer，base64 解码）
-          const certPemStr = textDecoder.decodeToString(this.clientCertPem);
-          const certBase64 = certPemStr
-            .replace('-----BEGIN CERTIFICATE-----', '')
-            .replace('-----END CERTIFICATE-----', '')
-            .replace(/\s/g, '');
-          const textEncoder = new util.TextEncoder();
-          const base64Helper = new util.Base64Helper();
-          this.clientCertDer = base64Helper.decodeSync(certBase64);
-          
-          Logger.info('PairingManager', `PairingManager: 成功加载已存在的证书，PEM长度=${this.clientCertPem.length}, DER长度=${this.clientCertDer.length}`);
-          return;
+          if (canIUse('SystemCapability.Security.CryptoFramework.Key.AsymKey')) {
+            const generator = cryptoFramework.createAsyKeyGenerator('RSA2048');
+            const keyPairResult = await generator.convertPemKey(null, keyPem);
+            this.keyPair = keyPairResult;
+
+            // 读取证书文件
+            const certFile = await fileIo.open(this.certFilePath, fileIo.OpenMode.READ_ONLY);
+            const certStats = await fileIo.stat(this.certFilePath);
+            const certBuffer = new ArrayBuffer(certStats.size);
+            await fileIo.read(certFile.fd, certBuffer);
+            await fileIo.close(certFile);
+
+            this.clientCertPem = new Uint8Array(certBuffer);
+
+            // 从 PEM 转换为 DER（去掉 header 和 footer，base64 解码）
+            const certPemStr = textDecoder.decodeToString(this.clientCertPem);
+            const certBase64 = certPemStr
+              .replace('-----BEGIN CERTIFICATE-----', '')
+              .replace('-----END CERTIFICATE-----', '')
+              .replace(/\s/g, '');
+            const textEncoder = new util.TextEncoder();
+            const base64Helper = new util.Base64Helper();
+            this.clientCertDer = base64Helper.decodeSync(certBase64);
+
+            Logger.info('PairingManager', `PairingManager: 成功加载已存在的证书，PEM长度=${this.clientCertPem.length}, DER长度=${this.clientCertDer.length}`);
+            return;
+          }
+          Logger.warn('PairingManager', 'PairingManager: 当前设备不支持非对称密钥系统能力，无法加载已存在证书');
         }
       } catch (err) {
         Logger.warn('PairingManager', `PairingManager: 加载已存在证书失败: ${err}, 将生成新的密钥对`);
@@ -180,10 +187,20 @@ export class PairingManager {
 
     // 生成新的密钥对和证书
     Logger.info('PairingManager', 'PairingManager: 生成新的 RSA 密钥对...');
-    this.keyPair = await CryptoUtil.generateRsaKeyPair();
+    const keyPair = await CryptoUtil.generateRsaKeyPair();
+    if (!keyPair) {
+      // 密钥对生成失败（系统能力缺失或加密异常），保持既有失败语义：向上抛出
+      throw new Error('生成 RSA 密钥对失败');
+    }
+    this.keyPair = keyPair;
     Logger.info('PairingManager', 'PairingManager: RSA 密钥对生成完成');
-    
-    this.clientCertDer = await CryptoUtil.generateSelfSignedCert(this.keyPair);
+
+    const clientCertDer = await CryptoUtil.generateSelfSignedCert(keyPair);
+    if (!clientCertDer) {
+      // 证书生成失败，避免保存半成品证书，保持既有失败语义：向上抛出
+      throw new Error('生成自签名证书失败');
+    }
+    this.clientCertDer = clientCertDer;
     Logger.info('PairingManager', `PairingManager: 证书 DER 生成完成，长度 = ${this.clientCertDer.length}`);
     
     this.clientCertPem = CryptoUtil.getPemCertBytes(this.clientCertDer);
@@ -214,11 +231,16 @@ export class PairingManager {
       Logger.info('PairingManager', `PairingManager: 证书已保存到 ${this.certFilePath}`);
 
       // 保存私钥
-      const priKeyBlob = this.keyPair.priKey.getEncodedPem('PKCS8');
-      const keyFile = await fileIo.open(this.keyFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      await fileIo.write(keyFile.fd, priKeyBlob);
-      await fileIo.close(keyFile);
-      Logger.info('PairingManager', `PairingManager: 私钥已保存到 ${this.keyFilePath}`);
+      if (canIUse('SystemCapability.Security.CryptoFramework.Key.AsymKey')) {
+        const priKeyBlob = this.keyPair.priKey.getEncodedPem('PKCS8');
+        const keyFile = await fileIo.open(this.keyFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+        await fileIo.write(keyFile.fd, priKeyBlob);
+        await fileIo.close(keyFile);
+        Logger.info('PairingManager', `PairingManager: 私钥已保存到 ${this.keyFilePath}`);
+      } else {
+        // 缺少系统能力时跳过保存私钥（与保存失败一致，非致命）
+        Logger.warn('PairingManager', 'PairingManager: 当前设备不支持导出私钥的系统能力，跳过保存私钥');
+      }
     } catch (err) {
       Logger.error('PairingManager', `PairingManager: 保存证书失败: ${err}`);
     }
@@ -396,12 +418,18 @@ export class PairingManager {
    * @returns 配对结果
    */
   async pair(pin: string): Promise<PairResult> {
-    await this.initialize();
-
-    // 自动检测服务器版本号（Gen 7+ 使用 SHA-256，之前使用 SHA-1）
-    const serverMajorVersion = await this.fetchServerMajorVersion();
-    const useSha256 = serverMajorVersion >= 7;
-    Logger.info('PairingManager', `PairingManager: 服务器版本 ${serverMajorVersion}, 使用 ${useSha256 ? 'SHA-256' : 'SHA-1'} 哈希算法`);
+    // 初始化/版本探测失败按配对失败终止，异常不再外溢到调用方
+    let useSha256 = false;
+    try {
+      await this.initialize();
+      // 自动检测服务器版本号（Gen 7+ 使用 SHA-256，之前使用 SHA-1）
+      const serverMajorVersion = await this.fetchServerMajorVersion();
+      useSha256 = serverMajorVersion >= 7;
+      Logger.info('PairingManager', `PairingManager: 服务器版本 ${serverMajorVersion}, 使用 ${useSha256 ? 'SHA-256' : 'SHA-1'} 哈希算法`);
+    } catch (e) {
+      Logger.error('PairingManager', `PairingManager: 初始化或版本探测失败: ${e}`);
+      return { state: PairState.FAILED };
+    }
 
     try {
       // ============ 步骤 1: 发送 salt 和客户端证书，获取服务器证书 ============
@@ -524,6 +552,14 @@ export class PairingManager {
         useSha256
       );
 
+      // 长度守卫：哈希/解密失败会降级为空数组，空对空比较恒等会让配对误判成功
+      if (expectedServerResponse.length === 0 || serverResponse.length === 0) {
+        Logger.error('PairingManager',
+          `PairingManager: 响应数据为空（expected=${expectedServerResponse.length}, actual=${serverResponse.length}），按配对失败处理`);
+        await this.unpair();
+        return { state: PairState.FAILED, pairName };
+      }
+
       if (!this.arraysEqual(expectedServerResponse, serverResponse)) {
         await this.unpair();
         return { state: PairState.PIN_WRONG, pairName };
@@ -534,7 +570,17 @@ export class PairingManager {
 
       // 签名 clientSecret
       Logger.info('PairingManager', `PairingManager: clientSecret 长度 = ${clientSecret.length}`);
-      const clientSignature = await CryptoUtil.rsaSign(clientSecret, this.keyPair!.priKey);
+      let clientSignature: Uint8Array | null = null;
+      if (canIUse('SystemCapability.Security.CryptoFramework.Key.AsymKey')) {
+        clientSignature = await CryptoUtil.rsaSign(clientSecret, this.keyPair!.priKey);
+      } else {
+        Logger.error('PairingManager', 'PairingManager: 当前设备不支持非对称密钥系统能力');
+      }
+      if (!clientSignature) {
+        Logger.error('PairingManager', 'PairingManager: 客户端签名生成失败');
+        await this.unpair();
+        return { state: PairState.FAILED, pairName };
+      }
       Logger.info('PairingManager', `PairingManager: clientSignature 长度 = ${clientSignature.length}`);
       const clientPairingSecret = CryptoUtil.concatBytes(clientSecret, clientSignature);
       Logger.info('PairingManager', `PairingManager: clientPairingSecret 长度 = ${clientPairingSecret.length}`);

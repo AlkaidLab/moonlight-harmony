@@ -1334,8 +1334,11 @@ export class ComputerManager {
    * 生成配对 PIN 码（使用加密安全的随机数）
    */
   private generatePin(): string {
-    // 使用 CryptoUtil 生成安全随机数
+    // 使用 CryptoUtil 生成安全随机数（内部含降级保护，不会产出 NaN）
     const randomBytes = CryptoUtil.generateRandomBytes(4);
+    if (randomBytes.length < 4) {
+      return Math.floor(1000 + Math.random() * 9000).toString();
+    }
     let pin = '';
     for (let i = 0; i < 4; i++) {
       pin += (randomBytes[i] % 10).toString();
