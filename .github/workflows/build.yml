@@ -118,15 +118,17 @@ jobs:
       if: steps.cache-sdk.outputs.cache-hit != 'true'
       run: |
         set -euo pipefail
-        SDK_URL="https://repo.huaweicloud.com/harmonyos/os/${{ env.SDK_VERSION }}/ohos-sdk-windows_linux-public.tar.gz"
+        SDK_URL="https://repo.huaweicloud.com/harmonyos/os/${{ env.SDK_VERSION }}/ohos-sdk-windows_linux-public_20260829.tar.gz"
         mkdir -p ~/ohos-sdk && cd ~/ohos-sdk
         curl -L --retry 3 --retry-delay 10 -o sdk.tar.gz "$SDK_URL" --progress-bar --fail
         tar -xzf sdk.tar.gz && rm sdk.tar.gz
-        if [ -d "linux" ]; then
-          for zip in linux/*.zip; do
+        # 7.0 包解压后组件 zip 在 ohos-sdk/linux/ 下（多一层顶层目录），6.x 直接在 linux/
+        LINUX_DIR=$(find . -maxdepth 2 -type d -name linux | head -1)
+        if [ -n "$LINUX_DIR" ]; then
+          for zip in "$LINUX_DIR"/*.zip; do
             [ -f "$zip" ] && unzip -q -o "$zip" -d .
           done
-          rm -rf linux windows
+          rm -rf ohos-sdk linux windows
         fi
 
     - name: Download command-line-tools
