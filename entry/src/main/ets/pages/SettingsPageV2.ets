@@ -262,6 +262,9 @@ struct SettingsPageV2 {
   @State perfOverlayOrientation: string = '垂直';
   @State perfOverlayPosition: string = '右上角';
   @State perfOverlayLocked: boolean = false;
+  @State perfOverlayVerticalPadding: number = 12;
+  @State perfOverlayFontSize: number = 12;
+  @State perfOverlayBgOpacity: number = 53;
   @State perfOverlayItems: string[] = ['resolution', 'decoder', 'render_fps', 'packet_loss', 'bitrate', 'network_latency', 'decode_latency'];
   @State latencyToast: boolean = false;
   @State disableWarnings: boolean = false;
@@ -616,6 +619,12 @@ struct SettingsPageV2 {
       this.perfOverlayOrientation = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_ORIENTATION, '垂直');
       this.perfOverlayPosition = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_POSITION, '右上角');
       this.perfOverlayLocked = await this.loadBoolean(SettingsKeys.PERF_OVERLAY_LOCKED, false);
+      this.perfOverlayVerticalPadding = Math.max(0, Math.min(32,
+        await PreferencesUtil.get<number>(SettingsKeys.PERF_OVERLAY_VERTICAL_PADDING, 12)));
+      this.perfOverlayFontSize = Math.max(8, Math.min(24,
+        await PreferencesUtil.get<number>(SettingsKeys.PERF_OVERLAY_FONT_SIZE, 12)));
+      this.perfOverlayBgOpacity = 100 - Math.round(Math.max(0, Math.min(1,
+        await PreferencesUtil.get<number>(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53))) * 100);
       const itemsStr = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_ITEMS, 'resolution,decoder,render_fps,packet_loss,bitrate,network_latency,decode_latency');
       this.perfOverlayItems = itemsStr.split(',').filter(item => item.length > 0);
       this.latencyToast = await this.loadBoolean(SettingsKeys.LATENCY_TOAST, false);
@@ -2239,6 +2248,50 @@ struct SettingsPageV2 {
                 type: 'select',
                 visible: this.enablePerfOverlay,
                 action: () => this.showPerfOverlayItemsPicker()
+              },
+              {
+                title: '性能信息上下黑边',
+                subtitle: '调整文字上下方的背景留白',
+                type: 'slider',
+                visible: this.enablePerfOverlay,
+                value: this.perfOverlayVerticalPadding,
+                min: 0,
+                max: 32,
+                step: 1,
+                unit: ' vp',
+                onSliderChange: (value: number) => {
+                  this.perfOverlayVerticalPadding = value;
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_VERTICAL_PADDING, value);
+                }
+              },
+              {
+                title: '性能信息字体大小',
+                type: 'slider',
+                visible: this.enablePerfOverlay,
+                value: this.perfOverlayFontSize,
+                min: 8,
+                max: 24,
+                step: 1,
+                unit: ' fp',
+                onSliderChange: (value: number) => {
+                  this.perfOverlayFontSize = value;
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_FONT_SIZE, value);
+                }
+              },
+              {
+                title: '性能信息背景透明度',
+                subtitle: '0% 为不透明，100% 为完全透明',
+                type: 'slider',
+                visible: this.enablePerfOverlay,
+                value: this.perfOverlayBgOpacity,
+                min: 0,
+                max: 100,
+                step: 1,
+                unit: '%',
+                onSliderChange: (value: number) => {
+                  this.perfOverlayBgOpacity = value;
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 1 - value / 100);
+                }
               },
               {
                 title: '串流后延迟提示',

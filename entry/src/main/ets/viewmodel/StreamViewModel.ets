@@ -245,6 +245,12 @@ export class StreamViewModel {
     if (this.displaySettings.perfOverlayBgOpacity !== undefined) {
       this.overlayState.config.bgOpacity = this.displaySettings.perfOverlayBgOpacity;
     }
+    if (this.displaySettings.perfOverlayVerticalPadding !== undefined) {
+      this.overlayState.config.verticalPadding = this.displaySettings.perfOverlayVerticalPadding;
+    }
+    if (this.displaySettings.perfOverlayFontSize !== undefined) {
+      this.overlayState.config.fontSize = this.displaySettings.perfOverlayFontSize;
+    }
     
     // 更新串流尺寸
     this.displayInfo.streamWidth = this.streamConfig.width;
