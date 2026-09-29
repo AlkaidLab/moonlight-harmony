@@ -1492,28 +1492,20 @@ struct StreamPage {
     this.resetStreamFrameHints();
     const surfaceId = this.xComponentController.getXComponentSurfaceId();
 
-    const streamConfig = this.viewModel.streamConfig;
-    if (streamConfig && streamConfig.fps > 60) {
-      const displayHz = getDisplayRequestHz(streamConfig.fps);
-      try {
-        const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
-        this.xComponentFrameRequestActive = frameNode !== null && frameNode !== undefined &&
-          MoonBridge.setXComponentFrameRate(frameNode, displayHz);
-      } catch (e) {
-        Logger.warn('StreamPage', `XComponent 帧率请求不可用: ${e}`);
-      }
-      if (!this.xComponentFrameRequestActive && displayHz > 60) {
-        this.startStreamDisplaySync(displayHz);
-      }
-      try {
-        MoonBridge.setFrameRateKeepAlive(true, displayHz);
-      } catch (e) {
-        Logger.warn('StreamPage', `启用帧率请求失败: ${e}`);
-      }
-      this.startStreamFrameDiagnostics(displayHz);
-    }
+    const requestedFps = this.viewModel.streamConfig?.fps ?? 60;
+    const requestedWidth = this.viewModel.displayInfo.streamWidth;
+    const requestedHeight = this.viewModel.displayInfo.streamHeight;
+    this.configureStreamFrameHints();
 
     await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+    if ((this.viewModel.streamConfig?.fps ?? 60) !== requestedFps) {
+      this.resetStreamFrameHints();
+      this.configureStreamFrameHints();
+    }
+    if (this.viewModel.displayInfo.streamWidth !== requestedWidth ||
+      this.viewModel.displayInfo.streamHeight !== requestedHeight) {
+      await this.configureStreamWindow();
+    }
 
     // 将屏幕 DS5 触控板绑定到本次会话的 controller slot 0。
     this.touchInputHandler.setDs5TouchpadSink(this.viewModel.getSession());
@@ -1540,6 +1532,28 @@ struct StreamPage {
 
     // 会话就绪后把键盘焦点拉回本页（NavDestination 不会自动获焦）
     this.requestStreamFocus();
+  }
+
+  private configureStreamFrameHints(): void {
+    const streamConfig = this.viewModel.streamConfig;
+    if (!streamConfig || streamConfig.fps <= 60) return;
+    const displayHz = getDisplayRequestHz(streamConfig.fps);
+    try {
+      const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
+      this.xComponentFrameRequestActive = frameNode !== null && frameNode !== undefined &&
+        MoonBridge.setXComponentFrameRate(frameNode, displayHz);
+    } catch (e) {
+      Logger.warn('StreamPage', `XComponent 帧率请求不可用: ${e}`);
+    }
+    if (!this.xComponentFrameRequestActive && displayHz > 60) {
+      this.startStreamDisplaySync(displayHz);
+    }
+    try {
+      MoonBridge.setFrameRateKeepAlive(true, displayHz);
+    } catch (e) {
+      Logger.warn('StreamPage', `启用帧率请求失败: ${e}`);
+    }
+    this.startStreamFrameDiagnostics(displayHz);
   }
 
   async startStreaming(): Promise<void> {

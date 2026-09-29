@@ -315,6 +315,7 @@ export class StreamViewModel {
       // 创建串流会话
       this.streamingSession = new StreamingSession();
       this.streamingSession.setDs5TouchpadEnabled(this.touchMode === TouchMode.DS5_TOUCHPAD);
+      let serverResolutionReceived = false;
       
       // 设置 HDR 状态回调，当 drSetup 检测到实际 HDR 状态时更新 UI
       this.streamingSession.setHdrStateCallback((isHdr: boolean) => {
@@ -341,6 +342,7 @@ export class StreamViewModel {
       // 设置分辨率变化回调（服务端分辨率/旋转同步）
       this.streamingSession.setResolutionChangedCallback((width: number, height: number) => {
         Logger.info('StreamViewModel', `StreamViewModel: 服务端分辨率变化 ${width}x${height}`);
+        serverResolutionReceived = true;
         // 更新串流分辨率
         this.displayInfo.streamWidth = width;
         this.displayInfo.streamHeight = height;
@@ -422,6 +424,11 @@ export class StreamViewModel {
       // 同步实际使用的配置（可能与初始配置不同，例如 HDR 因设备不支持被禁用）
       const effectiveConfig = this.streamingSession.getEffectiveConfig();
       if (effectiveConfig) {
+        // 启动期间主机可能先上报新尺寸，避免用请求的尺寸覆盖上报结果。
+        if (!serverResolutionReceived) {
+          this.displayInfo.streamWidth = effectiveConfig.width;
+          this.displayInfo.streamHeight = effectiveConfig.height;
+        }
         // 更新关键配置项以确保 UI 显示正确
         if (this.streamConfig!.hdr !== effectiveConfig.hdr) {
           Logger.info('StreamViewModel', `StreamViewModel: HDR 状态同步 ${this.streamConfig!.hdr} -> ${effectiveConfig.hdr}`);
