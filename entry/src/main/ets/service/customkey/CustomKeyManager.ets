@@ -23,7 +23,6 @@
 import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { util } from '@kit.ArkTS';
 import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../streaming/MoonBridge';
 import { CustomKeyStore } from './CustomKeyStore';
 import { ToastQueue } from '../../utils/ToastQueue';
@@ -43,6 +42,7 @@ import {
   sendShortcutKeys,
 } from './CustomKeyTypes';
 import { Logger } from '../../common/Logger';
+import { StringUtil } from '../../utils/StringUtil';
 
 // =============================================================================
 // 回调接口
@@ -389,7 +389,7 @@ export class CustomKeyManager {
         fileIo.readSync(file.fd, buf);
         fileIo.closeSync(file);
 
-        const json = new util.TextDecoder('utf-8').decodeToString(new Uint8Array(buf));
+        const json = StringUtil.uint8ArrayToString(new Uint8Array(buf));
         const success = await CustomKeyStore.importProfile(json);
 
         if (success) {

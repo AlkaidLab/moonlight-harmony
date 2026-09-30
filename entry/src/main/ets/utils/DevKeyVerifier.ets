@@ -7,12 +7,13 @@
  */
 
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
-import { util } from '@kit.ArkTS';
 import { fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { DEV_KEY_SALT } from '../config/DevKeySecret';
 import { Logger } from '../common/Logger';
 import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
+import { CryptoUtil } from './CryptoUtil';
+import { StringUtil } from './StringUtil';
 
 // 证书签名校验依赖 CryptoFramework，部分设备形态无对应 syscap，编译器对双注解 API 误报；
 // 运行时已由 canIUse 探测 + try-catch 兜底，故类级压制 syscap 警告
@@ -31,8 +32,7 @@ export class DevKeyVerifier {
         const buffer = new ArrayBuffer(stat.size);
         fileIo.readSync(file.fd, buffer);
         fileIo.closeSync(file);
-        const textDecoder = util.TextDecoder.create('utf-8');
-        return textDecoder.decodeToString(new Uint8Array(buffer)).trim();
+        return StringUtil.uint8ArrayToString(new Uint8Array(buffer)).trim();
       }
     } catch (err) {
       Logger.error('DevKeyVerifier', `DevKeyVerifier: 无法读取设备 ID: ${err}`);
@@ -57,8 +57,7 @@ export class DevKeyVerifier {
    */
   static computeKey(deviceId: string): string {
     const payload = DEV_KEY_SALT + deviceId.toLowerCase();
-    const encoder = new util.TextEncoder();
-    const data = encoder.encodeInto(payload);
+    const data = StringUtil.stringToUint8Array(payload);
     if (canIUse('SystemCapability.Security.CryptoFramework.MessageDigest')) {
       try {
         const md = cryptoFramework.createMd('SHA256');
@@ -66,11 +65,7 @@ export class DevKeyVerifier {
         const digest = md.digestSync();
         const bytes = new Uint8Array(digest.data);
         // 取前 4 字节 = 8 位 hex
-        let hex = '';
-        for (let i = 0; i < 4; i++) {
-          hex += (bytes[i] & 0xFF).toString(16).toUpperCase().padStart(2, '0');
-        }
-        return hex;
+        return CryptoUtil.bytesToHex(bytes.slice(0, 4));
       } catch (err) {
         Logger.error('DevKeyVerifier', `DevKeyVerifier: 计算激活码失败: ${err}`);
       }

@@ -22,7 +22,6 @@
  */
 
 import { picker, fileIo, fileShare } from '@kit.CoreFileKit';
-import { util } from '@kit.ArkTS';
 import { preferences } from '@kit.ArkData';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { promptAction } from '@kit.ArkUI';
@@ -30,6 +29,7 @@ import { CryptoService } from './CryptoService';
 import { NvHttp } from './streaming/NvHttp';
 import { ComputerManager } from './ComputerManager';
 import { ToastQueue } from '../utils/ToastQueue';
+import { StringUtil } from '../utils/StringUtil';
 import { Logger } from '../common/Logger';
 
 const TAG = '[SettingsBackup]';
@@ -137,7 +137,7 @@ export class SettingsBackupService {
       const buf = new ArrayBuffer(stat.size);
       fileIo.readSync(file.fd, buf);
       fileIo.closeSync(file);
-      return new util.TextDecoder('utf-8').decodeToString(new Uint8Array(buf));
+      return StringUtil.uint8ArrayToString(new Uint8Array(buf));
     } catch {
       return undefined;
     }
@@ -149,7 +149,7 @@ export class SettingsBackupService {
   private static writeFileText(path: string, content: string): void {
     try {
       const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      const encoded = new util.TextEncoder().encodeInto(content);
+      const encoded = StringUtil.stringToUint8Array(content);
       fileIo.writeSync(file.fd, encoded.buffer);
       fileIo.closeSync(file);
     } catch (e) {
@@ -323,7 +323,7 @@ export class SettingsBackupService {
             return false;
           }
         } else {
-          json = new util.TextDecoder('utf-8').decodeToString(rawData);
+          json = StringUtil.uint8ArrayToString(rawData);
         }
         const count = await SettingsBackupService.importAll(json);
 

@@ -13,6 +13,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { CryptoUtil } from '../../utils/CryptoUtil';
+import { StringUtil } from '../../utils/StringUtil';
 import { common } from '@kit.AbilityKit';
 import { HttpClient } from '../../utils/HttpClient';
 import { XmlUtil } from '../../utils/XmlUtil';
@@ -146,8 +147,7 @@ export class PairingManager {
           await fileIo.close(keyFile);
           
           const keyContent = new Uint8Array(keyBuffer);
-          const textDecoder = util.TextDecoder.create('utf-8');
-          const keyPem = textDecoder.decodeToString(keyContent);
+          const keyPem = StringUtil.uint8ArrayToString(keyContent);
           
           // 从 PEM 格式加载私钥
           if (canIUse('SystemCapability.Security.CryptoFramework.Key.AsymKey')) {
@@ -165,12 +165,11 @@ export class PairingManager {
             this.clientCertPem = new Uint8Array(certBuffer);
 
             // 从 PEM 转换为 DER（去掉 header 和 footer，base64 解码）
-            const certPemStr = textDecoder.decodeToString(this.clientCertPem);
+            const certPemStr = StringUtil.uint8ArrayToString(this.clientCertPem);
             const certBase64 = certPemStr
               .replace('-----BEGIN CERTIFICATE-----', '')
               .replace('-----END CERTIFICATE-----', '')
               .replace(/\s/g, '');
-            const textEncoder = new util.TextEncoder();
             const base64Helper = new util.Base64Helper();
             this.clientCertDer = base64Helper.decodeSync(certBase64);
 
@@ -223,8 +222,7 @@ export class PairingManager {
 
     try {
       // 保存证书（clientCertPem 已是 Uint8Array，直接转为字符串）
-      const textDecoder = util.TextDecoder.create('utf-8');
-      const certContent = textDecoder.decodeToString(this.clientCertPem);
+      const certContent = StringUtil.uint8ArrayToString(this.clientCertPem);
       const certFile = await fileIo.open(this.certFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       await fileIo.write(certFile.fd, certContent);
       await fileIo.close(certFile);

@@ -13,7 +13,6 @@ import { AppNav } from '../common/AppNav';
 import { LengthMetrics, ColorMetrics } from '@kit.ArkUI';
 import { common, Want, bundleManager } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
-import { util } from '@kit.ArkTS';
 import { getSupportedDisplayRates } from '../utils/DisplayFrameRate';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { AppColors, AppSizes, AppSpacing, AppAnimation, AppShadows } from '../common/Theme';
@@ -46,6 +45,7 @@ import { ToastQueue } from '../utils/ToastQueue';
 import { METERED_BANDWIDTH_PROBE_MAX_BYTES } from '../service/network/BandwidthProbeService';
 import { GYRO_SENSITIVITY_MIN, GYRO_SENSITIVITY_MAX } from '../service/input/GyroAssistService';
 import { Logger } from '../common/Logger';
+import { StringUtil } from '../utils/StringUtil';
 
 /**
  * 选择器选项接口
@@ -4227,9 +4227,8 @@ function loadOpenSourceLibraries(context: common.Context): OpenSourceLibrary[] {
   try {
     const rawData = context.resourceManager.getRawFileContentSync(
       'open_source_libraries.json');
-    const decoder = util.TextDecoder.create('utf-8');
     const manifest = JSON.parse(
-      decoder.decodeToString(rawData)) as OpenSourceManifest;
+      StringUtil.uint8ArrayToString(rawData)) as OpenSourceManifest;
     if (manifest.schemaVersion !== 1) {
       Logger.error('SettingsPageV2', 
         `[OpenSource] 不支持的清单版本: ${manifest.schemaVersion}`);
