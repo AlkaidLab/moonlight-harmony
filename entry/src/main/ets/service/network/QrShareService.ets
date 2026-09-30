@@ -23,7 +23,7 @@
 import { scanCore, scanBarcode, generateBarcode } from '@kit.ScanKit';
 import { image } from '@kit.ImageKit';
 import { zlib } from '@kit.BasicServicesKit';
-import { buffer, util } from '@kit.ArkTS';
+import { buffer } from '@kit.ArkTS';
 import { generateQrPixelMap, ECLevel } from './QrCodeGenerator';
 import {
   CustomKeyDef,
@@ -49,6 +49,7 @@ import {
 } from '../customkey/CustomKeyTypes';
 import { Logger } from '../../common/Logger';
 import { UI } from '../../common/UI';
+import { StringUtil } from '../../utils/StringUtil';
 
 export interface QrCodeResult {
   pixelMap: image.PixelMap | null;
@@ -109,8 +110,7 @@ const SCAN_UNSUPPORTED_MESSAGE = '当前设备不支持扫码';
  * 压缩率约 50-70%，使 QR 码版本大幅降低
  */
 async function compressToBase64(json: string): Promise<string> {
-  const encoder = new util.TextEncoder();
-  const encResult = encoder.encodeInto(json);
+  const encResult = StringUtil.stringToUint8Array(json);
   const sourceBuffer = encResult.buffer as ArrayBuffer;
 
   // 目标缓冲区：压缩数据通常不会比原始数据大
@@ -146,8 +146,7 @@ async function decompressFromBase64(data: string): Promise<string> {
     const result = await zip.uncompress(destBuffer, sourceBuffer);
 
     const decompressedBytes = new Uint8Array(destBuffer, 0, result.destLen);
-    const decoder = util.TextDecoder.create('utf-8');
-    return decoder.decodeToString(decompressedBytes);
+    return StringUtil.uint8ArrayToString(decompressedBytes);
   } catch (e) {
     // 解压失败返回空串，调用方 parseData 解析失败返回 null，导入整体失败
     Logger.error('QrShareService', '[QrShareService] zlib 解压失败:', JSON.stringify(e));

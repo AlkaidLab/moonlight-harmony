@@ -12,8 +12,8 @@
  */
 
 import { common } from '@kit.AbilityKit';
-import { util } from '@kit.ArkTS';
 import { Logger } from './Logger';
+import { StringUtil } from '../utils/StringUtil';
 
 /**
  * 单条变更项
@@ -172,8 +172,7 @@ export async function loadChangelog(context: common.Context): Promise<ChangelogE
   try {
     const resourceManager = context.resourceManager;
     const rawData: Uint8Array = resourceManager.getRawFileContentSync('CHANGELOG.md');
-    const decoder = util.TextDecoder.create('utf-8');
-    const markdown = decoder.decodeToString(rawData);
+    const markdown = StringUtil.uint8ArrayToString(rawData);
     return parseChangelog(markdown);
   } catch (err) {
     Logger.error('Changelog', '加载更新日志失败:', err);

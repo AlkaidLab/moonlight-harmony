@@ -9,7 +9,6 @@
  */
 
 import { util } from '@kit.ArkTS';
-import { CryptoUtil } from './CryptoUtil';
 
 /**
  * 字符串工具类
@@ -68,19 +67,10 @@ export class StringUtil {
   }
 
   /**
-   * 生成 UUID（使用加密安全的随机数）
+   * 生成 UUID（使用 HarmonyOS 的加密安全随机源）
    * @returns UUID 字符串
    */
   static generateUUID(): string {
-    // 使用加密安全的随机数生成 16 字节
-    const randomBytes = CryptoUtil.generateRandomBytes(16);
-    
-    // 设置版本号 (4) 和变体位
-    randomBytes[6] = (randomBytes[6] & 0x0f) | 0x40;  // version 4
-    randomBytes[8] = (randomBytes[8] & 0x3f) | 0x80;  // variant 1
-    
-    // 转换为 UUID 格式
-    const hex = CryptoUtil.bytesToHex(randomBytes).toLowerCase();
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+    return util.generateRandomUUID();
   }
 }

@@ -27,13 +27,14 @@
 import { usbManager } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
-import { util } from '@kit.ArkTS';
 import { ComputerInfo } from '../../model/ComputerInfo';
 import { SettingsService, SettingsKeys } from '../SettingsService';
 import { UsbDriverService } from './UsbDriverService';
 import { NvHttp } from '../streaming/NvHttp';
 import { ToastQueue } from '../../utils/ToastQueue';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
+import { CryptoUtil } from '../../utils/CryptoUtil';
+import { StringUtil } from '../../utils/StringUtil';
 import nativeLib from 'libmoonlight_nativelib.so';
 import { Logger } from '../../common/Logger';
 
@@ -479,8 +480,7 @@ export class UsbForwardingService {
         const stat = await fileIo.stat(path);
         const buffer = new ArrayBuffer(stat.size);
         await fileIo.read(file.fd, buffer);
-        const decoder = util.TextDecoder.create('utf-8');
-        return decoder.decodeToString(new Uint8Array(buffer));
+        return StringUtil.uint8ArrayToString(new Uint8Array(buffer));
       } finally {
         await fileIo.close(file);
       }
@@ -492,11 +492,6 @@ export class UsbForwardingService {
 
   /** base64 DER 证书 → PEM 文本（native 隧道按 PEM 解析） */
   private static base64DerToPem(base64Der: string): string {
-    const clean = base64Der.replace(/\s/g, '');
-    const lines: string[] = [];
-    for (let i = 0; i < clean.length; i += 64) {
-      lines.push(clean.substring(i, i + 64));
-    }
-    return `-----BEGIN CERTIFICATE-----\n${lines.join('\n')}\n-----END CERTIFICATE-----\n`;
+    return `${CryptoUtil.base64ToPem(base64Der, 'CERTIFICATE')}\n`;
   }
 }

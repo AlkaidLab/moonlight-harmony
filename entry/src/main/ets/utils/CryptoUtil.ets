@@ -862,13 +862,22 @@ export class CryptoUtil {
    * 将 DER 编码的证书转换为 PEM 格式
    */
   static derToPem(der: Uint8Array): string {
-    const base64 = CryptoUtil.base64Encode(der);
+    return CryptoUtil.base64ToPem(CryptoUtil.base64Encode(der), 'CERTIFICATE');
+  }
+
+  /**
+   * 将 Base64 编码的 DER 数据转换为 PEM 格式
+   *
+   * 调用方负责传入不带 PEM 头尾的 Base64 数据；空白字符会被忽略。
+   */
+  static base64ToPem(base64Data: string, label: string): string {
+    const base64 = base64Data.replace(/\s/g, '');
     const lines: string[] = [];
-    lines.push('-----BEGIN CERTIFICATE-----');
+    lines.push(`-----BEGIN ${label}-----`);
     for (let i = 0; i < base64.length; i += 64) {
       lines.push(base64.substring(i, Math.min(i + 64, base64.length)));
     }
-    lines.push('-----END CERTIFICATE-----');
+    lines.push(`-----END ${label}-----`);
     return lines.join('\n');
   }
 

@@ -10,7 +10,6 @@
 
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { util } from '@kit.ArkTS';
 import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { BinaryHttpSession, HttpClient } from '../../utils/HttpClient';
@@ -391,8 +390,7 @@ export class NvHttp {
           const buffer = new ArrayBuffer(stat.size);
           fileIo.readSync(file.fd, buffer);
           fileIo.closeSync(file);
-          const textDecoder = util.TextDecoder.create('utf-8');
-          const savedId = textDecoder.decodeToString(new Uint8Array(buffer)).trim();
+          const savedId = StringUtil.uint8ArrayToString(new Uint8Array(buffer)).trim();
           if (savedId.length === 16) {
             NvHttp.cachedUniqueId = savedId;
             Logger.info('NvHttp', `NvHttp: 从文件加载 uniqueId: ${savedId}`);
@@ -415,8 +413,7 @@ export class NvHttp {
       const uniqueIdPath = context.filesDir + '/unique_id.txt';
       try {
         const file = fileIo.openSync(uniqueIdPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-        const textEncoder = new util.TextEncoder();
-        const encoded = textEncoder.encodeInto(result);
+        const encoded = StringUtil.stringToUint8Array(result);
         fileIo.writeSync(file.fd, encoded.buffer);
         fileIo.closeSync(file);
         Logger.info('NvHttp', `NvHttp: uniqueId 已保存到文件`);
