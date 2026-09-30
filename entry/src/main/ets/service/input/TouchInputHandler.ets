@@ -181,6 +181,16 @@ export class TouchInputHandler {
   private mouseTapDownTimer: number = -1;
   /** 左键释放延迟定时器（快速点击时默认延迟 100ms 释放） */
   private mouseLeftButtonUpTimer: number = -1;
+  /** 左键按下延迟定时器（先让绝对坐标独立到达主机） */
+  private mouseLeftButtonPressTimer: number = -1;
+  /** 当前手势是否已经向主机发送左键按下 */
+  private mouseLeftButtonDownSent: boolean = false;
+  /** 左键按下前暂存的最新移动位置 */
+  private mousePendingMoveX: number = 0;
+  private mousePendingMoveY: number = 0;
+  private mouseHasPendingMove: boolean = false;
+  /** 防止旧手势的定时器作用于新手势 */
+  private mouseGestureGeneration: number = 0;
   /** 主手指 ID */
   private mousePrimaryFingerId: number = -1;
   /** 第二根手指 ID（用于滚轮） */
@@ -211,6 +221,8 @@ export class TouchInputHandler {
   private static readonly MOUSE_CLICK_RELEASE_DELAY_NORMAL = 100;
   /** 低延迟点击释放延迟（ms） */
   private static readonly MOUSE_CLICK_RELEASE_DELAY_LOW_LATENCY = 40;
+  /** 绝对坐标和左键按下之间的间隔（ms） */
+  private static readonly MOUSE_BUTTON_PRESS_DELAY = 20;
   /** 双击时间阈值（ms）—— 两次点击间隔小于此值视为双击 */
   private mouseDoubleTapTime: number = 250;
   /** 双击距离阈值（px）—— 两次点击位置距离小于此值视为双击 */
@@ -225,6 +237,8 @@ export class TouchInputHandler {
   private mouseDeadzoneTime: number = TouchInputHandler.MOUSE_DEADZONE_TIME_NORMAL;
   /** 当前点击释放延迟（ms） */
   private mouseClickReleaseDelay: number = TouchInputHandler.MOUSE_CLICK_RELEASE_DELAY_NORMAL;
+  /** 当前绝对坐标到左键按下的延迟（ms） */
+  private mouseButtonPressDelay: number = TouchInputHandler.MOUSE_BUTTON_PRESS_DELAY;
 
   // 默认配置
   private static readonly DEFAULT_SENSITIVITY = 1.5;
@@ -274,6 +288,11 @@ export class TouchInputHandler {
       ? TouchInputHandler.MOUSE_CLICK_RELEASE_DELAY_LOW_LATENCY
       : TouchInputHandler.MOUSE_CLICK_RELEASE_DELAY_NORMAL;
     this.trackpad.updateLatencyMode(enable);
+  }
+
+  /** 调整绝对坐标与左键按下之间的间隔，供不同主机帧率进行测试。 */
+  setMouseButtonPressDelay(delay: number): void {
+    this.mouseButtonPressDelay = Math.max(1, Math.min(100, Math.floor(delay)));
   }
 
   /**
@@ -385,19 +404,18 @@ export class TouchInputHandler {
    * @param releaseButtons 是否向主机发送 LEFT/RIGHT RELEASE（防御性释放）
    */
   private resetMouseState(releaseButtons: boolean): void {
+    this.mouseGestureGeneration += 1;
     // 取消所有定时器
     this.cancelMouseLongPressTimer();
     this.cancelMouseTapDownTimer();
-    if (this.mouseLeftButtonUpTimer !== -1) {
-      clearTimeout(this.mouseLeftButtonUpTimer);
-      this.mouseLeftButtonUpTimer = -1;
-    }
+    this.cancelMouseLeftButtonPressTimer();
+    this.cancelMouseLeftButtonUpTimer();
     // 释放可能卡在主机端的鼠标键
     if (releaseButtons) {
       if (this.mouseConfirmedLongPress) {
         this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
       }
-      if (this.mouseConfirmedTap) {
+      if (this.mouseLeftButtonDownSent) {
         this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
       }
     }
@@ -407,6 +425,8 @@ export class TouchInputHandler {
     this.mouseCancelled = false;
     this.mouseConfirmedTap = false;
     this.mouseConfirmedLongPress = false;
+    this.mouseLeftButtonDownSent = false;
+    this.mouseHasPendingMove = false;
   }
   
   /**
@@ -436,7 +456,8 @@ export class TouchInputHandler {
       return;
     }
 
-    if (touches.length === 0) return;
+    // MOUSE 模式需要处理 touches 为空的 Up/Cancel，以便完成释放对账。
+    if (touches.length === 0 && this.mode !== TouchInputMode.MOUSE) return;
 
     // 检测手写笔输入：SourceTool.Pen = 2
     // 仅在 DIRECT 模式下发送 Pen 协议事件（带压感/倾斜），
@@ -595,7 +616,7 @@ export class TouchInputHandler {
 
   /**
    * 确认点击（死区时间/距离超过后调用）
-   * 发送绝对鼠标位置 + 左键按下
+   * 先发送绝对鼠标位置，再延迟发送左键按下。
    */
   private mouseTapConfirmed(): void {
     if (this.mouseConfirmedTap || this.mouseConfirmedLongPress) {
@@ -603,6 +624,7 @@ export class TouchInputHandler {
     }
     this.mouseConfirmedTap = true;
     this.cancelMouseTapDownTimer();
+    this.mouseHasPendingMove = false;
 
     // 双击判定：如果启用双击拖动且本次按下距上次抬起很近且时间短，不重定位（方便双击）
     if (!this.enableDoubleClickDrag ||
@@ -613,7 +635,71 @@ export class TouchInputHandler {
           TouchInputHandler.MOUSE_DOUBLE_TAP_DISTANCE)) {
       this.mouseUpdatePosition(this.mouseDownX, this.mouseDownY);
     }
-    this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
+    this.scheduleMouseLeftButtonPress();
+  }
+
+  /** 在绝对位置之后延迟发送左键按下，避免主机按同一帧处理位置跳变。 */
+  private scheduleMouseLeftButtonPress(): void {
+    this.cancelMouseLeftButtonPressTimer();
+    const generation: number = this.mouseGestureGeneration;
+    this.mouseLeftButtonPressTimer = setTimeout(() => {
+      this.mouseLeftButtonPressTimer = -1;
+      // 快速抬起仍需完成一次点击，因此这里不检查 primaryFingerId。
+      if (generation !== this.mouseGestureGeneration ||
+          !this.mouseConfirmedTap ||
+          this.mouseConfirmedLongPress ||
+          this.mouseCancelled) {
+        return;
+      }
+      this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_LEFT);
+      this.mouseLeftButtonDownSent = true;
+      if (this.mouseHasPendingMove) {
+        this.mouseUpdatePosition(this.mousePendingMoveX, this.mousePendingMoveY);
+        this.mouseHasPendingMove = false;
+      }
+    }, this.mouseButtonPressDelay);
+  }
+
+  private cancelMouseLeftButtonPressTimer(): void {
+    if (this.mouseLeftButtonPressTimer !== -1) {
+      clearTimeout(this.mouseLeftButtonPressTimer);
+      this.mouseLeftButtonPressTimer = -1;
+    }
+  }
+
+  private cancelMouseLeftButtonUpTimer(): void {
+    if (this.mouseLeftButtonUpTimer !== -1) {
+      clearTimeout(this.mouseLeftButtonUpTimer);
+      this.mouseLeftButtonUpTimer = -1;
+    }
+  }
+
+  /** 快速点击在左键真正按下后再释放，保证按下/释放顺序完整。 */
+  private scheduleMouseLeftButtonRelease(): void {
+    this.cancelMouseLeftButtonUpTimer();
+    const generation: number = this.mouseGestureGeneration;
+    const releaseDelay: number = Math.max(
+      this.mouseClickReleaseDelay,
+      this.mouseButtonPressDelay
+    );
+    this.mouseLeftButtonUpTimer = setTimeout(() => {
+      this.mouseLeftButtonUpTimer = -1;
+      if (generation !== this.mouseGestureGeneration ||
+          this.mouseCancelled ||
+          !this.mouseConfirmedTap ||
+          this.mouseConfirmedLongPress) {
+        return;
+      }
+      // 极端情况下 UI 线程阻塞可能让释放回调先于按下回调执行，保留释放请求。
+      if (!this.mouseLeftButtonDownSent) {
+        this.scheduleMouseLeftButtonRelease();
+        return;
+      }
+      if (this.mouseLeftButtonDownSent) {
+        this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+        this.mouseLeftButtonDownSent = false;
+      }
+    }, releaseDelay);
   }
 
   /**
@@ -621,23 +707,40 @@ export class TouchInputHandler {
    */
   private mouseCancelTouch(): void {
     this.mouseCancelled = true;
+    this.mouseGestureGeneration += 1;
     this.cancelMouseLongPressTimer();
     this.cancelMouseTapDownTimer();
+    this.cancelMouseLeftButtonPressTimer();
+    this.cancelMouseLeftButtonUpTimer();
 
     if (this.mouseConfirmedLongPress) {
       this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
-    } else if (this.mouseConfirmedTap) {
+    } else if (this.mouseLeftButtonDownSent) {
       this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
     }
+    this.mouseLeftButtonDownSent = false;
+    this.mouseHasPendingMove = false;
+    this.mouseConfirmedTap = false;
+    this.mouseConfirmedLongPress = false;
   }
 
   private startMouseLongPressTimer(): void {
     this.cancelMouseLongPressTimer();
+    const generation: number = this.mouseGestureGeneration;
     this.mouseLongPressTimer = setTimeout(() => {
+      this.mouseLongPressTimer = -1;
+      if (generation !== this.mouseGestureGeneration ||
+          this.mouseCancelled ||
+          this.mousePrimaryFingerId === -1) {
+        return;
+      }
       this.cancelMouseTapDownTimer();
+      this.cancelMouseLeftButtonPressTimer();
+      this.mouseHasPendingMove = false;
       this.mouseConfirmedLongPress = true;
-      if (this.mouseConfirmedTap) {
+      if (this.mouseLeftButtonDownSent) {
         this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+        this.mouseLeftButtonDownSent = false;
       }
       this.nativeInput.sendMouseButton(BUTTON_ACTION_PRESS, BUTTON_RIGHT);
     }, this.mouseLongPressTime);
@@ -652,7 +755,14 @@ export class TouchInputHandler {
 
   private startMouseTapDownTimer(): void {
     this.cancelMouseTapDownTimer();
+    const generation: number = this.mouseGestureGeneration;
     this.mouseTapDownTimer = setTimeout(() => {
+      this.mouseTapDownTimer = -1;
+      if (generation !== this.mouseGestureGeneration ||
+          this.mouseCancelled ||
+          this.mousePrimaryFingerId === -1) {
+        return;
+      }
       this.mouseTapConfirmed();
     }, this.mouseDeadzoneTime);
   }
@@ -744,6 +854,21 @@ export class TouchInputHandler {
   }
 
   private onMousePrimaryDown(touch: TouchObject): void {
+    // 新手势开始前清理上一个手势的定时器和可能残留的按键状态。
+    this.mouseGestureGeneration += 1;
+    this.cancelMouseLongPressTimer();
+    this.cancelMouseTapDownTimer();
+    this.cancelMouseLeftButtonPressTimer();
+    this.cancelMouseLeftButtonUpTimer();
+    if (this.mouseConfirmedLongPress) {
+      this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
+    }
+    if (this.mouseLeftButtonDownSent) {
+      this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+    }
+    this.mouseLeftButtonDownSent = false;
+    this.mouseHasPendingMove = false;
+
     this.mousePrimaryFingerId = touch.id;
     this.mouseDownX = this.mouseLastX = touch.x;
     this.mouseDownY = this.mouseLastY = touch.y;
@@ -754,6 +879,19 @@ export class TouchInputHandler {
 
     this.startMouseTapDownTimer();
     this.startMouseLongPressTimer();
+  }
+
+  /** 左键按下前只保留最新位置，避免覆盖尚未独立到达主机的锚点。 */
+  private mouseUpdatePositionOrQueue(eventX: number, eventY: number): void {
+    if (this.mouseConfirmedTap &&
+        !this.mouseConfirmedLongPress &&
+        !this.mouseLeftButtonDownSent) {
+      this.mousePendingMoveX = eventX;
+      this.mousePendingMoveY = eventY;
+      this.mouseHasPendingMove = true;
+      return;
+    }
+    this.mouseUpdatePosition(eventX, eventY);
   }
 
   private onMouseSecondDown(touch: TouchObject): void {
@@ -775,7 +913,7 @@ export class TouchInputHandler {
           touch.x - this.mouseDownX, touch.y - this.mouseDownY,
           TouchInputHandler.MOUSE_DEADZONE_DISTANCE)) {
       this.mouseTapConfirmed();
-      this.mouseUpdatePosition(touch.x, touch.y);
+      this.mouseUpdatePositionOrQueue(touch.x, touch.y);
     }
     this.mouseLastX = touch.x;
     this.mouseLastY = touch.y;
@@ -801,18 +939,20 @@ export class TouchInputHandler {
 
       if (this.mouseConfirmedLongPress) {
         this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
+        this.mouseConfirmedLongPress = false;
+        this.mouseConfirmedTap = false;
+        this.mouseHasPendingMove = false;
       } else if (this.mouseConfirmedTap) {
-        this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
-      } else {
-        // 死区时间内完成的快速点击：立即按下，按当前触摸参数延迟释放
-        this.mouseTapConfirmed();
-        if (this.mouseLeftButtonUpTimer !== -1) {
-          clearTimeout(this.mouseLeftButtonUpTimer);
-        }
-        this.mouseLeftButtonUpTimer = setTimeout(() => {
+        if (this.mouseLeftButtonDownSent) {
           this.nativeInput.sendMouseButton(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
-          this.mouseLeftButtonUpTimer = -1;
-        }, this.mouseClickReleaseDelay);
+          this.mouseLeftButtonDownSent = false;
+        } else {
+          this.scheduleMouseLeftButtonRelease();
+        }
+      } else {
+        // 死区时间内完成的快速点击：延迟按下，按当前触摸参数延迟释放。
+        this.mouseTapConfirmed();
+        this.scheduleMouseLeftButtonRelease();
       }
     }
 
