@@ -1255,6 +1255,17 @@ export class GamepadManager implements UsbDriverListener {
         return;
       }
 
+      // GCK may expose a keyboard HID interface as a device with a generic
+      // name (for example, "System Control").  Do not register unknown
+      // device types as gamepads solely because they arrived through GCK.
+      // InputKit's joystick source also keeps hybrid keyboard/gamepads valid.
+      if (info.deviceType !== 1) {
+        Logger.info('GamepadManager', '[GAMEPAD-GC] 未明确识别为手柄，验证设备源类型: "' +
+          info.name + '" (type=' + info.deviceType + ')');
+        this.verifyAndRegisterGCDevice(deviceId, info);
+        return;
+      }
+
       // 品牌匹配通过但名称含强非手柄关键词（如 "RAPOO Keyboard-1 System Control"）
       // → 异步验证：查询 InputDevice 源类型，只有确实有 joystick 源才注册
       if (hasStrongNonGamepadKeyword(deviceNameLower)) {
