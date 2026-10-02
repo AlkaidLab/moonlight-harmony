@@ -550,7 +550,7 @@ struct SettingsPageV2 {
       this.gamepadMotionFallback = await this.loadBoolean(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false);
       this.gamepadTouchpadMouse = await this.loadBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
       this.enableStartKeyMenu = await this.loadBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true);
-      this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false);
+      this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, true);
       // 检查按键注入 API 是否可用（API 13+），不可用则强制禁用反劫持
       this.keyInterceptorAvailable = InputInterceptorService.getInstance().isInjectApiAvailable();
       if (!this.keyInterceptorAvailable && this.enableKeyInterceptor) {
@@ -1651,7 +1651,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '按键反劫持',
-                subtitle: '拦截部分蓝牙手柄 Guide/Mode 键退出 App（需系统级签名，否则可能无效）',
+                subtitle: '在系统之前接管按键，使 Alt+Tab 等系统快捷键能转发到主机；同时拦截蓝牙手柄 Guide/Mode 键退出 App。关闭后这类按键会被系统吞掉',
                 type: 'toggle',
                 value: this.enableKeyInterceptor,
                 visible: this.keyInterceptorAvailable,
