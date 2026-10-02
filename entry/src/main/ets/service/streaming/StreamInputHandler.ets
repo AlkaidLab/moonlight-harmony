@@ -136,6 +136,8 @@ export class StreamInputHandler {
   resetState(): void {
     this.releaseAllKeys();
     this.stopModifierWatchdog();
+    // 拦截器是消费型的，串流结束后必须停止，否则应用界面收不到物理键盘
+    this.stopKeyInterceptor();
     // 对账记录不跨串流残留：新串流主机端状态全新，旧记录无意义
     this.releasedVkKeys.clear();
     this.modifierFlags = 0;
@@ -771,6 +773,16 @@ export class StreamInputHandler {
         duration: 3500
       });
     }
+  }
+
+  /**
+   * 停止按键事件拦截器
+   *
+   * 拦截器是消费型的：被它接管的按键不会再传给应用自身。因此串流结束后必须
+   * 停止，否则停留在应用界面时物理键盘会全部失效（事件被吞掉且无处转发）。
+   */
+  stopKeyInterceptor(): void {
+    InputInterceptorService.getInstance().stop();
   }
 
   // ==================== 映射工具 ====================
