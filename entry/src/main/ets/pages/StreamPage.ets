@@ -845,6 +845,7 @@ struct StreamPage {
     // 停止按键拦截器、鼠标 Monitor 和 DisplaySync
     InputInterceptorService.getInstance().stop();
     this.inputHandler.stopMouseInterceptor();
+    this.inputHandler.stopModifierWatchdog();
     this.stopMouseKeepAlive();
 
     // 停止体感助手
@@ -1624,6 +1625,9 @@ struct StreamPage {
       if (this.viewModel.inputSettings?.enableKeyInterceptor) {
         this.inputHandler.startKeyInterceptor();
       }
+
+      // 启动修饰键卡死自愈看门狗（#153：Alt+Tab 等系统快捷键吞掉修饰键 KEY_UP 时兜底）
+      this.inputHandler.startModifierWatchdog();
 
       // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底
       const monitorOk = this.inputHandler.startMouseInterceptor(
