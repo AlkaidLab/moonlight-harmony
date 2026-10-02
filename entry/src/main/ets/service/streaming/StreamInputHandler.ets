@@ -55,6 +55,14 @@ export class StreamInputHandler {
   private viewWidthVp: number = 0;
   private viewHeightVp: number = 0;
 
+  // ── 视频区域位置（vp，用于画面之外鼠标坐标换算 #152）──
+  private viewGlobalLeftVp: number = 0;    // 视频区域全局 X
+  private viewGlobalTopVp: number = 0;     // 视频区域全局 Y
+  private containerOriginXvP: number = 0;  // 全屏容器全局原点 X
+  private containerOriginYvP: number = 0;  // 全屏容器全局原点 Y
+  private viewLeftVp: number = 0;          // 视频区域相对容器 X
+  private viewTopVp: number = 0;           // 视频区域相对容器 Y
+
   // ── 屏幕物理尺寸（px，用于相对模式边缘检测和 configure 传参）──
   private screenWidthPx: number = 1080;
   private screenHeightPx: number = 2400;
@@ -346,10 +354,76 @@ export class StreamInputHandler {
    * C++ 鼠标 Monitor 使用窗口矩形映射，onAreaChange 时重新获取窗口矩形
    */
   updateXComponentScreenPosition(screenX: number, screenY: number): void {
+    // 记录视频区域位置：画面之外的鼠标移动需要用它把容器坐标换算成画面坐标（#152）
+    if (screenX >= 0 && screenY >= 0) {
+      this.viewGlobalLeftVp = screenX;
+      this.viewGlobalTopVp = screenY;
+      this.refreshViewRectInContainer();
+    }
     // 窗口大小或位置可能变化，重新获取窗口矩形
     if (this.mouseInterceptorActive) {
       this.fetchAndUpdateWindowRect();
     }
+  }
+
+  /**
+   * 更新全屏容器自身的全局原点（由容器 onAreaChange 触发）
+   * 容器不位于页面原点时（如窗口模式/带标题栏），换算需要减去它才不会偏移
+   */
+  updateContainerOrigin(screenX: number, screenY: number): void {
+    this.containerOriginXvP = screenX;
+    this.containerOriginYvP = screenY;
+    this.refreshViewRectInContainer();
+  }
+
+  /**
+   * 按当前容器原点换算视频区域在容器内的位置
+   */
+  private refreshViewRectInContainer(): void {
+    this.viewLeftVp = this.viewGlobalLeftVp - this.containerOriginXvP;
+    this.viewTopVp = this.viewGlobalTopVp - this.containerOriginYvP;
+  }
+
+  /**
+   * 处理全屏容器上的鼠标事件（覆盖视频画面之外的部分）
+   *
+   * 背景（#152）：全屏下 XComponent 按视频宽高比缩放，画面之外会留出
+   * letterbox / pillarbox 黑边（例如 2800x1840 屏串 1920x1080 时上下各 132px）。
+   * 挂在 XComponent 上的 .onMouse 只在指针位于画面内时才触发，指针进入黑边后
+   * 一条事件都收不到 —— 绝对模式于是停发坐标，主机光标冻在原地；等指针回到
+   * 画面内，下一条是绝对坐标，于是直接跳到新位置（表现为「卡住后瞬移」）。
+   *
+   * 这里在容器层兜住画面之外的移动：换算成画面坐标后夹到画面边缘，让主机光标
+   * 贴边跟随而不是冻结，回来时也不会跳。画面内仍由 XComponent 的处理器负责，
+   * 此方法对画面内的事件直接返回。
+   *
+   * @returns true 表示已按画面边缘坐标转发
+   */
+  handleContainerMouseEvent(event: MouseEvent): boolean {
+    if (!this.viewModel?.isConnected) return false;
+    // C++ Monitor 在输入管线层监听，本来就覆盖全屏，无需容器层兜底
+    if (this.mouseInterceptorActive) return false;
+    if (event.action !== MouseAction.Move) return false;
+    if (this.viewWidthVp <= 0 || this.viewHeightVp <= 0) return false;
+
+    const relX = event.x - this.viewLeftVp;
+    const relY = event.y - this.viewTopVp;
+    // 画面内：交给 XComponent 的 .onMouse（它会 stopPropagation），此处不重复发送
+    if (relX >= 0 && relX <= this.viewWidthVp && relY >= 0 && relY <= this.viewHeightVp) {
+      return false;
+    }
+
+    // 相对模式没有绝对坐标可夹，黑边问题仅存在于绝对/桌面模式
+    const relativeMode = this.viewModel?.inputSettings?.gameMouseMode ?? false;
+    if (relativeMode) return false;
+
+    const clampedX = Math.max(0, Math.min(this.viewWidthVp, relX));
+    const clampedY = Math.max(0, Math.min(this.viewHeightVp, relY));
+    MoonBridge.sendMousePosition(
+      Math.round(clampedX), Math.round(clampedY),
+      this.viewWidthVp, this.viewHeightVp
+    );
+    return true;
   }
 
   /**
