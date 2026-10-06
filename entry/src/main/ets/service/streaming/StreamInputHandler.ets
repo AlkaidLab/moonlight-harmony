@@ -19,6 +19,8 @@ import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { common } from '@kit.AbilityKit';
 import { StreamViewModel } from '../../viewmodel/StreamViewModel';
 import { GamepadManager } from '../input/GamepadManager';
+import { GameMouseDevices } from '../input/GameMouseDevices';
+import { gameMouseGain, gameTouchpadUsesAcceleration } from '../input/GameMouseDevicePolicy';
 import { ToastQueue } from '../../utils/ToastQueue';
 
 import {
@@ -50,6 +52,8 @@ export class StreamInputHandler {
 
   // ── 鼠标拦截器（绕过 ArkUI 帧率限制，全速鼠标轮询）──
   private mouseInterceptorActive: boolean = false;
+  private gameMouseDevices: GameMouseDevices = new GameMouseDevices();
+  private loggedMouseRoutes: Set<string> = new Set<string>();
 
   // ── XComponent 实际渲染尺寸（vp，用于绝对模式坐标归一化）──
   private viewWidthVp: number = 0;
@@ -276,6 +280,8 @@ export class StreamInputHandler {
     const mouseInterceptor = MouseInterceptorService.getInstance();
     mouseInterceptor.stop();
     this.mouseInterceptorActive = false;
+    this.gameMouseDevices.start();
+    this.loggedMouseRoutes.clear();
 
     // 保存 XComponent 实际尺寸，供 ArkUI 回退路径绝对模式使用
     this.viewWidthVp = viewWidth;
@@ -296,6 +302,9 @@ export class StreamInputHandler {
 
     // 读取游戏鼠标模式设置
     const relativeMode = this.viewModel?.inputSettings?.gameMouseMode ?? false;
+    // Configure both paths before the locked-cursor branch returns early.
+    mouseInterceptor.configure(0, 0, screenWidthPx, screenHeightPx,
+                               screenWidthPx, screenHeightPx, relativeMode);
 
     // API 22+ 全屏窗口使用系统光标锁定。相对模式锁定后坐标保持不变，
     // 必须由 ArkUI rawDelta 处理移动，不能再用 C++ Monitor 计算坐标差。
@@ -311,10 +320,6 @@ export class StreamInputHandler {
       Logger.info('StreamInputHandler', 'StreamInputHandler: 游戏鼠标模式已锁定光标，使用 ArkUI rawDelta');
       return false;
     }
-
-    // 初始使用屏幕尺寸（全屏时完全正确），窗口模式下异步获取实际窗口矩形更新
-    mouseInterceptor.configure(0, 0, screenWidthPx, screenHeightPx,
-                                screenWidthPx, screenHeightPx, relativeMode);
 
     const result = mouseInterceptor.start();
     if (result === 0) {
@@ -380,6 +385,7 @@ export class StreamInputHandler {
    * 停止鼠标高速轮询
    */
   stopMouseInterceptor(): void {
+    this.gameMouseDevices.stop();
     MouseInterceptorService.getInstance().stop();
     this.mouseInterceptorActive = false;
   }
@@ -410,11 +416,25 @@ export class StreamInputHandler {
     if (event.action === MouseAction.Move) {
       const relativeMode = this.viewModel?.inputSettings?.gameMouseMode ?? false;
       if (relativeMode) {
-        // rawDelta 是鼠标硬件上报的原始位移，不是 vp/px，直接转发给远端。
+        // Relative motion bypasses absolute screen mapping. Scale before
+        // integer conversion; native code carries fractional motion forward.
         const dx = event.rawDeltaX ?? 0;
         const dy = event.rawDeltaY ?? 0;
         if (dx !== 0 || dy !== 0) {
-          MoonBridge.sendMouseMove(Math.round(dx), Math.round(dy));
+          const deviceId = event.deviceId ?? -1;
+          const kind = this.gameMouseDevices.classify(deviceId, event.sourceTool);
+          const settings = this.viewModel.inputSettings;
+          const gain = gameMouseGain(kind, settings?.gameMouseSensitivity ?? 1.0,
+            settings?.gameTouchpadSensitivityEnabled ?? false, settings?.gameTouchpadSensitivity ?? 1.0);
+          const accelerated = gameTouchpadUsesAcceleration(kind, settings?.gameTouchpadInputMode ?? 'linear');
+          const route = `${deviceId}:${event.sourceTool}:${kind}:${accelerated}`;
+          if (!this.loggedMouseRoutes.has(route)) {
+            this.loggedMouseRoutes.add(route);
+            Logger.info('StreamInputHandler', `GameMouse deviceId=${deviceId} sourceTool=${event.sourceTool} kind=${kind} gain=${gain} accelerated=${accelerated}`);
+          }
+          // BaseEvent.timestamp is monotonic nanoseconds from boot.
+          MouseInterceptorService.getInstance().sendGameMouseMove(dx, dy, gain, deviceId,
+            accelerated, event.timestamp / 1000000);
         }
       } else {
         // 绝对模式：发送坐标位置

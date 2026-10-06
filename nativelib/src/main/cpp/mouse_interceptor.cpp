@@ -32,6 +32,7 @@
 #define LOG_TAG "MouseInterceptor"
 #define LOG_DOMAIN 0xFF11
 #include "mouse_interceptor.h"
+#include "relative_mouse_motion.h"
 #include <dlfcn.h>
 #include <multimodalinput/oh_input_manager.h>
 #include <hilog/log.h>
@@ -117,6 +118,35 @@ static void LogCursorApiError(const char* action, int32_t result)
 
 // 鼠标模式：false=绝对模式（远程桌面），true=相对模式（游戏）
 static std::atomic<bool> g_relativeMode{false};
+static std::mutex g_motionMutex;
+static RelativeMouseMotion g_gameMouseMotion;
+static bool g_touchpadAccelerationReported = false;
+
+static void ResetGameMouseMotion()
+{
+    std::lock_guard<std::mutex> lock(g_motionMutex);
+    g_gameMouseMotion.reset();
+    g_touchpadAccelerationReported = false;
+}
+
+static void SendGameMouseMotion(double dx, double dy, double sensitivity = 1.0, int32_t deviceId = -1,
+                               bool accelerated = false, double eventTimeMs = 0.0)
+{
+    std::lock_guard<std::mutex> lock(g_motionMutex);
+    // The native monitor lacks a public per-event device ID/tool API. Its
+    // unidentified input must stay at 1x rather than accelerating touchpads.
+    g_gameMouseMotion.setSensitivity(sensitivity);
+    g_gameMouseMotion.setAccelerationEnabled(accelerated);
+    const auto delta = g_gameMouseMotion.move(dx, dy, true, deviceId, eventTimeMs);
+    if (accelerated && !g_touchpadAccelerationReported && g_gameMouseMotion.accelerationGain() >= 1.5) {
+        g_touchpadAccelerationReported = true;
+        LOGI("触控板加速生效: deviceId=%{public}d curveGain=%{public}.2f sensitivity=%{public}.1fx",
+             deviceId, g_gameMouseMotion.accelerationGain(), g_gameMouseMotion.sensitivity());
+    }
+    if (delta.x != 0 || delta.y != 0) {
+        LiSendMouseMoveEvent(delta.x, delta.y);
+    }
+}
 
 // 窗口矩形（物理 px）：绝对模式下用于坐标映射
 static std::atomic<int32_t> g_windowX{0};
@@ -278,7 +308,7 @@ static void OnMouseEvent(const Input_MouseEvent *event)
                     int32_t dx = x - g_lastX;
                     int32_t dy = y - g_lastY;
                     if (dx != 0 || dy != 0) {
-                        LiSendMouseMoveEvent((short)dx, (short)dy);
+                        SendGameMouseMotion(dx, dy);
                     }
                 }
                 g_lastX = x;
@@ -339,6 +369,7 @@ static napi_value AddMouseInterceptor(napi_env env, napi_callback_info info)
     }
 
     // 重置相对模式状态
+    ResetGameMouseMotion();
     g_lastX = -1;
     g_lastY = -1;
     g_warpPending.store(false);
@@ -374,6 +405,7 @@ static napi_value RemoveMouseInterceptor(napi_env env, napi_callback_info info)
     }
 
     // 清理注入事件对象
+    ResetGameMouseMotion();
     if (g_injectEvent) {
         OH_Input_DestroyMouseEvent(&g_injectEvent);
         g_injectEvent = nullptr;
@@ -424,6 +456,7 @@ static napi_value ConfigureMouseInterceptor(napi_env env, napi_callback_info inf
 
         // 模式切换时重置增量追踪状态
         if (relativeMode != prevMode) {
+            ResetGameMouseMotion();
             g_lastX = -1;
             g_lastY = -1;
             g_warpPending.store(false);
@@ -435,6 +468,32 @@ static napi_value ConfigureMouseInterceptor(napi_env env, napi_callback_info inf
              relativeMode ? "相对/游戏" : "绝对/桌面");
     }
 
+    napi_value undefined;
+    napi_get_undefined(env, &undefined);
+    return undefined;
+}
+
+// ArkUI's locked-cursor path uses the same scaler as the native monitor.
+// Keep raw floating-point deltas intact until after scaling and accumulation.
+static napi_value SendGameMouseMove(napi_env env, napi_callback_info info)
+{
+    size_t argc = 6;
+    napi_value argv[6];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    double dx = 0.0, dy = 0.0;
+    double sensitivity = 1.0;
+    int32_t deviceId = -1;
+    bool accelerated = false;
+    double eventTimeMs = 0.0;
+    if (argc >= 3) napi_get_value_double(env, argv[2], &sensitivity);
+    if (argc >= 4) napi_get_value_int32(env, argv[3], &deviceId);
+    if (argc >= 5) napi_get_value_bool(env, argv[4], &accelerated);
+    if (argc >= 6) napi_get_value_double(env, argv[5], &eventTimeMs);
+    if (argc >= 2 && g_relativeMode.load() && !g_active.load() &&
+        napi_get_value_double(env, argv[0], &dx) == napi_ok &&
+        napi_get_value_double(env, argv[1], &dy) == napi_ok) {
+        SendGameMouseMotion(dx, dy, sensitivity, deviceId, accelerated, eventTimeMs);
+    }
     napi_value undefined;
     napi_get_undefined(env, &undefined);
     return undefined;
@@ -539,6 +598,7 @@ napi_value MouseInterceptor_Init(napi_env env, napi_value exports)
         {"addMouseInterceptor", nullptr, AddMouseInterceptor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"removeMouseInterceptor", nullptr, RemoveMouseInterceptor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"configureMouseInterceptor", nullptr, ConfigureMouseInterceptor, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sendGameMouseMove", nullptr, SendGameMouseMove, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isMouseInterceptorActive", nullptr, IsMouseInterceptorActive, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isCursorLockAvailable", nullptr, IsCursorLockAvailable, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"lockCursor", nullptr, LockCursor, nullptr, nullptr, nullptr, napi_default, nullptr},

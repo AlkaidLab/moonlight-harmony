@@ -119,6 +119,10 @@ export class SettingsKeys {
   static readonly DOUBLE_TAP_TIME_THRESHOLD: string = 'settings_double_tap_time_threshold';
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
   static readonly GAME_MOUSE_MODE: string = 'settings_game_mouse_mode';  // 游戏鼠标模式（相对模式）
+  static readonly GAME_MOUSE_SENSITIVITY: string = 'settings_game_mouse_sensitivity';
+  static readonly GAME_TOUCHPAD_SENSITIVITY_ENABLED: string = 'settings_game_touchpad_sensitivity_enabled';
+  static readonly GAME_TOUCHPAD_SENSITIVITY: string = 'settings_game_touchpad_sensitivity';
+  static readonly GAME_TOUCHPAD_INPUT_MODE: string = 'settings_game_touchpad_input_mode';
   static readonly LAST_TOUCH_MODE: string = 'settings_last_touch_mode';  // 运行时触摸模式（菜单切换后持久化）
 
   // 增强触控设置
@@ -238,6 +242,10 @@ export interface InputSettings {
   doubleTapTimeThreshold: number;
   mouseNavButtons: boolean;
   gameMouseMode: boolean;  // 游戏鼠标模式：相对增量+光标回弹，适合 FPS/TPS
+  gameMouseSensitivity: number;
+  gameTouchpadSensitivityEnabled: boolean;
+  gameTouchpadSensitivity: number;
+  gameTouchpadInputMode: string;
 
   // 增强触控
   enableEnhancedTouch: boolean;
@@ -825,6 +833,10 @@ export class SettingsService {
       doubleTapTimeThreshold: await this.getNumber(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125),
       mouseNavButtons: await this.getBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false),
       gameMouseMode: await this.getBoolean(SettingsKeys.GAME_MOUSE_MODE, false),
+      gameMouseSensitivity: await this.getNumber(SettingsKeys.GAME_MOUSE_SENSITIVITY, 1.0),
+      gameTouchpadSensitivityEnabled: await this.getBoolean(SettingsKeys.GAME_TOUCHPAD_SENSITIVITY_ENABLED, false),
+      gameTouchpadSensitivity: await this.getNumber(SettingsKeys.GAME_TOUCHPAD_SENSITIVITY, 1.0),
+      gameTouchpadInputMode: await this.getString(SettingsKeys.GAME_TOUCHPAD_INPUT_MODE, 'linear'),
 
       // 增强触控
       enableEnhancedTouch: await this.getBoolean(SettingsKeys.ENABLE_ENHANCED_TOUCH, true),
