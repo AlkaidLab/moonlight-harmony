@@ -76,6 +76,10 @@ scripts/*
 !scripts/check-repository.js
 !scripts/check-open-source-licenses.js
 !scripts/test-display-frame-rate.cjs
+!scripts/test-game-mouse-device-policy.cjs
+!scripts/test-relative-mouse-motion.cpp
+!scripts/test-touchpad-acceleration.cpp
+!scripts/test-game-pointer-motion.cjs
 
 # Local release artifacts
 release-symbols/

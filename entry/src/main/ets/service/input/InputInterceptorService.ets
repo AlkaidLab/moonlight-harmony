@@ -53,6 +53,8 @@ interface MouseInterceptorNative {
                             windowWidth: number, windowHeight: number,
                             screenWidth: number, screenHeight: number,
                             relativeMode: boolean): void;
+  sendGameMouseMove(dx: number, dy: number, sensitivity: number, deviceId: number,
+                    accelerated: boolean, eventTimeMs: number): void;
   isMouseInterceptorActive(): boolean;
   isCursorLockAvailable(): boolean;
   lockCursor(windowId: number, followMovement: boolean): number;
@@ -198,6 +200,11 @@ export class MouseInterceptorService {
                                           screenWidth, screenHeight, relativeMode);
   }
 
+  sendGameMouseMove(dx: number, dy: number, sensitivity: number, deviceId: number,
+                    accelerated: boolean, eventTimeMs: number): void {
+    this.native?.sendGameMouseMove(dx, dy, sensitivity, deviceId, accelerated, eventTimeMs);
+  }
+
   /**
    * 启动鼠标拦截器
    * @returns 0 成功，其他为错误码
@@ -226,8 +233,9 @@ export class MouseInterceptorService {
    */
   stop(): void {
     if (!this.native) return;
+    // Also clear fractional motion when ArkUI, rather than the monitor, owns input.
+    this.native.removeMouseInterceptor();
     if (this.active) {
-      this.native.removeMouseInterceptor();
       this.active = false;
       Logger.info('InputInterceptorService', 'MouseInterceptor: 鼠标拦截器已停止');
     }

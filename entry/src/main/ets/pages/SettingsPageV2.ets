@@ -229,6 +229,10 @@ struct SettingsPageV2 {
   @State doubleTapTimeThreshold: number = 125;
   @State mouseNavButtons: boolean = false;
   @State gameMouseMode: boolean = false;   // 游戏鼠标模式（相对模式+光标回弹）
+  @State gameMouseSensitivity: number = 1.0;
+  @State gameTouchpadSensitivityEnabled: boolean = false;
+  @State gameTouchpadSensitivity: number = 1.0;
+  @State gameTouchpadInputMode: string = 'linear';
   
   // 体感助手设置
   @State gyroAssistEnabled: boolean = false;
@@ -581,6 +585,15 @@ struct SettingsPageV2 {
       this.doubleTapTimeThreshold = await PreferencesUtil.get<number>(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125);
       this.mouseNavButtons = await this.loadBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false);
       this.gameMouseMode = await this.loadBoolean(SettingsKeys.GAME_MOUSE_MODE, false);
+      const mouseSensitivity = await PreferencesUtil.get<number>(SettingsKeys.GAME_MOUSE_SENSITIVITY, 1.0);
+      this.gameMouseSensitivity = Number.isFinite(mouseSensitivity)
+        ? Math.min(10, Math.max(0.1, mouseSensitivity)) : 1.0;
+      this.gameTouchpadSensitivityEnabled = await this.loadBoolean(SettingsKeys.GAME_TOUCHPAD_SENSITIVITY_ENABLED, false);
+      const touchpadSensitivity = await PreferencesUtil.get<number>(SettingsKeys.GAME_TOUCHPAD_SENSITIVITY, 1.0);
+      this.gameTouchpadSensitivity = Number.isFinite(touchpadSensitivity)
+        ? Math.min(10, Math.max(0.1, touchpadSensitivity)) : 1.0;
+      const touchpadMode = await PreferencesUtil.get<string>(SettingsKeys.GAME_TOUCHPAD_INPUT_MODE, 'linear');
+      this.gameTouchpadInputMode = touchpadMode === 'accelerated' ? 'accelerated' : 'linear';
       
       // 体感助手设置
       this.gyroAssistEnabled = await this.loadBoolean(SettingsKeys.GYRO_ASSIST_ENABLED, false);
@@ -1925,12 +1938,67 @@ struct SettingsPageV2 {
               },
               {
                 title: '游戏鼠标模式',
-                subtitle: '相对输入+光标回弹，适合 FPS/TPS 游戏。搭配 Foundation Sunshine 的鼠标驱动效果更佳',
+                subtitle: '使用相对位移，避免游戏视角受屏幕边缘限制',
                 type: 'toggle',
                 value: this.gameMouseMode,
                 action: () => {
                   this.gameMouseMode = !this.gameMouseMode;
                   this.saveSetting(SettingsKeys.GAME_MOUSE_MODE, this.gameMouseMode);
+                }
+              },
+              {
+                title: '游戏鼠标灵敏度',
+                subtitle: '仅调整外接鼠标，触控板单独设置；重新连接后生效',
+                type: 'slider',
+                visible: this.gameMouseMode,
+                value: this.gameMouseSensitivity,
+                min: 0.1,
+                max: 10,
+                step: 0.1,
+                formatValue: (v: number) => `${v.toFixed(1)}×`,
+                onSliderChange: (value: number) => {
+                  this.gameMouseSensitivity = Math.round(value * 10) / 10;
+                  this.saveSetting(SettingsKeys.GAME_MOUSE_SENSITIVITY, this.gameMouseSensitivity);
+                }
+              },
+              {
+                title: '游戏触控板输入方式',
+                subtitle: '加速：慢滑精细，快滑移动更远；重新连接后生效',
+                tooltip: '加速由客户端处理，并非鸿蒙系统原有曲线。两种方式均使用相对位移，不受屏幕边缘限制。',
+                type: 'segment',
+                visible: this.gameMouseMode,
+                value: this.gameTouchpadInputMode,
+                segmentLabels: ['原始线性', '加速'],
+                segmentValues: ['linear', 'accelerated'],
+                onSegmentChange: (value: string) => {
+                  this.gameTouchpadInputMode = value;
+                  this.saveSetting(SettingsKeys.GAME_TOUCHPAD_INPUT_MODE, value);
+                }
+              },
+              {
+                title: '自定义游戏触控板倍率',
+                subtitle: '关闭时倍率为1×，输入方式仍生效；重新连接后生效',
+                type: 'toggle',
+                visible: this.gameMouseMode,
+                value: this.gameTouchpadSensitivityEnabled,
+                action: () => {
+                  this.gameTouchpadSensitivityEnabled = !this.gameTouchpadSensitivityEnabled;
+                  this.saveSetting(SettingsKeys.GAME_TOUCHPAD_SENSITIVITY_ENABLED, this.gameTouchpadSensitivityEnabled);
+                }
+              },
+              {
+                title: '游戏触控板灵敏度',
+                subtitle: '仅调整触控板，不影响外接鼠标；重新连接后生效',
+                type: 'slider',
+                visible: this.gameMouseMode && this.gameTouchpadSensitivityEnabled,
+                value: this.gameTouchpadSensitivity,
+                min: 0.1,
+                max: 10,
+                step: 0.1,
+                formatValue: (v: number) => `${v.toFixed(1)}×`,
+                onSliderChange: (value: number) => {
+                  this.gameTouchpadSensitivity = Math.round(value * 10) / 10;
+                  this.saveSetting(SettingsKeys.GAME_TOUCHPAD_SENSITIVITY, this.gameTouchpadSensitivity);
                 }
               }
             ]
