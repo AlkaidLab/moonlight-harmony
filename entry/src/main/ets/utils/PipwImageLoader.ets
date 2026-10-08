@@ -113,7 +113,7 @@ export class PipwImageLoader {
     try {
       response = await this.request(normalized, Math.min(deadline, Date.now() + 7000), operation, pool);
     } catch (e) {
-      if (!operation.template) throw e;
+      if (!operation.template) throw e as Error;
       return await this.fallback(pool, deadline, operation);
     }
     operation.checkActive();
@@ -231,7 +231,7 @@ export class PipwImageLoader {
       file = fileIo.openSync(path, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
     } catch (e) {
       request.destroy();
-      throw e;
+      throw e as Error;
     }
     return new Promise<PipwResponse>((resolve, reject) => {
       let finished = false;

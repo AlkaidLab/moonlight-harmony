@@ -9,7 +9,7 @@ import { http } from '@kit.NetworkKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
-import { buffer } from '@kit.ArkTS';
+import { StringUtil } from './StringUtil';
 import { ToastQueue } from './ToastQueue';
 import { Logger } from '../common/Logger';
 import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
@@ -128,7 +128,7 @@ export class BackgroundImageUtil {
     if (!this.index) {
       if (!this.context) throw new Error('Background context unavailable');
       const raw = this.context.resourceManager.getRawFileContentSync('pipw_review_index.json');
-      this.index = new PipwReviewIndex(buffer.from(raw).toString('utf-8'));
+      this.index = new PipwReviewIndex(StringUtil.uint8ArrayToString(raw));
     }
     return this.index;
   }
@@ -258,6 +258,8 @@ export class BackgroundImageUtil {
 
   private async load(request: BackgroundRequest, generation: number, force: boolean): Promise<string> {
     const pointer = `${this.directory}/background-${request.key}.json`;
+    let previousPath = '';
+    let writtenPath = '';
     try {
       if (!force) {
         const cached = this.readCache(pointer, request);
@@ -283,13 +285,14 @@ export class BackgroundImageUtil {
       // Immutable content files ensure an export never reads a refreshed image at an old URL.
       const filename = `background-${request.key}-${PipwReviewIndex.md5(new Uint8Array(data))}.${extension}`;
       const path = `${this.directory}/${filename}`;
-      const previous = this.previousContentPath(pointer, request.key);
+      previousPath = this.previousContentPath(pointer, request.key);
+      writtenPath = path;
       this.writeFile(path, data);
       const entry: BackgroundCacheEntry = { identity: request.identity, filename: filename };
-      this.writeFile(pointer, new Uint8Array(buffer.from(JSON.stringify(entry), 'utf-8')).buffer);
+      this.writeFile(pointer, StringUtil.stringToUint8Array(JSON.stringify(entry)).buffer as ArrayBuffer);
       this.publish(path, data, request);
-      if (previous && previous !== path) {
-        try { fileIo.unlinkSync(previous); } catch (e) {}
+      if (previousPath && previousPath !== path) {
+        try { fileIo.unlinkSync(previousPath); } catch (e) {}
       }
       return path;
     } catch (e) {
@@ -298,7 +301,14 @@ export class BackgroundImageUtil {
         this.cachedImageUrl = '';
         this.localCachePath = '';
         this.currentRequest = null;
+        const stale = previousPath || this.previousContentPath(pointer, request.key);
         try { if (fileIo.accessSync(pointer)) fileIo.unlinkSync(pointer); } catch (ignored) {}
+        if (stale) {
+          try { fileIo.unlinkSync(stale); } catch (ignored) {}
+        }
+        if (writtenPath && writtenPath !== stale) {
+          try { fileIo.unlinkSync(writtenPath); } catch (ignored) {}
+        }
       }
       Logger.warn('BackgroundImageUtil', '背景图下载或审核失败', e);
       return '';
@@ -307,7 +317,7 @@ export class BackgroundImageUtil {
 
   private previousContentPath(pointer: string, key: string): string {
     try {
-      const entry = JSON.parse(buffer.from(this.readFile(pointer, 4096)).toString('utf-8')) as BackgroundCacheEntry;
+      const entry = JSON.parse(StringUtil.arrayBufferToString(this.readFile(pointer, 4096))) as BackgroundCacheEntry;
       const pattern = new RegExp(`^background-${key}-[0-9a-f]{32}\\.(jpg|png|webp|gif|bmp|avif)$`);
       return pattern.test(entry.filename) ? `${this.directory}/${entry.filename}` : '';
     } catch (e) {
@@ -318,7 +328,7 @@ export class BackgroundImageUtil {
   private readCache(pointer: string, request: BackgroundRequest): BackgroundCachedImage | null {
     try {
       if (!fileIo.accessSync(pointer)) return null;
-      const entry = JSON.parse(buffer.from(this.readFile(pointer, 4096)).toString('utf-8')) as BackgroundCacheEntry;
+      const entry = JSON.parse(StringUtil.arrayBufferToString(this.readFile(pointer, 4096))) as BackgroundCacheEntry;
       const pattern = new RegExp(`^background-${request.key}-[0-9a-f]{32}\\.(jpg|png|webp|gif|bmp|avif)$`);
       if (entry.identity !== request.identity || !pattern.test(entry.filename)) return null;
       const path = `${this.directory}/${entry.filename}`;
@@ -388,6 +398,7 @@ export class BackgroundImageUtil {
   }
 
   async preloadAndCacheImage(imageUrl: string = this.cachedImageUrl): Promise<void> {
+    if (this.cachedImageData && imageUrl.split('?')[0] === this.cachedImageUrl) return;
     const generation = this.generation;
     const data = await this.downloadImageData(imageUrl);
     if (generation === this.generation && imageUrl.split('?')[0] === this.cachedImageUrl) this.cachedImageData = data;

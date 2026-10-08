@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
-import { buffer } from '@kit.ArkTS';
+import { StringUtil } from './StringUtil';
 
 export const PIPW_REVIEW_VERSION = 'd83e8223052491180467fb2b7a06443a6286b7cf';
 export const PIPW_MAX_BYTES = 20 * 1024 * 1024;
@@ -84,6 +84,6 @@ export class PipwReviewIndex {
   }
 
   static cacheKey(identity: string): string {
-    return PipwReviewIndex.md5(new Uint8Array(buffer.from(identity, 'utf-8')));
+    return PipwReviewIndex.md5(StringUtil.stringToUint8Array(identity));
   }
 }
