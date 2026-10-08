@@ -3845,7 +3845,7 @@ struct SettingsPageV2 {
   
   private showBackgroundImageTypePicker(): void {
     const options: PickerOption[] = [
-      { title: 'Pipw 二次元', subtitle: '二次元壁纸 (默认)', value: 'default' } as PickerOption,
+      { title: 'Pipw 二次元', subtitle: '已审核的二次元壁纸 (默认)', value: 'default' } as PickerOption,
       { title: 'Lorem Picsum', subtitle: '摄影壁纸 (Unsplash授权)', value: 'picsum' } as PickerOption,
       { title: '自定义 URL', subtitle: '使用自定义图片链接', value: 'api' } as PickerOption,
       { title: '关闭', subtitle: '不使用背景图片', value: 'none' } as PickerOption
@@ -3862,7 +3862,7 @@ struct SettingsPageV2 {
         await bgUtil.setBackgroundImageType(option.value as BackgroundImageType);
         // 选择关闭时，额外清除本地缓存文件
         if (option.value === 'none') {
-          bgUtil.disableBackgroundImage();
+          await bgUtil.disableBackgroundImage();
         }
         this.showToast(`背景图片设置为: ${option.title}，重启应用后生效`);
       }
@@ -3874,16 +3874,14 @@ struct SettingsPageV2 {
     this.textInputTitle = '设置自定义背景图片 URL';
     this.textInputPlaceholder = '输入图片网址，留空使用默认 API';
     this.textInputValue = this.backgroundImageUrl;
-    this.textInputCallback = (value: string) => {
+    this.textInputCallback = async (value: string) => {
       this.backgroundImageUrl = value;
-      this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_URL, value);
+      await BackgroundImageUtil.getInstance().setBackgroundImageUrl(value);
       if (value) {
         this.backgroundImageType = 'api';
-        this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_TYPE, 'api');
         this.showToast('自定义背景图片已设置');
       } else {
         this.backgroundImageType = 'default';
-        this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_TYPE, 'default');
         this.showToast('已恢复使用默认 API');
       }
     };

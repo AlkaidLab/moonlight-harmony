@@ -17,6 +17,7 @@ import { ComputerCard } from '../components/ComputerCard';
 import { ComputerListViewModel, ObservableComputer, ComputerDataSource } from '../viewmodel/ComputerViewModel';
 import { AppColors, AppSizes, AppSpacing } from '../common/Theme';
 import { common } from '@kit.AbilityKit';
+import { display } from '@kit.ArkUI';
 import { buffer } from '@kit.ArkTS';
 import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundImageUtil';
 import { BackgroundImage } from '../components/BackgroundImage';
@@ -24,8 +25,6 @@ import { sensor } from '@kit.SensorServiceKit';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from '../components/dialogs/OptionPickerDialog';
 import { ConfirmDialog, ConfirmDialogConfig, InfoDialog, InfoDialogConfig } from '../components/dialogs/ConfirmDialog';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { photoAccessHelper } from '@kit.MediaLibraryKit';
-import { fileIo } from '@kit.CoreFileKit';
 import { ComputerMenuHelper, ComputerMenuCallbacks } from '../viewmodel/ComputerMenuHelper';
 import { PcListActions, PcListUICallbacks } from '../viewmodel/PcListActions';
 import { PairingManager, PairState as PMPairState } from '../service/network/PairingManager';
@@ -70,6 +69,11 @@ struct PcListPageV2 {
 
   private computerManager: ComputerManager = ComputerManager.getInstance();
   private backgroundUtil: BackgroundImageUtil = BackgroundImageUtil.getInstance();
+  private backgroundLoadGeneration: number = 0;
+  private backgroundPageVisible: boolean = true;
+  private displayChangeListener = (displayId: number): void => {
+    if (this.backgroundPageVisible) this.reloadBackgroundImage();
+  };
   private actions: PcListActions | null = null;
 
   // 摇一摇相关
@@ -131,9 +135,15 @@ struct PcListPageV2 {
   }
 
   aboutToAppear(): void {
+    this.backgroundPageVisible = true;
     // 先设置 context 以便后续使用本地缓存（aboutToAppear 期间组件未挂载，走全局 UI 载体取 context）
     const context = UI.get().getHostContext() as common.UIAbilityContext;
     this.backgroundUtil.setContext(context);
+    try {
+      display.on('change', this.displayChangeListener);
+    } catch (e) {
+      Logger.warn('PcListPageV2', '屏幕方向监听不可用', e);
+    }
     this.canScanQrCode = QrShareService.isScanQrCodeSupported();
 
     // 初始化业务逻辑处理类
@@ -154,34 +164,33 @@ struct PcListPageV2 {
     this.startShakeDetection();
   }
 
-  private async loadBackgroundImage(): Promise<void> {
+  private setBackgroundImage(value: string): void {
+    this.backgroundImageUrl = value;
+    AppStorage.setOrCreate<string>('globalBackgroundImageUrl', value);
+  }
+
+  private async loadBackgroundImage(forceRefresh: boolean = false): Promise<void> {
+    const generation = ++this.backgroundLoadGeneration;
+    this.setBackgroundImage('');
     try {
       // 先检查背景图类型，如果是 NONE 则不加载
       const bgType = await this.backgroundUtil.getBackgroundImageType();
+      if (generation !== this.backgroundLoadGeneration) return;
       if (bgType === BackgroundImageType.NONE) {
-        this.backgroundImageUrl = '';
-        AppStorage.setOrCreate<string>('globalBackgroundImageUrl', '');
         return;
       }
 
       // 首次使用检查免责声明
       const disclaimerAccepted = await this.backgroundUtil.isDisclaimerAccepted();
+      if (generation !== this.backgroundLoadGeneration) return;
       if (!disclaimerAccepted) {
         // 显示免责声明弹窗
         this.showBackgroundDisclaimerDialog();
         return;
       }
 
-      // 优先使用本地缓存的图片
-      const localPath = await this.backgroundUtil.downloadToLocalCache();
-      if (localPath) {
-        this.backgroundImageUrl = 'file://' + localPath;
-      } else {
-        // 如果本地缓存失败，使用在线 URL
-        this.backgroundImageUrl = await this.backgroundUtil.getBackgroundImageUrl();
-      }
-      // 发布到全局：StreamPage 连接中遮罩在没有应用海报时底到这张背景图
-      AppStorage.setOrCreate<string>('globalBackgroundImageUrl', this.backgroundImageUrl);
+      const value = await this.backgroundUtil.loadBackgroundImageUrl(forceRefresh);
+      if (generation === this.backgroundLoadGeneration) this.setBackgroundImage(value);
     } catch (err) {
       // 忽略错误
     }
@@ -192,16 +201,18 @@ struct PcListPageV2 {
    * 用户可能在设置页面更改了背景图类型
    */
   private async reloadBackgroundImage(): Promise<void> {
+    const generation = this.backgroundLoadGeneration;
     try {
       // 检查类型是否发生变化
       const typeChanged = await this.backgroundUtil.reload();
+      if (!this.backgroundPageVisible || generation !== this.backgroundLoadGeneration) return;
       const currentType = await this.backgroundUtil.getBackgroundImageType();
+      if (!this.backgroundPageVisible || generation !== this.backgroundLoadGeneration) return;
       if (currentType === BackgroundImageType.NONE) {
-        this.backgroundImageUrl = '';
-        AppStorage.setOrCreate<string>('globalBackgroundImageUrl', '');
-      } else if (typeChanged) {
-        // 类型变化，重新加载（缓存已在 setBackgroundImageType 中清除）
-        this.loadBackgroundImage();
+        this.backgroundLoadGeneration++;
+        this.setBackgroundImage('');
+      } else if (typeChanged || !this.backgroundImageUrl) {
+        await this.loadBackgroundImage();
       }
     } catch (err) {
       // 忽略错误
@@ -214,18 +225,15 @@ struct PcListPageV2 {
   private showBackgroundDisclaimerDialog(): void {
     const config: ConfirmDialogConfig = {
       title: '背景壁纸功能说明',
-      message: '本应用的背景壁纸来自互联网公开资源（Pipw API），图片版权归原作者所有。\n\n' +
-        '• 本应用仅提供技术链接，不存储、不拥有这些图片的版权\n' +
-        '• 如有侵权，请联系原图片来源方\n' +
-        '• 您可以在设置中随时关闭壁纸功能或切换为其他来源\n\n' +
-        '继续使用即表示您知悉并同意上述条款。',
+      message: this.backgroundUtil.getDisclaimerText(),
       cancelButton: {
         text: '关闭壁纸',
         onClick: async () => {
           // 用户选择关闭壁纸，设置为 NONE
           await this.backgroundUtil.setDisclaimerAccepted();
           await this.backgroundUtil.disableBackgroundImage();
-          this.backgroundImageUrl = '';
+          this.backgroundLoadGeneration++;
+          this.setBackgroundImage('');
         }
       },
       confirmButton: {
@@ -244,16 +252,7 @@ struct PcListPageV2 {
    * 免责声明确认后加载背景图
    */
   private async loadBackgroundImageAfterDisclaimer(): Promise<void> {
-    try {
-      const localPath = await this.backgroundUtil.downloadToLocalCache();
-      if (localPath) {
-        this.backgroundImageUrl = 'file://' + localPath;
-      } else {
-        this.backgroundImageUrl = await this.backgroundUtil.getBackgroundImageUrl();
-      }
-    } catch (err) {
-      // 忽略错误
-    }
+    await this.loadBackgroundImage();
   }
 
   private async initializeAsync(): Promise<void> {
@@ -391,12 +390,17 @@ struct PcListPageV2 {
   }
 
   aboutToDisappear(): void {
+    this.backgroundPageVisible = false;
+    try { display.off('change', this.displayChangeListener); } catch (e) {}
+    this.backgroundLoadGeneration++;
+    this.backgroundUtil.cancelPendingLoad();
     this.computerManager.stopBackgroundScan();
     this.computerManager.stopPolling();
     this.stopShakeDetection();
   }
 
   onPageShow(): void {
+    this.backgroundPageVisible = true;
     // 页面再次显示时启动轮询
     this.computerManager.startPolling();
     if (!this.isInitializing) {
@@ -417,6 +421,9 @@ struct PcListPageV2 {
   }
 
   onPageHide(): void {
+    this.backgroundPageVisible = false;
+    this.backgroundLoadGeneration++;
+    this.backgroundUtil.cancelPendingLoad();
     // 页面隐藏时停止轮询（节省资源）
     this.computerManager.stopPolling();
     // 停止摇一摇检测
@@ -802,10 +809,8 @@ struct PcListPageV2 {
   private async refreshWallpaper(): Promise<void> {
     try {
       ToastQueue.show({ message: '正在刷新壁纸...' });
-      const localPath = await this.backgroundUtil.downloadToLocalCache(true); // forceRefresh = true
-      if (localPath) {
-        // 添加时间戳参数强制 Image 组件重新加载（绕过缓存）
-        this.backgroundImageUrl = 'file://' + localPath + '?t=' + Date.now();
+      await this.loadBackgroundImage(true);
+      if (this.backgroundImageUrl) {
         ToastQueue.show({ message: '壁纸已刷新' });
       } else {
         ToastQueue.show({ message: '刷新失败' });
@@ -826,43 +831,8 @@ struct PcListPageV2 {
     error?: BusinessError
   ) => {
     if (result === SaveButtonOnClickResult.SUCCESS) {
-      const localPath = this.backgroundUtil.getLocalCachePath();
-      if (!localPath) {
-        ToastQueue.show({ message: '没有可下载的壁纸' });
-        return;
-      }
-
-      try {
-        const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-        ToastQueue.show({ message: '正在保存壁纸...' });
-
-        // 读取本地缓存文件
-        const stat = fileIo.statSync(localPath);
-        if (!stat || stat.size === 0) {
-          ToastQueue.show({ message: '缓存图片不存在' });
-          return;
-        }
-
-        const file = fileIo.openSync(localPath, fileIo.OpenMode.READ_ONLY);
-        const imageData = new ArrayBuffer(stat.size);
-        fileIo.readSync(file.fd, imageData);
-        fileIo.closeSync(file.fd);
-
-        // 使用 SaveButton 授权后创建图片资源
-        const helper = photoAccessHelper.getPhotoAccessHelper(context);
-        const uri = await helper.createAsset(photoAccessHelper.PhotoType.IMAGE, 'jpg');
-
-        // 写入图片数据
-        const photoFile = await fileIo.open(uri, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
-        await fileIo.write(photoFile.fd, imageData);
-        await fileIo.close(photoFile.fd);
-
-        ToastQueue.show({ message: '壁纸已保存到相册' });
-      } catch (err) {
-        Logger.error('PcListPageV2', '下载壁纸失败', err);
-        const e = err as BusinessError;
-        ToastQueue.show({ message: `保存失败: ${e.message || '未知错误'}` });
-      }
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await this.backgroundUtil.saveImageToGallery(this.backgroundImageUrl, context);
     } else if (result === SaveButtonOnClickResult.TEMPORARY_AUTHORIZATION_FAILED) {
       Logger.error('PcListPageV2', '保存授权失败', error);
       ToastQueue.show({ message: '保存授权失败' });
