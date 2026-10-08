@@ -39,7 +39,7 @@ export const BACKGROUND_API_SOURCES: BackgroundApiSources = {
     landscape: 'https://picsum.photos/1920/1080', portrait: 'https://picsum.photos/1080/1920'
   },
   pipw: {
-    name: 'Pipw 二次元', description: '二次元壁纸 (已审核图片)',
+    name: 'Pipw 二次元', description: '二次元壁纸 (第三方)',
     landscape: 'https://img-api.pipw.top', portrait: 'https://img-api.pipw.top/?phone=true'
   }
 };
@@ -471,9 +471,11 @@ export class BackgroundImageUtil {
   async setDisclaimerAccepted(): Promise<void> { await PreferencesUtil.put(DISCLAIMER_KEY, true); }
   getDisclaimerText(): string {
     return '背景壁纸功能说明\n\n' +
-      '本应用的背景壁纸来自互联网公开资源，图片版权归原作者所有。Pipw 二次元图片经审核表校验后显示。\n\n' +
-      '• 本应用不拥有这些图片的版权\n• 如有侵权，请联系原图片来源方\n' +
-      '• 您可以在设置中随时关闭壁纸功能或切换来源\n\n继续使用即表示您知悉并同意上述条款。';
+      '本应用的背景壁纸来自互联网公开资源（Pipw API），图片版权归原作者所有。\n\n' +
+      '• 本应用仅提供技术链接，不存储、不拥有这些图片的版权\n' +
+      '• 如有侵权，请联系原图片来源方\n' +
+      '• 您可以在设置中随时关闭壁纸功能或切换为其他来源\n\n' +
+      '继续使用即表示您知悉并同意上述条款。';
   }
 
   isValidImageUrl(value: string): boolean { return /^https?:\/\//.test(value); }

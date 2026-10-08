@@ -3845,7 +3845,7 @@ struct SettingsPageV2 {
   
   private showBackgroundImageTypePicker(): void {
     const options: PickerOption[] = [
-      { title: 'Pipw 二次元', subtitle: '已审核的二次元壁纸 (默认)', value: 'default' } as PickerOption,
+      { title: 'Pipw 二次元', subtitle: '二次元壁纸 (默认)', value: 'default' } as PickerOption,
       { title: 'Lorem Picsum', subtitle: '摄影壁纸 (Unsplash授权)', value: 'picsum' } as PickerOption,
       { title: '自定义 URL', subtitle: '使用自定义图片链接', value: 'api' } as PickerOption,
       { title: '关闭', subtitle: '不使用背景图片', value: 'none' } as PickerOption
