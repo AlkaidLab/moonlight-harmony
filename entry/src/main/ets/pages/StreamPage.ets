@@ -2599,6 +2599,19 @@ struct StreamPage {
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Black)
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      // 记录容器全局原点，供画面之外的鼠标坐标换算使用（#152）
+      const globalPos = newArea.globalPosition;
+      if (globalPos) {
+        this.inputHandler.updateContainerOrigin(globalPos.x as number, globalPos.y as number);
+      }
+    })
+    .onMouse((event: MouseEvent) => {
+      // 视频画面之外的鼠标移动（letterbox/pillarbox 黑边）在容器层兜底转发（#152）；
+      // 有交互弹层时不动主机光标，避免操作界面时误移动远端指针
+      if (this.hasInteractiveOverlay()) return;
+      this.inputHandler.handleContainerMouseEvent(event);
+    })
     }
     .id(STREAM_FOCUS_KEY)
     .focusable(true)
