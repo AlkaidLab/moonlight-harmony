@@ -2,7 +2,6 @@
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { StringUtil } from './StringUtil';
 
-export const PIPW_REVIEW_VERSION = 'd83e8223052491180467fb2b7a06443a6286b7cf';
 export const PIPW_MAX_BYTES = 20 * 1024 * 1024;
 export type PipwPool = 'pc' | 'phone';
 
@@ -25,8 +24,12 @@ class PipwReviewedPool {
 export class PipwReviewIndex {
   private pc: PipwReviewedPool = new PipwReviewedPool();
   private phone: PipwReviewedPool = new PipwReviewedPool();
+  readonly version: string;
 
   constructor(json: string) {
+    // The index content is the single source of truth: cache identities derive
+    // from this digest so updating the JSON invalidates old caches by itself.
+    this.version = PipwReviewIndex.md5(StringUtil.stringToUint8Array(json));
     const records = JSON.parse(json) as PipwRecords;
     if (!records || Object.keys(records).sort().join(',') !== 'pc,phone') {
       throw new Error('Invalid Pipw review index');

@@ -109,11 +109,18 @@ export class PipwImageLoader {
   async load(api: string, pool: PipwPool, operation: PipwDownloadOperation): Promise<ReviewedImage> {
     const deadline = Date.now() + 30000;
     const normalized = PipwUrlPolicy.api(api, pool);
+    // Seeded before the first request so a rejected or unreachable first
+    // response can still fall back to a reviewed filename instead of failing.
+    operation.template = normalized;
+    // API < 23 has no maxRedirects: NetworkKit follows redirects inside this
+    // request, so the initial call already carries the full image body and
+    // needs the candidate download budget instead of the redirect-hop budget.
+    const legacyNetworkStack = deviceInfo.sdkApiVersion < 23;
+    const initialBudgetMs = legacyNetworkStack ? 15000 : 7000;
     let response: PipwResponse;
     try {
-      response = await this.request(normalized, Math.min(deadline, Date.now() + 7000), operation, pool);
+      response = await this.request(normalized, Math.min(deadline, Date.now() + initialBudgetMs), operation, pool);
     } catch (e) {
-      if (!operation.template) throw e as Error;
       return await this.fallback(pool, deadline, operation);
     }
     operation.checkActive();
@@ -314,12 +321,15 @@ export class PipwImageLoader {
             finish(0, e as Error);
           }
         });
+        // Older auto-redirect systems carry the whole image in one request;
+        // give them the wider connection/reading windows the old app used.
+        const legacyNetworkStack = deviceInfo.sdkApiVersion < 23;
         const options: http.HttpRequestOptions = {
           method: http.RequestMethod.GET,
           header: { 'Accept-Encoding': 'identity' },
           usingCache: false,
-          connectTimeout: 2000,
-          readTimeout: 5000,
+          connectTimeout: legacyNetworkStack ? 5000 : 2000,
+          readTimeout: legacyNetworkStack ? 15000 : 5000,
           maxLimit: PIPW_MAX_BYTES
         };
         if (deviceInfo.sdkApiVersion >= 23) options.maxRedirects = 0;

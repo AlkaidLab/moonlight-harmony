@@ -3875,14 +3875,18 @@ struct SettingsPageV2 {
     this.textInputPlaceholder = '输入图片网址，留空使用默认 API';
     this.textInputValue = this.backgroundImageUrl;
     this.textInputCallback = async (value: string) => {
-      this.backgroundImageUrl = value;
-      await BackgroundImageUtil.getInstance().setBackgroundImageUrl(value);
-      if (value) {
-        this.backgroundImageType = 'api';
-        this.showToast('自定义背景图片已设置');
-      } else {
-        this.backgroundImageType = 'default';
-        this.showToast('已恢复使用默认 API');
+      try {
+        await BackgroundImageUtil.getInstance().setBackgroundImageUrl(value);
+        // saveSetting also schedules the settings backup; going through the
+        // util alone would leave auto-backup on a stale value.
+        await this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_URL, value);
+        await this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_TYPE, value ? 'api' : 'default');
+        this.backgroundImageUrl = value;
+        this.backgroundImageType = value ? 'api' : 'default';
+        this.showToast(value ? '自定义背景图片已设置' : '已恢复使用默认 API');
+      } catch (err) {
+        Logger.error('SettingsPageV2', 'Failed to save background URL:', err);
+        this.showToast('设置失败，请重试');
       }
     };
     this.showTextInputDialog = true;

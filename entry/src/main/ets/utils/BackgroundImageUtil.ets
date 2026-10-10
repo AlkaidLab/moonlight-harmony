@@ -13,7 +13,7 @@ import { StringUtil } from './StringUtil';
 import { ToastQueue } from './ToastQueue';
 import { Logger } from '../common/Logger';
 import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
-import { PipwReviewIndex, PipwPool, PIPW_REVIEW_VERSION, PIPW_MAX_BYTES } from './PipwReviewIndex';
+import { PipwReviewIndex, PipwPool, PIPW_MAX_BYTES } from './PipwReviewIndex';
 import { PipwImageLoader, PipwUrlPolicy, PipwDownloadOperation } from './PipwImageLoader';
 
 const URL_KEY = 'settings_background_image_url';
@@ -53,13 +53,6 @@ export enum BackgroundImageType {
   NONE = 'none'
 }
 
-export interface BackgroundConfig {
-  imageUrl: string;
-  opacity: number;
-  enableBlur: boolean;
-  blurRadius: number;
-}
-
 interface BackgroundRequest {
   type: BackgroundImageType;
   apiUrl: string;
@@ -67,16 +60,12 @@ interface BackgroundRequest {
   key: string;
   pool: PipwPool;
   filtered: boolean;
+  poolSensitive: boolean;
 }
 
 interface BackgroundCacheEntry {
   identity: string;
   filename: string;
-}
-
-interface BackgroundCachedImage {
-  path: string;
-  data: ArrayBuffer;
 }
 
 export class BackgroundImageUtil {
@@ -96,6 +85,9 @@ export class BackgroundImageUtil {
   private operation: PipwDownloadOperation | null = null;
   private pendingTypeChange: boolean = false;
   private exportSequence: number = 0;
+  private activeKey: string = '';
+  private ordinaryRequest: http.HttpRequest | null = null;
+  private displayListener: ((displayId: number) => void) | null = null;
 
   private constructor() {}
 
@@ -112,7 +104,46 @@ export class BackgroundImageUtil {
     } catch (e) {
       this.directory = '';
       Logger.warn('BackgroundImageUtil', '背景图缓存目录不可用', e);
+      return;
     }
+    this.cleanupTemporaryFiles();
+    this.registerDisplayListener();
+  }
+
+  /** Stream downloads killed mid-flight leave pipw-*.tmp behind; sweep on startup. */
+  private cleanupTemporaryFiles(): void {
+    if (!this.directory) return;
+    try {
+      for (const name of fileIo.listFileSync(this.directory)) {
+        if (/^pipw-.+\.tmp$/.test(name)) {
+          try { fileIo.unlinkSync(`${this.directory}/${name}`); } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+
+  /** Keep StreamPage's shared background correct across rotation even when PcListPage is hidden. */
+  private registerDisplayListener(): void {
+    if (this.displayListener) return;
+    this.displayListener = (): void => {
+      this.handleDisplayChange();
+    };
+    try {
+      display.on('change', this.displayListener);
+    } catch (e) {
+      Logger.warn('BackgroundImageUtil', '屏幕方向监听不可用', e);
+    }
+  }
+
+  private async handleDisplayChange(): Promise<void> {
+    try {
+      // Before the first accepted load the page flow owns background startup.
+      if (!this.activeIdentity || this.pending) return;
+      const request = await this.resolveRequest();
+      if (request.identity === this.activeIdentity) return;
+      await this.downloadToLocalCache();
+      AppStorage.setOrCreate<string>('globalBackgroundImageUrl', this.cachedImageUrl);
+    } catch (e) {}
   }
 
   private getPool(): PipwPool {
@@ -137,6 +168,10 @@ export class BackgroundImageUtil {
     this.generation++;
     if (this.operation) this.operation.cancel();
     this.operation = null;
+    if (this.ordinaryRequest) {
+      try { this.ordinaryRequest.destroy(); } catch (e) {}
+      this.ordinaryRequest = null;
+    }
     this.pending = null;
     this.cachedImageData = null;
     this.cachedImageUrl = '';
@@ -168,27 +203,20 @@ export class BackgroundImageUtil {
     if (filtered || type === BackgroundImageType.PICSUM) {
       apiUrl = `${base}${base.includes('?') ? '&' : '?'}${filtered ? 't' : 'random'}=${this.refreshTimestamp}`;
     }
-    const identity = `${type}|${base}|${pool}|${filtered ? PIPW_REVIEW_VERSION : 'ordinary-v1'}`;
-    return { type: type, apiUrl: apiUrl, identity: identity, key: PipwReviewIndex.cacheKey(identity), pool: pool, filtered: filtered };
+    // Custom URLs and the off switch are orientation-independent; tying their
+    // cache identity to a device pool would force a reload on every rotation.
+    const poolSensitive = type === BackgroundImageType.DEFAULT || type === BackgroundImageType.PIPW ||
+      type === BackgroundImageType.PICSUM;
+    const version = filtered ? this.getIndex().version : 'ordinary-v1';
+    const identity = `${type}|${base}|${poolSensitive ? pool : 'any'}|${version}`;
+    return {
+      type: type, apiUrl: apiUrl, identity: identity, key: PipwReviewIndex.cacheKey(identity),
+      pool: pool, filtered: filtered, poolSensitive: poolSensitive
+    };
   }
 
   async getBackgroundImageType(): Promise<BackgroundImageType> {
     return await PreferencesUtil.get<string>(TYPE_KEY, BackgroundImageType.DEFAULT) as BackgroundImageType;
-  }
-
-  /** Pipw never exposes its unverified network URL to Image components. */
-  async getBackgroundImageUrl(): Promise<string> {
-    try {
-      const request = await this.resolveRequest();
-      if (request.filtered) {
-        const path = await this.downloadToLocalCache();
-        return path ? `file://${path}` : '';
-      }
-      return request.apiUrl;
-    } catch (e) {
-      Logger.warn('BackgroundImageUtil', '背景图地址不可用');
-      return '';
-    }
   }
 
   /** One load attempt; a rejected Pipw image never starts another random API request as a UI fallback. */
@@ -197,22 +225,17 @@ export class BackgroundImageUtil {
     if (path) return `file://${path}`;
     try {
       const request = await this.resolveRequest();
-      return request.filtered ? '' : request.apiUrl;
+      if (request.filtered) return '';
+      // Online fallback: hold the request identity so save and preload target
+      // the exact URL the Image component is showing instead of re-fetching a
+      // different random image.
+      this.currentRequest = request;
+      this.cachedImageUrl = request.apiUrl;
+      this.localCachePath = '';
+      return request.apiUrl;
     } catch (e) {
       return '';
     }
-  }
-
-  getPipwApiUrl(): string {
-    if (!this.refreshTimestamp) this.refreshTimestamp = Date.now();
-    const base = this.getPool() === 'phone' ? BACKGROUND_API_SOURCES.pipw.portrait : BACKGROUND_API_SOURCES.pipw.landscape;
-    return `${base}${base.includes('?') ? '&' : '?'}t=${this.refreshTimestamp}`;
-  }
-
-  getPicsumApiUrl(): string {
-    if (!this.refreshTimestamp) this.refreshTimestamp = Date.now();
-    const source = BACKGROUND_API_SOURCES.picsum;
-    return `${this.getPool() === 'phone' ? source.portrait : source.landscape}?random=${this.refreshTimestamp}`;
   }
 
   async downloadToLocalCache(forceRefresh: boolean = false): Promise<string> {
@@ -231,9 +254,13 @@ export class BackgroundImageUtil {
       if (request.identity !== this.activeIdentity) {
         this.invalidate();
         this.activeIdentity = request.identity;
+        this.activeKey = request.key;
       }
       this.cachedType = request.type;
-      if (!request.apiUrl) return '';
+      if (!request.apiUrl) {
+        this.invalidate();
+        return '';
+      }
       if (this.pending) return await this.pending;
       const generation = this.generation;
       const pending = this.load(request, generation, forceRefresh);
@@ -253,19 +280,45 @@ export class BackgroundImageUtil {
   }
 
   private isCurrent(request: BackgroundRequest, generation: number): boolean {
-    return generation === this.generation && request.identity === this.activeIdentity && request.pool === this.getPool();
+    return generation === this.generation && request.identity === this.activeIdentity &&
+      (!request.poolSensitive || request.pool === this.getPool());
+  }
+
+  private pointerPath(key: string): string {
+    return `${this.directory}/background-${key}.json`;
+  }
+
+  private contentName(key: string, digest: string, extension: string): string {
+    return `background-${key}-${digest}.${extension}`;
+  }
+
+  private isContentFilename(name: string, key: string): boolean {
+    return new RegExp(`^background-${key}-[0-9a-f]{32}\\.(jpg|png|webp|gif|bmp|avif)$`).test(name);
+  }
+
+  /** Drop pointers and content from superseded identities once a new image is live. */
+  private collectStaleCache(activeKey: string, currentFilename: string): void {
+    if (!this.directory) return;
+    try {
+      for (const name of fileIo.listFileSync(this.directory)) {
+        if (name === this.pointerPath(activeKey).substring(this.directory.length + 1) || name === currentFilename) continue;
+        if (/^background-[0-9a-f]{32}(\.json|-[0-9a-f]{32}\.(jpg|png|webp|gif|bmp|avif))$/.test(name)) {
+          try { fileIo.unlinkSync(`${this.directory}/${name}`); } catch (e) {}
+        }
+      }
+    } catch (e) {}
   }
 
   private async load(request: BackgroundRequest, generation: number, force: boolean): Promise<string> {
-    const pointer = `${this.directory}/background-${request.key}.json`;
-    let previousPath = '';
+    const pointer = this.pointerPath(request.key);
     let writtenPath = '';
     try {
       if (!force) {
-        const cached = this.readCache(pointer, request);
-        if (cached && this.isCurrent(request, generation)) {
-          this.publish(cached.path, cached.data, request);
-          return cached.path;
+        const cachedPath = this.readCachePath(pointer, request, false);
+        if (cachedPath && this.isCurrent(request, generation)) {
+          this.publish(cachedPath, null, request);
+          this.collectStaleCache(request.key, cachedPath.substring(this.directory.length + 1));
+          return cachedPath;
         }
       }
       let data: ArrayBuffer | null = null;
@@ -283,79 +336,66 @@ export class BackgroundImageUtil {
       if (!this.isCurrent(request, generation)) return '';
       if (!data) throw new Error('Background download returned no image');
       // Immutable content files ensure an export never reads a refreshed image at an old URL.
-      const filename = `background-${request.key}-${PipwReviewIndex.md5(new Uint8Array(data))}.${extension}`;
+      const filename = this.contentName(request.key, PipwReviewIndex.md5(new Uint8Array(data)), extension);
       const path = `${this.directory}/${filename}`;
-      previousPath = this.previousContentPath(pointer, request.key);
       writtenPath = path;
       this.writeFile(path, data);
       const entry: BackgroundCacheEntry = { identity: request.identity, filename: filename };
       this.writeFile(pointer, StringUtil.stringToUint8Array(JSON.stringify(entry)).buffer as ArrayBuffer);
       this.publish(path, data, request);
-      if (previousPath && previousPath !== path) {
-        try { fileIo.unlinkSync(previousPath); } catch (e) {}
-      }
+      this.collectStaleCache(request.key, filename);
       return path;
     } catch (e) {
       if (this.isCurrent(request, generation)) {
+        if (writtenPath) {
+          try { fileIo.unlinkSync(writtenPath); } catch (ignored) {}
+        }
+        // Offline or rejected refreshes keep serving the last verified image;
+        // a blank background is only correct when no reviewed file exists.
+        const fallbackPath = this.readCachePath(pointer, request, true);
+        if (fallbackPath) {
+          this.publish(fallbackPath, null, request);
+          return fallbackPath;
+        }
         this.cachedImageData = null;
         this.cachedImageUrl = '';
         this.localCachePath = '';
         this.currentRequest = null;
-        const stale = previousPath || this.previousContentPath(pointer, request.key);
-        try { if (fileIo.accessSync(pointer)) fileIo.unlinkSync(pointer); } catch (ignored) {}
-        if (stale) {
-          try { fileIo.unlinkSync(stale); } catch (ignored) {}
-        }
-        if (writtenPath && writtenPath !== stale) {
-          try { fileIo.unlinkSync(writtenPath); } catch (ignored) {}
-        }
       }
       Logger.warn('BackgroundImageUtil', '背景图下载或审核失败', e);
       return '';
     }
   }
 
-  private previousContentPath(pointer: string, key: string): string {
+  /**
+   * Validates the pointer and the content-addressed filename without reading
+   * image bytes: the private cacheDir file name already embeds the content
+   * digest, so a hit needs no UI-thread 20 MiB read or extra MD5 pass.
+   */
+  private readCachePath(pointer: string, request: BackgroundRequest, ignoreExpiry: boolean): string {
     try {
+      if (!fileIo.accessSync(pointer)) return '';
       const entry = JSON.parse(StringUtil.arrayBufferToString(this.readFile(pointer, 4096))) as BackgroundCacheEntry;
-      const pattern = new RegExp(`^background-${key}-[0-9a-f]{32}\\.(jpg|png|webp|gif|bmp|avif)$`);
-      return pattern.test(entry.filename) ? `${this.directory}/${entry.filename}` : '';
+      if (entry.identity !== request.identity || !this.isContentFilename(entry.filename, request.key)) return '';
+      const path = `${this.directory}/${entry.filename}`;
+      const stat = fileIo.statSync(path);
+      if (!ignoreExpiry && Date.now() - stat.mtime * 1000 > CACHE_EXPIRE_MS) {
+        this.refreshTimestamp = Date.now();
+        request.apiUrl = request.apiUrl.replace(/([?&])(t|random)=[0-9]+$/, `$1$2=${this.refreshTimestamp}`);
+        return '';
+      }
+      return path;
     } catch (e) {
       return '';
     }
   }
 
-  private readCache(pointer: string, request: BackgroundRequest): BackgroundCachedImage | null {
-    try {
-      if (!fileIo.accessSync(pointer)) return null;
-      const entry = JSON.parse(StringUtil.arrayBufferToString(this.readFile(pointer, 4096))) as BackgroundCacheEntry;
-      const pattern = new RegExp(`^background-${request.key}-[0-9a-f]{32}\\.(jpg|png|webp|gif|bmp|avif)$`);
-      if (entry.identity !== request.identity || !pattern.test(entry.filename)) return null;
-      const path = `${this.directory}/${entry.filename}`;
-      const stat = fileIo.statSync(path);
-      if (Date.now() - stat.mtime * 1000 > CACHE_EXPIRE_MS) {
-        this.refreshTimestamp = Date.now();
-        request.apiUrl = request.apiUrl.replace(/([?&])(t|random)=[0-9]+$/, `$1$2=${this.refreshTimestamp}`);
-        return null;
-      }
-      const data = this.readFile(path);
-      if (request.filtered && !this.getIndex().accepts(request.pool, data)) return null;
-      return { path: path, data: data };
-    } catch (e) {
-      return null;
-    }
-  }
-
-  private publish(path: string, data: ArrayBuffer, request: BackgroundRequest): void {
+  private publish(path: string, data: ArrayBuffer | null, request: BackgroundRequest): void {
     this.localCachePath = path;
     this.cachedImageUrl = `file://${path}`;
     this.cachedImageData = data;
     this.currentRequest = request;
   }
-
-  getLocalCachePath(): string { return this.localCachePath; }
-  getCachedImageData(): ArrayBuffer | null { return this.cachedImageData; }
-  clearCachedImageData(): void { this.cachedImageData = null; }
 
   private readFile(path: string, limit: number = PIPW_MAX_BYTES): ArrayBuffer {
     const stat = fileIo.statSync(path);
@@ -389,6 +429,9 @@ export class BackgroundImageUtil {
         if (this.currentRequest.filtered && !this.getIndex().accepts(this.currentRequest.pool, data)) return null;
         return data;
       }
+      // Memory-first: an online random-URL fallback must save the exact image
+      // on screen instead of fetching a fresh random one.
+      if (imageUrl === this.cachedImageUrl && this.cachedImageData) return this.cachedImageData;
       if (PipwUrlPolicy.isOfficial(imageUrl)) return null;
       return await this.downloadOrdinaryImage(imageUrl);
     } catch (e) {
@@ -398,10 +441,13 @@ export class BackgroundImageUtil {
   }
 
   async preloadAndCacheImage(imageUrl: string = this.cachedImageUrl): Promise<void> {
-    if (this.cachedImageData && imageUrl.split('?')[0] === this.cachedImageUrl) return;
+    // file:// backgrounds are read lazily at save time; only online fallback
+    // URLs need bytes held in memory so later saves match the display.
+    if (imageUrl.startsWith('file://')) return;
+    if (this.cachedImageData && imageUrl === this.cachedImageUrl) return;
     const generation = this.generation;
     const data = await this.downloadImageData(imageUrl);
-    if (generation === this.generation && imageUrl.split('?')[0] === this.cachedImageUrl) this.cachedImageData = data;
+    if (generation === this.generation && imageUrl === this.cachedImageUrl) this.cachedImageData = data;
   }
 
   async setBackgroundImageType(type: BackgroundImageType): Promise<void> {
@@ -424,8 +470,6 @@ export class BackgroundImageUtil {
     await this.setBackgroundImageType(value ? BackgroundImageType.API : BackgroundImageType.DEFAULT);
   }
 
-  async clearBackgroundImage(): Promise<void> { await this.setBackgroundImageUrl(''); }
-
   async disableBackgroundImage(): Promise<void> {
     await this.setBackgroundImageType(BackgroundImageType.NONE);
     this.invalidate();
@@ -436,33 +480,23 @@ export class BackgroundImageUtil {
     this.invalidate();
     if (!this.directory) return;
     for (const name of fileIo.listFileSync(this.directory)) {
-      if (/^background-[0-9a-f]{32}(\.json|-[0-9a-f]{32}\.(jpg|png|webp|gif|bmp|avif))$/.test(name)) {
+      if (/^(background-[0-9a-f]{32}(\.json|-[0-9a-f]{32}\.(jpg|png|webp|gif|bmp|avif))|pipw-.+\.tmp)$/.test(name)) {
         try { fileIo.unlinkSync(`${this.directory}/${name}`); } catch (e) {}
       }
     }
   }
 
-  async refreshBackgroundImage(): Promise<string> {
-    const path = await this.downloadToLocalCache(true);
-    return path ? `file://${path}` : '';
-  }
-
+  /**
+   * Pure change probe: callers that abandon the reload (page hidden mid-await)
+   * must not leave wiped state behind. Identity switching is owned by the next
+   * downloadToLocalCache call.
+   */
   async reload(): Promise<boolean> {
-    const generation = this.generation;
     const request = await this.resolveRequest();
-    if (generation !== this.generation) return false;
     const changed = this.pendingTypeChange || (!!this.activeIdentity && request.identity !== this.activeIdentity);
     this.pendingTypeChange = false;
     this.cachedType = request.type;
-    if (changed) {
-      this.invalidate();
-      this.activeIdentity = '';
-    }
     return changed;
-  }
-
-  getDefaultConfig(): BackgroundConfig {
-    return { imageUrl: this.cachedImageUrl, opacity: 0.15, enableBlur: true, blurRadius: 20 };
   }
 
   async isDisclaimerAccepted(): Promise<boolean> {
@@ -477,8 +511,6 @@ export class BackgroundImageUtil {
       '• 您可以在设置中随时关闭壁纸功能或切换为其他来源\n\n' +
       '继续使用即表示您知悉并同意上述条款。';
   }
-
-  isValidImageUrl(value: string): boolean { return /^https?:\/\//.test(value); }
 
   @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   async saveImageToGallery(imageUrl: string, context: common.UIAbilityContext): Promise<boolean> {
@@ -511,12 +543,9 @@ export class BackgroundImageUtil {
     }
   }
 
-  async saveLocalCacheToGallery(context: common.UIAbilityContext): Promise<boolean> {
-    return await this.saveImageToGallery(this.cachedImageUrl, context);
-  }
-
   private async downloadOrdinaryImage(value: string): Promise<ArrayBuffer | null> {
     const request = http.createHttp();
+    this.ordinaryRequest = request;
     try {
       const result = await request.request(value, {
         method: http.RequestMethod.GET, expectDataType: http.HttpDataType.ARRAY_BUFFER,
@@ -526,6 +555,7 @@ export class BackgroundImageUtil {
     } catch (e) {
       return null;
     } finally {
+      if (this.ordinaryRequest === request) this.ordinaryRequest = null;
       request.destroy();
     }
   }

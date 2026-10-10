@@ -71,6 +71,7 @@ struct PcListPageV2 {
   private backgroundUtil: BackgroundImageUtil = BackgroundImageUtil.getInstance();
   private backgroundLoadGeneration: number = 0;
   private backgroundPageVisible: boolean = true;
+  private disclaimerDialogShowing: boolean = false;
   private displayChangeListener = (displayId: number): void => {
     if (this.backgroundPageVisible) this.reloadBackgroundImage();
   };
@@ -113,7 +114,10 @@ struct PcListPageV2 {
       }),
       alignment: DialogAlignment.Center,
       customStyle: true,
-      backgroundColor: Color.Transparent
+      backgroundColor: Color.Transparent,
+      // Confirm dialogs require an explicit choice; a mask tap must not
+      // silently dismiss the background disclaimer and wedge its state.
+      autoCancel: false
     });
     this.confirmDialogController.open();
   }
@@ -171,12 +175,12 @@ struct PcListPageV2 {
 
   private async loadBackgroundImage(forceRefresh: boolean = false): Promise<void> {
     const generation = ++this.backgroundLoadGeneration;
-    this.setBackgroundImage('');
     try {
       // 先检查背景图类型，如果是 NONE 则不加载
       const bgType = await this.backgroundUtil.getBackgroundImageType();
       if (generation !== this.backgroundLoadGeneration) return;
       if (bgType === BackgroundImageType.NONE) {
+        this.setBackgroundImage('');
         return;
       }
 
@@ -190,7 +194,9 @@ struct PcListPageV2 {
       }
 
       const value = await this.backgroundUtil.loadBackgroundImageUrl(forceRefresh);
-      if (generation === this.backgroundLoadGeneration) this.setBackgroundImage(value);
+      // Keep the current background until a verified replacement is ready;
+      // a failed refresh must not blank the screen or the stream mask.
+      if (generation === this.backgroundLoadGeneration && value) this.setBackgroundImage(value);
     } catch (err) {
       // 忽略错误
     }
@@ -211,7 +217,7 @@ struct PcListPageV2 {
       if (currentType === BackgroundImageType.NONE) {
         this.backgroundLoadGeneration++;
         this.setBackgroundImage('');
-      } else if (typeChanged || !this.backgroundImageUrl) {
+      } else if (typeChanged) {
         await this.loadBackgroundImage();
       }
     } catch (err) {
@@ -223,12 +229,15 @@ struct PcListPageV2 {
    * 显示背景图免责声明弹窗
    */
   private showBackgroundDisclaimerDialog(): void {
+    if (this.disclaimerDialogShowing) return;
+    this.disclaimerDialogShowing = true;
     const config: ConfirmDialogConfig = {
       title: '背景壁纸功能说明',
       message: this.backgroundUtil.getDisclaimerText(),
       cancelButton: {
         text: '关闭壁纸',
         onClick: async () => {
+          this.disclaimerDialogShowing = false;
           // 用户选择关闭壁纸，设置为 NONE
           await this.backgroundUtil.setDisclaimerAccepted();
           await this.backgroundUtil.disableBackgroundImage();
@@ -239,6 +248,7 @@ struct PcListPageV2 {
       confirmButton: {
         text: '知悉并继续',
         onClick: async () => {
+          this.disclaimerDialogShowing = false;
           // 用户同意，保存状态并加载壁纸
           await this.backgroundUtil.setDisclaimerAccepted();
           this.loadBackgroundImageAfterDisclaimer();
@@ -422,8 +432,6 @@ struct PcListPageV2 {
 
   onPageHide(): void {
     this.backgroundPageVisible = false;
-    this.backgroundLoadGeneration++;
-    this.backgroundUtil.cancelPendingLoad();
     // 页面隐藏时停止轮询（节省资源）
     this.computerManager.stopPolling();
     // 停止摇一摇检测
