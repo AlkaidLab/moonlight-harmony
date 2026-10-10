@@ -793,7 +793,7 @@ export class SettingsService {
       gamepadMotionFallback: await this.getBoolean(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false),
       gamepadTouchpadMouse: await this.getBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false),
       enableStartKeyMenu: await this.getBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true),
-      enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false),
+      enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, true),
       usbDriverEnabled: await this.getBoolean(SettingsKeys.USB_DRIVER_ENABLED, false),
       forceUsbDriverOnly: await this.getBoolean(SettingsKeys.FORCE_USB_DRIVER_ONLY, false),
       ddkHighSpeedPolling: await this.getBoolean(SettingsKeys.DDK_HIGH_SPEED_POLLING, false),
