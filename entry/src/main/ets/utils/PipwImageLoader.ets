@@ -109,9 +109,6 @@ export class PipwImageLoader {
   async load(api: string, pool: PipwPool, operation: PipwDownloadOperation): Promise<ReviewedImage> {
     const deadline = Date.now() + 30000;
     const normalized = PipwUrlPolicy.api(api, pool);
-    // Seeded before the first request so a rejected or unreachable first
-    // response can still fall back to a reviewed filename instead of failing.
-    operation.template = normalized;
     // API < 23 has no maxRedirects: NetworkKit follows redirects inside this
     // request, so the initial call already carries the full image body and
     // needs the candidate download budget instead of the redirect-hop budget.
@@ -121,6 +118,10 @@ export class PipwImageLoader {
     try {
       response = await this.request(normalized, Math.min(deadline, Date.now() + initialBudgetMs), operation, pool);
     } catch (e) {
+      // The API host does not serve index-reviewed bytes itself; a fallback
+      // needs the validated CDN template from a redirect hop. Without one,
+      // failing closed is the only safe outcome.
+      if (!operation.template) throw e as Error;
       return await this.fallback(pool, deadline, operation);
     }
     operation.checkActive();

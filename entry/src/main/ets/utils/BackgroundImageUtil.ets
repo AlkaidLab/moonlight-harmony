@@ -141,8 +141,8 @@ export class BackgroundImageUtil {
       if (!this.activeIdentity || this.pending) return;
       const request = await this.resolveRequest();
       if (request.identity === this.activeIdentity) return;
-      await this.downloadToLocalCache();
-      AppStorage.setOrCreate<string>('globalBackgroundImageUrl', this.cachedImageUrl);
+      const path = await this.downloadToLocalCache();
+      if (path) AppStorage.setOrCreate<string>('globalBackgroundImageUrl', `file://${path}`);
     } catch (e) {}
   }
 
