@@ -17,8 +17,6 @@ import { AppColors } from '../common/Theme';
 import { BackgroundImageUtil } from '../utils/BackgroundImageUtil';
 import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
-import { photoAccessHelper } from '@kit.MediaLibraryKit';
-import { fileIo } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ToastQueue } from '../utils/ToastQueue';
 import { Logger } from '../common/Logger';
@@ -75,7 +73,7 @@ const PIXEL_TILES: PixelTile[] = (() => {
 
 @Component
 export struct BackgroundImage {
-  @Prop imageUrl: string = '';
+  @Prop @Watch('onImageUrlChanged') imageUrl: string = '';
   @Prop imageOpacity: number = 0.15;
   @Prop enableLongPressSave: boolean = true;
   @State showSaveDialog: boolean = false;
@@ -87,6 +85,13 @@ export struct BackgroundImage {
   private lastImageUrl: string = '';
   
   private backgroundUtil = BackgroundImageUtil.getInstance();
+
+  private onImageUrlChanged(): void {
+    this.currentOpacity = 0;
+    this.imageLoaded = false;
+    this.showSaveDialog = false;
+    this.lastImageUrl = this.imageUrl;
+  }
   
   /**
    * SaveButton 点击回调处理
@@ -101,31 +106,7 @@ export struct BackgroundImage {
     if (result === SaveButtonOnClickResult.SUCCESS) {
       try {
         const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-        ToastQueue.show({ message: '正在保存图片...' });
-        
-        // 获取图片数据
-        let imageData = this.backgroundUtil.getCachedImageData();
-        if (!imageData) {
-          // 如果没有缓存数据，重新获取
-          imageData = await this.backgroundUtil.downloadImageData(this.imageUrl);
-        }
-        
-        if (!imageData) {
-          ToastQueue.show({ message: '图片数据获取失败' });
-          this.showSaveDialog = false;
-          return;
-        }
-        
-        // 使用 SaveButton 授权后创建图片资源
-        const helper = photoAccessHelper.getPhotoAccessHelper(context);
-        const uri = await helper.createAsset(photoAccessHelper.PhotoType.IMAGE, 'jpg');
-        
-        // 写入图片数据
-        const file = await fileIo.open(uri, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
-        await fileIo.write(file.fd, imageData);
-        await fileIo.close(file.fd);
-        
-        ToastQueue.show({ message: '图片已保存到相册' });
+        await this.backgroundUtil.saveImageToGallery(this.imageUrl, context);
       } catch (err) {
         Logger.error('BackgroundImage', 'BackgroundImage: 保存图片失败', err);
         const e = err as BusinessError;
@@ -194,7 +175,7 @@ export struct BackgroundImage {
             this.imageLoaded = true;
             // 仅在支持长按保存时预缓存图片数据
             if (this.enableLongPressSave) {
-              this.backgroundUtil.preloadAndCacheImage();
+              this.backgroundUtil.preloadAndCacheImage(this.imageUrl);
             }
           })
           .onError(() => {

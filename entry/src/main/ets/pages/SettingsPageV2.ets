@@ -3862,7 +3862,7 @@ struct SettingsPageV2 {
         await bgUtil.setBackgroundImageType(option.value as BackgroundImageType);
         // 选择关闭时，额外清除本地缓存文件
         if (option.value === 'none') {
-          bgUtil.disableBackgroundImage();
+          await bgUtil.disableBackgroundImage();
         }
         this.showToast(`背景图片设置为: ${option.title}，重启应用后生效`);
       }
@@ -3874,17 +3874,19 @@ struct SettingsPageV2 {
     this.textInputTitle = '设置自定义背景图片 URL';
     this.textInputPlaceholder = '输入图片网址，留空使用默认 API';
     this.textInputValue = this.backgroundImageUrl;
-    this.textInputCallback = (value: string) => {
-      this.backgroundImageUrl = value;
-      this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_URL, value);
-      if (value) {
-        this.backgroundImageType = 'api';
-        this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_TYPE, 'api');
-        this.showToast('自定义背景图片已设置');
-      } else {
-        this.backgroundImageType = 'default';
-        this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_TYPE, 'default');
-        this.showToast('已恢复使用默认 API');
+    this.textInputCallback = async (value: string) => {
+      try {
+        await BackgroundImageUtil.getInstance().setBackgroundImageUrl(value);
+        // saveSetting also schedules the settings backup; going through the
+        // util alone would leave auto-backup on a stale value.
+        await this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_URL, value);
+        await this.saveSetting(SettingsKeys.BACKGROUND_IMAGE_TYPE, value ? 'api' : 'default');
+        this.backgroundImageUrl = value;
+        this.backgroundImageType = value ? 'api' : 'default';
+        this.showToast(value ? '自定义背景图片已设置' : '已恢复使用默认 API');
+      } catch (err) {
+        Logger.error('SettingsPageV2', 'Failed to save background URL:', err);
+        this.showToast('设置失败，请重试');
       }
     };
     this.showTextInputDialog = true;
