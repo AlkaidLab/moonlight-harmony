@@ -1244,6 +1244,9 @@ export struct CustomKeyOverlay {
     await CustomKeyStore.addKey(newKey);
     this.selectedKeyId = newKey.id;
     this.showAddPanel = false;
+    if (preset.action.type === 'mouseLook') {
+      ToastQueue.show({ message: '已添加视角滑动区，可拖动调整范围并在属性中设置灵敏度', duration: 2200 });
+    }
   }
 
   private async deleteSelectedKey(): Promise<void> {
@@ -3070,7 +3073,8 @@ export struct CustomKeyOverlay {
   PropertyPanel() {
     Column() {
       Row() {
-        Text('按键属性').fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
+        Text(this.getSelectedKey()?.action.type === 'mouseLook' ? '视角滑动区属性' : '按键属性')
+          .fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
         Blank()
         Text('✕').fontSize(14).fontColor('#99FFFFFF')
           .width(28).height(28).textAlign(TextAlign.Center)
@@ -3659,6 +3663,8 @@ export struct CustomKeyOverlay {
     Text(label)
       .fontSize(12).fontColor(OV_TEXT_WHITE)
       .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+      .height(40)
+      .textAlign(TextAlign.Center)
       .borderRadius(8)
       .backgroundColor((this.getMouseLookAction().region ?? 'rightHalf') === region ? OV_ACCENT_BLUE : OV_BG_TRACK)
       .onClick(() => {
@@ -3670,7 +3676,13 @@ export struct CustomKeyOverlay {
   MouseLookProperties() {
     Column({ space: 8 }) {
       Text('仅滑动转视角，轻触、长按和双击均不点击。其他手指可同时操作按键。')
-        .fontSize(11).fontColor(OV_TEXT_MEDIUM)
+        .fontSize(12).fontColor(OV_TEXT_MEDIUM)
+      Text(this.getMouseLookAction().region === 'custom'
+        ? '自由区域：拖动区域或右下角手柄调整大小和位置。切换到左右半屏会恢复整半屏。'
+        : '左右半屏会跟随当前画面尺寸；需要自定义范围时请选择“自由区域”。')
+        .fontSize(11).fontColor(OV_TEXT_DIM)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
       Row({ space: 8 }) {
         this.MouseLookRegionChip('左半屏', 'leftHalf')
         this.MouseLookRegionChip('右半屏', 'rightHalf')
@@ -3687,6 +3699,10 @@ export struct CustomKeyOverlay {
         Text(`${(this.getMouseLookAction().sensitivity ?? 1.5).toFixed(1)}x`)
           .fontSize(11).fontColor(OV_TEXT_DIM)
       }
+      Text('0.1x 慢 · 1.0x 默认 · 5.0x 快')
+        .fontSize(10).fontColor(OV_TEXT_DIM)
+        .width('100%')
+        .textAlign(TextAlign.Center)
       Row() {
         Text('反转 Y 轴').fontSize(12).fontColor(OV_TEXT_MEDIUM)
         Blank()
