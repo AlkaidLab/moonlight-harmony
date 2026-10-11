@@ -31,6 +31,7 @@ import {
   cloneKeyDef,
   generateKeyId,
   KeyAction,
+  MouseLookAction,
 } from './CustomKeyTypes';
 import { Logger } from '../../common/Logger';
 
@@ -140,10 +141,32 @@ export class CustomKeyStore {
   }
 
   /**
+   * 归一化视角滑动区动作，确保导入或合并的运行时数据不会绕过编辑器校验。
+   * 非法灵敏度回退到 1.5 并限制在 0.1~5，非布尔反转值关闭，未知区域使用右半屏。
+   */
+  private static normalizeMouseLookActions(): void {
+    for (const profile of CustomKeyStore.profiles ?? []) {
+      if (!profile || !Array.isArray(profile.keys)) continue;
+      for (const key of profile.keys) {
+        if (!key || !key.action || key.action.type !== 'mouseLook') continue;
+        const action = key.action as MouseLookAction;
+        action.sensitivity = typeof action.sensitivity === 'number' && Number.isFinite(action.sensitivity)
+          ? Math.max(0.1, Math.min(5, action.sensitivity))
+          : 1.5;
+        action.invertY = typeof action.invertY === 'boolean' ? action.invertY : false;
+        action.region = action.region === 'leftHalf' || action.region === 'custom' || action.region === 'rightHalf'
+          ? action.region
+          : 'rightHalf';
+      }
+    }
+  }
+
+  /**
    * 持久化到 Preferences
    * @returns 是否成功落盘（读取失败保护期或写入失败返回 false）
    */
   private static async save(): Promise<boolean> {
+    CustomKeyStore.normalizeMouseLookActions();
     if (CustomKeyStore.loadFailed) {
       Logger.warn('CustomKeyStore', '[CustomKeyStore] save 拒绝: 初始化读取失败，写盘会覆盖原数据，待下次启动重试读取');
       ToastQueue.show({ message: '配置读取异常，本次修改暂不会保存（已保护原数据）', duration: 3000 });
