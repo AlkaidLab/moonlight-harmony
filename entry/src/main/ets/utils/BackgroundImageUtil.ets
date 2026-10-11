@@ -1,40 +1,26 @@
 /*
  * Moonlight for HarmonyOS
  * Copyright (C) 2024-2025 Moonlight/AlkaidLab
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- */
-
-/**
- * 背景图工具类
- * 提供背景图加载和管理功能
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 import { PreferencesUtil } from './PreferencesUtil';
 import { display } from '@kit.ArkUI';
 import { http } from '@kit.NetworkKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
-import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
+import { StringUtil } from './StringUtil';
 import { ToastQueue } from './ToastQueue';
 import { Logger } from '../common/Logger';
 import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
+import { PipwReviewIndex, PipwPool, PIPW_MAX_BYTES } from './PipwReviewIndex';
+import { PipwImageLoader, PipwUrlPolicy, PipwDownloadOperation } from './PipwImageLoader';
 
-const BACKGROUND_IMAGE_URL_KEY = 'settings_background_image_url';
-const BACKGROUND_IMAGE_TYPE_KEY = 'settings_background_image_type';
-const BACKGROUND_DISCLAIMER_ACCEPTED_KEY = 'settings_background_disclaimer_accepted';
-// 本地缓存文件名（横屏/竖屏分别缓存）
-const CACHED_BACKGROUND_LANDSCAPE = 'cached_background_landscape.jpg';
-const CACHED_BACKGROUND_PORTRAIT = 'cached_background_portrait.jpg';
-// 背景图缓存过期时间：24小时（毫秒）
-const BACKGROUND_CACHE_EXPIRE_MS = 24 * 60 * 60 * 1000;
+const URL_KEY = 'settings_background_image_url';
+const TYPE_KEY = 'settings_background_image_type';
+const DISCLAIMER_KEY = 'settings_background_disclaimer_accepted';
+const CACHE_EXPIRE_MS = 24 * 60 * 60 * 1000;
 
-/**
- * 背景图 API 源配置
- */
 interface BackgroundApiSource {
   name: string;
   description: string;
@@ -42,381 +28,481 @@ interface BackgroundApiSource {
   portrait: string;
 }
 
-/**
- * 背景图 API 源集合
- */
-interface BackgroundApiSourceCollection {
+interface BackgroundApiSources {
   picsum: BackgroundApiSource;
   pipw: BackgroundApiSource;
 }
 
-/**
- * 可用的背景图 API 源
- * - picsum: Lorem Picsum (基于 Unsplash，免费商用授权)
- * - pipw: Pipw Team 二次元壁纸 API (第三方服务，需自行评估版权风险)
- */
-export const BACKGROUND_API_SOURCES: BackgroundApiSourceCollection = {
+export const BACKGROUND_API_SOURCES: BackgroundApiSources = {
   picsum: {
-    name: 'Lorem Picsum',
-    description: '摄影壁纸 (Unsplash授权)',
-    landscape: 'https://picsum.photos/1920/1080',
-    portrait: 'https://picsum.photos/1080/1920',
-  } as BackgroundApiSource,
+    name: 'Lorem Picsum', description: '摄影壁纸 (Unsplash授权)',
+    landscape: 'https://picsum.photos/1920/1080', portrait: 'https://picsum.photos/1080/1920'
+  },
   pipw: {
-    name: 'Pipw 二次元',
-    description: '二次元壁纸 (第三方)',
-    landscape: 'https://img-api.pipw.top',
-    portrait: 'https://img-api.pipw.top/?phone=true',
-  } as BackgroundApiSource
+    name: 'Pipw 二次元', description: '二次元壁纸 (第三方)',
+    landscape: 'https://img-api.pipw.top', portrait: 'https://img-api.pipw.top/?phone=true'
+  }
 };
 
-// 背景图类型
 export enum BackgroundImageType {
-  DEFAULT = 'default',  // 使用默认 API (Pipw 二次元壁纸)
-  PICSUM = 'picsum',    // Lorem Picsum 摄影壁纸
-  PIPW = 'pipw',        // 使用 Pipw 二次元壁纸 API (兼容旧设置)
-  API = 'api',          // 自定义 API URL
-  LOCAL = 'local',      // 本地图片（暂不支持）
-  NONE = 'none'         // 不使用背景图
+  DEFAULT = 'default',
+  PICSUM = 'picsum',
+  PIPW = 'pipw',
+  API = 'api',
+  LOCAL = 'local',
+  NONE = 'none'
 }
 
-/**
- * 背景图配置
- */
-export interface BackgroundConfig {
-  /** 背景图 URL，空字符串表示使用纯色背景 */
-  imageUrl: string;
-  /** 背景图透明度 0-1 */
-  opacity: number;
-  /** 是否启用模糊效果 */
-  enableBlur: boolean;
-  /** 模糊半径 */
-  blurRadius: number;
+interface BackgroundRequest {
+  type: BackgroundImageType;
+  apiUrl: string;
+  identity: string;
+  key: string;
+  pool: PipwPool;
+  filtered: boolean;
+  poolSensitive: boolean;
 }
 
-/**
- * HTTP 下载结果
- */
-interface DownloadResult {
-  code: number;
-  data: ArrayBuffer | null;
-  redirectUrl: string;
+interface BackgroundCacheEntry {
+  identity: string;
+  filename: string;
 }
 
-/**
- * 背景图工具类
- */
 export class BackgroundImageUtil {
   private static instance: BackgroundImageUtil;
-  private cachedUrl: string = '';
-  private cachedType: BackgroundImageType = BackgroundImageType.DEFAULT;
-  private isLoaded: boolean = false;
-  private refreshTimestamp: number = 0;
-  // 缓存当前显示的图片数据（用于下载）
-  private cachedImageData: ArrayBuffer | null = null;
-  // 本地缓存文件路径（根据当前屏幕方向动态选择）
-  private localCachePath: string = '';
-  // 横屏缓存路径
-  private landscapeCachePath: string = '';
-  // 竖屏缓存路径
-  private portraitCachePath: string = '';
-  // 当前缓存的方向
-  private cachedOrientation: string = '';
-  // 应用上下文（用于获取沙盒路径）
   private context: common.Context | null = null;
-  // 类型变更脏标记（singleton 共享，setBackgroundImageType 时置 true，reload 时消费）
+  private directory: string = '';
+  private index: PipwReviewIndex | null = null;
+  private cachedType: BackgroundImageType = BackgroundImageType.DEFAULT;
+  private cachedImageData: ArrayBuffer | null = null;
+  private cachedImageUrl: string = '';
+  private localCachePath: string = '';
+  private activeIdentity: string = '';
+  private currentRequest: BackgroundRequest | null = null;
+  private refreshTimestamp: number = 0;
+  private generation: number = 0;
+  private pending: Promise<string> | null = null;
+  private operation: PipwDownloadOperation | null = null;
   private pendingTypeChange: boolean = false;
+  private exportSequence: number = 0;
+  private activeKey: string = '';
+  private ordinaryRequest: http.HttpRequest | null = null;
+  private displayListener: ((displayId: number) => void) | null = null;
 
   private constructor() {}
 
   static getInstance(): BackgroundImageUtil {
-    if (!BackgroundImageUtil.instance) {
-      BackgroundImageUtil.instance = new BackgroundImageUtil();
-    }
+    if (!BackgroundImageUtil.instance) BackgroundImageUtil.instance = new BackgroundImageUtil();
     return BackgroundImageUtil.instance;
   }
 
-  /**
-   * 设置应用上下文（必须在使用前调用）
-   */
   setContext(context: common.Context): void {
     this.context = context;
-    this.landscapeCachePath = `${context.cacheDir}/${CACHED_BACKGROUND_LANDSCAPE}`;
-    this.portraitCachePath = `${context.cacheDir}/${CACHED_BACKGROUND_PORTRAIT}`;
-    // 根据当前方向设置默认缓存路径
-    this.updateCachePathForOrientation();
-  }
-
-  /**
-   * 根据当前屏幕方向更新缓存路径
-   */
-  private updateCachePathForOrientation(): void {
-    const orientation = this.getCurrentOrientation();
-    if (orientation === 'portrait') {
-      this.localCachePath = this.portraitCachePath;
-    } else {
-      this.localCachePath = this.landscapeCachePath;
-    }
-    this.cachedOrientation = orientation;
-  }
-
-  /**
-   * 获取当前屏幕方向
-   */
-  private getCurrentOrientation(): string {
+    this.directory = `${context.cacheDir}/vplus-backgrounds`;
     try {
-      const displayInfo = display.getDefaultDisplaySync();
-      return displayInfo.height > displayInfo.width ? 'portrait' : 'landscape';
-    } catch (err) {
-      return 'landscape'; // 默认横屏
+      if (!fileIo.accessSync(this.directory)) fileIo.mkdirSync(this.directory);
+    } catch (e) {
+      this.directory = '';
+      Logger.warn('BackgroundImageUtil', '背景图缓存目录不可用', e);
+      return;
+    }
+    this.cleanupTemporaryFiles();
+    this.registerDisplayListener();
+  }
+
+  /** Stream downloads killed mid-flight leave pipw-*.tmp behind; sweep on startup. */
+  private cleanupTemporaryFiles(): void {
+    if (!this.directory) return;
+    try {
+      for (const name of fileIo.listFileSync(this.directory)) {
+        if (/^pipw-.+\.tmp$/.test(name)) {
+          try { fileIo.unlinkSync(`${this.directory}/${name}`); } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+
+  /** Keep StreamPage's shared background correct across rotation even when PcListPage is hidden. */
+  private registerDisplayListener(): void {
+    if (this.displayListener) return;
+    this.displayListener = (): void => {
+      this.handleDisplayChange();
+    };
+    try {
+      display.on('change', this.displayListener);
+    } catch (e) {
+      Logger.warn('BackgroundImageUtil', '屏幕方向监听不可用', e);
     }
   }
 
-  /**
-   * 获取本地缓存的图片路径
-   */
-  getLocalCachePath(): string {
-    return this.localCachePath;
+  private async handleDisplayChange(): Promise<void> {
+    try {
+      // Before the first accepted load the page flow owns background startup.
+      if (!this.activeIdentity || this.pending) return;
+      const request = await this.resolveRequest();
+      if (request.identity === this.activeIdentity) return;
+      const path = await this.downloadToLocalCache();
+      if (path) AppStorage.setOrCreate<string>('globalBackgroundImageUrl', `file://${path}`);
+    } catch (e) {}
   }
 
-  /**
-   * 下载图片到本地缓存，返回本地文件路径
-   * 根据当前屏幕方向使用对应的缓存文件
-   * 如果已有缓存且不强制刷新，直接返回缓存路径
-   */
+  private getPool(): PipwPool {
+    try {
+      const screen = display.getDefaultDisplaySync();
+      return screen.height > screen.width ? 'phone' : 'pc';
+    } catch (e) {
+      return 'pc';
+    }
+  }
+
+  private getIndex(): PipwReviewIndex {
+    if (!this.index) {
+      if (!this.context) throw new Error('Background context unavailable');
+      const raw = this.context.resourceManager.getRawFileContentSync('pipw_review_index.json');
+      this.index = new PipwReviewIndex(StringUtil.uint8ArrayToString(raw));
+    }
+    return this.index;
+  }
+
+  private invalidate(): void {
+    this.generation++;
+    if (this.operation) this.operation.cancel();
+    this.operation = null;
+    if (this.ordinaryRequest) {
+      try { this.ordinaryRequest.destroy(); } catch (e) {}
+      this.ordinaryRequest = null;
+    }
+    this.pending = null;
+    this.cachedImageData = null;
+    this.cachedImageUrl = '';
+    this.localCachePath = '';
+    this.currentRequest = null;
+  }
+
+  cancelPendingLoad(): void {
+    if (this.pending) this.invalidate();
+    else this.generation++;
+  }
+
+  private async resolveRequest(): Promise<BackgroundRequest> {
+    let type = await PreferencesUtil.get<string>(TYPE_KEY, BackgroundImageType.DEFAULT) as BackgroundImageType;
+    const pool = this.getPool();
+    let base = '';
+    if (type === BackgroundImageType.API) {
+      base = await PreferencesUtil.get<string>(URL_KEY, '');
+      if (!base) type = BackgroundImageType.DEFAULT;
+    }
+    if (type !== BackgroundImageType.API && type !== BackgroundImageType.NONE) {
+      const source = type === BackgroundImageType.PICSUM ? BACKGROUND_API_SOURCES.picsum : BACKGROUND_API_SOURCES.pipw;
+      base = pool === 'phone' ? source.portrait : source.landscape;
+    }
+    const filtered = !!base && PipwUrlPolicy.isOfficial(base);
+    if (filtered) base = PipwUrlPolicy.api(base, pool);
+    if (this.refreshTimestamp === 0) this.refreshTimestamp = Date.now();
+    let apiUrl = base;
+    if (filtered || type === BackgroundImageType.PICSUM) {
+      apiUrl = `${base}${base.includes('?') ? '&' : '?'}${filtered ? 't' : 'random'}=${this.refreshTimestamp}`;
+    }
+    // Custom URLs and the off switch are orientation-independent; tying their
+    // cache identity to a device pool would force a reload on every rotation.
+    const poolSensitive = type === BackgroundImageType.DEFAULT || type === BackgroundImageType.PIPW ||
+      type === BackgroundImageType.PICSUM;
+    const version = filtered ? this.getIndex().version : 'ordinary-v1';
+    const identity = `${type}|${base}|${poolSensitive ? pool : 'any'}|${version}`;
+    return {
+      type: type, apiUrl: apiUrl, identity: identity, key: PipwReviewIndex.cacheKey(identity),
+      pool: pool, filtered: filtered, poolSensitive: poolSensitive
+    };
+  }
+
+  async getBackgroundImageType(): Promise<BackgroundImageType> {
+    return await PreferencesUtil.get<string>(TYPE_KEY, BackgroundImageType.DEFAULT) as BackgroundImageType;
+  }
+
+  /** One load attempt; a rejected Pipw image never starts another random API request as a UI fallback. */
+  async loadBackgroundImageUrl(forceRefresh: boolean = false): Promise<string> {
+    const path = await this.downloadToLocalCache(forceRefresh);
+    if (path) return `file://${path}`;
+    try {
+      const request = await this.resolveRequest();
+      if (request.filtered) return '';
+      // Online fallback: hold the request identity so save and preload target
+      // the exact URL the Image component is showing instead of re-fetching a
+      // different random image.
+      this.currentRequest = request;
+      this.cachedImageUrl = request.apiUrl;
+      this.localCachePath = '';
+      return request.apiUrl;
+    } catch (e) {
+      return '';
+    }
+  }
+
   async downloadToLocalCache(forceRefresh: boolean = false): Promise<string> {
-    if (!this.context) {
-      return '';
+    if (!this.context || !this.directory) return '';
+    if (forceRefresh) {
+      this.refreshTimestamp = Date.now();
+      this.invalidate();
     }
-    
-    // 检测方向变化，切换缓存路径
-    this.updateCachePathForOrientation();
-    
-    // 检查是否已有本地缓存
-    if (!forceRefresh && this.localCachePath) {
-      try {
-        const stat = fileIo.statSync(this.localCachePath);
-        if (stat && stat.size > 0) {
-          // 检查缓存是否过期（超过24小时则重新下载）
-          const cacheAge = Date.now() - stat.mtime * 1000;
-          if (cacheAge > BACKGROUND_CACHE_EXPIRE_MS) {
-            Logger.info('BackgroundImageUtil', 'BackgroundImageUtil: 缓存已过期，将下载新图片');
-            // 重置 refreshTimestamp 以获取新图片 URL
-            this.refreshTimestamp = Date.now();
-          } else {
-            // 缓存未过期，直接使用
-            const file = fileIo.openSync(this.localCachePath, fileIo.OpenMode.READ_ONLY);
-            this.cachedImageData = new ArrayBuffer(stat.size);
-            fileIo.readSync(file.fd, this.cachedImageData);
-            fileIo.closeSync(file.fd);
-            Logger.info('BackgroundImageUtil', `BackgroundImageUtil: 使用 ${this.cachedOrientation} 方向缓存`);
-            return this.localCachePath;
-          }
-        }
-      } catch (error) {
-        // 文件不存在，继续下载
-        Logger.debug('BackgroundImageUtil', `BackgroundImageUtil: ${this.cachedOrientation} 方向缓存不存在，将下载新图片`);
-      }
-    }
-    
-    // 根据当前类型和方向获取 API URL
-    const apiUrl = await this.getApiUrlForCurrentType();
-    
-    // 下载图片数据
-    const imageData = await this.downloadImage(apiUrl);
-    if (!imageData) {
-      return '';
-    }
-    
-    // 保存到本地缓存
+    const beforeResolve = this.generation;
     try {
-      const file = fileIo.openSync(this.localCachePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, imageData);
-      fileIo.closeSync(file.fd);
-      
-      // 同时保存到内存缓存
-      this.cachedImageData = imageData;
-      
-      return this.localCachePath;
-    } catch (err) {
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存本地缓存失败', err);
-      return '';
-    }
-  }
-
-  /**
-   * 获取背景图 URL
-   * 注意：使用缓存避免频繁刷新背景图
-   * @returns 背景图 URL
-   */
-  async getBackgroundImageUrl(): Promise<string> {
-    // 如果已加载，直接返回缓存的 URL（包括 DEFAULT 类型）
-    if (this.isLoaded && this.cachedUrl) {
-      return this.cachedUrl;
-    }
-    
-    try {
-      this.cachedType = await PreferencesUtil.get<string>(
-        BACKGROUND_IMAGE_TYPE_KEY, 
-        BackgroundImageType.DEFAULT
-      ) as BackgroundImageType;
-      
-      switch (this.cachedType) {
-        case BackgroundImageType.API:
-          this.cachedUrl = await PreferencesUtil.get<string>(BACKGROUND_IMAGE_URL_KEY, '');
-          if (!this.cachedUrl) {
-            // 如果自定义 URL 为空，回退到默认 API
-            this.cachedType = BackgroundImageType.DEFAULT;
-            await this.setBackgroundImageType(BackgroundImageType.DEFAULT);
-            return this.getPipwApiUrl();
-          }
-          break;
-          
-        case BackgroundImageType.PICSUM:
-          this.cachedUrl = this.getPicsumApiUrl();
-          break;
-          
-        case BackgroundImageType.NONE:
-          this.cachedUrl = '';
-          break;
-          
-        case BackgroundImageType.PIPW:
-        case BackgroundImageType.DEFAULT:
-        default:
-          // 默认使用 Pipw 二次元壁纸
-          this.cachedUrl = this.getPipwApiUrl();
-          break;
-      }
-      
-      this.isLoaded = true;
-      return this.cachedUrl;
-    } catch (err) {
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 加载背景图设置失败', err);
-      return this.getPipwApiUrl();
-    }
-  }
-
-  /**
-   * 根据当前背景图类型获取对应的 API URL
-   */
-  private async getApiUrlForCurrentType(): Promise<string> {
-    const bgType = await PreferencesUtil.get<string>(
-      BACKGROUND_IMAGE_TYPE_KEY,
-      BackgroundImageType.DEFAULT
-    ) as BackgroundImageType;
-
-    switch (bgType) {
-      case BackgroundImageType.PICSUM:
-        return this.getPicsumApiUrl();
-      case BackgroundImageType.API:
-        return await PreferencesUtil.get<string>(BACKGROUND_IMAGE_URL_KEY, '');
-      case BackgroundImageType.NONE:
+      const request = await this.resolveRequest();
+      if (beforeResolve !== this.generation) {
+        if (!forceRefresh && request.identity === this.activeIdentity && this.pending) return await this.pending;
         return '';
-      case BackgroundImageType.PIPW:
-      case BackgroundImageType.DEFAULT:
-      default:
-        return this.getPipwApiUrl();
-    }
-  }
-
-  /**
-   * 获取 Pipw 二次元壁纸 API URL（根据屏幕方向）
-   */
-  getPipwApiUrl(): string {
-    try {
-      const displayInfo = display.getDefaultDisplaySync();
-      const isPortrait = displayInfo.height > displayInfo.width;
-      if (this.refreshTimestamp === 0) {
-        this.refreshTimestamp = Date.now();
       }
-      const source = BACKGROUND_API_SOURCES.pipw;
-      const baseUrl = isPortrait ? source.portrait : source.landscape;
-      return `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}t=${this.refreshTimestamp}`;
-    } catch (err) {
-      if (this.refreshTimestamp === 0) {
-        this.refreshTimestamp = Date.now();
+      if (request.identity !== this.activeIdentity) {
+        this.invalidate();
+        this.activeIdentity = request.identity;
+        this.activeKey = request.key;
       }
-      return `${BACKGROUND_API_SOURCES.pipw.landscape}?t=${this.refreshTimestamp}`;
-    }
-  }
-
-  /**
-   * 获取 Lorem Picsum 摄影壁纸 API URL（根据屏幕方向）
-   * 注意：只在首次加载或明确刷新时更新时间戳，避免频繁刷新
-   */
-  getPicsumApiUrl(): string {
-    try {
-      const displayInfo = display.getDefaultDisplaySync();
-      const isPortrait = displayInfo.height > displayInfo.width;
-      // 仅在明确调用刷新时更新时间戳，否则保持稳定的URL
-      // 如果 refreshTimestamp 为 0，设置一个初始值，之后保持不变
-      if (this.refreshTimestamp === 0) {
-        this.refreshTimestamp = Date.now();
+      this.cachedType = request.type;
+      if (!request.apiUrl) {
+        this.invalidate();
+        return '';
       }
-      const source = BACKGROUND_API_SOURCES.picsum;
-      const baseUrl = isPortrait ? source.portrait : source.landscape;
-      // Lorem Picsum 使用 random 参数来获取随机图片
-      return `${baseUrl}?random=${this.refreshTimestamp}`;
-    } catch (err) {
-      if (this.refreshTimestamp === 0) {
-        this.refreshTimestamp = Date.now();
-      }
-      return `${BACKGROUND_API_SOURCES.picsum.landscape}?random=${this.refreshTimestamp}`;
-    }
-  }
-
-  /**
-   * 设置背景图类型
-   * 类型变化时自动清除本地缓存，确保下次加载使用新类型的图片
-   */
-  async setBackgroundImageType(type: BackgroundImageType): Promise<void> {
-    try {
-      const previousType = this.cachedType;
-      await PreferencesUtil.put(BACKGROUND_IMAGE_TYPE_KEY, type);
-      this.cachedType = type;
-      this.isLoaded = false;
-      // 类型变化时清除缓存，确保切换后能获取正确的图片
-      if (previousType !== type) {
-        this.cachedUrl = '';
-        this.cachedImageData = null;
-        this.refreshTimestamp = Date.now();
-        this.pendingTypeChange = true;
-        // 非关闭类型时清除本地缓存文件（关闭时由 disableBackgroundImage 处理）
-        if (type !== BackgroundImageType.NONE) {
-          await this.clearLocalCache();
+      if (this.pending) return await this.pending;
+      const generation = this.generation;
+      const pending = this.load(request, generation, forceRefresh);
+      this.pending = pending;
+      try {
+        return await pending;
+      } finally {
+        if (generation === this.generation) {
+          this.pending = null;
+          this.operation = null;
         }
       }
-    } catch (err) {
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存背景图类型失败', err);
+    } catch (e) {
+      Logger.warn('BackgroundImageUtil', '背景图加载失败', e);
+      return '';
+    }
+  }
+
+  private isCurrent(request: BackgroundRequest, generation: number): boolean {
+    return generation === this.generation && request.identity === this.activeIdentity &&
+      (!request.poolSensitive || request.pool === this.getPool());
+  }
+
+  private pointerPath(key: string): string {
+    return `${this.directory}/background-${key}.json`;
+  }
+
+  private contentName(key: string, digest: string, extension: string): string {
+    return `background-${key}-${digest}.${extension}`;
+  }
+
+  private isContentFilename(name: string, key: string): boolean {
+    return new RegExp(`^background-${key}-[0-9a-f]{32}\\.(jpg|png|webp|gif|bmp|avif)$`).test(name);
+  }
+
+  /** Drop pointers and content from superseded identities once a new image is live. */
+  private collectStaleCache(activeKey: string, currentFilename: string): void {
+    if (!this.directory) return;
+    try {
+      for (const name of fileIo.listFileSync(this.directory)) {
+        if (name === this.pointerPath(activeKey).substring(this.directory.length + 1) || name === currentFilename) continue;
+        if (/^background-[0-9a-f]{32}(\.json|-[0-9a-f]{32}\.(jpg|png|webp|gif|bmp|avif))$/.test(name)) {
+          try { fileIo.unlinkSync(`${this.directory}/${name}`); } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+
+  private async load(request: BackgroundRequest, generation: number, force: boolean): Promise<string> {
+    const pointer = this.pointerPath(request.key);
+    let writtenPath = '';
+    try {
+      if (!force) {
+        const cachedPath = this.readCachePath(pointer, request, false);
+        if (cachedPath && this.isCurrent(request, generation)) {
+          this.publish(cachedPath, null, request);
+          this.collectStaleCache(request.key, cachedPath.substring(this.directory.length + 1));
+          return cachedPath;
+        }
+      }
+      let data: ArrayBuffer | null = null;
+      let extension = 'jpg';
+      if (request.filtered) {
+        const operation = new PipwDownloadOperation();
+        this.operation = operation;
+        const result = await new PipwImageLoader(this.getIndex(), this.directory).load(request.apiUrl, request.pool, operation);
+        data = result.data;
+        extension = result.extension;
+      } else {
+        data = await this.downloadOrdinaryImage(request.apiUrl);
+        if (data) extension = PipwImageLoader.extension(data);
+      }
+      if (!this.isCurrent(request, generation)) return '';
+      if (!data) throw new Error('Background download returned no image');
+      // Immutable content files ensure an export never reads a refreshed image at an old URL.
+      const filename = this.contentName(request.key, PipwReviewIndex.md5(new Uint8Array(data)), extension);
+      const path = `${this.directory}/${filename}`;
+      writtenPath = path;
+      this.writeFile(path, data);
+      const entry: BackgroundCacheEntry = { identity: request.identity, filename: filename };
+      this.writeFile(pointer, StringUtil.stringToUint8Array(JSON.stringify(entry)).buffer as ArrayBuffer);
+      this.publish(path, data, request);
+      this.collectStaleCache(request.key, filename);
+      return path;
+    } catch (e) {
+      if (this.isCurrent(request, generation)) {
+        if (writtenPath) {
+          try { fileIo.unlinkSync(writtenPath); } catch (ignored) {}
+        }
+        // Offline or rejected refreshes keep serving the last verified image;
+        // a blank background is only correct when no reviewed file exists.
+        const fallbackPath = this.readCachePath(pointer, request, true);
+        if (fallbackPath) {
+          this.publish(fallbackPath, null, request);
+          return fallbackPath;
+        }
+        this.cachedImageData = null;
+        this.cachedImageUrl = '';
+        this.localCachePath = '';
+        this.currentRequest = null;
+      }
+      Logger.warn('BackgroundImageUtil', '背景图下载或审核失败', e);
+      return '';
     }
   }
 
   /**
-   * 检查用户是否已同意背景图免责声明
-   * @returns true 表示已同意，可以加载背景图
+   * Validates the pointer and the content-addressed filename without reading
+   * image bytes: the private cacheDir file name already embeds the content
+   * digest, so a hit needs no UI-thread 20 MiB read or extra MD5 pass.
    */
+  private readCachePath(pointer: string, request: BackgroundRequest, ignoreExpiry: boolean): string {
+    try {
+      if (!fileIo.accessSync(pointer)) return '';
+      const entry = JSON.parse(StringUtil.arrayBufferToString(this.readFile(pointer, 4096))) as BackgroundCacheEntry;
+      if (entry.identity !== request.identity || !this.isContentFilename(entry.filename, request.key)) return '';
+      const path = `${this.directory}/${entry.filename}`;
+      const stat = fileIo.statSync(path);
+      if (!ignoreExpiry && Date.now() - stat.mtime * 1000 > CACHE_EXPIRE_MS) {
+        this.refreshTimestamp = Date.now();
+        request.apiUrl = request.apiUrl.replace(/([?&])(t|random)=[0-9]+$/, `$1$2=${this.refreshTimestamp}`);
+        return '';
+      }
+      return path;
+    } catch (e) {
+      return '';
+    }
+  }
+
+  private publish(path: string, data: ArrayBuffer | null, request: BackgroundRequest): void {
+    this.localCachePath = path;
+    this.cachedImageUrl = `file://${path}`;
+    this.cachedImageData = data;
+    this.currentRequest = request;
+  }
+
+  private readFile(path: string, limit: number = PIPW_MAX_BYTES): ArrayBuffer {
+    const stat = fileIo.statSync(path);
+    if (stat.size <= 0 || stat.size > limit) throw new Error('Invalid background file size');
+    const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+    try {
+      const data = new ArrayBuffer(stat.size);
+      if (fileIo.readSync(file.fd, data) !== stat.size) throw new Error('Incomplete background file');
+      return data;
+    } finally {
+      fileIo.closeSync(file.fd);
+    }
+  }
+
+  private writeFile(path: string, data: ArrayBuffer): void {
+    const file = fileIo.openSync(path, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+    try {
+      if (fileIo.writeSync(file.fd, data) !== data.byteLength) throw new Error('Incomplete background write');
+    } finally {
+      fileIo.closeSync(file.fd);
+    }
+  }
+
+  async downloadImageData(imageUrl: string): Promise<ArrayBuffer | null> {
+    try {
+      if (!imageUrl) return null;
+      if (imageUrl.startsWith('file://')) {
+        const clean = imageUrl.split('?')[0];
+        if (clean !== this.cachedImageUrl || !this.currentRequest) return null;
+        const data = this.readFile(clean.substring(7));
+        if (this.currentRequest.filtered && !this.getIndex().accepts(this.currentRequest.pool, data)) return null;
+        return data;
+      }
+      // Memory-first: an online random-URL fallback must save the exact image
+      // on screen instead of fetching a fresh random one.
+      if (imageUrl === this.cachedImageUrl && this.cachedImageData) return this.cachedImageData;
+      if (PipwUrlPolicy.isOfficial(imageUrl)) return null;
+      return await this.downloadOrdinaryImage(imageUrl);
+    } catch (e) {
+      Logger.warn('BackgroundImageUtil', '当前背景图片数据不可用', e);
+      return null;
+    }
+  }
+
+  async preloadAndCacheImage(imageUrl: string = this.cachedImageUrl): Promise<void> {
+    // file:// backgrounds are read lazily at save time; only online fallback
+    // URLs need bytes held in memory so later saves match the display.
+    if (imageUrl.startsWith('file://')) return;
+    if (this.cachedImageData && imageUrl === this.cachedImageUrl) return;
+    const generation = this.generation;
+    const data = await this.downloadImageData(imageUrl);
+    if (generation === this.generation && imageUrl === this.cachedImageUrl) this.cachedImageData = data;
+  }
+
+  async setBackgroundImageType(type: BackgroundImageType): Promise<void> {
+    if (this.cachedType !== type) {
+      this.invalidate();
+      this.activeIdentity = '';
+      this.pendingTypeChange = true;
+      this.refreshTimestamp = Date.now();
+    }
+    this.cachedType = type;
+    await PreferencesUtil.put(TYPE_KEY, type);
+  }
+
+  async setBackgroundImageUrl(value: string): Promise<void> {
+    this.invalidate();
+    this.activeIdentity = '';
+    this.pendingTypeChange = true;
+    this.refreshTimestamp = Date.now();
+    await PreferencesUtil.put(URL_KEY, value);
+    await this.setBackgroundImageType(value ? BackgroundImageType.API : BackgroundImageType.DEFAULT);
+  }
+
+  async disableBackgroundImage(): Promise<void> {
+    await this.setBackgroundImageType(BackgroundImageType.NONE);
+    this.invalidate();
+    await this.clearLocalCache();
+  }
+
+  async clearLocalCache(): Promise<void> {
+    this.invalidate();
+    if (!this.directory) return;
+    for (const name of fileIo.listFileSync(this.directory)) {
+      if (/^(background-[0-9a-f]{32}(\.json|-[0-9a-f]{32}\.(jpg|png|webp|gif|bmp|avif))|pipw-.+\.tmp)$/.test(name)) {
+        try { fileIo.unlinkSync(`${this.directory}/${name}`); } catch (e) {}
+      }
+    }
+  }
+
+  /**
+   * Pure change probe: callers that abandon the reload (page hidden mid-await)
+   * must not leave wiped state behind. Identity switching is owned by the next
+   * downloadToLocalCache call.
+   */
+  async reload(): Promise<boolean> {
+    const request = await this.resolveRequest();
+    const changed = this.pendingTypeChange || (!!this.activeIdentity && request.identity !== this.activeIdentity);
+    this.pendingTypeChange = false;
+    this.cachedType = request.type;
+    return changed;
+  }
+
   async isDisclaimerAccepted(): Promise<boolean> {
-    try {
-      return await PreferencesUtil.get<boolean>(BACKGROUND_DISCLAIMER_ACCEPTED_KEY, false);
-    } catch (err) {
-      return false;
-    }
+    return await PreferencesUtil.get<boolean>(DISCLAIMER_KEY, false);
   }
-
-  /**
-   * 设置用户已同意背景图免责声明
-   */
-  async setDisclaimerAccepted(): Promise<void> {
-    try {
-      await PreferencesUtil.put(BACKGROUND_DISCLAIMER_ACCEPTED_KEY, true);
-    } catch (err) {
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存免责声明状态失败', err);
-    }
-  }
-
-  /**
-   * 获取背景图免责声明文本
-   */
+  async setDisclaimerAccepted(): Promise<void> { await PreferencesUtil.put(DISCLAIMER_KEY, true); }
   getDisclaimerText(): string {
     return '背景壁纸功能说明\n\n' +
       '本应用的背景壁纸来自互联网公开资源（Pipw API），图片版权归原作者所有。\n\n' +
@@ -426,438 +512,51 @@ export class BackgroundImageUtil {
       '继续使用即表示您知悉并同意上述条款。';
   }
 
-  /**
-   * 设置自定义背景图 URL
-   * @param url 背景图 URL
-   */
-  async setBackgroundImageUrl(url: string): Promise<void> {
-    try {
-      await PreferencesUtil.put(BACKGROUND_IMAGE_URL_KEY, url);
-      this.cachedUrl = url;
-      
-      if (url) {
-        await this.setBackgroundImageType(BackgroundImageType.API);
-      } else {
-        await this.setBackgroundImageType(BackgroundImageType.DEFAULT);
-      }
-      
-      this.isLoaded = true;
-    } catch (err) {
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存背景图设置失败', err);
-    }
-  }
-
-  /**
-   * 清除背景图（使用默认 API）
-   */
-  async clearBackgroundImage(): Promise<void> {
-    await this.setBackgroundImageUrl('');
-    await this.setBackgroundImageType(BackgroundImageType.DEFAULT);
-  }
-
-  /**
-   * 禁用背景图
-   * 同时清除本地缓存文件和内存缓存
-   */
-  async disableBackgroundImage(): Promise<void> {
-    await this.setBackgroundImageType(BackgroundImageType.NONE);
-    this.cachedUrl = '';
-    this.isLoaded = true;
-    this.cachedImageData = null;
-    // 删除本地缓存文件，防止下次启动时仍然显示旧图片
-    await this.clearLocalCache();
-  }
-
-  /**
-   * 清除本地缓存的背景图文件（清除所有方向的缓存）
-   */
-  async clearLocalCache(): Promise<void> {
-    const paths: string[] = [this.landscapeCachePath, this.portraitCachePath];
-    for (const cachePath of paths) {
-      if (cachePath) {
-        try {
-          await fileIo.access(cachePath);
-          await fileIo.unlink(cachePath);
-          Logger.info('BackgroundImageUtil', `BackgroundImageUtil: 已清除缓存文件 ${cachePath}`);
-        } catch (err) {
-          // 文件不存在或删除失败，忽略
-        }
-      }
-    }
-  }
-
-  /**
-   * 刷新背景图（生成新的时间戳以获取新图片）
-   */
-  async refreshBackgroundImage(): Promise<string> {
-    this.refreshTimestamp = Date.now();
-    this.isLoaded = false;
-    return await this.getBackgroundImageUrl();
-  }
-
-  /**
-   * 重新加载背景图设置
-   * @returns 如果类型发生变化返回 true，否则返回 false
-   */
-  async reload(): Promise<boolean> {
-    // pendingTypeChange: 通过 setBackgroundImageType() 修改（singleton 共享，cachedType 已被更新）
-    // previousType 比较: 通过 saveSetting() 直接写 preferences（cachedType 未更新，需从 prefs 重新读取）
-    const dirtyFlag = this.pendingTypeChange;
-    this.pendingTypeChange = false;
-    const previousType = this.cachedType;
-    this.isLoaded = false;
-    await this.getBackgroundImageUrl();
-    return dirtyFlag || this.cachedType !== previousType;
-  }
-
-  /**
-   * 获取当前背景图类型
-   */
-  async getBackgroundImageType(): Promise<BackgroundImageType> {
-    if (!this.isLoaded) {
-      await this.getBackgroundImageUrl();
-    }
-    return this.cachedType;
-  }
-
-  /**
-   * 获取默认背景图配置
-   */
-  getDefaultConfig(): BackgroundConfig {
-    return {
-      imageUrl: this.cachedUrl,
-      opacity: 0.15,
-      enableBlur: true,
-      blurRadius: 20
-    };
-  }
-  
-  /**
-   * 预加载并缓存当前背景图数据
-   * 优先从本地缓存文件读取，确保下载保存的图片与显示的一致
-   */
-  async preloadAndCacheImage(): Promise<void> {
-    try {
-      // 优先从本地缓存文件读取
-      if (this.localCachePath) {
-        try {
-          const stat = fileIo.statSync(this.localCachePath);
-          if (stat && stat.size > 0) {
-            const file = fileIo.openSync(this.localCachePath, fileIo.OpenMode.READ_ONLY);
-            const imageData = new ArrayBuffer(stat.size);
-            fileIo.readSync(file.fd, imageData);
-            fileIo.closeSync(file.fd);
-            this.cachedImageData = imageData;
-            return;
-          }
-        } catch (e) {
-          // 本地缓存文件不存在，继续尝试从 URL 下载
-        }
-      }
-      
-      // 如果没有本地缓存，从在线 URL 下载
-      if (this.cachedUrl) {
-        this.cachedImageData = await this.downloadImage(this.cachedUrl);
-      }
-    } catch (err) {
-      // 忽略错误
-    }
-  }
-
-  /**
-   * 获取缓存的图片数据
-   */
-  getCachedImageData(): ArrayBuffer | null {
-    return this.cachedImageData;
-  }
-
-  /**
-   * 清除缓存的图片数据
-   */
-  clearCachedImageData(): void {
-    this.cachedImageData = null;
-  }
-
-  /**
-   * 下载图片数据（公共方法，供 SaveButton 使用）
-   * @param imageUrl 图片 URL
-   * @returns 图片二进制数据
-   */
-  async downloadImageData(imageUrl: string): Promise<ArrayBuffer | null> {
-    if (!imageUrl || imageUrl.length === 0) {
-      return null;
-    }
-    
-    try {
-      // 如果是 file:// 路径，直接读取本地文件
-      if (imageUrl.startsWith('file://')) {
-        const filePath = imageUrl.replace('file://', '');
-        try {
-          const stat = fileIo.statSync(filePath);
-          if (stat && stat.size > 0) {
-            const file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
-            const imageData = new ArrayBuffer(stat.size);
-            fileIo.readSync(file.fd, imageData);
-            fileIo.closeSync(file.fd);
-            return imageData;
-          }
-        } catch (e) {
-          Logger.warn('BackgroundImageUtil', 'BackgroundImageUtil: 读取本地文件失败');
-        }
-      }
-      
-      // 尝试使用缓存数据
-      if (this.cachedImageData) {
-        return this.cachedImageData;
-      }
-      
-      // 重新下载
-      return await this.downloadImage(imageUrl);
-    } catch (err) {
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 下载图片数据失败', err);
-      return null;
-    }
-  }
-
-  /**
-   * 验证 URL 是否为有效的图片 URL
-   */
-  isValidImageUrl(url: string): boolean {
-    if (!url) return false;
-    
-    // 检查是否为 http/https URL
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      return false;
-    }
-    
-    return true;
-  }
-
-  /**
-   * 直接将本地缓存文件保存到相册
-   * @param context 应用上下文
-   * @returns 是否保存成功
-   */
-  @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
-  async saveLocalCacheToGallery(context: common.UIAbilityContext): Promise<boolean> {
-    if (!this.localCachePath) {
-      ToastQueue.show({ message: '没有可保存的图片' });
-      return false;
-    }
-    
-    try {
-      // 检查缓存文件是否存在
-      const stat = fileIo.statSync(this.localCachePath);
-      if (!stat || stat.size === 0) {
-        ToastQueue.show({ message: '缓存图片不存在' });
-        return false;
-      }
-      
-      ToastQueue.show({ message: '正在保存图片...' });
-      
-      // 读取本地缓存文件
-      const file = fileIo.openSync(this.localCachePath, fileIo.OpenMode.READ_ONLY);
-      const imageData = new ArrayBuffer(stat.size);
-      fileIo.readSync(file.fd, imageData);
-      fileIo.closeSync(file.fd);
-      
-      // 创建相册访问助手
-      const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
-      
-      // 创建图片资源
-      const createOption: photoAccessHelper.CreateOptions = {
-        title: `moonlight_bg_${Date.now()}`,
-        subtype: photoAccessHelper.PhotoSubtype.DEFAULT
-      };
-      
-      const photoUri = await phAccessHelper.createAsset(
-        photoAccessHelper.PhotoType.IMAGE,
-        'jpg',
-        createOption
-      );
-      
-      // 写入图片数据
-      const photoFile = fileIo.openSync(photoUri, fileIo.OpenMode.READ_WRITE);
-      fileIo.writeSync(photoFile.fd, imageData);
-      fileIo.closeSync(photoFile.fd);
-      
-      ToastQueue.show({ message: '图片已保存到相册' });
-      return true;
-    } catch (err) {
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存本地缓存到相册失败', err);
-      const error = err as Error;
-      if (error.message?.includes('permission')) {
-        ToastQueue.show({ message: '没有保存图片的权限，请在设置中授权' });
-      } else {
-        ToastQueue.show({ message: `保存失败: ${error.message || '未知错误'}` });
-      }
-      return false;
-    }
-  }
-
-  /**
-   * 保存背景图到相册
-   * @param imageUrl 图片 URL
-   * @param context 应用上下文
-   * @returns 是否保存成功
-   */
   @SuppressWarnings({ rules: [SuppressWarningsType.PERMISSION] })
   async saveImageToGallery(imageUrl: string, context: common.UIAbilityContext): Promise<boolean> {
-    if (!imageUrl || imageUrl.length === 0) {
-      ToastQueue.show({ message: '没有可保存的图片' });
-      return false;
-    }
-
     try {
-      ToastQueue.show({ message: '正在保存图片...' });
-      
-      let imageData: ArrayBuffer | null = null;
-      
-      // 1. 如果是 file:// 路径，优先直接读取本地文件
-      if (imageUrl.startsWith('file://')) {
-        const filePath = imageUrl.replace('file://', '');
-        try {
-          const stat = fileIo.statSync(filePath);
-          if (stat && stat.size > 0) {
-            const file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
-            imageData = new ArrayBuffer(stat.size);
-            fileIo.readSync(file.fd, imageData);
-            fileIo.closeSync(file.fd);
-            Logger.info('BackgroundImageUtil', 'BackgroundImageUtil: 从本地文件读取图片数据');
-          }
-        } catch (e) {
-          Logger.warn('BackgroundImageUtil', 'BackgroundImageUtil: 读取本地文件失败，尝试使用缓存数据');
-        }
-      }
-      
-      // 2. 如果本地文件读取失败，使用缓存的图片数据
-      if (!imageData) {
-        imageData = this.cachedImageData;
-      }
-      
-      // 3. 如果缓存数据也没有，重新下载
-      if (!imageData && !imageUrl.startsWith('file://')) {
-        ToastQueue.show({ message: '正在下载图片...' });
-        imageData = await this.downloadImage(imageUrl);
-      }
-      
-      if (!imageData) {
-        ToastQueue.show({ message: '图片数据获取失败' });
+      const data = await this.downloadImageData(imageUrl);
+      if (!data) {
+        ToastQueue.show({ message: '当前图片不可保存，请重新加载' });
         return false;
       }
-      
-      // 4. 创建相册访问助手
-      const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
-      
-      // 5. 创建图片资源
-      const createOption: photoAccessHelper.CreateOptions = {
-        title: `moonlight_bg_${Date.now()}`,
+      const extension = PipwImageLoader.extension(data);
+      ToastQueue.show({ message: '正在保存图片...' });
+      const helper = photoAccessHelper.getPhotoAccessHelper(context);
+      const options: photoAccessHelper.CreateOptions = {
+        title: `vplus_${Date.now()}_${++this.exportSequence}`,
         subtype: photoAccessHelper.PhotoSubtype.DEFAULT
       };
-      
-      const photoUri = await phAccessHelper.createAsset(
-        photoAccessHelper.PhotoType.IMAGE,
-        'jpg',
-        createOption
-      );
-      
-      // 6. 写入图片数据
-      const file = fileIo.openSync(photoUri, fileIo.OpenMode.READ_WRITE);
-      fileIo.writeSync(file.fd, imageData);
-      fileIo.closeSync(file.fd);
-      
+      const uri = await helper.createAsset(photoAccessHelper.PhotoType.IMAGE, extension, options);
+      const file = await fileIo.open(uri, fileIo.OpenMode.READ_WRITE);
+      try {
+        if (await fileIo.write(file.fd, data) !== data.byteLength) throw new Error('图片写入不完整');
+      } finally {
+        await fileIo.close(file.fd);
+      }
       ToastQueue.show({ message: '图片已保存到相册' });
       return true;
-    } catch (err) {
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 保存图片失败', err);
-      const error = err as Error;
-      if (error.message?.includes('permission')) {
-        ToastQueue.show({ message: '没有保存图片的权限，请在设置中授权' });
-      } else {
-        ToastQueue.show({ message: `保存失败: ${error.message || '未知错误'}` });
-      }
+    } catch (e) {
+      Logger.error('BackgroundImageUtil', '保存图片失败', e);
+      ToastQueue.show({ message: `保存失败: ${(e as Error).message || '未知错误'}` });
       return false;
     }
   }
 
-  /**
-   * 下载图片数据
-   * @param url 图片 URL
-   * @returns 图片二进制数据
-   */
-  private async downloadImage(url: string): Promise<ArrayBuffer | null> {
+  private async downloadOrdinaryImage(value: string): Promise<ArrayBuffer | null> {
+    const request = http.createHttp();
+    this.ordinaryRequest = request;
     try {
-      // 处理 URL，移除可能的时间戳参数以获取稳定的图片
-      let cleanUrl = url;
-      let redirectCount = 0;
-      const maxRedirects = 5;
-      
-      // 循环处理重定向
-      while (redirectCount < maxRedirects) {
-        const httpRequest = http.createHttp();
-        
-        const result = await new Promise<DownloadResult>((resolve) => {
-          httpRequest.request(
-            cleanUrl,
-            {
-              method: http.RequestMethod.GET,
-              expectDataType: http.HttpDataType.ARRAY_BUFFER,
-              connectTimeout: 30000,
-              readTimeout: 60000
-            },
-            (err, data) => {
-              httpRequest.destroy();
-              
-              if (err) {
-                Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 下载图片请求失败', err);
-                const errorResult: DownloadResult = { code: 0, data: null, redirectUrl: '' };
-                resolve(errorResult);
-                return;
-              }
-              
-              // 处理重定向 (301, 302, 303, 307, 308)
-              if (data.responseCode >= 300 && data.responseCode < 400) {
-                const headers = data.header as Record<string, string>;
-                const location = headers['Location'] || headers['location'];
-                if (location) {
-                  const redirectResult: DownloadResult = { code: data.responseCode, data: null, redirectUrl: location };
-                  resolve(redirectResult);
-                  return;
-                }
-              }
-              
-              if (data.responseCode === 200 && data.result) {
-                const successResult: DownloadResult = { code: data.responseCode, data: data.result as ArrayBuffer, redirectUrl: '' };
-                resolve(successResult);
-              } else {
-                Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 下载图片响应错误', data.responseCode);
-                const failResult: DownloadResult = { code: data.responseCode, data: null, redirectUrl: '' };
-                resolve(failResult);
-              }
-            }
-          );
-        });
-        
-        if (result.data) {
-          return result.data;
-        }
-        
-        if (result.redirectUrl) {
-          Logger.info('BackgroundImageUtil', `BackgroundImageUtil: 重定向到 ${result.redirectUrl}`);
-          cleanUrl = result.redirectUrl;
-          redirectCount++;
-          continue;
-        }
-        
-        // 非重定向且无数据，返回 null
-        return null;
-      }
-      
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 重定向次数超限');
+      const result = await request.request(value, {
+        method: http.RequestMethod.GET, expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        connectTimeout: 30000, readTimeout: 60000, maxLimit: PIPW_MAX_BYTES
+      });
+      return result.responseCode === 200 ? result.result as ArrayBuffer : null;
+    } catch (e) {
       return null;
-    } catch (err) {
-      Logger.error('BackgroundImageUtil', 'BackgroundImageUtil: 下载图片失败', err);
-      return null;
+    } finally {
+      if (this.ordinaryRequest === request) this.ordinaryRequest = null;
+      request.destroy();
     }
   }
 }
