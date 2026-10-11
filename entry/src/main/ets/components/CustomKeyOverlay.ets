@@ -391,18 +391,23 @@ export struct CustomKeyOverlay {
         // 按 layer 升序排列，layer 大的在上层
         ForEach(this.getSortedKeys(), (key: CustomKeyDef) => {
           if (key.action.type === 'mouseLook' && !this.editMode) {
-            MouseLookRegion({
-              regionWidth: key.width,
-              regionHeight: key.height,
-              sensitivity: (key.action as MouseLookAction).sensitivity ?? 1.5,
-              invertY: (key.action as MouseLookAction).invertY ?? false,
-              inputEnabled: this.inputEnabled,
-              onMovement: (dx: number, dy: number): void => this.onMouseLookMovement(dx, dy),
-            })
-              .position({
-                x: key.xPercent * this.screenWidthVp - key.width / 2,
-                y: key.yPercent * this.screenHeightVp - key.height / 2,
+            // 自定义组件必须作为容器的子组件声明，避免 ArkTS UI 组件语法检查失败。
+            Column() {
+              MouseLookRegion({
+                regionWidth: key.width,
+                regionHeight: key.height,
+                sensitivity: (key.action as MouseLookAction).sensitivity ?? 1.5,
+                invertY: (key.action as MouseLookAction).invertY ?? false,
+                inputEnabled: this.inputEnabled,
+                onMovement: (dx: number, dy: number): void => this.onMouseLookMovement(dx, dy),
               })
+            }
+            .width(key.width)
+            .height(key.height)
+            .position({
+              x: key.xPercent * this.screenWidthVp - key.width / 2,
+              y: key.yPercent * this.screenHeightVp - key.height / 2,
+            })
           } else if (key.action.type === 'analogStick' && !this.editMode) {
             // 模拟摇杆：非编辑模式时渲染真正的虚拟摇杆 UI
             Column() {
@@ -3675,7 +3680,8 @@ export struct CustomKeyOverlay {
         Text('灵敏度').fontSize(12).fontColor(OV_TEXT_MEDIUM)
         Slider({ value: this.getMouseLookAction().sensitivity ?? 1.5, min: 0.1, max: 5, step: 0.1 })
           .layoutWeight(1).blockColor(OV_ACCENT_BLUE)
-          .onChange((value: number) => {
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click) return;
             this.updateMouseLookOptions(this.getMouseLookAction().region ?? 'rightHalf', Math.round(value * 10) / 10, this.getMouseLookAction().invertY ?? false);
           })
         Text(`${(this.getMouseLookAction().sensitivity ?? 1.5).toFixed(1)}x`)
