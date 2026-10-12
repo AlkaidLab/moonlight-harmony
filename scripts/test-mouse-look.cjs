@@ -170,7 +170,7 @@ assert.deepEqual([free.width, free.height], [60, 60]);
 assert.deepEqual(JSON.parse(JSON.stringify(types.cloneKeyDef(original))).action, original.action);
 
 // Exercise actual QR formats; the action must not degrade into a D-pad or click.
-const qr = load('service/network/QrShareService.ets', '\nexport { encodeAction, decodeAction, toCompact, fromCompactV1, fromCompactV2, serializeV3, deserializeV3 };');
+const qr = load('service/network/QrShareService.ets', '\nexport { encodeAction, decodeAction, toCompact, fromCompactV1, fromCompactV2, serializeV3, deserializeV3, QrShareService };');
 const plain = value => JSON.parse(JSON.stringify(value));
 assert.deepEqual(plain(qr.decodeAction(qr.encodeAction(original.action))), original.action);
 for (const region of ['leftHalf', 'rightHalf', 'custom']) {
@@ -199,16 +199,14 @@ const oldV2 = JSON.stringify({
   k: [{ l: 'Fire', a: 'M1', s: 'c', b: 't', x: 0.75, y: 0.5, w: 56, h: 56, o: 65, gid: 'legacy-controls' }]
 });
 const oldV3 = '3\nLegacy v3\nMenu|P,openGameMenu|0.5|0.1|64|64|s=h|o=70';
-const parsedV1 = JSON.parse(oldV1);
-const parsedV2 = JSON.parse(oldV2);
-const parsedV3 = qr.deserializeV3(oldV3);
-const oldV1Key = qr.fromCompactV1(parsedV1.k[0]);
-const oldV2Key = qr.fromCompactV2(parsedV2.k[0]);
-assert.equal(parsedV1.n, 'Legacy v1');
-assert.deepEqual(plain(oldV1Key.action), { type: 'keyboard', vk: 32 });
-assert.equal(parsedV2.n, 'Legacy v2');
-assert.deepEqual(plain(oldV2Key.action), { type: 'mouse', button: 1 });
-assert.equal(oldV2Key.groupId, 'legacy-controls');
+const parsedV1 = qr.QrShareService.parseData(oldV1);
+const parsedV2 = qr.QrShareService.parseData(oldV2);
+const parsedV3 = qr.QrShareService.parseData(oldV3);
+assert.equal(parsedV1[0], 'Legacy v1');
+assert.deepEqual(plain(parsedV1[1][0].action), { type: 'keyboard', vk: 32 });
+assert.equal(parsedV2[0], 'Legacy v2');
+assert.deepEqual(plain(parsedV2[1][0].action), { type: 'mouse', button: 1 });
+assert.equal(parsedV2[1][0].groupId, 'legacy-controls');
 assert.equal(parsedV3[0], 'Legacy v3');
 assert.deepEqual(plain(parsedV3[1][0].action), { type: 'special', id: 'openGameMenu' });
 assert.equal(parsedV3[1][0].shape, 'hexagon');
