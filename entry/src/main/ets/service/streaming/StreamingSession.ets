@@ -179,7 +179,7 @@ interface NativeModule {
     audioConfiguration: number, supportedVideoFormats: number, clientRefreshRateX100: number,
     riAesKey: ArrayBuffer, riAesIv: ArrayBuffer, videoCapabilities: number,
     colorSpace: number, colorRange: number, hdrMode: number,
-    enableMic: boolean, controlOnly: boolean
+    enableMic: boolean, controlOnly: boolean, videoFecPercentage?: number
   ): number;
   startConnectionAsync(
     address: string, appVersion: string, gfeVersion: string, rtspSessionUrl: string,
@@ -188,7 +188,7 @@ interface NativeModule {
     audioConfiguration: number, supportedVideoFormats: number, clientRefreshRateX100: number,
     riAesKey: ArrayBuffer, riAesIv: ArrayBuffer, videoCapabilities: number,
     colorSpace: number, colorRange: number, hdrMode: number,
-    enableMic: boolean, controlOnly: boolean
+    enableMic: boolean, controlOnly: boolean, videoFecPercentage?: number
   ): Promise<number>;
   stopConnection(): void;
   interruptConnection(): void;
@@ -1844,7 +1844,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
           this.config!.colorRange,
           this.config!.hdr ? this.config!.hdrMode : HdrMode.SDR,
           this.config!.microphoneEnabled,
-          this.config!.controlOnly
+          this.config!.controlOnly,
+          this.config!.videoFecPercentage
         );
         this.connectionStartPromise = pendingStart;
         return await pendingStart;

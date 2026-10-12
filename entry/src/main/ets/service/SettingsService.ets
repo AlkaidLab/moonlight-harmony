@@ -18,6 +18,8 @@ import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { display } from '@kit.ArkUI';
 import {
   StreamConfig,
+  normalizeVideoFecPercentage,
+  VIDEO_FEC_HOST,
   AudioConfiguration,
   ColorRange,
   HdrMode,
@@ -40,6 +42,8 @@ export class SettingsKeys {
   static readonly FPS: string = 'settings_fps';
   static readonly CUSTOM_FPS: string = 'settings_custom_fps';
   static readonly BITRATE: string = 'settings_bitrate';
+  static readonly VIDEO_FEC_PERCENTAGE: string = 'settings_video_fec_percentage';
+  static readonly VIDEO_FEC_FIXED_PERCENTAGE: string = 'settings_video_fec_fixed_percentage';
   static readonly BANDWIDTH_PROBE_ENABLED: string = 'settings_bandwidth_probe_enabled';
   static readonly METERED_BANDWIDTH_PROBE_ENABLED: string = 'settings_metered_bandwidth_probe_enabled';
   static readonly HOST_SCALE: string = 'settings_host_scale';
@@ -688,6 +692,7 @@ export class SettingsService {
       fps: fps,
       clientRefreshRateX100: this.parseClientRefreshRateX100(fpsStr),
       bitrate: bitrate,
+      videoFecPercentage: normalizeVideoFecPercentage(await this.getNumber(SettingsKeys.VIDEO_FEC_PERCENTAGE, VIDEO_FEC_HOST)),
       codec: this.parseVideoFormat(videoFormatStr),
       hdr: enableHdr,
       hdrMode: hdrModeStr === 'HLG' ? HdrMode.HLG : HdrMode.HDR10,
