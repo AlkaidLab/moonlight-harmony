@@ -381,9 +381,15 @@ static bool PrepareStartConnection(napi_env env, napi_value* args, size_t argc, 
     if (argc > 21) {
         GetBool(env, args[21], &controlOnly);
     }
-    if (argc > 22 && (!GetInt32(env, args[22], &videoFecPercentage) ||
-                      videoFecPercentage < -2 || videoFecPercentage > 100)) {
-        return false;
+    if (argc > 22) {
+        double rawVideoFecPercentage;
+        if (napi_get_value_double(env, args[22], &rawVideoFecPercentage) != napi_ok ||
+            !std::isfinite(rawVideoFecPercentage) ||
+            std::trunc(rawVideoFecPercentage) != rawVideoFecPercentage ||
+            rawVideoFecPercentage < -2 || rawVideoFecPercentage > 100) {
+            return false;
+        }
+        videoFecPercentage = static_cast<int32_t>(rawVideoFecPercentage);
     }
 
     void* aesKeyData = nullptr;
