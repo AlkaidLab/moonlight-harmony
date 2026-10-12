@@ -617,7 +617,7 @@ napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info) {
     if (!PrepareStartConnection(env, args, argc, &g_serverInfo, &g_streamConfig,
                                 &videoCapabilities, &hdrMode)) {
         MarkConnectionIdle();
-        napi_throw_error(env, nullptr, "参数不足");
+        napi_throw_error(env, nullptr, "参数不足或参数无效");
         napi_value result;
         napi_create_int32(env, -1, &result);
         return result;
@@ -692,7 +692,7 @@ napi_value MoonBridge_StartConnectionAsync(napi_env env, napi_callback_info info
                                 &videoCapabilities, &hdrMode)) {
         MarkConnectionIdle();
         delete context;
-        napi_throw_error(env, nullptr, "参数不足");
+        napi_throw_error(env, nullptr, "参数不足或参数无效");
         napi_value result;
         napi_create_int32(env, -1, &result);
         return result;

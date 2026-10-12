@@ -127,8 +127,6 @@ set(MOONLIGHT_COMMON_SOURCES
     ${MOONLIGHT_COMMON_PATH}/src/RtspParser.c
     ${MOONLIGHT_COMMON_PATH}/src/SdpGenerator.c
     ${MOONLIGHT_COMMON_PATH}/src/RtpVideoQueue.c
-    ${MOONLIGHT_COMMON_PATH}/src/PyrowaveProtocol.c
-    ${MOONLIGHT_COMMON_PATH}/src/PyrowaveReassembly.c
     ${MOONLIGHT_COMMON_PATH}/src/RtpAudioQueue.c
     ${MOONLIGHT_COMMON_PATH}/src/VideoDepacketizer.c
     ${MOONLIGHT_COMMON_PATH}/src/RemoteTextContextStream.c
