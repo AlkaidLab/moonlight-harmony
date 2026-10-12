@@ -40,6 +40,15 @@ export interface MouseScrollAction {
   direction: number;
 }
 
+/** 仅发送相对鼠标位移的触屏视角区域，不包含任何点击手势。 */
+export interface MouseLookAction {
+  type: 'mouseLook';
+  region?: 'leftHalf' | 'rightHalf' | 'custom';
+  /** 位移倍率，0.1~5.0，默认 1.5。 */
+  sensitivity?: number;
+  invertY?: boolean;
+}
+
 /** 手柄按钮动作 */
 export interface GamepadButtonAction {
   type: 'gamepadButton';
@@ -177,6 +186,7 @@ export type KeyAction =
   | KeyboardAction
   | MouseButtonAction
   | MouseScrollAction
+  | MouseLookAction
   | GamepadButtonAction
   | GamepadTriggerAction
   | GamepadStickAction
@@ -305,6 +315,22 @@ export function cloneKeyDef(src: CustomKeyDef): CustomKeyDef {
     icon: src.icon,
   };
   return dst;
+}
+
+/** 半屏区域跟随实际视图尺寸；保存的是区域选择，避免旋转后尺寸过时。 */
+export function resolveMouseLookLayout(src: CustomKeyDef, viewWidth: number, viewHeight: number): CustomKeyDef {
+  if (src.action.type !== 'mouseLook') return src;
+  const key = cloneKeyDef(src);
+  const action = src.action as MouseLookAction;
+  key.shape = 'rect';
+  key.behavior = 'momentary';
+  if (action.region !== 'custom' && viewWidth > 0 && viewHeight > 0) {
+    key.xPercent = action.region === 'leftHalf' ? 0.25 : 0.75;
+    key.yPercent = 0.5;
+    key.width = viewWidth / 2;
+    key.height = viewHeight;
+  }
+  return key;
 }
 
 /** 创建默认按键定义 */
@@ -581,6 +607,8 @@ export function getActionDisplayName(action: KeyAction): string {
       return mouseNames[action.button] ?? `鼠标${action.button}`;
     case 'mouseScroll':
       return action.direction > 0 ? '滚轮↑' : '滚轮↓';
+    case 'mouseLook':
+      return '视角滑动区';
     case 'gamepadButton':
       return getGamepadDisplayName(action.mask);
     case 'gamepadTrigger':
@@ -698,6 +726,7 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
       { label: '右键', action: { type: 'mouse', button: 3 } },
       { label: '滚轮↑', action: { type: 'mouseScroll', direction: 1 } },
       { label: '滚轮↓', action: { type: 'mouseScroll', direction: -1 } },
+      { label: '视角滑动区', action: { type: 'mouseLook', region: 'rightHalf', sensitivity: 1.5 } as MouseLookAction },
     ],
   },
   {

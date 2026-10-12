@@ -33,6 +33,7 @@ import {
   KeyboardAction,
   MouseButtonAction,
   MouseScrollAction,
+  MouseLookAction,
   GamepadButtonAction,
   GamepadTriggerAction,
   GamepadStickAction,
@@ -166,6 +167,7 @@ function isCompressedData(data: string): boolean {
 //   K{vk}                           keyboard
 //   M{button}                       mouse
 //   S{direction}                    mouseScroll
+//   L,{region},{sens},{invertY}      mouseLook
 //   B{mask}                         gamepadButton
 //   T,{l|r}                         gamepadTrigger
 //   J,{l|r},{u|d|l|r}               gamepadStick
@@ -186,6 +188,10 @@ function encodeAction(a: KeyAction): string {
       return `M${(a as MouseButtonAction).button}`;
     case 'mouseScroll':
       return `S${(a as MouseScrollAction).direction}`;
+    case 'mouseLook': {
+      const look = a as MouseLookAction;
+      return `L,${look.region ?? 'rightHalf'},${look.sensitivity ?? 1.5},${look.invertY ? 1 : 0}`;
+    }
     case 'gamepadButton':
       return `B${(a as GamepadButtonAction).mask}`;
     case 'gamepadTrigger':
@@ -247,6 +253,16 @@ function encodeAction(a: KeyAction): string {
 
 /** 解码简单动作字符串（不含 |） */
 function decodeSimpleAction(s: string): KeyAction {
+  if (s.startsWith('L,')) {
+    const parts = s.split(',');
+    const region = parts[1] === 'leftHalf' ? 'leftHalf' : (parts[1] === 'custom' ? 'custom' : 'rightHalf');
+    const sensitivity = parseFloat(parts[2]);
+    return {
+      type: 'mouseLook', region: region,
+      sensitivity: Number.isFinite(sensitivity) ? Math.max(0.1, Math.min(5, sensitivity)) : 1.5,
+      invertY: parts[3] === '1',
+    } as MouseLookAction;
+  }
   if (s.startsWith('K')) {
     const vk = parseInt(s.substring(1));
     if (!isNaN(vk)) {

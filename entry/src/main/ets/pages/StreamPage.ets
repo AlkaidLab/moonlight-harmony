@@ -237,7 +237,8 @@ struct StreamPage {
   private streamFrameDiagnosticTimer: number | null = null;
   private streamDisplayCallbacks: number = 0;
   private xComponentFrameRequestActive: boolean = false;
-  private mouseInputSuspended: boolean = false;
+  @State private mouseInputSuspended: boolean = false;
+  @State private streamWindowFocused: boolean = true;
   
   // ── 解耦的处理器/管理器 ──
   private inputHandler: StreamInputHandler = new StreamInputHandler();
@@ -359,6 +360,7 @@ struct StreamPage {
     this.windowManager = new StreamWindowManager(this.context);
     this.windowManager.setOnWindowSizeChanged(() => this.recalculateXComponentSize());
     this.windowManager.setOnWindowFocusChanged((focused: boolean) => {
+      this.streamWindowFocused = focused;
       if (!this.viewModel.isConnected) return;
       if (!focused) {
         // 失焦（Alt+Tab 切走 / 弹系统对话框）：释放所有按键，
@@ -2520,6 +2522,11 @@ struct StreamPage {
       if (this.showCustomKeys && this.viewModel.isConnected) {
         Column() {
           CustomKeyOverlay({
+            inputEnabled: !this.mouseInputSuspended && this.streamWindowFocused,
+            onMouseLookMovement: (dx: number, dy: number): void => {
+              if (!this.viewModel.isConnected || this.mouseInputSuspended || !this.streamWindowFocused) return;
+              this.customKeyManager?.handleMouseLookMovement(dx, dy);
+            },
             editMode: $customKeyEditMode,
             profileVersion: this.customKeyProfileVersion,
             onKeyAction: (action: KeyAction, isDown: boolean): void => {

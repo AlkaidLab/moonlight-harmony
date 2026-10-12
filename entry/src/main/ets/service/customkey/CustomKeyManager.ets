@@ -137,6 +137,12 @@ export class CustomKeyManager {
 
   // ── 按键动作分发 ──
 
+  /** 视角区的连续输入独立于按下/释放分发，永远只发送相对鼠标位移。 */
+  handleMouseLookMovement(deltaX: number, deltaY: number): void {
+    if (!this.host.getSession()) return;
+    MoonBridge.sendMouseMove(deltaX, deltaY);
+  }
+
   /**
    * 处理自定义按键动作（键盘/鼠标/手柄/组合）
    * 由 CustomKeyOverlay 回调触发
