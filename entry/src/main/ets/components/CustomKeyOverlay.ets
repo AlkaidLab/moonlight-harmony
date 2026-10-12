@@ -3699,7 +3699,7 @@ export struct CustomKeyOverlay {
         Text(`${(this.getMouseLookAction().sensitivity ?? 1.5).toFixed(1)}x`)
           .fontSize(11).fontColor(OV_TEXT_DIM)
       }
-      Text('0.1x 慢 · 1.0x 默认 · 5.0x 快')
+      Text('0.1x 慢 · 1.5x 默认 · 5.0x 快')
         .fontSize(10).fontColor(OV_TEXT_DIM)
         .width('100%')
         .textAlign(TextAlign.Center)

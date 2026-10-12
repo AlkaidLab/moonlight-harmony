@@ -170,7 +170,7 @@ assert.deepEqual([free.width, free.height], [60, 60]);
 assert.deepEqual(JSON.parse(JSON.stringify(types.cloneKeyDef(original))).action, original.action);
 
 // Exercise actual QR formats; the action must not degrade into a D-pad or click.
-const qr = load('service/network/QrShareService.ets', '\nexport { encodeAction, decodeAction, toCompact, fromCompactV2, serializeV3, deserializeV3 };');
+const qr = load('service/network/QrShareService.ets', '\nexport { encodeAction, decodeAction, toCompact, fromCompactV1, fromCompactV2, serializeV3, deserializeV3 };');
 const plain = value => JSON.parse(JSON.stringify(value));
 assert.deepEqual(plain(qr.decodeAction(qr.encodeAction(original.action))), original.action);
 for (const region of ['leftHalf', 'rightHalf', 'custom']) {
@@ -185,4 +185,31 @@ assert.equal(decodedV3[0], 'Look');
 assert.deepEqual(plain(decodedV3[1][0]).action, original.action);
 assert.equal(decodedV3[1][0].groupId, original.groupId);
 assert.deepEqual(plain(qr.decodeAction('K87')), { type: 'keyboard', vk: 87 });
+
+// Historical share payloads must remain importable after adding mouse-look.
+// These fixtures represent the three formats emitted before this feature.
+const oldV1 = JSON.stringify({
+  v: 1,
+  n: 'Legacy v1',
+  k: [{ l: 'Jump', a: { type: 'keyboard', vk: 32 }, s: 'r', b: 'm', x: 0.25, y: 0.75, w: 48, h: 48 }]
+});
+const oldV2 = JSON.stringify({
+  v: 2,
+  n: 'Legacy v2',
+  k: [{ l: 'Fire', a: 'M1', s: 'c', b: 't', x: 0.75, y: 0.5, w: 56, h: 56, o: 65, gid: 'legacy-controls' }]
+});
+const oldV3 = '3\nLegacy v3\nMenu|P,openGameMenu|0.5|0.1|64|64|s=h|o=70';
+const parsedV1 = JSON.parse(oldV1);
+const parsedV2 = JSON.parse(oldV2);
+const parsedV3 = qr.deserializeV3(oldV3);
+const oldV1Key = qr.fromCompactV1(parsedV1.k[0]);
+const oldV2Key = qr.fromCompactV2(parsedV2.k[0]);
+assert.equal(parsedV1.n, 'Legacy v1');
+assert.deepEqual(plain(oldV1Key.action), { type: 'keyboard', vk: 32 });
+assert.equal(parsedV2.n, 'Legacy v2');
+assert.deepEqual(plain(oldV2Key.action), { type: 'mouse', button: 1 });
+assert.equal(oldV2Key.groupId, 'legacy-controls');
+assert.equal(parsedV3[0], 'Legacy v3');
+assert.deepEqual(plain(parsedV3[1][0].action), { type: 'special', id: 'openGameMenu' });
+assert.equal(parsedV3[1][0].shape, 'hexagon');
 console.log('Mouse-look gesture, multitouch, pure movement, layout and sharing tests passed.');
