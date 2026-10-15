@@ -1625,13 +1625,10 @@ struct StreamPage {
         await this.lifecycleManager.startBackgroundTask(this.context, this.appName || undefined);
       }
 
-      // 启动按键拦截器与修饰键自愈看门狗（设置开关与注入 API 检查在
-      // startKeyInterceptor 内部完成）。启动链路的 await 期间页面可能已销毁、
-      // 连接可能已终止：清理回调已停用键盘转发，过期链路重启会让物理按键
-      // 再次被吞，故启动前必须复核。
-      // 不能用 isConnected 判断：CONNECTED 要等首帧（firstFrameWatcher），
-      // 走到这里通常还是 CONNECTING，用 isConnected 会导致正常启动永不启动
-      // 键盘转发；这里只需排除「已终止」，故比对 connectionState
+      // 启动按键拦截器与修饰键自愈看门狗（开关与注入 API 检查在
+      // startKeyInterceptor 内部）。不能用 isConnected 复核：CONNECTED 等首帧
+      // 才翻转，此处是 CONNECTING；用 connectionState 排除启动链路 await
+      // 期间已终止的过期链路，防止其重启已被清理回调停用的键盘转发
       if (!this.pageDisposed &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
         this.inputHandler.startKeyInterceptor();
@@ -2133,25 +2130,12 @@ struct StreamPage {
       await this.launchStream();
       this.streamStartedAtMs = Date.now();
 
-      // 连接终止时已停用按键拦截器与自愈看门狗，重连成功后恢复
-      //（与 startStreaming 的启动项保持一致；startKeyInterceptor 内部完成条件判断）。
-      // 重连的 await 期间页面可能已销毁、连接可能再次终止，启动前同样复核；
-      // launchStream 因 pageDisposed 提前返回时也不得启动键盘转发。
-      // 同 startStreaming：此处 isConnected 尚为 false（等首帧），
-      // 用 connectionState 排除「已终止」
+      // 连接终止时已停用键盘转发，重连成功后恢复（条件判断在 startKeyInterceptor
+      // 内部；复核逻辑同 startStreaming，不能用等首帧才翻转的 isConnected）
       if (!this.pageDisposed &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
         this.inputHandler.startKeyInterceptor();
         this.inputHandler.startModifierWatchdog();
-        // 后台断连时用户仍按着的键：失焦已 releaseAllKeys 清除追踪，回前台的
-        // 对账因未连接被跳过。reconcileKeyState 内部要求 CONNECTED，而首帧
-        // 最迟 1.5s（firstFrameWatcher deadline）才翻转，同步调用会被跳过，
-        // 故延迟到其后补差量同步；期间再次断开则由其内部检查自动跳过
-        setTimeout(() => {
-          if (!this.pageDisposed) {
-            this.inputHandler.reconcileKeyState();
-          }
-        }, 2000);
       }
 
       await this.startClipboardSync();
