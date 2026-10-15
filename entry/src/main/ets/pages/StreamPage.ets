@@ -479,6 +479,10 @@ struct StreamPage {
       reconcileKeyState: () => {
         this.inputHandler.reconcileKeyState();
       },
+      stopKeyboardForwarding: () => {
+        this.inputHandler.stopKeyInterceptor();
+        this.inputHandler.stopModifierWatchdog();
+      },
       setNativeVSyncForeground: (foreground: boolean) => {
         try { MoonBridge.setNativeVSyncForeground(foreground); } catch (e) {
           Logger.warn('StreamPage', `NativeVSync visibility update failed: ${e}`);
@@ -1621,10 +1625,8 @@ struct StreamPage {
         await this.lifecycleManager.startBackgroundTask(this.context, this.appName || undefined);
       }
 
-      // 启动按键拦截器（拦截被系统劫持的手柄按键，如蓝牙手柄 Home 键）
-      if (this.viewModel.inputSettings?.enableKeyInterceptor) {
-        this.inputHandler.startKeyInterceptor();
-      }
+      // 启动按键拦截器（设置开关与注入 API 可用性检查由 startKeyInterceptor 内部完成）
+      this.inputHandler.startKeyInterceptor();
 
       // 启动修饰键卡死自愈看门狗（#153：Alt+Tab 等系统快捷键吞掉修饰键 KEY_UP 时兜底）
       this.inputHandler.startModifierWatchdog();
@@ -2123,6 +2125,12 @@ struct StreamPage {
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
       this.streamStartedAtMs = Date.now();
+
+      // 连接终止时已停用按键拦截器与自愈看门狗，重连成功后恢复
+      //（与 startStreaming 的启动项保持一致；startKeyInterceptor 内部完成条件判断）
+      this.inputHandler.startKeyInterceptor();
+      this.inputHandler.startModifierWatchdog();
+
       await this.startClipboardSync();
       Logger.info('StreamPage', '[StreamPage] 重连串流成功');
 

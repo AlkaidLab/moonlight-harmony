@@ -329,10 +329,12 @@ export class StreamInputHandler {
     for (let i = 0; i < vkCodes.length; i++) {
       if (states[i] !== 0) continue; // 0=已抬起；1=按下 / -1=查询失败，保守跳过
       const vkCode = vkCodes[i];
-      // 先更新掩码再发送，保证这条 KEY_UP 带的是纠正后的修饰位
-      this.updateModifierFlags(vkCode, false);
-      session.sendKeyboardInput(vkCode, KEY_ACTION_UP, this.modifierFlags);
+      // 先移除该键再按剩余按键重建掩码：左右变体共享一个修饰位，若一对中只有
+      // 一侧被自愈（如 LAlt/RAlt 同按、仅一侧的 KEY_UP 被吞），增量清位会把
+      // 仍被按住的另一侧的修饰状态一起丢掉
       this.activeVkKeys.delete(vkCode);
+      this.rebuildModifierFlags();
+      session.sendKeyboardInput(vkCode, KEY_ACTION_UP, this.modifierFlags);
       released++;
     }
     if (released > 0) {
@@ -340,6 +342,38 @@ export class StreamInputHandler {
         `[INPUT] 修饰键卡死自愈: 补发 ${released} 个 KEY_UP (掩码=0x${this.modifierFlags.toString(16)})`);
     }
     return released;
+  }
+
+  /**
+   * 按当前仍按下的键（activeVkKeys）全量重建修饰键掩码
+   *
+   * 左右变体（LAlt/RAlt 等）共用一个修饰位，updateModifierFlags 的增量清位
+   * 无法表达「一对中只松开一侧」；自愈补发 KEY_UP 前用本方法重算，
+   * 保证掩码与剩余仍按下的修饰键一致。非修饰键不贡献任何位。
+   */
+  private rebuildModifierFlags(): void {
+    let flags = 0;
+    this.activeVkKeys.forEach((vkCode: number) => {
+      switch (vkCode) {
+        case 0xA0: // VK_LSHIFT
+        case 0xA1: // VK_RSHIFT
+          flags |= MODIFIER_SHIFT;
+          break;
+        case 0xA2: // VK_LCONTROL
+        case 0xA3: // VK_RCONTROL
+          flags |= MODIFIER_CTRL;
+          break;
+        case 0xA4: // VK_LMENU
+        case 0xA5: // VK_RMENU
+          flags |= MODIFIER_ALT;
+          break;
+        case 0x5B: // VK_LWIN
+        case 0x5C: // VK_RWIN
+          flags |= MODIFIER_META;
+          break;
+      }
+    });
+    this.modifierFlags = flags;
   }
 
   /**
@@ -667,8 +701,21 @@ export class StreamInputHandler {
   /**
    * 启动按键事件拦截器
    * 拦截被系统劫持的手柄按键和特殊键盘按键，转发给 GamepadManager / StreamingSession 处理
+   *
+   * 启动条件在内部判断（而非调用方判断），保证所有启动路径口径一致：
+   * - 设置开关 enableKeyInterceptor 关闭时不启动；
+   * - 无按键注入 API（API 13 以下老设备）时强制跳过——拦截器是消费型的，
+   *   音量键被吃掉后无法回注。与设置页的 keyInterceptorAvailable 检查一致，
+   *   这里兜底覆盖从未打开过设置页的场景。
    */
   startKeyInterceptor(): void {
+    if (this.viewModel?.inputSettings?.enableKeyInterceptor !== true) {
+      return;
+    }
+    if (!InputInterceptorService.getInstance().isInjectApiAvailable()) {
+      Logger.warn('StreamInputHandler', 'StreamInputHandler: 无按键注入 API（API 13+），跳过按键拦截器');
+      return;
+    }
     const result = InputInterceptorService.getInstance().start((event) => {
       if (!this.viewModel?.isConnected) {
         return;
