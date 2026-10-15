@@ -1625,11 +1625,14 @@ struct StreamPage {
         await this.lifecycleManager.startBackgroundTask(this.context, this.appName || undefined);
       }
 
-      // 启动按键拦截器（设置开关与注入 API 可用性检查由 startKeyInterceptor 内部完成）
-      this.inputHandler.startKeyInterceptor();
-
-      // 启动修饰键卡死自愈看门狗（#153：Alt+Tab 等系统快捷键吞掉修饰键 KEY_UP 时兜底）
-      this.inputHandler.startModifierWatchdog();
+      // 启动按键拦截器与修饰键自愈看门狗（设置开关与注入 API 检查在
+      // startKeyInterceptor 内部完成）。启动链路的 await 期间页面可能已销毁、
+      // 连接可能已终止：清理回调已停用键盘转发，过期链路重启会让物理按键
+      // 再次被吞，故启动前必须复核
+      if (!this.pageDisposed && this.viewModel.isConnected) {
+        this.inputHandler.startKeyInterceptor();
+        this.inputHandler.startModifierWatchdog();
+      }
 
       // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底
       const monitorOk = this.inputHandler.startMouseInterceptor(
@@ -2127,9 +2130,16 @@ struct StreamPage {
       this.streamStartedAtMs = Date.now();
 
       // 连接终止时已停用按键拦截器与自愈看门狗，重连成功后恢复
-      //（与 startStreaming 的启动项保持一致；startKeyInterceptor 内部完成条件判断）
-      this.inputHandler.startKeyInterceptor();
-      this.inputHandler.startModifierWatchdog();
+      //（与 startStreaming 的启动项保持一致；startKeyInterceptor 内部完成条件判断）。
+      // 重连的 await 期间页面可能已销毁、连接可能再次终止，启动前同样复核；
+      // launchStream 因 pageDisposed 提前返回时也不得启动键盘转发
+      if (!this.pageDisposed && this.viewModel.isConnected) {
+        this.inputHandler.startKeyInterceptor();
+        this.inputHandler.startModifierWatchdog();
+        // 后台断连时用户可能仍按着按键：失焦已 releaseAllKeys 清除追踪，
+        // 回前台的对账因当时未连接被跳过，会话就绪后补一次差量同步
+        this.inputHandler.reconcileKeyState();
+      }
 
       await this.startClipboardSync();
       Logger.info('StreamPage', '[StreamPage] 重连串流成功');
