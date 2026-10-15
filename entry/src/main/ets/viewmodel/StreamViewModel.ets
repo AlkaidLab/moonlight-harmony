@@ -118,6 +118,13 @@ export class StreamViewModel {
   // 连接状态
   connectionState: StreamConnectionState = StreamConnectionState.IDLE;
   errorMessage: string = '';
+  /**
+   * 停止流程进行中：原生 teardown 的 await 期间 connectionState 仍为旧值，
+   * 尚未翻转 DISCONNECTED，启动侧复核需据此排除与停止流程的交叠
+   * （entry 置位、startStreaming 入口复位；停止异常中断时保持 true，
+   * 由下一次启动解锁，属保守方向）
+   */
+  isStopping: boolean = false;
   
   // 连接进度（0.0 - 1.0）
   connectionProgress: number = 0;
@@ -293,6 +300,7 @@ export class StreamViewModel {
     useVdd?: boolean
   ): Promise<void> {
     this.connectionState = StreamConnectionState.CONNECTING;
+    this.isStopping = false;
     this.connectionProgress = 0;
     this.connectionStageText = '';
     this.errorMessage = '';
@@ -458,6 +466,8 @@ export class StreamViewModel {
    * 停止串流
    */
   async stopStreaming(): Promise<void> {
+    this.isStopping = true;
+
     // 重置旋转状态
     this.resetRotationState();
 
@@ -476,8 +486,9 @@ export class StreamViewModel {
       await this.streamingSession.stop();
       this.streamingSession = null;
     }
-    
+
     this.connectionState = StreamConnectionState.DISCONNECTED;
+    this.isStopping = false;
   }
 
   private stopFirstFrameWatcher(): void {
@@ -663,6 +674,8 @@ export class StreamViewModel {
    * 调用服务器 API 退出当前运行的游戏并停止串流
    */
   async quitGame(): Promise<void> {
+    this.isStopping = true;
+
     // 调用 StreamingSession 的 quitApp 方法退出远程游戏
     try {
       if (this.streamingSession) {
@@ -677,8 +690,9 @@ export class StreamViewModel {
     } catch (err) {
       Logger.error('StreamViewModel', '退出游戏失败:', err);
     }
-    
+
     this.connectionState = StreamConnectionState.DISCONNECTED;
+    this.isStopping = false;
   }
   
   /**

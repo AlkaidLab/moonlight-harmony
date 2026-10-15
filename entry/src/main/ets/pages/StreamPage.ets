@@ -1627,9 +1627,10 @@ struct StreamPage {
 
       // 启动按键拦截器与修饰键自愈看门狗（开关与注入 API 检查在
       // startKeyInterceptor 内部）。不能用 isConnected 复核：CONNECTED 等首帧
-      // 才翻转，此处是 CONNECTING；用 connectionState 排除启动链路 await
-      // 期间已终止的过期链路，防止其重启已被清理回调停用的键盘转发
-      if (!this.pageDisposed &&
+      // 才翻转，此处是 CONNECTING。需排除两类过期链路：连接已终止
+      // （DISCONNECTED）；停止流程在原生 teardown 中尚未翻转状态（isStopping，
+      // 此时停止入口的 resetState 清理已先行执行，重启将无人回收）
+      if (!this.pageDisposed && !this.viewModel.isStopping &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
         this.inputHandler.startKeyInterceptor();
         this.inputHandler.startModifierWatchdog();
@@ -2131,8 +2132,9 @@ struct StreamPage {
       this.streamStartedAtMs = Date.now();
 
       // 连接终止时已停用键盘转发，重连成功后恢复（条件判断在 startKeyInterceptor
-      // 内部；复核逻辑同 startStreaming，不能用等首帧才翻转的 isConnected）
-      if (!this.pageDisposed &&
+      // 内部；复核逻辑同 startStreaming：不能用等首帧才翻转的 isConnected，
+      // 并经 isStopping 排除与停止流程的交叠）
+      if (!this.pageDisposed && !this.viewModel.isStopping &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
         this.inputHandler.startKeyInterceptor();
         this.inputHandler.startModifierWatchdog();
