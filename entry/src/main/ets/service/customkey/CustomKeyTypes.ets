@@ -104,12 +104,23 @@ export interface DPadAction {
   type: 'dpad';
 }
 
-/** 轮盘菜单分区定义 */
-export interface WheelPadSegment {
-  /** 分区显示文字 */
+/** 菜单项和轮盘分区共用的名称及动作绑定。 */
+export interface KeyActionItem {
+  /** 显示文字 */
   label: string;
   /** 绑定的按键动作 */
   action: KeyAction;
+}
+
+/** 轮盘菜单分区定义 */
+export interface WheelPadSegment extends KeyActionItem {}
+
+/** 点击入口展开的快捷菜单；展开状态只属于本次串流，不写入配置。 */
+export interface KeyMenuAction {
+  type: 'keyMenu';
+  items: KeyActionItem[];
+  /** 未设置时默认执行后收起。 */
+  autoClose?: boolean;
 }
 
 /**
@@ -193,6 +204,7 @@ export type KeyAction =
   | AnalogStickAction
   | DPadAction
   | WheelPadAction
+  | KeyMenuAction
   | DigitalStickAction
   | ComboAction
   | ShortcutAction
@@ -289,12 +301,26 @@ export function generateKeyId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 }
 
-/** 浅拷贝一个 CustomKeyDef（ArkTS 不支持 spread 对象字面量） */
+/** 复制含嵌套数据的动作，避免复制配置或撤销后共享菜单项/轮盘分区。 */
+export function cloneKeyAction(action: KeyAction): KeyAction {
+  switch (action.type) {
+    case 'keyMenu':
+    case 'wheelPad':
+    case 'digitalStick':
+    case 'combo':
+    case 'shortcut':
+      return JSON.parse(JSON.stringify(action)) as KeyAction;
+    default:
+      return action;
+  }
+}
+
+/** 拷贝一个 CustomKeyDef（ArkTS 不支持 spread 对象字面量） */
 export function cloneKeyDef(src: CustomKeyDef): CustomKeyDef {
   const dst: CustomKeyDef = {
     id: src.id,
     label: src.label,
-    action: src.action,
+    action: cloneKeyAction(src.action),
     shape: src.shape,
     behavior: src.behavior,
     xPercent: src.xPercent,
@@ -359,7 +385,7 @@ export function createDefaultKeyDef(partial?: Partial<CustomKeyDef>): CustomKeyD
   if (partial) {
     if (partial.id !== undefined) def.id = partial.id;
     if (partial.label !== undefined) def.label = partial.label;
-    if (partial.action !== undefined) def.action = partial.action;
+    if (partial.action !== undefined) def.action = cloneKeyAction(partial.action);
     if (partial.shape !== undefined) def.shape = partial.shape;
     if (partial.behavior !== undefined) def.behavior = partial.behavior;
     if (partial.xPercent !== undefined) def.xPercent = partial.xPercent;
@@ -633,6 +659,8 @@ export function getActionDisplayName(action: KeyAction): string {
       const wpAction = action as WheelPadAction;
       return `轮盘(${wpAction.segments.length})`;
     }
+    case 'keyMenu':
+      return `快捷菜单(${action.items.length})`;
     case 'digitalStick': {
       const dsAction = action as DigitalStickAction;
       const dirs = [dsAction.upAction, dsAction.downAction, dsAction.leftAction, dsAction.rightAction]
@@ -839,6 +867,22 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
   {
     name: '按键组',
     presets: buildWheelPadPresets(),
+  },
+  {
+    name: '快捷菜单',
+    presets: [{
+      label: '快捷菜单',
+      action: {
+        type: 'keyMenu', autoClose: true,
+        items: [
+          { label: '背包', action: { type: 'keyboard', vk: 0x42 } as KeyboardAction },
+          { label: '地图', action: { type: 'keyboard', vk: 0x4D } as KeyboardAction },
+          { label: '任务', action: { type: 'keyboard', vk: 0x4A } as KeyboardAction },
+          { label: '角色', action: { type: 'keyboard', vk: 0x43 } as KeyboardAction },
+          { label: '系统', action: { type: 'keyboard', vk: 0x1B } as KeyboardAction },
+        ],
+      } as KeyMenuAction,
+    }],
   },
   {
     name: '数字摇杆',

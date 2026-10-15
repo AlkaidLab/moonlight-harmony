@@ -41,6 +41,7 @@ import {
   DPadAction,
   WheelPadAction,
   WheelPadSegment,
+  KeyMenuAction,
   DigitalStickAction,
   ComboAction,
   ShortcutAction,
@@ -51,6 +52,7 @@ import {
 import { Logger } from '../../common/Logger';
 import { UI } from '../../common/UI';
 import { StringUtil } from '../../utils/StringUtil';
+import { normalizeKeyMenuAction } from '../customkey/KeyMenuController';
 
 export interface QrCodeResult {
   pixelMap: image.PixelMap | null;
@@ -178,10 +180,13 @@ function isCompressedData(data: string): boolean {
 //   X|{up}|{dn}|{lt}|{rt}[|{ck}]   digitalStick
 //   C|{act}|{act}|...               combo
 //   H,{k1},{k2}[/{sk1},{sk2}/...]   shortcut
+//   Q,{URI-encoded JSON}           keyMenu (names may contain | : or newlines)
 
 /** 将 KeyAction 编码为紧凑字符串 */
 function encodeAction(a: KeyAction): string {
   switch (a.type) {
+    case 'keyMenu':
+      return 'Q,' + encodeURIComponent(JSON.stringify(a));
     case 'keyboard':
       return `K${(a as KeyboardAction).vk}`;
     case 'mouse':
@@ -253,6 +258,13 @@ function encodeAction(a: KeyAction): string {
 
 /** 解码简单动作字符串（不含 |） */
 function decodeSimpleAction(s: string): KeyAction {
+  if (s.startsWith('Q,')) {
+    try {
+      const menu = JSON.parse(decodeURIComponent(s.substring(2))) as KeyMenuAction;
+      if (menu?.type === 'keyMenu') return normalizeKeyMenuAction(menu);
+    } catch (_e) { /* Invalid new-format payloads become a safe no-op. */ }
+    return { type: 'special', id: 'none' } as SpecialAction;
+  }
   if (s.startsWith('L,')) {
     const parts = s.split(',');
     const region = parts[1] === 'leftHalf' ? 'leftHalf' : (parts[1] === 'custom' ? 'custom' : 'rightHalf');
@@ -403,7 +415,7 @@ function serializeV3(profileName: string, keys: CustomKeyDef[]): string {
     const y = Math.round(key.yPercent * 1000) / 1000;
     // 必填字段：label|action|x|y|width|height
     const parts: string[] = [];
-    parts.push(key.label);
+    parts.push(key.action.type === 'keyMenu' ? encodeURIComponent(key.label) : key.label);
     parts.push(action);
     parts.push(x.toString());
     parts.push(y.toString());
@@ -422,6 +434,7 @@ function serializeV3(profileName: string, keys: CustomKeyDef[]): string {
     if ((key.borderWidth ?? 1) !== 1) parts.push('bw=' + (key.borderWidth ?? 1).toString());
     if (key.haptic !== 'light') parts.push('hp=' + key.haptic);
     if (key.groupId) parts.push('gid=' + key.groupId);
+    if (key.action.type === 'keyMenu') parts.push('le=1');
     lines.push(parts.join('|'));
   }
   return lines.join('\n');
@@ -451,6 +464,7 @@ function deserializeV3(data: string): [string, CustomKeyDef[]] | null {
     let borderWidth = 1;
     let haptic = 'light';
     let groupId: string | undefined = undefined;
+    let labelEncoded = false;
     for (let j = 6; j < parts.length; j++) {
       const eqIdx = parts[j].indexOf('=');
       if (eqIdx < 0) continue;
@@ -468,10 +482,15 @@ function deserializeV3(data: string): [string, CustomKeyDef[]] | null {
       else if (k === 'bw') borderWidth = parseInt(v) || 1;
       else if (k === 'hp') haptic = v;
       else if (k === 'gid') groupId = v;
+      else if (k === 'le') labelEncoded = v === '1';
+    }
+    let label = parts[0];
+    if (labelEncoded) {
+      try { label = decodeURIComponent(label); } catch (_e) { return null; }
     }
     const keyDef: CustomKeyDef = {
       id: generateKeyId(),
-      label: parts[0],
+      label: label,
       action: decodeAction(parts[1]),
       shape: shape,
       behavior: behavior,

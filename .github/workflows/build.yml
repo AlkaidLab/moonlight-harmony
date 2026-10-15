@@ -173,12 +173,13 @@ jobs:
           echo "DEVECO_SDK_HOME=$SDK_HOME"
         } >> "$GITHUB_ENV"
 
-    - name: Test mouse-look input and sharing
+    - name: Test custom input and sharing
       run: |
         set -euo pipefail
         TS_PATH=$(find "$DEVECO_SDK_HOME" -path '*/ets/build-tools/ets-loader/node_modules/typescript/lib/typescript.js' -print -quit)
         test -n "$TS_PATH"
         npm run test:mouse-look -- "$TS_PATH"
+        npm run test:key-menu -- "$TS_PATH"
 
     # ── build-profile.json5 ──
     - name: Create build profile (unsigned)

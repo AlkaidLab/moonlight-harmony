@@ -28,6 +28,7 @@ export type WheelEditModeGetter = () => boolean;
 
 @Component
 export struct VirtualWheelPad {
+  @Prop @Watch('resetInput') inputEnabled: boolean = true;
   /** 轮盘尺寸 (vp) */
   @Prop wheelSize: number = 150;
   /** 常态边框颜色 */
@@ -67,6 +68,18 @@ export struct VirtualWheelPad {
     this.innerRadius = this.wheelRadius * 0.30;
   }
 
+  aboutToDisappear(): void {
+    this.resetInput();
+  }
+
+  private resetInput(): void {
+    if (this.activeIndex >= 0 && this.activeIndex < this.segments.length) {
+      this.onSegmentAction(this.segments[this.activeIndex].action, false);
+    }
+    this.trackingTouchId = -1;
+    this.activeIndex = -1;
+  }
+
   build() {
     Stack() {
       Canvas(this.ctx)
@@ -83,7 +96,7 @@ export struct VirtualWheelPad {
     .opacity(this.opacity_ / 100)
     .hitTestBehavior(HitTestMode.Block)
     .onTouch((event: TouchEvent): void => {
-      if (this.isEditMode()) return;
+      if (this.isEditMode() || !this.inputEnabled) return;
       event.stopPropagation();
       this.handleTouch(event);
     })
@@ -193,6 +206,8 @@ export struct VirtualWheelPad {
       const touch: TouchObject | null = this.findTrackedTouch(event.touches);
       if (touch !== null) {
         this.updateActiveSegment(touch.x, touch.y);
+      } else {
+        this.resetInput();
       }
       return;
     }
@@ -207,13 +222,9 @@ export struct VirtualWheelPad {
           break;
         }
       }
-      if (isOurs) {
-        // 释放当前激活的分区
-        if (this.activeIndex >= 0 && this.activeIndex < this.segments.length) {
-          this.onSegmentAction(this.segments[this.activeIndex].action, false);
-        }
-        this.trackingTouchId = -1;
-        this.activeIndex = -1;
+      if (isOurs || (this.trackingTouchId >= 0 &&
+        ((event.type === TouchType.Cancel && changed.length === 0) || this.findTrackedTouch(event.touches) === null))) {
+        this.resetInput();
       }
     }
   }

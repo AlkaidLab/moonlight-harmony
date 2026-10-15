@@ -66,6 +66,7 @@ import {
 } from './MoonBridge';
 import nativeLib from 'libmoonlight_nativelib.so';
 import { Logger } from '../../common/Logger';
+import { ControllerInputState as ControllerState, mergeControllerInput } from '../input/ControllerInputMerge';
 
 // =============================================================================
 // 类型定义
@@ -322,16 +323,6 @@ interface VideoStats {
   presentationPendingHighWater: number;
 }
 
-interface ControllerState {
-  buttonFlags: number;
-  leftTrigger: number;
-  rightTrigger: number;
-  leftStickX: number;
-  leftStickY: number;
-  rightStickX: number;
-  rightStickY: number;
-}
-
 // =============================================================================
 // 常量
 // =============================================================================
@@ -559,6 +550,11 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     leftStickY: 0,
     rightStickX: 0,
     rightStickY: 0
+  };
+  /** 自定义按键/快捷菜单独立保存，发送时与默认虚拟手柄或物理手柄快照合并。 */
+  private customControllerState: ControllerState = {
+    buttonFlags: 0, leftTrigger: 0, rightTrigger: 0,
+    leftStickX: 0, leftStickY: 0, rightStickX: 0, rightStickY: 0,
   };
 
   // ---------------------------------------------------------------------------
@@ -1090,15 +1086,11 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     if (!this.isRunning) return;
     const controllerIndex = 0;
     this.ensureVirtualControllerArrival(controllerIndex);
-    this.controllerState.buttonFlags = buttonFlags;
-    this.controllerState.leftTrigger = leftTrigger;
-    this.controllerState.rightTrigger = rightTrigger;
-    this.controllerState.leftStickX = leftStickX;
-    this.controllerState.leftStickY = leftStickY;
-    this.controllerState.rightStickX = rightStickX;
-    this.controllerState.rightStickY = rightStickY;
-    this.controllerStates.set(controllerIndex, this.cloneControllerState(this.controllerState));
-    this.sendControllerStateSnapshot(controllerIndex, this.controllerState);
+    this.customControllerState = {
+      buttonFlags: buttonFlags, leftTrigger: leftTrigger, rightTrigger: rightTrigger,
+      leftStickX: leftStickX, leftStickY: leftStickY, rightStickX: rightStickX, rightStickY: rightStickY,
+    };
+    this.sendControllerStateSnapshot(controllerIndex, this.getControllerState(controllerIndex));
   }
 
   // ---------------------------------------------------------------------------
@@ -2045,6 +2037,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.controllerState.leftStickY = 0;
     this.controllerState.rightStickX = 0;
     this.controllerState.rightStickY = 0;
+    this.customControllerState = this.cloneControllerState(this.controllerState);
   }
 
   private getControllerState(controllerIndex: number): ControllerState {
@@ -2068,6 +2061,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   }
 
   private sendControllerStateSnapshot(controllerIndex: number, state: ControllerState): void {
+    if (controllerIndex === 0) state = mergeControllerInput(state, this.customControllerState);
     const buttonFlags = controllerIndex === 0 && this.ds5TouchpadEnabled && this.ds5TouchpadButtonPressed
       ? state.buttonFlags | TOUCHPAD_FLAG
       : state.buttonFlags;

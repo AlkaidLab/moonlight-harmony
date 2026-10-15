@@ -39,8 +39,8 @@ import {
   ShortcutAction,
   SpecialAction,
   DPadAction,
-  sendShortcutKeys,
 } from './CustomKeyTypes';
+import { KeyActionPulseRunner } from './KeyMenuController';
 import { Logger } from '../../common/Logger';
 import { StringUtil } from '../../utils/StringUtil';
 
@@ -72,7 +72,7 @@ export interface CustomKeyManagerHost {
 
 /** session 只需要 sendKeyboardInput 能力 */
 export interface SessionLike {
-  sendKeyboardInput(vk: number, flags: number): void;
+  sendKeyboardInput(vk: number, flags: number, modifiers?: number): void;
   /** 发送按键组合（同时按下，延迟后释放） */
   sendKeys(keyCodes: number[]): void;
   /** 发送虚拟手柄输入（内部处理 controller arrival + activeGamepadMask） */
@@ -104,9 +104,17 @@ export class CustomKeyManager {
   private leftStickY: number = 0;
   private rightStickX: number = 0;
   private rightStickY: number = 0;
+  private keyboardHolds: Map<number, number> = new Map();
+  private mouseHolds: Map<number, number> = new Map();
+  private gamepadButtonHolds: Map<number, number> = new Map();
+  private triggerHolds: Map<number, number> = new Map();
+  private stickDirectionHolds: Map<number, number> = new Map();
+  private dpadDirection: number = 0;
+  private pulses: KeyActionPulseRunner = new KeyActionPulseRunner();
 
   constructor(host: CustomKeyManagerHost) {
     this.host = host;
+    this.pulses.onAction = (action: KeyAction, isDown: boolean): void => this.handleAction(action, isDown);
   }
 
   /**
@@ -122,8 +130,23 @@ export class CustomKeyManager {
    * 在串流结束时调用，确保不残留虚拟按键状态
    */
   reset(): void {
+    this.pulses.reset();
+    const session = this.host.getSession();
+    const keyboardKeys = Array.from(this.keyboardHolds.keys()).reverse();
+    for (const vk of keyboardKeys) {
+      this.keyboardHolds.delete(vk);
+      session?.sendKeyboardInput(vk, 0x04, this.keyboardModifiers());
+    }
+    this.mouseHolds.forEach((_count: number, button: number) => MoonBridge.sendMouseButton(BUTTON_ACTION_RELEASE, button));
+    this.keyboardHolds.clear();
+    this.mouseHolds.clear();
+    this.gamepadButtonHolds.clear();
+    this.triggerHolds.clear();
+    const hadDirections = this.stickDirectionHolds.size > 0 || this.dpadDirection !== 0;
+    this.stickDirectionHolds.clear();
+    this.dpadDirection = 0;
     if (this.gamepadInputMap !== 0 || this.gamepadLeftTrigger !== 0 || this.gamepadRightTrigger !== 0 ||
-        this.leftStickX !== 0 || this.leftStickY !== 0 || this.rightStickX !== 0 || this.rightStickY !== 0) {
+        this.leftStickX !== 0 || this.leftStickY !== 0 || this.rightStickX !== 0 || this.rightStickY !== 0 || hadDirections) {
       this.gamepadInputMap = 0;
       this.gamepadLeftTrigger = 0;
       this.gamepadRightTrigger = 0;
@@ -137,10 +160,40 @@ export class CustomKeyManager {
 
   // ── 按键动作分发 ──
 
+  /** 每个逻辑输入按住计数；最后一个来源松开时才向主机发送释放。 */
+  private updateHold(holds: Map<number, number>, id: number, isDown: boolean): boolean {
+    const count = Math.max(0, (holds.get(id) ?? 0) + (isDown ? 1 : -1));
+    if (count > 0) holds.set(id, count);
+    else holds.delete(id);
+    return count > 0;
+  }
+
+  private resolveStickAxis(stick: number, negative: number, positive: number, analog: number): number {
+    const neg = this.stickDirectionHolds.has(stick * 4 + negative);
+    const pos = this.stickDirectionHolds.has(stick * 4 + positive);
+    if (!neg && !pos) return analog;
+    return (pos ? CustomKeyManager.STICK_MAX : 0) - (neg ? CustomKeyManager.STICK_MAX : 0);
+  }
+
+  private keyboardModifiers(): number {
+    let modifiers = 0;
+    this.keyboardHolds.forEach((_count: number, vk: number) => {
+      if (vk === 0x10 || vk === 0xA0 || vk === 0xA1) modifiers |= 0x01;
+      else if (vk === 0x11 || vk === 0xA2 || vk === 0xA3) modifiers |= 0x02;
+      else if (vk === 0x12 || vk === 0xA4 || vk === 0xA5) modifiers |= 0x04;
+      else if (vk === 0x5B || vk === 0x5C) modifiers |= 0x08;
+    });
+    return modifiers;
+  }
+
   /** 视角区的连续输入独立于按下/释放分发，永远只发送相对鼠标位移。 */
   handleMouseLookMovement(deltaX: number, deltaY: number): void {
     if (!this.host.getSession()) return;
     MoonBridge.sendMouseMove(deltaX, deltaY);
+  }
+
+  handlePulseAction(action: KeyAction): void {
+    if (this.host.getSession()) this.pulses.execute(action);
   }
 
   /**
@@ -154,15 +207,18 @@ export class CustomKeyManager {
     switch (action.type) {
       case 'keyboard': {
         const kbAction = action as KeyboardAction;
-        session.sendKeyboardInput(kbAction.vk, isDown ? 0x03 : 0x04);
+        const modifiersBefore = this.keyboardModifiers();
+        const wasHeld = this.keyboardHolds.has(kbAction.vk);
+        const held = this.updateHold(this.keyboardHolds, kbAction.vk, isDown);
+        if (wasHeld !== held) session.sendKeyboardInput(kbAction.vk, held ? 0x03 : 0x04,
+          held ? modifiersBefore : this.keyboardModifiers());
         break;
       }
       case 'mouse': {
         const mouseAction = action as MouseButtonAction;
-        MoonBridge.sendMouseButton(
-          isDown ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE,
-          mouseAction.button
-        );
+        const wasHeld = this.mouseHolds.has(mouseAction.button);
+        const held = this.updateHold(this.mouseHolds, mouseAction.button, isDown);
+        if (wasHeld !== held) MoonBridge.sendMouseButton(held ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, mouseAction.button);
         break;
       }
       case 'mouseScroll': {
@@ -175,10 +231,11 @@ export class CustomKeyManager {
       case 'gamepadButton': {
         const gpAction = action as GamepadButtonAction;
         const mask: number = gpAction.mask;
-        if (isDown) {
-          this.gamepadInputMap |= mask;
-        } else {
-          this.gamepadInputMap &= ~mask;
+        for (let bit = 0; bit < 32; bit++) {
+          const flag = 1 << bit;
+          if ((mask & flag) === 0) continue;
+          if (this.updateHold(this.gamepadButtonHolds, flag, isDown)) this.gamepadInputMap |= flag;
+          else this.gamepadInputMap &= ~flag;
         }
         this.sendGamepadState();
         break;
@@ -186,28 +243,19 @@ export class CustomKeyManager {
       case 'gamepadTrigger': {
         const trigAction = action as GamepadTriggerAction;
         if (trigAction.trigger === 'left') {
-          this.gamepadLeftTrigger = isDown ? 0xFF : 0;
+          this.gamepadLeftTrigger = this.updateHold(this.triggerHolds, 0, isDown) ? 0xFF : 0;
         } else {
-          this.gamepadRightTrigger = isDown ? 0xFF : 0;
+          this.gamepadRightTrigger = this.updateHold(this.triggerHolds, 1, isDown) ? 0xFF : 0;
         }
         this.sendGamepadState();
         break;
       }
       case 'gamepadStick': {
         const stickAction = action as GamepadStickAction;
-        const posMax: number = CustomKeyManager.STICK_MAX;
-        const negMax: number = 0 - posMax;
-        if (stickAction.stick === 'left') {
-          if (stickAction.direction === 'up') this.leftStickY = isDown ? negMax : 0;
-          else if (stickAction.direction === 'down') this.leftStickY = isDown ? posMax : 0;
-          else if (stickAction.direction === 'left') this.leftStickX = isDown ? negMax : 0;
-          else if (stickAction.direction === 'right') this.leftStickX = isDown ? posMax : 0;
-        } else {
-          if (stickAction.direction === 'up') this.rightStickY = isDown ? negMax : 0;
-          else if (stickAction.direction === 'down') this.rightStickY = isDown ? posMax : 0;
-          else if (stickAction.direction === 'left') this.rightStickX = isDown ? negMax : 0;
-          else if (stickAction.direction === 'right') this.rightStickX = isDown ? posMax : 0;
-        }
+        const directions: string[] = ['left', 'right', 'up', 'down'];
+        const direction = directions.indexOf(stickAction.direction);
+        if (direction < 0) break;
+        this.updateHold(this.stickDirectionHolds, (stickAction.stick === 'left' ? 0 : 4) + direction, isDown);
         this.sendGamepadState();
         break;
       }
@@ -222,7 +270,7 @@ export class CustomKeyManager {
         // 快捷键：仅在按下时一次性触发完整组合/序列，释放无操作
         if (isDown) {
           const scAction = action as ShortcutAction;
-          this.executeShortcut(scAction, session);
+          this.pulses.execute(scAction, 25);
         }
         break;
       }
@@ -245,13 +293,13 @@ export class CustomKeyManager {
     const session = this.host.getSession();
     if (!session) return;
     session.sendVirtualControllerInput(
-      this.gamepadInputMap,
+      this.gamepadInputMap | this.dpadDirection,
       this.gamepadLeftTrigger,
       this.gamepadRightTrigger,
-      this.leftStickX,
-      this.leftStickY,
-      this.rightStickX,
-      this.rightStickY
+      this.resolveStickAxis(0, 0, 1, this.leftStickX),
+      this.resolveStickAxis(0, 2, 3, this.leftStickY),
+      this.resolveStickAxis(1, 0, 1, this.rightStickX),
+      this.resolveStickAxis(1, 2, 3, this.rightStickY)
     );
   }
 
@@ -286,14 +334,7 @@ export class CustomKeyManager {
    */
   handleAnalogStickClick(stick: string): void {
     const mask: number = stick === 'left' ? GamepadButton.LS : GamepadButton.RS;
-    // 按下
-    this.gamepadInputMap |= mask;
-    this.sendGamepadState();
-    // 50ms 后自动释放（与 AnalogStick.ets 一致）
-    setTimeout(() => {
-      this.gamepadInputMap &= ~mask;
-      this.sendGamepadState();
-    }, 50);
+    this.pulses.execute({ type: 'gamepadButton', mask: mask } as GamepadButtonAction, 50);
   }
 
   /**
@@ -302,17 +343,9 @@ export class CustomKeyManager {
    * direction 为方向位掩码组合（GamepadButton.UP/DOWN/LEFT/RIGHT），0 = 松开/无方向。
    */
   handleDPadDirectionChange(direction: number): void {
-    // 清除旧的 D-Pad 位，设置新方向
-    const dpadMask: number = GamepadButton.DPAD_MASK;
-    this.gamepadInputMap = (this.gamepadInputMap & (~dpadMask)) | (direction & dpadMask);
+    // D-Pad 持续状态和菜单/常驻按钮独立合并，任一来源释放都不会清掉另一方。
+    this.dpadDirection = direction & GamepadButton.DPAD_MASK;
     this.sendGamepadState();
-  }
-
-  /**
-   * 执行快捷键动作（一次性组合键或多步序列）
-   */
-  private executeShortcut(action: ShortcutAction, session: SessionLike): void {
-    sendShortcutKeys((keys: number[]) => session.sendKeys(keys), action.keys, action.keySequence);
   }
 
   /**

@@ -77,6 +77,7 @@ scripts/*
 !scripts/check-open-source-licenses.js
 !scripts/test-display-frame-rate.cjs
 !scripts/test-mouse-look.cjs
+!scripts/test-key-menu.cjs
 
 # Local release artifacts
 release-symbols/

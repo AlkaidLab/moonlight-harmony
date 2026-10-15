@@ -37,6 +37,7 @@ export type EditModeGetter = () => boolean;
 
 @Component
 export struct VirtualJoystick {
+  @Prop @Watch('resetInput') inputEnabled: boolean = true;
   /** 摇杆尺寸 (vp)，外圆直径（避免与 CustomComponent.size 冲突） */
   @Prop joystickSize: number = 120;
   /** 外圆颜色 */
@@ -92,6 +93,18 @@ export struct VirtualJoystick {
     this.stickMaxTravel = this.stickOuterRadius - this.stickInnerRadius;
   }
 
+  aboutToDisappear(): void {
+    this.resetInput();
+  }
+
+  private resetInput(): void {
+    const active = this.trackingTouchId >= 0 || this.isPressed;
+    this.trackingTouchId = -1;
+    this.isPressed = false;
+    this.lastTapTime = 0;
+    if (active) this.resetStick();
+  }
+
   build() {
     Stack() {
       // 隐形模式下需要一个不可见但可点击的全尺寸触摸区
@@ -133,7 +146,7 @@ export struct VirtualJoystick {
     .hitTestBehavior(HitTestMode.Block)
     .onTouch((event: TouchEvent): void => {
       event.stopPropagation();
-      if (this.isEditMode()) return;
+      if (this.isEditMode() || !this.inputEnabled) return;
       this.handleTouch(event);
     })
   }
@@ -179,6 +192,8 @@ export struct VirtualJoystick {
         } else {
           this.updateStickPosition(touch.x - compCenterX, touch.y - compCenterY);
         }
+      } else {
+        this.resetInput();
       }
       return;
     }
@@ -194,10 +209,9 @@ export struct VirtualJoystick {
           break;
         }
       }
-      if (isOurFinger) {
-        this.trackingTouchId = -1;
-        this.isPressed = false;
-        this.resetStick();
+      if (isOurFinger || (this.trackingTouchId >= 0 &&
+        ((event.type === TouchType.Cancel && changed.length === 0) || this.findTrackedTouch(event.touches) === null))) {
+        this.resetInput();
       }
     }
   }
