@@ -352,28 +352,10 @@ export class StreamInputHandler {
    * 保证掩码与剩余仍按下的修饰键一致。非修饰键不贡献任何位。
    */
   private rebuildModifierFlags(): void {
-    let flags = 0;
+    this.modifierFlags = 0;
     this.activeVkKeys.forEach((vkCode: number) => {
-      switch (vkCode) {
-        case 0xA0: // VK_LSHIFT
-        case 0xA1: // VK_RSHIFT
-          flags |= MODIFIER_SHIFT;
-          break;
-        case 0xA2: // VK_LCONTROL
-        case 0xA3: // VK_RCONTROL
-          flags |= MODIFIER_CTRL;
-          break;
-        case 0xA4: // VK_LMENU
-        case 0xA5: // VK_RMENU
-          flags |= MODIFIER_ALT;
-          break;
-        case 0x5B: // VK_LWIN
-        case 0x5C: // VK_RWIN
-          flags |= MODIFIER_META;
-          break;
-      }
+      this.updateModifierFlags(vkCode, true);
     });
-    this.modifierFlags = flags;
   }
 
   /**
