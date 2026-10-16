@@ -47,6 +47,9 @@ export class StreamInputHandler {
   private modifierFlags: number = 0;
   // ── 当前通过 ArkUI onKeyEvent 按下的 VK 键集合（用于焦点丢失时释放残留键）──
   private activeVkKeys: Set<number> = new Set<number>();
+  // ── 修饰键卡死自愈看门狗（#153：系统快捷键吞掉修饰键 KEY_UP 时兜底）──
+  private modifierWatchdogTimer: number = -1;
+  private static readonly MODIFIER_WATCHDOG_INTERVAL: number = 300; // ms
 
   // ── 鼠标拦截器（绕过 ArkUI 帧率限制，全速鼠标轮询）──
   private mouseInterceptorActive: boolean = false;
@@ -140,6 +143,9 @@ export class StreamInputHandler {
    */
   resetState(): void {
     this.releaseAllKeys();
+    this.stopModifierWatchdog();
+    // 拦截器是消费型的，串流结束后必须停止，否则应用界面收不到物理键盘
+    this.stopKeyInterceptor();
     // 对账记录不跨串流残留：新串流主机端状态全新，旧记录无意义
     this.releasedVkKeys.clear();
     this.modifierFlags = 0;
@@ -261,6 +267,127 @@ export class StreamInputHandler {
     this.releasedVkKeys.clear();
     if (resynced > 0) {
       Logger.info('StreamInputHandler', `[INPUT] 焦点恢复对账: ${resynced} 个按键状态已重新同步`);
+    }
+  }
+
+  // ── 修饰键卡死自愈（#153）──
+
+  /**
+   * 判断 HarmonyOS 键码是否为修饰键（Alt/Shift/Ctrl/Meta 左右）
+   */
+  private static isModifierKeyCode(keyCode: number): boolean {
+    return StreamInputHandler.RECONCILE_KEY_CODES.indexOf(keyCode) >= 0;
+  }
+
+  /**
+   * 修饰键 VK → HarmonyOS 键码
+   * 复用焦点对账的映射表，避免同一份对应关系出现两份实现而走偏
+   *
+   * @returns HarmonyOS 键码；非修饰键返回 -1
+   */
+  private static harmonyCodeForModifierVk(vkCode: number): number {
+    const index = StreamInputHandler.RECONCILE_VK_CODES.indexOf(vkCode);
+    return index >= 0 ? StreamInputHandler.RECONCILE_KEY_CODES[index] : -1;
+  }
+
+  /**
+   * 修饰键卡死自愈（#153）
+   *
+   * 背景：修饰键的 KEY_UP 可能被系统快捷键流程吞掉（典型 Alt+Tab 切换应用），
+   * 事件通道收不到这个 UP，于是本地掩码与主机端都会永久保持「按下」，
+   * 表现为主机把后续所有按键都当成 Alt+xxx，且只能靠反复按 Alt 恢复。
+   *
+   * 权威来源：OH_Input_GetKeyState（经 queryKeyStates 查询；低版本设备无该 API 时
+   * 返回 null，静默跳过）。
+   *
+   * 只纠正「本地认为按下、物理已抬起」这一个方向：
+   * - 这正是 #153 的失效形态，补发一条 KEY_UP 即可同时清掉本地掩码与主机端状态；
+   * - 反方向（物理按下、本地松开）由焦点恢复时的 reconcileKeyState 负责，放在这里
+   *   会在失焦期间误重按，也会和虚拟键盘的粘滞修饰键互相打架。
+   *
+   * 只查询本地认为仍按下的修饰键，没有修饰键时零开销（虚拟键盘直接调用
+   * sendKeyboardInput，不进入 activeVkKeys，因此不受影响）。
+   *
+   * @returns 本次纠正的修饰键数量
+   */
+  verifyStuckModifiers(): number {
+    if (!this.viewModel?.isConnected) return 0;
+
+    // 1. 收集本地认为仍按下的修饰键（无则直接返回，正常输入路径无额外开销）
+    const vkCodes: number[] = [];
+    const harmonyCodes: number[] = [];
+    this.activeVkKeys.forEach((vkCode: number) => {
+      const harmony = StreamInputHandler.harmonyCodeForModifierVk(vkCode);
+      if (harmony > 0) {
+        vkCodes.push(vkCode);
+        harmonyCodes.push(harmony);
+      }
+    });
+    if (vkCodes.length === 0) return 0;
+
+    const session = this.viewModel.getSession();
+    if (!session) return 0;
+
+    // 2. 查询真实物理状态（null = API 不可用，维持现状）
+    const states = InputInterceptorService.getInstance().queryKeyStates(harmonyCodes);
+    if (states === null || states.length !== harmonyCodes.length) return 0;
+
+    // 3. 仅对「物理已抬起」的修饰键补发 KEY_UP
+    let released = 0;
+    for (let i = 0; i < vkCodes.length; i++) {
+      if (states[i] !== 0) continue; // 0=已抬起；1=按下 / -1=查询失败，保守跳过
+      const vkCode = vkCodes[i];
+      // 先移除该键再按剩余按键重建掩码：左右变体共享一个修饰位，若一对中只有
+      // 一侧被自愈（如 LAlt/RAlt 同按、仅一侧的 KEY_UP 被吞），增量清位会把
+      // 仍被按住的另一侧的修饰状态一起丢掉
+      this.activeVkKeys.delete(vkCode);
+      this.rebuildModifierFlags();
+      session.sendKeyboardInput(vkCode, KEY_ACTION_UP, this.modifierFlags);
+      released++;
+    }
+    if (released > 0) {
+      Logger.info('StreamInputHandler',
+        `[INPUT] 修饰键卡死自愈: 补发 ${released} 个 KEY_UP (掩码=0x${this.modifierFlags.toString(16)})`);
+    }
+    return released;
+  }
+
+  /**
+   * 按当前仍按下的键（activeVkKeys）全量重建修饰键掩码
+   *
+   * 左右变体（LAlt/RAlt 等）共用一个修饰位，updateModifierFlags 的增量清位
+   * 无法表达「一对中只松开一侧」；自愈补发 KEY_UP 前用本方法重算，
+   * 保证掩码与剩余仍按下的修饰键一致。非修饰键不贡献任何位。
+   */
+  private rebuildModifierFlags(): void {
+    this.modifierFlags = 0;
+    this.activeVkKeys.forEach((vkCode: number) => {
+      this.updateModifierFlags(vkCode, true);
+    });
+  }
+
+  /**
+   * 启动修饰键卡死自愈看门狗
+   *
+   * 用户停止输入时（主机端 Alt 一直卡住、菜单栏被激活）也能在
+   * MODIFIER_WATCHDOG_INTERVAL 内自愈，不必等下一次按键。
+   */
+  startModifierWatchdog(): void {
+    if (this.modifierWatchdogTimer >= 0) return;
+    this.modifierWatchdogTimer = setInterval(() => {
+      this.verifyStuckModifiers();
+    }, StreamInputHandler.MODIFIER_WATCHDOG_INTERVAL);
+    Logger.info('StreamInputHandler', 'StreamInputHandler: 修饰键自愈看门狗已启动');
+  }
+
+  /**
+   * 停止修饰键卡死自愈看门狗
+   */
+  stopModifierWatchdog(): void {
+    if (this.modifierWatchdogTimer >= 0) {
+      clearInterval(this.modifierWatchdogTimer);
+      this.modifierWatchdogTimer = -1;
+      Logger.info('StreamInputHandler', 'StreamInputHandler: 修饰键自愈看门狗已停止');
     }
   }
 
@@ -556,6 +683,13 @@ export class StreamInputHandler {
     const keyCode = event.keyCode;
     const isGamepadKey = KeyboardTranslator.isGamepadKey(keyCode);
 
+    // 修饰键卡死自愈（#153）：非修饰键事件到达时先纠正残留的修饰键状态，
+    // 避免本次按键被主机当成 Alt+xxx。修饰键自身的事件交给正常路径处理，
+    // 否则每次松开修饰键都会重复补发一条 KEY_UP。
+    if (!StreamInputHandler.isModifierKeyCode(keyCode)) {
+      this.verifyStuckModifiers();
+    }
+
     if (!this.viewModel?.isConnected) {
       // 即使未连接，也要拦截手柄按键，防止触发系统导航
       return isGamepadKey;
@@ -623,8 +757,21 @@ export class StreamInputHandler {
   /**
    * 启动按键事件拦截器
    * 拦截被系统劫持的手柄按键和特殊键盘按键，转发给 GamepadManager / StreamingSession 处理
+   *
+   * 启动条件在内部判断（而非调用方判断），保证所有启动路径口径一致：
+   * - 设置开关 enableKeyInterceptor 关闭时不启动；
+   * - 无按键注入 API（API 13 以下老设备）时强制跳过——拦截器是消费型的，
+   *   音量键被吃掉后无法回注。与设置页的 keyInterceptorAvailable 检查一致，
+   *   这里兜底覆盖从未打开过设置页的场景。
    */
   startKeyInterceptor(): void {
+    if (this.viewModel?.inputSettings?.enableKeyInterceptor !== true) {
+      return;
+    }
+    if (!InputInterceptorService.getInstance().isInjectApiAvailable()) {
+      Logger.warn('StreamInputHandler', 'StreamInputHandler: 无按键注入 API（API 13+），跳过按键拦截器');
+      return;
+    }
     const result = InputInterceptorService.getInstance().start((event) => {
       if (!this.viewModel?.isConnected) {
         return;
@@ -632,6 +779,11 @@ export class StreamInputHandler {
       const keyCode = event.keyCode;
       // action: 1=KEY_DOWN, 2=KEY_UP
       const isPressed = event.action === 1;
+
+      // 修饰键卡死自愈（#153）：与 ArkUI 路径同源处理，非修饰键事件先纠正残留修饰键
+      if (!StreamInputHandler.isModifierKeyCode(keyCode)) {
+        this.verifyStuckModifiers();
+      }
 
       // 1. 手柄按键范围 (2300-2320 GC Kit / 110 标准 Mode) - 转发给 GamepadManager
       if ((keyCode >= 2300 && keyCode <= 2320) || keyCode === 110) {
@@ -724,6 +876,16 @@ export class StreamInputHandler {
         duration: 3500
       });
     }
+  }
+
+  /**
+   * 停止按键事件拦截器
+   *
+   * 拦截器是消费型的：被它接管的按键不会再传给应用自身。因此串流结束后必须
+   * 停止，否则停留在应用界面时物理键盘会全部失效（事件被吞掉且无处转发）。
+   */
+  stopKeyInterceptor(): void {
+    InputInterceptorService.getInstance().stop();
   }
 
   // ==================== 映射工具 ====================

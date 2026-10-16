@@ -42,6 +42,8 @@ export interface LifecycleCallbacks {
   releaseAllKeys: () => void;
   /** 对账按键状态（回前台时调用，补发仍物理按住的键） */
   reconcileKeyState: () => void;
+  /** 连接终止时立即停用按键拦截器与修饰键看门狗（不等清理流程，让物理键盘回到应用界面） */
+  stopKeyboardForwarding: () => void;
   /** Pause/resume the native high-rate VSync request with app visibility. */
   setNativeVSyncForeground: (foreground: boolean) => void;
 }
@@ -432,6 +434,11 @@ export class StreamLifecycleManager {
    */
   handleConnectionTerminated(errorCode: number): void {
     Logger.info('StreamLifecycleManager', `StreamPage: 连接终止, errorCode=${errorCode}, inBackground=${this.wasInBackground}`);
+
+    // 拦截器是消费型的：连接已终止但停留在串流页期间（典型：断连错误对话框
+    // 等待用户确认），物理按键会被吞掉且无处转发，键盘无法操作对话框。
+    // 立即停用，不等 stopStreaming 的清理流程；重连成功后由 reconnectStreaming 重新启动
+    this.callbacks?.stopKeyboardForwarding();
 
     const ML_ERROR_GRACEFUL_TERMINATION = 0;
     const ML_ERROR_NO_VIDEO_TRAFFIC = -100;

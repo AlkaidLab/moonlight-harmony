@@ -27,7 +27,7 @@ import { PerformanceOverlay } from '../components/PerformanceOverlay';
 import { OptionPickerDialog, OptionPickerDialogConfig } from '../components/dialogs/OptionPickerDialog';
 import { GameMenuDialog, GameMenuCallbacks } from '../components/dialogs/GameMenuDialog';
 import { StreamMenuManager } from '../components/StreamMenuManager';
-import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
+import { StreamViewModel, TouchMode, StreamConnectionState } from '../viewmodel/StreamViewModel';
 import { TouchInputHandler, TouchInputMode } from '../service/input/TouchInputHandler';
 import {
   DS5_TOUCH_FEEDBACK_CANCEL,
@@ -481,6 +481,10 @@ struct StreamPage {
       reconcileKeyState: () => {
         this.inputHandler.reconcileKeyState();
       },
+      stopKeyboardForwarding: () => {
+        this.inputHandler.stopKeyInterceptor();
+        this.inputHandler.stopModifierWatchdog();
+      },
       setNativeVSyncForeground: (foreground: boolean) => {
         try { MoonBridge.setNativeVSyncForeground(foreground); } catch (e) {
           Logger.warn('StreamPage', `NativeVSync visibility update failed: ${e}`);
@@ -847,6 +851,7 @@ struct StreamPage {
     // 停止按键拦截器、鼠标 Monitor 和 DisplaySync
     InputInterceptorService.getInstance().stop();
     this.inputHandler.stopMouseInterceptor();
+    this.inputHandler.stopModifierWatchdog();
     this.stopMouseKeepAlive();
 
     // 停止体感助手
@@ -1622,9 +1627,15 @@ struct StreamPage {
         await this.lifecycleManager.startBackgroundTask(this.context, this.appName || undefined);
       }
 
-      // 启动按键拦截器（拦截被系统劫持的手柄按键，如蓝牙手柄 Home 键）
-      if (this.viewModel.inputSettings?.enableKeyInterceptor) {
+      // 启动按键拦截器与修饰键自愈看门狗（开关与注入 API 检查在
+      // startKeyInterceptor 内部）。不能用 isConnected 复核：CONNECTED 等首帧
+      // 才翻转，此处是 CONNECTING。需排除两类过期链路：连接已终止
+      // （DISCONNECTED）；停止流程在原生 teardown 中尚未翻转状态（isStopping，
+      // 此时停止入口的 resetState 清理已先行执行，重启将无人回收）
+      if (!this.pageDisposed && !this.viewModel.isStopping &&
+          this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
         this.inputHandler.startKeyInterceptor();
+        this.inputHandler.startModifierWatchdog();
       }
 
       // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底
@@ -2121,6 +2132,16 @@ struct StreamPage {
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
       this.streamStartedAtMs = Date.now();
+
+      // 连接终止时已停用键盘转发，重连成功后恢复（条件判断在 startKeyInterceptor
+      // 内部；复核逻辑同 startStreaming：不能用等首帧才翻转的 isConnected，
+      // 并经 isStopping 排除与停止流程的交叠）
+      if (!this.pageDisposed && !this.viewModel.isStopping &&
+          this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
+        this.inputHandler.startKeyInterceptor();
+        this.inputHandler.startModifierWatchdog();
+      }
+
       await this.startClipboardSync();
       Logger.info('StreamPage', '[StreamPage] 重连串流成功');
 
