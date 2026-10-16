@@ -60,6 +60,7 @@ function load(relative, extra = '') {
     require(name) {
       if (name.endsWith('MoonBridge')) return { MoonBridge: bridge, BUTTON_ACTION_PRESS: 7, BUTTON_ACTION_RELEASE: 8 };
       if (name.endsWith('CustomKeyTypes')) return types;
+      if (name.endsWith('KeyMenuController')) return keyMenu;
       return {};
     }
   }, { filename: relative });
@@ -67,6 +68,7 @@ function load(relative, extra = '') {
 }
 const types = load('service/customkey/CustomKeyTypes.ets');
 const { MouseLookGestureHandler } = load('service/input/MouseLookGestureHandler.ets');
+const keyMenu = load('service/customkey/KeyMenuController.ets');
 const { CustomKeyManager } = load('service/customkey/CustomKeyManager.ets');
 let connected = true;
 const manager = new CustomKeyManager({ getSession: () => connected ? session : null });

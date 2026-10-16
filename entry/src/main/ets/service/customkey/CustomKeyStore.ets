@@ -34,6 +34,7 @@ import {
   MouseLookAction,
 } from './CustomKeyTypes';
 import { Logger } from '../../common/Logger';
+import { normalizeKeyMenuAction } from './KeyMenuController';
 
 /** 导出数据格式 */
 interface ExportData {
@@ -76,6 +77,7 @@ export class CustomKeyStore {
         CustomKeyStore.profiles = [];
       }
       CustomKeyStore.activeProfileName = await prefs.get(STORAGE_KEY_ACTIVE, '') as string;
+      CustomKeyStore.normalizeKeyMenus();
 
       // 如果没有任何配置，创建一个默认的
       if (CustomKeyStore.profiles.length === 0) {
@@ -161,11 +163,21 @@ export class CustomKeyStore {
     }
   }
 
+  private static normalizeKeyMenus(): void {
+    for (const profile of CustomKeyStore.profiles ?? []) {
+      if (!profile || !Array.isArray(profile.keys)) continue;
+      for (const key of profile.keys) {
+        if (key?.action?.type === 'keyMenu') key.action = normalizeKeyMenuAction(key.action);
+      }
+    }
+  }
+
   /**
    * 持久化到 Preferences
    * @returns 是否成功落盘（读取失败保护期或写入失败返回 false）
    */
   private static async save(): Promise<boolean> {
+    CustomKeyStore.normalizeKeyMenus();
     CustomKeyStore.normalizeMouseLookActions();
     if (CustomKeyStore.loadFailed) {
       Logger.warn('CustomKeyStore', '[CustomKeyStore] save 拒绝: 初始化读取失败，写盘会覆盖原数据，待下次启动重试读取');

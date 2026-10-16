@@ -2553,6 +2553,10 @@ struct StreamPage {
             onKeyAction: (action: KeyAction, isDown: boolean): void => {
               this.customKeyManager?.handleAction(action, isDown);
             },
+            onPulseAction: (action: KeyAction): void => {
+              this.customKeyManager?.handlePulseAction(action);
+            },
+            onInputReset: (): void => { this.customKeyManager?.reset(); },
             onAnalogStickMovement: (stick: string, x: number, y: number): void => {
               this.customKeyManager?.handleAnalogStickMovement(stick, x, y);
             },

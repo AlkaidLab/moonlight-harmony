@@ -32,6 +32,7 @@ export type DPadEditModeGetter = () => boolean;
 
 @Component
 export struct VirtualDPad {
+  @Prop @Watch('resetInput') inputEnabled: boolean = true;
   /** D-Pad 尺寸 (vp)，正方形边长 */
   @Prop dpadSize: number = 120;
   /** 常态颜色 */
@@ -67,6 +68,18 @@ export struct VirtualDPad {
     this.threshold33 = this.padSize * 0.33;
     this.threshold66 = this.padSize * 0.66;
     this.bandWidth = this.padSize * 0.33;
+  }
+
+  aboutToDisappear(): void {
+    this.resetInput();
+  }
+
+  private resetInput(): void {
+    this.trackingTouchId = -1;
+    if (this.currentDir !== 0) {
+      this.currentDir = 0;
+      this.onDirectionChange(0);
+    }
   }
 
   build() {
@@ -152,7 +165,7 @@ export struct VirtualDPad {
     .opacity(this.opacity_ / 100)
     .hitTestBehavior(HitTestMode.Block)
     .onTouch((event: TouchEvent): void => {
-      if (this.isEditMode()) return;
+      if (this.isEditMode() || !this.inputEnabled) return;
       event.stopPropagation();
       this.handleTouch(event);
     })
@@ -176,6 +189,8 @@ export struct VirtualDPad {
       const touch: TouchObject | null = this.findTrackedTouch(event.touches);
       if (touch !== null) {
         this.updateDirection(touch.x, touch.y);
+      } else {
+        this.resetInput();
       }
       return;
     }
@@ -190,10 +205,9 @@ export struct VirtualDPad {
           break;
         }
       }
-      if (isOurFinger) {
-        this.trackingTouchId = -1;
-        this.currentDir = 0;
-        this.onDirectionChange(0);
+      if (isOurFinger || (this.trackingTouchId >= 0 &&
+        ((event.type === TouchType.Cancel && changed.length === 0) || this.findTrackedTouch(event.touches) === null))) {
+        this.resetInput();
       }
     }
   }
