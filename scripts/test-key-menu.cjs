@@ -360,8 +360,9 @@ assert.equal(menuTaps, 1);
 // is added/removed. Global cancellation, focus loss and unmount release state.
 const { VirtualJoystick } = loadTouchComponent('components/virtual/VirtualJoystick.ets');
 const joystick = new VirtualJoystick();
-const moves = [];
+const moves = [], joystickDoubleClicks = [];
 joystick.onMovement = (x, y) => moves.push([x, y]); joystick.aboutToAppear();
+joystick.onDoubleClick = () => joystickDoubleClicks.push(true);
 joystick.handleTouch({ type: TouchType.Down, touches: [finger(1, 60, 0)], changedTouches: [finger(1, 60, 0)] });
 const firstMove = moves.length;
 joystick.handleTouch({ type: TouchType.Up, touches: [finger(1, 60, 0)], changedTouches: [finger(2)] });
@@ -370,6 +371,12 @@ joystick.aboutToDisappear();
 assert.deepEqual(moves.at(-1), [0, 0]);
 joystick.handleTouch({ type: TouchType.Move, touches: [finger(1, 60, 0)], changedTouches: [finger(1, 60, 0)] });
 assert.deepEqual(moves.at(-1), [0, 0]);
+joystick.aboutToAppear();
+for (const id of [8, 9]) {
+  joystick.handleTouch({ type: TouchType.Down, touches: [finger(id, 60, 0)], changedTouches: [finger(id, 60, 0)] });
+  joystick.handleTouch({ type: TouchType.Up, touches: [], changedTouches: [finger(id, 60, 0)] });
+}
+assert.equal(joystickDoubleClicks.length, 1);
 joystick.handleTouch({ type: TouchType.Down, touches: [finger(3, 60, 0)], changedTouches: [finger(3, 60, 0)] });
 joystick.handleTouch({ type: TouchType.Cancel, touches: [finger(3, 60, 0)], changedTouches: [] });
 assert.deepEqual(moves.at(-1), [0, 0]);

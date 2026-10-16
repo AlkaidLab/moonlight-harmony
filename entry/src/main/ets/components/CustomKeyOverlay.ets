@@ -636,7 +636,7 @@ export struct CustomKeyOverlay {
               })
             }
             .width('100%').height('100%').hitTestBehavior(HitTestMode.Transparent)
-          }, (menuKey: CustomKeyDef) => menuKey.id)
+          }, (menuKey: CustomKeyDef) => this.getKeyMenuRenderKey(menuKey))
         }
 
         // 缩放手柄：选中按键时显示在右下角
@@ -962,6 +962,11 @@ export struct CustomKeyOverlay {
   private getOpenKeyMenus(): CustomKeyDef[] {
     const key = this.getOpenKeyMenu();
     return key ? [key] : [];
+  }
+
+  private getKeyMenuRenderKey(menuKey: CustomKeyDef): string {
+    if (menuKey.action.type !== 'keyMenu') return menuKey.id;
+    return menuKey.id + '|' + (menuKey.action.autoClose !== false ? 'auto-close' : 'pinned');
   }
 
   private updateKeyMenuAutoClose(keyId: string, autoClose: boolean): void {

@@ -98,10 +98,14 @@ export struct VirtualJoystick {
   }
 
   private resetInput(): void {
+    this.resetInputState(false);
+  }
+
+  private resetInputState(preserveDoubleTap: boolean): void {
     const active = this.trackingTouchId >= 0 || this.isPressed;
     this.trackingTouchId = -1;
     this.isPressed = false;
-    this.lastTapTime = 0;
+    if (!preserveDoubleTap) this.lastTapTime = 0;
     if (active) this.resetStick();
   }
 
@@ -209,8 +213,12 @@ export struct VirtualJoystick {
           break;
         }
       }
-      if (isOurFinger || (this.trackingTouchId >= 0 &&
-        ((event.type === TouchType.Cancel && changed.length === 0) || this.findTrackedTouch(event.touches) === null))) {
+      if (isOurFinger) {
+        // 保留普通抬指后的时间戳，让连续两次按下仍能触发 L3/R3 双击。
+        this.resetInputState(event.type === TouchType.Up);
+      } else if (this.trackingTouchId >= 0 &&
+        ((event.type === TouchType.Cancel && changed.length === 0) || this.findTrackedTouch(event.touches) === null)) {
+        // 取消或丢失触点必须清掉双击窗口，避免下一次按下误判。
         this.resetInput();
       }
     }
