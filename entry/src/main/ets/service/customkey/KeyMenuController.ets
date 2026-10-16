@@ -5,6 +5,12 @@
 
 import { KeyAction, CustomKeyDef, ComboAction, KeyMenuAction, KeyActionItem, KeyboardAction } from './CustomKeyTypes';
 
+const KEY_MENU_MARGIN_VP = 12;
+const KEY_MENU_MAX_WIDTH_VP = 320;
+const KEY_MENU_THREE_COLUMN_WIDTH_VP = 360;
+const KEY_MENU_BASE_HEIGHT_VP = 112;
+const KEY_MENU_ROW_HEIGHT_VP = 76;
+
 /** 菜单只接受可点按动作，连续区域和嵌套容器仍由各自控件处理。 */
 export function isKeyMenuItemAction(action: KeyAction, depth: number = 0): boolean {
   if (!action || depth > 8) return false;
@@ -61,31 +67,35 @@ export interface KeyMenuLayout {
 /** 使用覆盖层实际尺寸避让屏幕边缘；项目多时仅在菜单内部滚动。 */
 export function resolveKeyMenuLayout(key: CustomKeyDef, viewWidth: number,
   viewHeight: number, count: number): KeyMenuLayout {
-  const margin = 8;
-  const width = Math.min(280, Math.max(0, viewWidth - margin * 2));
-  const columns = width >= 240 ? 3 : 2;
-  const height = Math.min(82 + Math.ceil(Math.max(1, count) / columns) * 66,
-    Math.max(0, viewHeight - margin * 2));
+  const width = Math.min(KEY_MENU_MAX_WIDTH_VP,
+    Math.max(0, viewWidth - KEY_MENU_MARGIN_VP * 2));
+  // 两列能保留足够的点击面积；需要更宽的窗口才使用三列，避免滚动条挤压第三列。
+  const columns = width >= KEY_MENU_THREE_COLUMN_WIDTH_VP ? 3 : 2;
+  const height = Math.min(KEY_MENU_BASE_HEIGHT_VP +
+    Math.ceil(Math.max(1, count) / columns) * KEY_MENU_ROW_HEIGHT_VP,
+    Math.max(0, viewHeight - KEY_MENU_MARGIN_VP * 2));
   const anchorX = key.xPercent * viewWidth;
   const anchorY = key.yPercent * viewHeight;
-  const above = anchorY - key.height / 2 - margin - height;
-  const below = anchorY + key.height / 2 + margin;
+  const above = anchorY - key.height / 2 - KEY_MENU_MARGIN_VP - height;
+  const below = anchorY + key.height / 2 + KEY_MENU_MARGIN_VP;
   let x = anchorX + key.width / 2 - width;
   let y = above;
-  if (above < margin) {
+  if (above < KEY_MENU_MARGIN_VP) {
     y = below;
-    if (below + height > viewHeight - margin) {
-      const right = anchorX + key.width / 2 + margin;
-      const left = anchorX - key.width / 2 - margin - width;
-      if (right + width <= viewWidth - margin || left >= margin) {
-        x = right + width <= viewWidth - margin ? right : left;
+    if (below + height > viewHeight - KEY_MENU_MARGIN_VP) {
+      const right = anchorX + key.width / 2 + KEY_MENU_MARGIN_VP;
+      const left = anchorX - key.width / 2 - KEY_MENU_MARGIN_VP - width;
+      if (right + width <= viewWidth - KEY_MENU_MARGIN_VP || left >= KEY_MENU_MARGIN_VP) {
+        x = right + width <= viewWidth - KEY_MENU_MARGIN_VP ? right : left;
         y = anchorY - height / 2;
       }
     }
   }
   return {
-    x: Math.max(margin, Math.min(viewWidth - width - margin, x)),
-    y: Math.max(margin, Math.min(viewHeight - height - margin, y)),
+    x: Math.max(KEY_MENU_MARGIN_VP,
+      Math.min(viewWidth - width - KEY_MENU_MARGIN_VP, x)),
+    y: Math.max(KEY_MENU_MARGIN_VP,
+      Math.min(viewHeight - height - KEY_MENU_MARGIN_VP, y)),
     width: width, height: height, columns: columns,
   };
 }

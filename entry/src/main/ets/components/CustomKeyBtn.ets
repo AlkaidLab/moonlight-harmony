@@ -124,9 +124,9 @@ export struct CustomKeyBtn {
         .textAlign(TextAlign.Center)
     }
     if (this.keyDef.action.type === 'keyMenu') {
-      Text(this.menuOpen ? '⌃' : '⌄')
-        .fontSize(10).fontColor(this.getForegroundColor())
-        .position({ x: this.keyDef.width / 2 - 5, y: this.keyDef.height - 14 })
+      SymbolGlyph($r(this.menuOpen ? 'sys.symbol.chevron_up' : 'sys.symbol.chevron_down'))
+        .fontSize(12).fontColor([this.getForegroundColor()])
+        .position({ x: this.keyDef.width / 2 - 6, y: this.keyDef.height - 16 })
     }
   }
 
