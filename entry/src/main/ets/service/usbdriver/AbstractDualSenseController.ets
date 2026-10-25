@@ -498,10 +498,13 @@ export abstract class AbstractDualSenseController extends AbstractController {
    * 普通 usbManager 轮询和 DDK 轮询必须经过同一条路径，避免高性能路径漏报 IMU。
    */
   private reportExtendedInput(): void {
-    if (this.capabilities & ControllerCapabilities.GYRO) {
+    const both = ControllerCapabilities.GYRO | ControllerCapabilities.ACCEL;
+    if ((this.capabilities & both) === both) {
+      this.notifyControllerMotionFrame(this.gyroX, this.gyroY, this.gyroZ,
+        this.accelX, this.accelY, this.accelZ);
+    } else if (this.capabilities & ControllerCapabilities.GYRO) {
       this.notifyControllerMotion(MotionType.GYRO, this.gyroX, this.gyroY, this.gyroZ);
-    }
-    if (this.capabilities & ControllerCapabilities.ACCEL) {
+    } else if (this.capabilities & ControllerCapabilities.ACCEL) {
       this.notifyControllerMotion(MotionType.ACCEL, this.accelX, this.accelY, this.accelZ);
     }
     if (this.capabilities & ControllerCapabilities.TOUCHPAD) {

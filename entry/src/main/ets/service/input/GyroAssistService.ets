@@ -28,7 +28,7 @@
  *   multiplier=1.0 → 180°/s 满偏; multiplier=10.0 → 18°/s 满偏
  */
 
-import { DeviceSensorService, LI_MOTION_TYPE_GYRO, SensorDataCallback } from './DeviceSensorService';
+import { DeviceSensorService, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
 import { Logger } from '../../common/Logger';
 
 // ==================== 常量 ====================
@@ -112,8 +112,6 @@ export class GyroAssistService {
   // —— 依赖 ——
   private sensorService: DeviceSensorService;
 
-  // —— 原始传感器回调（保存引用以便解除） ——
-  private originalSensorCallback: SensorDataCallback | null = null;
 
   private constructor() {
     this.sensorService = DeviceSensorService.getInstance();
@@ -130,6 +128,11 @@ export class GyroAssistService {
 
   get enabled(): boolean {
     return this._enabled;
+  }
+
+  isCapturingControllerMotion(controller: number): boolean {
+    return this._enabled && this.holdActive && this.sensorListening &&
+      this.sensorService.isGyroActive() && this.controllerNumber === controller;
   }
 
   get sensitivityMultiplier(): number {
@@ -269,8 +272,10 @@ export class GyroAssistService {
     this.gyroStickX = Math.round(scaledX * STICK_MAX);
     this.gyroStickY = Math.round(scaledY * STICK_MAX);
 
-    // 即时发送（对齐 Android updateContextWithGyroData → sendControllerInputPacket）
-    // 每次陀螺仪数据更新时立即构造融合后的手柄状态并发送，以实现 120Hz 的响应率
+    this.sendFusedState();
+  }
+
+  private sendFusedState(): void {
     if (this.sendCallback !== null) {
       const px = this.denoisePhys(this.lastPhysRightStickX);
       const py = this.denoisePhys(this.lastPhysRightStickY);
@@ -307,6 +312,8 @@ export class GyroAssistService {
     } else if (this._activationKey === GYRO_ACTIVATION_RT) {
       this.holdActive = rightTrigger >= TRIGGER_ACTIVATE_THRESHOLD;
     }
+
+    if (!wasActive && this.holdActive) this.sensorService.stopRemoteGyro();
 
     // 释放时清零陀螺仪数据
     if (wasActive && !this.holdActive) {
@@ -397,24 +404,17 @@ export class GyroAssistService {
       return;
     }
 
-    // 保存并设置数据回调
     this.sensorService.setControllerNumber(this.controllerNumber);
-    this.sensorService.setDataCallback(
-      (cn: number, mt: number, x: number, y: number, z: number) => {
+    this.sensorService.setLocalGyroConsumer(
+      (cn: number, mt: number, x: number, y: number, z: number): boolean => {
         this.onGyroData(cn, mt, x, y, z);
-        // 同时转发给原始回调（如果存在），保持 motion event 直通
-        if (this.originalSensorCallback) {
-          this.originalSensorCallback(cn, mt, x, y, z);
-        }
-      }
-    );
-
-    // 启动陀螺仪
-    this.sensorService.setMotionEventState(LI_MOTION_TYPE_GYRO, GYRO_REPORT_RATE_HZ);
-    this.sensorListening = true;
+        return this.isCapturingControllerMotion(cn);
+      }, GYRO_REPORT_RATE_HZ);
+    this.sensorListening = this.sensorService.isGyroActive();
 
     if (this._activationKey === GYRO_ACTIVATION_ALWAYS) {
       this.holdActive = true;
+      this.sensorService.stopRemoteGyro();
     }
 
     Logger.info('GyroAssistService', `[GyroAssist] 体感助手已启动 (灵敏度: ${this._sensitivityMultiplier}x, ` +
@@ -428,21 +428,14 @@ export class GyroAssistService {
   private stopListening(): void {
     if (!this.sensorListening) return;
 
-    this.sensorService.setMotionEventState(LI_MOTION_TYPE_GYRO, 0);
+    this.sensorService.setLocalGyroConsumer(null, 0);
     this.sensorListening = false;
     this.holdActive = false;
     this.gyroStickX = 0;
     this.gyroStickY = 0;
 
+    this.sendFusedState();
     Logger.info('GyroAssistService', '[GyroAssist] 体感助手已停止');
-  }
-
-  /**
-   * 设置原始传感器回调（用于 motion event 直通）
-   * 当体感助手活跃时，传感器数据同时发给助手和此回调
-   */
-  setOriginalSensorCallback(callback: SensorDataCallback | null): void {
-    this.originalSensorCallback = callback;
   }
 
   /**
@@ -461,7 +454,6 @@ export class GyroAssistService {
     this.holdActive = false;
     this.gyroStickX = 0;
     this.gyroStickY = 0;
-    this.originalSensorCallback = null;
     this.sendCallback = null;
   }
 

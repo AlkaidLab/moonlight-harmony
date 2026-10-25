@@ -20,6 +20,8 @@ import {
 } from './GameControllerService';
 import { SettingsService, SettingsKeys } from '../SettingsService';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
+import { ControllerMotionSink } from './ControllerMotionSink';
+import { GyroAssistService } from './GyroAssistService';
 import { DeviceSensorService, LI_MOTION_TYPE_ACCEL, LI_MOTION_TYPE_GYRO } from './DeviceSensorService';
 import { MoonBridge, Ds5HapticsIrV2Frame, AdaptiveTriggersFrame,
   TOUCH_EVENT_DOWN, TOUCH_EVENT_MOVE, TOUCH_EVENT_UP, TOUCH_EVENT_CANCEL,
@@ -104,7 +106,7 @@ export class GamepadManager implements UsbDriverListener {
   private usingDeviceSensorFallback = false;  // 当前是否正在使用设备传感器回退
   
   // 传感器数据发送回调（由 StreamingSession 设置）
-  private sensorDataCallback: ((controllerNumber: number, motionType: number, x: number, y: number, z: number) => void) | null = null;
+  private motionSink: ControllerMotionSink | null = null;
 
   /** 控制器触摸板原生触点回调（由 StreamingSession 设置，发送 SS_CONTROLLER_TOUCH） */
   private controllerTouchCallback: ((controllerNumber: number, eventType: number,
@@ -743,6 +745,7 @@ export class GamepadManager implements UsbDriverListener {
    * 发送断开通知并释放连接通知 Key，允许同一设备后续真正重连时再次提示。
    */
   private notifyGamepadDisconnectedByKey(notificationKey: string, slot: number): void {
+    this.motionSink?.resetControllerMotionEvents(slot, false);
     this.notifiedConnectionKeys.delete(notificationKey);
     this.listener?.onGamepadDisconnected(slot);
   }
@@ -2175,8 +2178,28 @@ export class GamepadManager implements UsbDriverListener {
 
     const slot = this.usbControllerIdToSlot.get(controllerId);
     if (slot === undefined) return;
-    if (this.requestedPhysicalMotion.has(`${slot}:${motionType}`) && this.sensorDataCallback) {
-      this.sensorDataCallback(slot, motionType, x, y, z);
+    if (motionType === LI_MOTION_TYPE_GYRO && GyroAssistService.getInstance().isCapturingControllerMotion(slot)) {
+      this.motionSink?.stopControllerMotionEvent(slot, false);
+      return;
+    }
+    if (this.requestedPhysicalMotion.has(`${slot}:${motionType}`) && this.motionSink) {
+      this.motionSink.sendControllerMotionEvent(slot, motionType, x, y, z);
+    }
+  }
+
+  reportControllerMotionFrame(controllerId: number, gx: number, gy: number, gz: number,
+    ax: number, ay: number, az: number): void {
+    if (!this.gamepadMotionSensorsEnabled || !this.motionSink) return;
+    const slot = this.usbControllerIdToSlot.get(controllerId);
+    if (slot === undefined) return;
+    const captured = GyroAssistService.getInstance().isCapturingControllerMotion(slot);
+    if (captured) this.motionSink.stopControllerMotionEvent(slot, false);
+    const gyro = !captured && this.requestedPhysicalMotion.has(`${slot}:${LI_MOTION_TYPE_GYRO}`);
+    const accel = this.requestedPhysicalMotion.has(`${slot}:${LI_MOTION_TYPE_ACCEL}`);
+    if (gyro && accel) this.motionSink.sendControllerMotionFrame(slot, gx, gy, gz, ax, ay, az);
+    else {
+      if (gyro) this.motionSink.sendControllerMotionEvent(slot, LI_MOTION_TYPE_GYRO, gx, gy, gz);
+      if (accel) this.motionSink.sendControllerMotionEvent(slot, LI_MOTION_TYPE_ACCEL, ax, ay, az);
     }
   }
 
@@ -2432,21 +2455,18 @@ export class GamepadManager implements UsbDriverListener {
    * 设置传感器数据回调
    * 由 StreamingSession 调用，用于将传感器数据发送到串流
    */
-  setSensorDataCallback(callback: ((controllerNumber: number, motionType: number, x: number, y: number, z: number) => void) | null): void {
-    this.sensorDataCallback = callback;
-
-    // 同时设置设备传感器服务的回调
-    if (callback) {
-      this.deviceSensorService.setDataCallback((controllerNumber, motionType, x, y, z) => {
-        if (this.sensorDataCallback) {
-          this.sensorDataCallback(controllerNumber, motionType, x, y, z);
-        }
-      });
-    } else {
-      this.deviceSensorService.setDataCallback(null);
-      this.deviceSensorService.disableAll();
-      this.usingDeviceSensorFallback = false;
+  setMotionSink(sink: ControllerMotionSink | null): void {
+    if (!sink) {
+      this.stopAllSensors();
+      return;
     }
+    this.motionSink = sink;
+    this.deviceSensorService.setDataCallback(
+      (controller: number, type: number, x: number, y: number, z: number): number => {
+        return sink.sendControllerMotionEvent(controller, type, x, y, z);
+      }, (controller: number): void => {
+        sink.stopControllerMotionEvent(controller, false);
+      });
   }
 
   /**
@@ -2570,10 +2590,12 @@ export class GamepadManager implements UsbDriverListener {
    * 停止所有传感器（串流断开时调用）
    */
   stopAllSensors(): void {
+    GyroAssistService.getInstance().dispose();
     this.deviceSensorService.disableAll();
+    for (let slot = 0; slot < 16; slot++) this.motionSink?.resetControllerMotionEvents(slot, false);
     this.requestedPhysicalMotion.clear();
     this.usingDeviceSensorFallback = false;
-    this.sensorDataCallback = null;
+    this.motionSink = null;
     Logger.info('GamepadManager', '[GAMEPAD] 所有传感器已停止');
   }
   
@@ -2581,6 +2603,10 @@ export class GamepadManager implements UsbDriverListener {
    * USB 设备移除
    */
   deviceRemoved(controller: AbstractController): void {
+    const motionSlot = this.getUsbControllerSlot(controller);
+    if (motionSlot !== undefined && this.requestedPhysicalMotion.has(`${motionSlot}:${LI_MOTION_TYPE_GYRO}`)) {
+      this.motionSink?.stopControllerMotionEvent(motionSlot, false);
+    }
     const controllerId = controller.getControllerId();
     const deviceKey = controller.getDeviceKey();
     Logger.info('GamepadManager', `[GAMEPAD-USB] 设备移除: ID=${controllerId}, Key=${deviceKey}`);

@@ -47,7 +47,11 @@ export type SensorDataCallback = (
   x: number,
   y: number,
   z: number
-) => void;
+) => number;
+
+export type SensorStopCallback = (controllerNumber: number) => void;
+export type LocalGyroCallback = (controllerNumber: number, motionType: number,
+  x: number, y: number, z: number) => boolean;
 
 /**
  * 设备传感器服务
@@ -68,8 +72,14 @@ export class DeviceSensorService {
 
   // 数据回调
   private dataCallback: SensorDataCallback | null = null;
+  private stopCallback: SensorStopCallback | null = null;
+  private localGyroCallback: LocalGyroCallback | null = null;
+  private localGyroRateHz: number = 0;
+  private gyroSamplingRateHz: number = 0;
+  private gyroGeneration: number = 0;
+  private accelGeneration: number = 0;
 
-  // 去重：上一次值
+  // 最近的原始读数，仅用于调试展示
   private lastGyroValues: number[] = [0, 0, 0];
   private lastAccelValues: number[] = [0, 0, 0];
 
@@ -137,8 +147,20 @@ export class DeviceSensorService {
   /**
    * 设置数据回调
    */
-  setDataCallback(callback: SensorDataCallback | null): void {
+  setDataCallback(callback: SensorDataCallback | null, stopCallback: SensorStopCallback | null = null): void {
     this.dataCallback = callback;
+    this.stopCallback = stopCallback;
+  }
+
+  /** Local acquisition demand and consumer are independent of host forwarding. */
+  setLocalGyroConsumer(callback: LocalGyroCallback | null, rateHz: number): void {
+    this.localGyroCallback = callback;
+    this.localGyroRateHz = callback ? rateHz : 0;
+    this.updateGyroSubscription();
+  }
+
+  stopRemoteGyro(): void {
+    if (this.stopCallback) this.stopCallback(this.controllerNumber);
   }
 
   /**
@@ -228,7 +250,16 @@ export class DeviceSensorService {
    * 启用/禁用陀螺仪
    */
   private setGyroState(reportRateHz: number): void {
-    // 先取消已有订阅
+    this.gyroReportRateHz = Math.max(0, reportRateHz);
+    if (reportRateHz === 0) this.stopRemoteGyro();
+    this.updateGyroSubscription();
+  }
+
+  private updateGyroSubscription(): void {
+    const rateHz = Math.min(MAX_SENSOR_REPORT_RATE_HZ,
+      Math.max(this.gyroReportRateHz, this.localGyroRateHz));
+    if (this.gyroEnabled && rateHz === this.gyroSamplingRateHz) return;
+    const generation = ++this.gyroGeneration;
     if (this.gyroEnabled) {
       try {
         sensor.off(sensor.SensorId.GYROSCOPE);
@@ -237,53 +268,28 @@ export class DeviceSensorService {
       }
       this.gyroEnabled = false;
     }
-
-    this.gyroReportRateHz = reportRateHz;
-
-    if (reportRateHz === 0) {
-      Logger.info('DeviceSensorService', '[DeviceSensor] 陀螺仪已禁用');
-      // 发送归零事件以确保虚拟控制器静止
-      if (this.dataCallback) {
-        this.dataCallback(this.controllerNumber, LI_MOTION_TYPE_GYRO, 0, 0, 0);
-      }
-      return;
-    }
-
-    // Sensor Service Kit 的 interval 使用纳秒，且支持的最小间隔为 5 ms。
-    const intervalNs = Math.floor(
-      NANOSECONDS_PER_SECOND / Math.min(MAX_SENSOR_REPORT_RATE_HZ, reportRateHz)
-    );
-
+    this.gyroSamplingRateHz = rateHz;
+    if (rateHz === 0) return;
+    const intervalNs = Math.floor(NANOSECONDS_PER_SECOND / rateHz);
     try {
       sensor.on(sensor.SensorId.GYROSCOPE, (data: sensor.GyroscopeResponse) => {
-        // 去重
-        if (data.x === this.lastGyroValues[0] &&
-            data.y === this.lastGyroValues[1] &&
-            data.z === this.lastGyroValues[2]) {
-          return;
-        }
+        if (generation !== this.gyroGeneration || !this.gyroEnabled) return;
         this.lastGyroValues[0] = data.x;
         this.lastGyroValues[1] = data.y;
         this.lastGyroValues[2] = data.z;
-
-        // 设备传感器返回 rad/s，需要转换为 deg/s
-        const rawX = data.x * RAD_TO_DEG;
-        const rawY = data.y * RAD_TO_DEG;
-        const rawZ = data.z * RAD_TO_DEG;
-
-        // 方向校正
-        const corrected = this.correctOrientation(rawX, rawY, rawZ);
-        const cx = corrected[0];
-        const cy = corrected[1];
-        const cz = corrected[2];
-
-        if (this.dataCallback) {
-          this.dataCallback(this.controllerNumber, LI_MOTION_TYPE_GYRO, cx, cy, cz);
+        const corrected = this.correctOrientation(data.x * RAD_TO_DEG,
+          data.y * RAD_TO_DEG, data.z * RAD_TO_DEG);
+        const consumed = this.localGyroCallback
+          ? this.localGyroCallback(this.controllerNumber, LI_MOTION_TYPE_GYRO,
+            corrected[0], corrected[1], corrected[2]) : false;
+        if (consumed) {
+          this.stopRemoteGyro();
+        } else if (this.gyroReportRateHz > 0 && this.dataCallback) {
+          this.dataCallback(this.controllerNumber, LI_MOTION_TYPE_GYRO,
+            corrected[0], corrected[1], corrected[2]);
         }
       }, { interval: intervalNs });
-
       this.gyroEnabled = true;
-      Logger.info('DeviceSensorService', `[DeviceSensor] 陀螺仪已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
     } catch (err) {
       Logger.error('DeviceSensorService', `[DeviceSensor] 启用陀螺仪失败: ${err}`);
       this.gyroAvailable = false;
@@ -294,7 +300,7 @@ export class DeviceSensorService {
    * 启用/禁用加速度计
    */
   private setAccelState(reportRateHz: number): void {
-    // 先取消已有订阅
+    const generation = ++this.accelGeneration;
     if (this.accelEnabled) {
       try {
         sensor.off(sensor.SensorId.ACCELEROMETER);
@@ -303,48 +309,21 @@ export class DeviceSensorService {
       }
       this.accelEnabled = false;
     }
-
-    this.accelReportRateHz = reportRateHz;
-
-    if (reportRateHz === 0) {
-      Logger.info('DeviceSensorService', '[DeviceSensor] 加速度计已禁用');
-      return;
-    }
-
-    const intervalNs = Math.floor(
-      NANOSECONDS_PER_SECOND / Math.min(MAX_SENSOR_REPORT_RATE_HZ, reportRateHz)
-    );
-
+    this.accelReportRateHz = Math.max(0, reportRateHz);
+    if (reportRateHz === 0) return;
+    const intervalNs = Math.floor(NANOSECONDS_PER_SECOND /
+      Math.min(MAX_SENSOR_REPORT_RATE_HZ, reportRateHz));
     try {
       sensor.on(sensor.SensorId.ACCELEROMETER, (data: sensor.AccelerometerResponse) => {
-        // 去重
-        if (data.x === this.lastAccelValues[0] &&
-            data.y === this.lastAccelValues[1] &&
-            data.z === this.lastAccelValues[2]) {
-          return;
-        }
+        if (generation !== this.accelGeneration || !this.accelEnabled) return;
         this.lastAccelValues[0] = data.x;
         this.lastAccelValues[1] = data.y;
         this.lastAccelValues[2] = data.z;
-
-        // 加速度计数据单位已经是 m/s²，无需转换
-        const rawX = data.x;
-        const rawY = data.y;
-        const rawZ = data.z;
-
-        // 方向校正
-        const corrected = this.correctOrientation(rawX, rawY, rawZ);
-        const cx = corrected[0];
-        const cy = corrected[1];
-        const cz = corrected[2];
-
-        if (this.dataCallback) {
-          this.dataCallback(this.controllerNumber, LI_MOTION_TYPE_ACCEL, cx, cy, cz);
-        }
+        const corrected = this.correctOrientation(data.x, data.y, data.z);
+        if (this.dataCallback) this.dataCallback(this.controllerNumber, LI_MOTION_TYPE_ACCEL,
+          corrected[0], corrected[1], corrected[2]);
       }, { interval: intervalNs });
-
       this.accelEnabled = true;
-      Logger.info('DeviceSensorService', `[DeviceSensor] 加速度计已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
     } catch (err) {
       Logger.error('DeviceSensorService', `[DeviceSensor] 启用加速度计失败: ${err}`);
       this.accelAvailable = false;
@@ -355,9 +334,12 @@ export class DeviceSensorService {
    * 禁用所有传感器
    */
   disableAll(): void {
+    this.localGyroCallback = null;
+    this.localGyroRateHz = 0;
     this.setGyroState(0);
     this.setAccelState(0);
     this.dataCallback = null;
+    this.stopCallback = null;
     Logger.info('DeviceSensorService', '[DeviceSensor] 所有传感器已禁用');
   }
 

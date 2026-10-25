@@ -102,6 +102,9 @@ napi_value MoonBridge_SendMultiControllerInput(napi_env env, napi_callback_info 
 napi_value MoonBridge_SendControllerArrivalEvent(napi_env env, napi_callback_info info);
 napi_value MoonBridge_SendControllerTouchEvent(napi_env env, napi_callback_info info);
 napi_value MoonBridge_SendControllerMotionEvent(napi_env env, napi_callback_info info);
+napi_value MoonBridge_SendControllerMotionFrame(napi_env env, napi_callback_info info);
+napi_value MoonBridge_StopControllerMotionEvent(napi_env env, napi_callback_info info);
+napi_value MoonBridge_ResetControllerMotionEvents(napi_env env, napi_callback_info info);
 napi_value MoonBridge_SendControllerBatteryEvent(napi_env env, napi_callback_info info);
 
 // =============================================================================

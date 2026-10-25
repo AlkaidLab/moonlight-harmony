@@ -985,6 +985,16 @@ export class UsbDriverService implements UsbDriverListener {
     }
   }
 
+  reportControllerMotionFrame(controllerId: number, gx: number, gy: number, gz: number,
+    ax: number, ay: number, az: number): void {
+    if (this.listener?.reportControllerMotionFrame) {
+      this.listener.reportControllerMotionFrame(controllerId, gx, gy, gz, ax, ay, az);
+    } else {
+      this.reportControllerMotion(controllerId, 2, gx, gy, gz);
+      this.reportControllerMotion(controllerId, 1, ax, ay, az);
+    }
+  }
+
   reportTouchpadInput(
     controllerId: number,
     active: boolean,

@@ -467,8 +467,8 @@ export class SwitchProController extends AbstractController {
    * 报告运动数据
    */
   private reportMotion(): void {
-    this.notifyControllerMotion(MotionType.GYRO, this.gyroX, this.gyroY, this.gyroZ);
-    this.notifyControllerMotion(MotionType.ACCEL, this.accelX * 9.81, this.accelY * 9.81, this.accelZ * 9.81);
+    this.notifyControllerMotionFrame(this.gyroX, this.gyroY, this.gyroZ,
+      this.accelX * 9.81, this.accelY * 9.81, this.accelZ * 9.81);
   }
   
   /**

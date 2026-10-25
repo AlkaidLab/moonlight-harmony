@@ -76,6 +76,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "sendControllerArrivalEvent", nullptr, MoonBridge_SendControllerArrivalEvent, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "sendControllerTouchEvent", nullptr, MoonBridge_SendControllerTouchEvent, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "sendControllerMotionEvent", nullptr, MoonBridge_SendControllerMotionEvent, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "sendControllerMotionFrame", nullptr, MoonBridge_SendControllerMotionFrame, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "stopControllerMotionEvent", nullptr, MoonBridge_StopControllerMotionEvent, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "resetControllerMotionEvents", nullptr, MoonBridge_ResetControllerMotionEvents, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "sendControllerBatteryEvent", nullptr, MoonBridge_SendControllerBatteryEvent, nullptr, nullptr, nullptr, napi_default, nullptr },
         
         // 触摸输入

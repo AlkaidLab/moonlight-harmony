@@ -195,6 +195,7 @@ export struct SensorTestView {
             this.internalAccelMaxAbs = maxVal;
           }
         }
+        return 0;
       }
     );
 
@@ -244,6 +245,7 @@ export struct SensorTestView {
             this.internalAccelMaxAbs = maxVal;
           }
         }
+        return 0;
       }
     );
 

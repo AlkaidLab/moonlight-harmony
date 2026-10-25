@@ -66,6 +66,7 @@ import {
 } from './MoonBridge';
 import nativeLib from 'libmoonlight_nativelib.so';
 import { Logger } from '../../common/Logger';
+import { ControllerMotionSink } from '../input/ControllerMotionSink';
 import { ControllerInputState as ControllerState, mergeControllerInput } from '../input/ControllerInputMerge';
 
 // =============================================================================
@@ -171,7 +172,7 @@ export type ResolutionChangedCallback = (width: number, height: number) => void;
 // Native 模块接口
 // =============================================================================
 
-interface NativeModule {
+interface NativeModule extends ControllerMotionSink {
   init(callbacks: StreamCallbacks): void;
   startConnection(
     address: string, appVersion: string, gfeVersion: string, rtspSessionUrl: string,
@@ -236,9 +237,6 @@ interface NativeModule {
   ): number;
   getHostFeatureFlags(): number;
   sendClientSdrWhiteNits(nits: number): number;
-  sendControllerMotionEvent(
-    controllerNumber: number, motionType: number, x: number, y: number, z: number
-  ): number;
   sendControllerBatteryEvent(
     controllerNumber: number, batteryState: number, batteryPercentage: number
   ): number;
@@ -477,6 +475,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   /** 用户主动发起的停止（菜单断开/退出游戏），抑制 connectionTerminated 回调弹窗 */
   private userInitiatedStop: boolean = false;
   private isStartingConnection: boolean = false;
+  private motionCallbacksActive: boolean = false;
   /** 回调代次:native 各回调走独立 TSFN,无跨队列顺序;init() 重注册时递增,用于丢弃旧代次迟到回调 */
   private static callbackGeneration: number = 0;
   private connectionStartPromise: Promise<number> | null = null;
@@ -771,9 +770,10 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     // 必须在 isRunning 翻转前注销：回调闭包以 isRunning 守卫，
     // 翻转后 CANCEL 无法发出，主机侧活动触点将悬死到断连
     GamepadManager.getInstance().setControllerTouchCallback(null);
-    this.isRunning = false;
-    this.resetControllerState();
     GamepadManager.getInstance().stopAllSensors();
+    this.isRunning = false;
+    this.motionCallbacksActive = false;
+    this.resetControllerState();
     this.audioVibrationService.stop();
     NetworkBoostService.getInstance().stop();
     await this.cleanup();
@@ -799,6 +799,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     // 与 stop() 相同：在 isRunning 翻转前注销触点回调并发送 CANCEL
     GamepadManager.getInstance().setControllerTouchCallback(null);
     this.isRunning = false;
+    this.motionCallbacksActive = false;
     NetworkBoostService.getInstance().stop();
     await this.cleanup();
     return quitSuccess;
@@ -1459,6 +1460,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     // mutable member here would let an old closure observe the next session's
     // generation and accept a delayed HDR notification.
     const generation = ++StreamingSession.callbackGeneration;
+    this.motionCallbacksActive = true;
 
     const callbacks: StreamCallbacks = {
       drSetup: (videoFormat: number, width: number, height: number, redrawRate: number): void => {
@@ -1511,6 +1513,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         Logger.error('StreamingSession', `连接阶段失败: stage=${stage} (${name}), error=${errorCode}`);
       },
       connectionStarted: (): void => {
+        if (generation !== StreamingSession.callbackGeneration) return;
         Logger.info('StreamingSession', '连接已建立');
         this.isRunning = true;
         this.readHostFeatureFlags();
@@ -1526,8 +1529,10 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         this.startMicrophoneIfNeeded();
       },
       connectionTerminated: (errorCode: number): void => {
+        if (generation !== StreamingSession.callbackGeneration) return;
         Logger.info('StreamingSession', `连接已终止: ${errorCode}, userInitiated=${this.userInitiatedStop}`);
         this.isRunning = false;
+        this.motionCallbacksActive = false;
         this.stopBrightnessUpdates();
         this.hostFeatureFlags = 0;
         this.hostFeatureFlagsKnown = false;
@@ -1605,6 +1610,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         GamepadManager.getInstance().handleRumbleTriggers(cn, lt, rt);
       },
       setMotionEventState: (cn: number, motionType: number, rateHz: number): void => {
+        if (!this.motionCallbacksActive || generation !== StreamingSession.callbackGeneration) return;
         Logger.info('StreamingSession', `传感器状态: controller=${cn}, type=${motionType}, rate=${rateHz}`);
         GamepadManager.getInstance().handleSetMotionEventState(cn, motionType, rateHz);
       },
@@ -1621,11 +1627,26 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     };
 
     // 设置传感器数据回调
-    GamepadManager.getInstance().setSensorDataCallback(
-      (cn: number, motionType: number, x: number, y: number, z: number): void => {
-        if (this.isRunning) this.nativeModule.sendControllerMotionEvent(cn, motionType, x, y, z);
+    const motionSink: ControllerMotionSink = {
+      sendControllerMotionEvent: (cn: number, type: number, x: number, y: number, z: number): number => {
+        return this.isRunning && generation === StreamingSession.callbackGeneration
+          ? this.nativeModule.sendControllerMotionEvent(cn, type, x, y, z) : -2;
+      },
+      sendControllerMotionFrame: (cn: number, gx: number, gy: number, gz: number,
+        ax: number, ay: number, az: number): number => {
+        return this.isRunning && generation === StreamingSession.callbackGeneration
+          ? this.nativeModule.sendControllerMotionFrame(cn, gx, gy, gz, ax, ay, az) : -2;
+      },
+      stopControllerMotionEvent: (cn: number, onlyFromFrame: boolean): number => {
+        return this.isRunning && generation === StreamingSession.callbackGeneration
+          ? this.nativeModule.stopControllerMotionEvent(cn, onlyFromFrame) : -2;
+      },
+      resetControllerMotionEvents: (cn: number, clearDemand: boolean): number => {
+        return this.isRunning && generation === StreamingSession.callbackGeneration
+          ? this.nativeModule.resetControllerMotionEvents(cn, clearDemand) : -2;
       }
-    );
+    };
+    GamepadManager.getInstance().setMotionSink(motionSink);
 
     // USB DS5 物理触摸板原生触点转发（主机需宣告 controller-touch 扩展）
     GamepadManager.getInstance().setControllerTouchCallback(
@@ -2085,6 +2106,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     if (!hadSlot) return;
 
     const remainingMask = this.activeGamepadMask & ~1;
+    this.nativeModule.resetControllerMotionEvents(0, true);
     this.nativeModule.sendMultiControllerInput(0, remainingMask, 0, 0, 0, 0, 0, 0, 0);
     this.activeGamepadMask = remainingMask;
     this.virtualControllerArrived = false;
@@ -2284,6 +2306,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private async cleanup(): Promise<void> {
     Logger.info('StreamingSession', '清理串流资源');
     this.isRunning = false;
+    this.motionCallbacksActive = false;
     this.stopBrightnessUpdates();
     // USB/IP 反向隧道随会话回收（stop/quit/启动失败共用此路径）
     UsbForwardingService.getInstance().endStreamForwarding();

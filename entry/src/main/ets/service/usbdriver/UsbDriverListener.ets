@@ -57,6 +57,8 @@ export interface UsbDriverListener {
     y: number,
     z: number
   ): void;
+  reportControllerMotionFrame?(controllerId: number, gx: number, gy: number, gz: number,
+    ax: number, ay: number, az: number): void;
 
   /**
    * 报告触摸板输入数据

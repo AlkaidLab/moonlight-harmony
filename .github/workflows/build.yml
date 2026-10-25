@@ -180,6 +180,7 @@ jobs:
         test -n "$TS_PATH"
         npm run test:mouse-look -- "$TS_PATH"
         npm run test:key-menu -- "$TS_PATH"
+        npm run test:controller-motion -- "$TS_PATH"
 
     # ── build-profile.json5 ──
     - name: Create build profile (unsigned)

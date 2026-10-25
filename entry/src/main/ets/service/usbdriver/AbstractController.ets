@@ -292,6 +292,16 @@ export abstract class AbstractController {
     }
   }
 
+  protected notifyControllerMotionFrame(gx: number, gy: number, gz: number,
+    ax: number, ay: number, az: number): void {
+    if (this.listener?.reportControllerMotionFrame) {
+      this.listener.reportControllerMotionFrame(this.deviceId, gx, gy, gz, ax, ay, az);
+    } else {
+      this.notifyControllerMotion(2, gx, gy, gz);
+      this.notifyControllerMotion(1, ax, ay, az);
+    }
+  }
+
   /**
    * 报告触摸板数据
    */

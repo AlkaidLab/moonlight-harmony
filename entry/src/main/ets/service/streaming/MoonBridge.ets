@@ -567,6 +567,19 @@ class MoonBridgeClass {
     return nativeLib.sendControllerMotionEvent(controllerNumber, motionType, x, y, z);
   }
 
+  sendControllerMotionFrame(controller: number, gx: number, gy: number, gz: number,
+    ax: number, ay: number, az: number): number {
+    return nativeLib.sendControllerMotionFrame(controller, gx, gy, gz, ax, ay, az);
+  }
+
+  stopControllerMotionEvent(controller: number, onlyFromFrame: boolean): number {
+    return nativeLib.stopControllerMotionEvent(controller, onlyFromFrame);
+  }
+
+  resetControllerMotionEvents(controller: number, clearDemand: boolean): number {
+    return nativeLib.resetControllerMotionEvents(controller, clearDemand);
+  }
+
   sendControllerBatteryEvent(
     controllerNumber: number,
     batteryState: number,

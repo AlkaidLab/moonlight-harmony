@@ -78,6 +78,7 @@ scripts/*
 !scripts/test-display-frame-rate.cjs
 !scripts/test-mouse-look.cjs
 !scripts/test-key-menu.cjs
+!scripts/test-controller-motion.cjs
 
 # Local release artifacts
 release-symbols/

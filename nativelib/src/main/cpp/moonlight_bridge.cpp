@@ -1028,6 +1028,44 @@ napi_value MoonBridge_SendControllerMotionEvent(napi_env env, napi_callback_info
     return result;
 }
 
+napi_value MoonBridge_SendControllerMotionFrame(napi_env env, napi_callback_info info) {
+    size_t argc = 7;
+    napi_value args[7];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    int32_t controller = -1;
+    double values[6] = {};
+    bool valid = argc == 7 && GetInt32(env, args[0], &controller) && controller >= 0 && controller < 16;
+    for (size_t i = 0; valid && i < 6; i++) valid = GetDouble(env, args[i + 1], &values[i]);
+    int ret = valid ? LiSendControllerMotionFrame(controller, values[0], values[1], values[2],
+        values[3], values[4], values[5]) : -3;
+    napi_value result;
+    napi_create_int32(env, ret, &result);
+    return result;
+}
+
+static napi_value ControllerMotionLifecycle(napi_env env, napi_callback_info info, bool reset) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    int32_t controller = -1;
+    bool flag = false;
+    bool valid = argc == 2 && GetInt32(env, args[0], &controller) &&
+        controller >= 0 && controller < 16 && GetBool(env, args[1], &flag);
+    int ret = valid ? (reset ? LiResetControllerMotionEvents(controller, flag) :
+        LiStopControllerMotionEvent(controller, flag)) : -3;
+    napi_value result;
+    napi_create_int32(env, ret, &result);
+    return result;
+}
+
+napi_value MoonBridge_StopControllerMotionEvent(napi_env env, napi_callback_info info) {
+    return ControllerMotionLifecycle(env, info, false);
+}
+
+napi_value MoonBridge_ResetControllerMotionEvents(napi_env env, napi_callback_info info) {
+    return ControllerMotionLifecycle(env, info, true);
+}
+
 napi_value MoonBridge_SendControllerBatteryEvent(napi_env env, napi_callback_info info) {
     size_t argc = 3;
     napi_value args[3];
