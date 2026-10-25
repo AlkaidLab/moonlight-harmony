@@ -411,6 +411,11 @@ export class GyroAssistService {
         return this.isCapturingControllerMotion(cn);
       }, GYRO_REPORT_RATE_HZ);
     this.sensorListening = this.sensorService.isGyroActive();
+    if (!this.sensorListening) {
+      this.sensorService.setLocalGyroConsumer(null, 0);
+      Logger.warn('GyroAssistService', '[GyroAssist] 陀螺仪订阅失败');
+      return;
+    }
 
     if (this._activationKey === GYRO_ACTIVATION_ALWAYS) {
       this.holdActive = true;

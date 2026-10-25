@@ -85,3 +85,5 @@ release-symbols/
 
 # Standalone SDK checkout used by CI/local native builds.
 /audio-haptics-sdk/
+
+!scripts/load-sdk-typescript.cjs

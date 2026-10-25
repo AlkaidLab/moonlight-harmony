@@ -798,6 +798,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
     // 与 stop() 相同：在 isRunning 翻转前注销触点回调并发送 CANCEL
     GamepadManager.getInstance().setControllerTouchCallback(null);
+    GamepadManager.getInstance().stopAllSensors();
     this.isRunning = false;
     this.motionCallbacksActive = false;
     NetworkBoostService.getInstance().stop();

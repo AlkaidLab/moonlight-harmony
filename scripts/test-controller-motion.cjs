@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const ts = require(process.argv[2] || 'typescript');
+const ts = require('./load-sdk-typescript.cjs')();
 const root = path.resolve(__dirname, '..');
 const input = path.join(root, 'entry/src/main/ets/service/input');
 const managerText = fs.readFileSync(path.join(input, 'GamepadManager.ets'), 'utf8');
@@ -23,8 +23,9 @@ function compile(source) {
 }
 function fixture() {
   const listeners = new Map(), modules = {}, remote = [], local = [];
+  let rejectSubscription = false;
   const sensor = { SensorId: { GYROSCOPE: 1, ACCELEROMETER: 2 }, once() {},
-    on(id, callback) { listeners.set(id, callback); }, off(id) { listeners.delete(id); } };
+    on(id, callback) { if (rejectSubscription) throw Error('subscription failed'); listeners.set(id, callback); }, off(id) { listeners.delete(id); } };
   const Logger = { info() {}, warn() {}, error() {} };
   function load(name) {
     if (modules[name]) return modules[name];
@@ -61,7 +62,7 @@ function fixture() {
   }
   context.manager.setMotionSink(sink);
   return { device, assist, manager: context.manager, sink, remote, local, listeners,
-    fail(value) { result = value; }, emit(x, y = 0, z = 0) { listeners.get(1)?.({ x, y, z }); } };
+    fail(value) { result = value; }, failSubscription(value) { rejectSubscription = value; }, emit(x, y = 0, z = 0) { listeners.get(1)?.({ x, y, z }); } };
 }
 {
   const f = fixture();
@@ -75,6 +76,14 @@ function fixture() {
   const before = f.remote.length;
   old({ x: 9, y: 0, z: 0 }); assert.equal(f.remote.length, before);
   f.emit(.1); assert.equal(f.remote.length, before + 1); // Same reading resumes without a stale cache.
+}
+{
+  const f = fixture(); f.failSubscription(true); f.assist.setEnabled(true);
+  assert.equal(f.device.isGyroActive(), false);
+  assert.equal(f.remote.length, 0); // Failed local acquisition must not stop remote motion.
+  f.failSubscription(false); f.device.setMotionEventState(2, 100); f.emit(.1);
+  assert.equal(f.local.length, 0); // A later host subscription must not revive the failed consumer.
+  assert.equal(f.remote.at(-1)[0], 'sendControllerMotionEvent');
 }
 for (const assistFirst of [false, true]) {
   const f = fixture();
@@ -144,4 +153,24 @@ for (const assistFirst of [false, true]) {
     assert.equal(session.isRunning, false);
   }
 }
-console.log('Motion adapters: repeated samples, resume, local/host demand, frames and stale callbacks passed.');
+// Execute quitApp itself to check that sensor teardown runs while sending is still allowed.
+async function testQuitLifecycle() {
+  const text = fs.readFileSync(path.join(root, 'entry/src/main/ets/service/streaming/StreamingSession.ets'), 'utf8');
+  const tree = ts.createSourceFile('StreamingSession.ts', text, ts.ScriptTarget.ES2020, true);
+  const cls = tree.statements.find(node => ts.isClassDeclaration(node) && node.name.text === 'StreamingSession');
+  const quit = cls.members.find(node => node.name && node.name.getText(tree) === 'quitApp').getText(tree);
+  const calls = [], context = { assert, calls, Logger: { info() {}, error() {} },
+    GamepadManager: { getInstance: () => ({ setControllerTouchCallback() {},
+      stopAllSensors() { assert.equal(context.session.isRunning, true); calls.push('sensors'); } }) },
+    NetworkBoostService: { getInstance: () => ({ stop() {} }) } };
+  vm.runInNewContext(compile(`class Session {
+    isRunning=true; motionCallbacksActive=true; nvHttp=null;
+    ${quit}
+    async cleanup() { assert.equal(calls.join(','),'sensors'); calls.push('cleanup'); }
+  }; globalThis.session=new Session();`), context);
+  assert.equal(await context.session.quitApp(), false);
+  assert.deepEqual(calls, ['sensors', 'cleanup']);
+}
+testQuitLifecycle().then(() => {
+  console.log('Motion adapters: samples, source stops, local/host demand, failed subscriptions, quit and stale callbacks passed.');
+}).catch(error => { console.error(error); process.exitCode = 1; });

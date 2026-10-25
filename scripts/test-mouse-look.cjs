@@ -3,40 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-let ts;
-if (process.argv[2]) {
-  ts = require(path.resolve(process.argv[2]));
-} else {
-  try {
-    ts = require('typescript');
-  } catch {
-    const roots = [];
-    if (process.env.DEVECO_SDK_HOME) roots.push(process.env.DEVECO_SDK_HOME);
-    if (process.env.DEVECO_HOME) {
-      roots.push(path.join(process.env.DEVECO_HOME, 'Contents', 'sdk'));
-      roots.push(path.join(process.env.DEVECO_HOME, 'sdk'));
-    }
-    if (process.platform === 'win32') {
-      roots.push('C:/Program Files/Huawei/DevEco Studio/sdk');
-    } else if (process.platform === 'darwin') {
-      roots.push('/Applications/DevEco-Studio.app/Contents/sdk');
-    } else {
-      roots.push('/opt/DevEco-Studio/sdk');
-    }
-
-    const candidates = [];
-    for (const root of roots) {
-      candidates.push(path.join(root, 'default', 'openharmony', 'ets', 'build-tools', 'ets-loader', 'node_modules', 'typescript', 'lib', 'typescript.js'));
-      candidates.push(path.join(root, 'ets', 'build-tools', 'ets-loader', 'node_modules', 'typescript', 'lib', 'typescript.js'));
-      candidates.push(path.join(root, 'openharmony', 'ets', 'build-tools', 'ets-loader', 'node_modules', 'typescript', 'lib', 'typescript.js'));
-    }
-    const tsPath = candidates.find((candidate) => fs.existsSync(candidate));
-    if (!tsPath) {
-      throw new Error('Cannot find TypeScript in the DevEco SDK; pass the SDK TypeScript path as the first argument');
-    }
-    ts = require(tsPath);
-  }
-}
+const ts = require('./load-sdk-typescript.cjs')();
 const TouchType = { Down: 0, Up: 1, Move: 2, Cancel: 3 };
 const input = [];
 const session = {
