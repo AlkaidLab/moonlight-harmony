@@ -1044,15 +1044,15 @@ napi_value MoonBridge_SendControllerMotionFrame(napi_env env, napi_callback_info
 }
 
 static napi_value ControllerMotionLifecycle(napi_env env, napi_callback_info info, bool reset) {
-    size_t argc = 2;
+    size_t argc = reset ? 2 : 1;
     napi_value args[2];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     int32_t controller = -1;
     bool flag = false;
-    bool valid = argc == 2 && GetInt32(env, args[0], &controller) &&
-        controller >= 0 && controller < 16 && GetBool(env, args[1], &flag);
+    bool valid = argc == (reset ? 2u : 1u) && GetInt32(env, args[0], &controller) &&
+        controller >= 0 && controller < 16 && (!reset || GetBool(env, args[1], &flag));
     int ret = valid ? (reset ? LiResetControllerMotionEvents(controller, flag) :
-        LiStopControllerMotionEvent(controller, flag)) : -3;
+        LiStopControllerMotionEvent(controller)) : -3;
     napi_value result;
     napi_create_int32(env, ret, &result);
     return result;

@@ -2179,7 +2179,7 @@ export class GamepadManager implements UsbDriverListener {
     const slot = this.usbControllerIdToSlot.get(controllerId);
     if (slot === undefined) return;
     if (motionType === LI_MOTION_TYPE_GYRO && GyroAssistService.getInstance().isCapturingControllerMotion(slot)) {
-      this.motionSink?.stopControllerMotionEvent(slot, false);
+      this.motionSink?.stopControllerMotionEvent(slot);
       return;
     }
     if (this.requestedPhysicalMotion.has(`${slot}:${motionType}`) && this.motionSink) {
@@ -2193,7 +2193,7 @@ export class GamepadManager implements UsbDriverListener {
     const slot = this.usbControllerIdToSlot.get(controllerId);
     if (slot === undefined) return;
     const captured = GyroAssistService.getInstance().isCapturingControllerMotion(slot);
-    if (captured) this.motionSink.stopControllerMotionEvent(slot, false);
+    if (captured) this.motionSink.stopControllerMotionEvent(slot);
     const gyro = !captured && this.requestedPhysicalMotion.has(`${slot}:${LI_MOTION_TYPE_GYRO}`);
     const accel = this.requestedPhysicalMotion.has(`${slot}:${LI_MOTION_TYPE_ACCEL}`);
     if (gyro && accel) this.motionSink.sendControllerMotionFrame(slot, gx, gy, gz, ax, ay, az);
@@ -2465,7 +2465,7 @@ export class GamepadManager implements UsbDriverListener {
       (controller: number, type: number, x: number, y: number, z: number): number => {
         return sink.sendControllerMotionEvent(controller, type, x, y, z);
       }, (controller: number): void => {
-        sink.stopControllerMotionEvent(controller, false);
+        sink.stopControllerMotionEvent(controller);
       });
   }
 
@@ -2605,7 +2605,7 @@ export class GamepadManager implements UsbDriverListener {
   deviceRemoved(controller: AbstractController): void {
     const motionSlot = this.getUsbControllerSlot(controller);
     if (motionSlot !== undefined && this.requestedPhysicalMotion.has(`${motionSlot}:${LI_MOTION_TYPE_GYRO}`)) {
-      this.motionSink?.stopControllerMotionEvent(motionSlot, false);
+      this.motionSink?.stopControllerMotionEvent(motionSlot);
     }
     const controllerId = controller.getControllerId();
     const deviceKey = controller.getDeviceKey();

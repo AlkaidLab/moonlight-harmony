@@ -1637,9 +1637,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         return this.isRunning && generation === StreamingSession.callbackGeneration
           ? this.nativeModule.sendControllerMotionFrame(cn, gx, gy, gz, ax, ay, az) : -2;
       },
-      stopControllerMotionEvent: (cn: number, onlyFromFrame: boolean): number => {
+      stopControllerMotionEvent: (cn: number): number => {
         return this.isRunning && generation === StreamingSession.callbackGeneration
-          ? this.nativeModule.stopControllerMotionEvent(cn, onlyFromFrame) : -2;
+          ? this.nativeModule.stopControllerMotionEvent(cn) : -2;
       },
       resetControllerMotionEvents: (cn: number, clearDemand: boolean): number => {
         return this.isRunning && generation === StreamingSession.callbackGeneration
