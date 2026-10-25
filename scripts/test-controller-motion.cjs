@@ -101,6 +101,10 @@ for (const assistFirst of [false, true]) {
   f.manager.handleSetMotionEventState(0, 1, 100);
   f.manager.reportControllerMotionFrame(7, 1, 2, 3, 4, 5, 6);
   assert.deepEqual(f.remote.at(-1), ['sendControllerMotionFrame', 0, 1, 2, 3, 4, 5, 6]);
+  f.fail(-1);
+  f.manager.reportControllerMotionFrame(7, 0, 0, 0, 4, 5, 6);
+  assert.deepEqual(f.remote.at(-1), ['stopControllerMotionEvent', 0]);
+  f.fail(0);
   f.assist.setEnabled(true);
   f.manager.reportControllerMotionFrame(7, 1, 2, 3, 4, 5, 6);
   assert.deepEqual(f.remote.at(-1), ['sendControllerMotionEvent', 0, 1, 4, 5, 6]);

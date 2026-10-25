@@ -2196,7 +2196,12 @@ export class GamepadManager implements UsbDriverListener {
     if (captured) this.motionSink.stopControllerMotionEvent(slot);
     const gyro = !captured && this.requestedPhysicalMotion.has(`${slot}:${LI_MOTION_TYPE_GYRO}`);
     const accel = this.requestedPhysicalMotion.has(`${slot}:${LI_MOTION_TYPE_ACCEL}`);
-    if (gyro && accel) this.motionSink.sendControllerMotionFrame(slot, gx, gy, gz, ax, ay, az);
+    if (gyro && accel) {
+      if (this.motionSink.sendControllerMotionFrame(slot, gx, gy, gz, ax, ay, az) !== 0 &&
+          gx === 0 && gy === 0 && gz === 0) {
+        this.motionSink.stopControllerMotionEvent(slot);
+      }
+    }
     else {
       if (gyro) this.motionSink.sendControllerMotionEvent(slot, LI_MOTION_TYPE_GYRO, gx, gy, gz);
       if (accel) this.motionSink.sendControllerMotionEvent(slot, LI_MOTION_TYPE_ACCEL, ax, ay, az);
