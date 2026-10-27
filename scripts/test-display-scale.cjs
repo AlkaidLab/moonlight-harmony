@@ -144,7 +144,7 @@ async function run() {
   // Runtime JSON may contain values that satisfy the compile-time interface
   // only on paper. Invalid scale fields must be discarded before reaching UI.
   reply(options({ current_scale_percent: '500', recommended_scale_percent: '175',
-    supported_scale_percents: ['100', 150, null] }));
+    supported_scale_percents: ['100', 150, 0, -1, 1001, 125.5, null] }));
   const malformedOptions = await client().getDisplayScaleOptions();
   assert.equal(malformedOptions.currentScalePercent, null);
   assert.equal(malformedOptions.recommendedScalePercent, null);
@@ -153,6 +153,13 @@ async function run() {
   reply(options({ supported_scale_percents: '500' }));
   const nonArrayOptions = await client().getDisplayScaleOptions();
   assert.deepEqual(Array.from(nonArrayOptions.supportedScalePercents), []);
+
+  for (const invalid of [0, -1, 1001, 125.5, Infinity]) {
+    reply(options({ current_scale_percent: invalid, recommended_scale_percent: invalid }));
+    const invalidOptions = await client().getDisplayScaleOptions();
+    assert.equal(invalidOptions.currentScalePercent, null);
+    assert.equal(invalidOptions.recommendedScalePercent, null);
+  }
 
   reply(result());
   const changed = await client().setDisplayScale(500, supported);
@@ -202,7 +209,7 @@ async function run() {
   }
 
   reply(result({ previous_scale_percent: '150', current_scale_percent: '500',
-    supported_scale_percents: ['100', 200, null] }));
+    supported_scale_percents: ['100', 200, 0, -1, 1001, 125.5, null] }));
   const malformedResult = await client().setDisplayScale(500, supported);
   assert.equal(malformedResult.previousScalePercent, null);
   assert.equal(malformedResult.currentScalePercent, null);
@@ -211,6 +218,13 @@ async function run() {
   reply(result({ supported_scale_percents: '500' }));
   const nonArrayResult = await client().setDisplayScale(500, supported);
   assert.deepEqual(Array.from(nonArrayResult.supportedScalePercents), []);
+
+  for (const invalid of [0, -1, 1001, 125.5, Infinity]) {
+    reply(result({ previous_scale_percent: invalid, current_scale_percent: invalid }));
+    const invalidResult = await client().setDisplayScale(500, supported);
+    assert.equal(invalidResult.previousScalePercent, null);
+    assert.equal(invalidResult.currentScalePercent, null);
+  }
 
   const errors = [
     [400, 'unsupported_scale', 'Unsupported display scale', '不支持此 DPI'],

@@ -697,17 +697,18 @@ export class NvHttp {
     return new DisplayScaleError(message, statusCode, statusMessage, errorCode);
   }
 
-  /** 将 JSON 中的缩放值收敛为有限数字，避免错误响应污染 UI。 */
+  /** 将 JSON 中的缩放值收敛为 1–1000 的有限整数，避免错误响应污染 UI。 */
   private toDisplayScaleNumber(value: number | null | undefined): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 1000 ? value : null;
   }
 
-  /** 将 JSON 中的缩放档位收敛为有限数字数组。 */
+  /** 将 JSON 中的缩放档位收敛为 1–1000 的有限整数数组。 */
   private toDisplayScaleNumbers(value: number[] | undefined): number[] {
     if (!Array.isArray(value)) {
       return [];
     }
-    return value.filter((item: number): boolean => typeof item === 'number' && Number.isFinite(item));
+    return value.filter((item: number): boolean =>
+      typeof item === 'number' && Number.isInteger(item) && item >= 1 && item <= 1000);
   }
 
   /**
