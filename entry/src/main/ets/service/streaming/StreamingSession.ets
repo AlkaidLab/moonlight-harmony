@@ -14,6 +14,8 @@ import { ComputerManager } from '../ComputerManager';
 import { ComputerInfo, selectBestAddress } from '../../model/ComputerInfo';
 import {
   NvHttp,
+  DisplayScaleOptions,
+  DisplayScaleResult,
   LaunchConfig,
   DEFAULT_HDR_MIN_BRIGHTNESS_NITS,
   DEFAULT_HDR_MAX_BRIGHTNESS_NITS,
@@ -872,6 +874,18 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     } catch {
       return false;
     }
+  }
+
+  /** 由 Sunshine 定位本客户端会话当前实际捕获的屏幕。 */
+  async getDisplayScaleOptions(): Promise<DisplayScaleOptions | null> {
+    if (!this.nvHttp) return null;
+    return await this.nvHttp.getDisplayScaleOptions();
+  }
+
+  /** 设置请求时当前串流屏幕的 DPI，目标由 Sunshine 在服务端解析。 */
+  async setDisplayScale(scalePercent: number): Promise<DisplayScaleResult | null> {
+    if (!this.nvHttp) return null;
+    return await this.nvHttp.setDisplayScale(scalePercent);
   }
 
   // ---------------------------------------------------------------------------

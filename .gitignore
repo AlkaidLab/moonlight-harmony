@@ -76,6 +76,11 @@ scripts/*
 !scripts/check-repository.js
 !scripts/check-open-source-licenses.js
 !scripts/test-display-frame-rate.cjs
+!scripts/test-display-scale.cjs
+!scripts/test-display-scale-targets.cjs
+!scripts/test-helpers/
+scripts/test-helpers/*
+!scripts/test-helpers/load-arkts.cjs
 !scripts/test-mouse-look.cjs
 !scripts/test-key-menu.cjs
 

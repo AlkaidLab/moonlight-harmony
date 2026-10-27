@@ -12,7 +12,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { BinaryHttpSession, HttpClient } from '../../utils/HttpClient';
+import { BinaryHttpSession, HttpClient, HttpResponse } from '../../utils/HttpClient';
 import { XmlUtil } from '../../utils/XmlUtil';
 import { StringUtil } from '../../utils/StringUtil';
 import { CryptoUtil } from '../../utils/CryptoUtil';
@@ -73,6 +73,87 @@ interface DisplayItem {
   friendly_name?: string;
   display_name?: string;
   device_id?: string;
+}
+
+/** Sunshine 显示缩放选项响应（Foundation Sunshine） */
+export interface DisplayScaleOptions {
+  statusCode: number;
+  statusMessage: string;
+  success: boolean;
+  displayName: string;
+  deviceId: string;
+  friendlyName: string;
+  isPrimary: boolean;
+  currentScalePercent: number | null;
+  recommendedScalePercent: number | null;
+  supportedScalePercents: number[];
+  scaleSetSupported: boolean;
+}
+
+/** Sunshine 显示缩放设置响应（Foundation Sunshine） */
+export interface DisplayScaleResult {
+  statusCode: number;
+  statusMessage: string;
+  success: boolean;
+  displayName: string;
+  deviceId: string;
+  previousScalePercent: number | null;
+  currentScalePercent: number | null;
+  supportedScalePercents: number[];
+  restartRequired: boolean;
+  effectiveImmediately: boolean;
+  errorCode: string;
+}
+
+/** 保留 Sunshine 的原始错误字段，同时向界面提供可读的中文错误。 */
+export class DisplayScaleError extends Error {
+  statusCode: number;
+  statusMessage: string;
+  errorCode: string;
+
+  constructor(message: string, statusCode: number, statusMessage: string, errorCode: string) {
+    super(message);
+    this.name = 'DisplayScaleError';
+    this.statusCode = statusCode;
+    this.statusMessage = statusMessage;
+    this.errorCode = errorCode;
+  }
+}
+
+interface DisplayScaleOptionsResponse {
+  status_code?: number;
+  status_message?: string;
+  success?: boolean;
+  target?: string;
+  display_name?: string;
+  device_id?: string;
+  friendly_name?: string;
+  is_primary?: boolean;
+  current_scale_percent?: number | null;
+  recommended_scale_percent?: number | null;
+  supported_scale_percents?: number[];
+  scale_set_supported?: boolean;
+  error_code?: string;
+}
+
+interface DisplayScaleResultResponse {
+  status_code?: number;
+  status_message?: string;
+  success?: boolean;
+  target?: string;
+  display_name?: string;
+  device_id?: string;
+  previous_scale_percent?: number | null;
+  current_scale_percent?: number | null;
+  supported_scale_percents?: number[];
+  restart_required?: boolean;
+  effective_immediately?: boolean;
+  error_code?: string;
+}
+
+interface DisplayScaleRequest {
+  target: 'current';
+  scale_percent: number;
 }
 
 /**
@@ -537,6 +618,89 @@ export class NvHttp {
         transferTimeout: transferTimeout
       });
     }
+  }
+
+  /** DPI GET/POST 均保留非 2xx 的 JSON 错误体，并复用已配对客户端证书。 */
+  private async doDisplayScaleRequest(url: string, method: 'GET' | 'POST', body?: string): Promise<HttpResponse> {
+    if (!this.hasCertificateFiles()) {
+      throw this.createDisplayScaleError(401, 'pairing_required', '');
+    }
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    };
+    return HttpClient.requestRaw(url, method, body, {
+      headers: headers,
+      skipServerValidation: true,
+      clientCertPath: this.certFilePath,
+      clientKeyPath: this.keyFilePath,
+      connectTimeout: NvHttp.CONNECTION_TIMEOUT,
+      transferTimeout: NvHttp.LONG_CONNECTION_TIMEOUT
+    });
+  }
+
+  private createDisplayScaleError(statusCode: number, errorCode: string, statusMessage: string): DisplayScaleError {
+    let message: string;
+    switch (errorCode) {
+      case 'display_not_found':
+        message = '找不到当前串流显示器，请稍后重试';
+        break;
+      case 'no_active_stream':
+        message = '当前没有正在串流的会话，请重新连接';
+        break;
+      case 'display_target_unavailable':
+        message = '串流显示器暂不可用，请稍后重试';
+        break;
+      case 'unsupported_scale':
+        message = '该显示器不支持此 DPI 档位，请重新读取可用档位';
+        break;
+      case 'permission_denied':
+        message = 'Sunshine 没有调整主机 DPI 的权限';
+        break;
+      case 'apply_failed':
+        message = '主机 DPI 调整失败，请稍后重试';
+        break;
+      case 'invalid_request':
+        message = 'DPI 调整请求无效，请更新客户端后重试';
+        break;
+      case 'unsupported_platform':
+        message = '此主机系统不支持调整 DPI';
+        break;
+      case 'pairing_required':
+        message = '请先与 Sunshine 配对后再调整主机 DPI';
+        break;
+      case 'invalid_response':
+        message = 'Sunshine 返回了无效的 DPI 响应';
+        break;
+      default:
+        if (statusCode === 401) {
+          message = 'Sunshine 配对已失效，请重新配对';
+        } else if (statusCode === 403) {
+          message = 'Sunshine 拒绝调整主机 DPI，请检查主机权限';
+        } else if (statusCode === 404) {
+          message = '当前 Sunshine 不支持主机 DPI 调整，请更新 Sunshine';
+        } else if (statusCode === 501) {
+          message = '此主机系统不支持调整 DPI';
+        } else {
+          message = statusMessage || '主机 DPI 请求失败';
+        }
+        break;
+    }
+    return new DisplayScaleError(message, statusCode, statusMessage, errorCode);
+  }
+
+  /** 将 JSON 中的缩放值收敛为 1–1000 的有限整数，避免错误响应污染 UI。 */
+  private toDisplayScaleNumber(value: number | null | undefined): number | null {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 1000 ? value : null;
+  }
+
+  /** 将 JSON 中的缩放档位收敛为 1–1000 的有限整数数组。 */
+  private toDisplayScaleNumbers(value: number[] | undefined): number[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.filter((item: number): boolean =>
+      typeof item === 'number' && Number.isInteger(item) && item >= 1 && item <= 1000);
   }
 
   /**
@@ -1127,6 +1291,94 @@ export class NvHttp {
     
     Logger.info('NvHttp', `NvHttp: 获取到 ${displays.length} 个显示器`);
     return displays;
+  }
+
+  /**
+   * 获取当前客户端会话实际捕获屏幕的 DPI 档位。
+   * 由 Sunshine 解析当前目标，覆盖默认屏幕、VDD 和串流中的切屏。
+   */
+  async getDisplayScaleOptions(): Promise<DisplayScaleOptions> {
+    const response = await this.doHttpsWithFrpRetry('display-scale-options', 'target=current', (url: string): Promise<HttpResponse> => {
+      return this.doDisplayScaleRequest(url, 'GET');
+    });
+    let json: DisplayScaleOptionsResponse;
+    try {
+      json = JSON.parse(response.body);
+    } catch (_err) {
+      const errorCode = response.statusCode >= 200 && response.statusCode < 300 ? 'invalid_response' : '';
+      throw this.createDisplayScaleError(response.statusCode, errorCode, '');
+    }
+    if (!json) {
+      throw this.createDisplayScaleError(response.statusCode, 'invalid_response', '');
+    }
+    const statusCode = json.status_code ?? response.statusCode;
+    const success = json.success ?? false;
+    if (response.statusCode < 200 || response.statusCode >= 300 || statusCode !== 200 || !success) {
+      throw this.createDisplayScaleError(statusCode, json.error_code || '', json.status_message || '');
+    }
+    if (json.target !== 'current' || typeof json.device_id !== 'string' || json.device_id.trim().length === 0) {
+      throw this.createDisplayScaleError(statusCode, 'invalid_response', '');
+    }
+    return {
+      statusCode: statusCode,
+      statusMessage: json.status_message || '',
+      success: success,
+      displayName: json.display_name || '',
+      deviceId: json.device_id,
+      friendlyName: json.friendly_name || json.display_name || '当前串流显示器',
+      isPrimary: json.is_primary ?? false,
+      currentScalePercent: this.toDisplayScaleNumber(json.current_scale_percent),
+      recommendedScalePercent: this.toDisplayScaleNumber(json.recommended_scale_percent),
+      supportedScalePercents: this.toDisplayScaleNumbers(json.supported_scale_percents),
+      scaleSetSupported: json.scale_set_supported ?? false
+    };
+  }
+
+  /** 设置请求时当前串流屏幕的 DPI；目标由 Sunshine 在服务端解析。 */
+  async setDisplayScale(scalePercent: number): Promise<DisplayScaleResult> {
+    if (!Number.isInteger(scalePercent) || scalePercent < 1 || scalePercent > 1000) {
+      throw new Error('DPI 缩放值无效');
+    }
+    const requestBody: DisplayScaleRequest = {
+      target: 'current',
+      scale_percent: scalePercent
+    };
+    const body = JSON.stringify(requestBody);
+    // 设置的是确定的 DPI 档位；仅复用已有的自定义端口超时兜底，不增加常规重放。
+    const response = await this.doHttpsWithFrpRetry('display-scale', undefined, (url: string): Promise<HttpResponse> => {
+      return this.doDisplayScaleRequest(url, 'POST', body);
+    });
+    let json: DisplayScaleResultResponse;
+    try {
+      json = JSON.parse(response.body);
+    } catch (_err) {
+      const errorCode = response.statusCode >= 200 && response.statusCode < 300 ? 'invalid_response' : '';
+      throw this.createDisplayScaleError(response.statusCode, errorCode, '');
+    }
+    if (!json) {
+      throw this.createDisplayScaleError(response.statusCode, 'invalid_response', '');
+    }
+    const statusCode = json.status_code ?? response.statusCode;
+    const success = json.success ?? false;
+    if (response.statusCode < 200 || response.statusCode >= 300 || statusCode < 200 || statusCode >= 300 || !success) {
+      throw this.createDisplayScaleError(statusCode, json.error_code || '', json.status_message || '');
+    }
+    if (json.target !== 'current' || typeof json.device_id !== 'string' || json.device_id.trim().length === 0) {
+      throw this.createDisplayScaleError(statusCode, 'invalid_response', '');
+    }
+    return {
+      statusCode: statusCode,
+      statusMessage: json.status_message || '',
+      success: success,
+      displayName: json.display_name || '',
+      deviceId: json.device_id,
+      previousScalePercent: this.toDisplayScaleNumber(json.previous_scale_percent),
+      currentScalePercent: this.toDisplayScaleNumber(json.current_scale_percent),
+      supportedScalePercents: this.toDisplayScaleNumbers(json.supported_scale_percents),
+      restartRequired: json.restart_required ?? false,
+      effectiveImmediately: json.effective_immediately ?? false,
+      errorCode: json.error_code || ''
+    };
   }
 
   /**
