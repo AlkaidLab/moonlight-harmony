@@ -19,7 +19,7 @@ import { VirtualKey, sendShortcutKeys } from '../../service/customkey/CustomKeyT
 import { CustomKeyStore } from '../../service/customkey/CustomKeyStore';
 import { ShortcutManager, Shortcut } from '../ShortcutManager';
 import { ActionDialog, ActionDialogConfig, ConfirmDialog, ConfirmDialogConfig } from './ConfirmDialog';
-import { DisplayScaleError, DisplayScaleOptions, DisplayScaleResult, SuperCmd } from '../../service/streaming/NvHttp';
+import { DisplayScaleOptions, DisplayScaleResult, SuperCmd } from '../../service/streaming/NvHttp';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from './OptionPickerDialog';
 import {
   GyroAssistService,
@@ -174,11 +174,9 @@ export struct GameMenuDialog {
   private bitrateDebounceTimer: number = -1;
 
   // 主机显示缩放（DPI）状态。Sunshine 返回的档位是离散值，因此使用选项弹窗。
-  @State private dpiCurrentScalePercent: number = 0;
   @State private dpiScaleOptions: DisplayScaleOptions | null = null;
   @State private isLoadingDpi: boolean = false;
   @State private isApplyingDpi: boolean = false;
-  private dpiLoadPromise: Promise<DisplayScaleOptions | null> | null = null;
   private isOpeningDpi: boolean = false;
   private dpiMenuGeneration: number = 0;
   private isDpiMenuVisible: boolean = false;
@@ -234,7 +232,6 @@ export struct GameMenuDialog {
   aboutToDisappear(): void {
     this.isDpiMenuVisible = false;
     this.dpiMenuGeneration++;
-    this.dpiLoadPromise = null;
     this.dpiPickerDialogController?.close();
     if (this.bitrateDebounceTimer !== -1) {
       clearTimeout(this.bitrateDebounceTimer);
@@ -253,7 +250,6 @@ export struct GameMenuDialog {
     this.isOpeningDpi = false;
     this.isApplyingDpi = false;
     this.dpiScaleOptions = null;
-    this.dpiCurrentScalePercent = 0;
     this.shortcuts = this.shortcutManager.getShortcuts();
     this.currentBitrate = this.viewModel.getCurrentBitrate();
     this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
@@ -276,8 +272,6 @@ export struct GameMenuDialog {
     this.loadCardUsageCounts();
     this.loadCustomKeyProfiles();
     this.micActive = this.viewModel.getSession()?.isMicrophoneActive() ?? false;
-    // 预取当前主机 DPI，不阻塞菜单入场动画。
-    this.loadDisplayScaleOptions().catch(() => {});
     this.detectLayoutMode();
     this.animateIn();
   }
@@ -456,15 +450,7 @@ export struct GameMenuDialog {
     }, BITRATE_DEBOUNCE_MS);
   }
 
-  /** 复用预取请求，点击卡片时等待加载完成。 */
-  private loadDisplayScaleOptions(): Promise<DisplayScaleOptions | null> {
-    if (this.dpiLoadPromise) return this.dpiLoadPromise;
-    const pending = this.fetchDisplayScaleOptions();
-    this.dpiLoadPromise = pending;
-    return pending;
-  }
-
-  private async fetchDisplayScaleOptions(): Promise<DisplayScaleOptions | null> {
+  private async loadDisplayScaleOptions(): Promise<DisplayScaleOptions | null> {
     const generation = this.dpiMenuGeneration;
     this.isLoadingDpi = true;
     try {
@@ -472,19 +458,16 @@ export struct GameMenuDialog {
       if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return null;
       if (options) {
         this.dpiScaleOptions = options;
-        this.dpiCurrentScalePercent = options.currentScalePercent ?? 0;
       }
       return options;
     } catch (error) {
       if (this.isDpiMenuVisible && generation === this.dpiMenuGeneration) {
         this.dpiScaleOptions = null;
-        this.dpiCurrentScalePercent = 0;
       }
       throw error instanceof Error ? error : new Error(String(error));
     } finally {
       if (generation === this.dpiMenuGeneration) {
         this.isLoadingDpi = false;
-        this.dpiLoadPromise = null;
       }
     }
   }
@@ -536,7 +519,7 @@ export struct GameMenuDialog {
       options: pickerOptions,
       selectedValue: options.currentScalePercent ?? undefined,
       onSelect: (option: OptionItem) => {
-        this.applyDisplayScale(option, options).catch(() => {});
+        this.applyDisplayScale(option).catch(() => {});
       },
       onCancel: () => {},
       closeOnSelect: true
@@ -556,28 +539,27 @@ export struct GameMenuDialog {
   }
 
   /** 应用用户选择的 Sunshine DPI 档位。 */
-  private async applyDisplayScale(option: OptionItem, target: DisplayScaleOptions): Promise<void> {
+  private async applyDisplayScale(option: OptionItem): Promise<void> {
     if (typeof option.value !== 'number' || this.isApplyingDpi) {
       return;
     }
     const generation = this.dpiMenuGeneration;
     this.isApplyingDpi = true;
     try {
-      const result: DisplayScaleResult | null = await this.viewModel.setDisplayScale(option.value, target);
+      const result: DisplayScaleResult | null = await this.viewModel.setDisplayScale(option.value);
       if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return;
       if (!result || !result.success) {
         ToastQueue.show({ message: result?.statusMessage || '主机 DPI 调整失败', duration: 2200 });
         return;
       }
-      this.dpiCurrentScalePercent = result.currentScalePercent ?? 0;
       if (this.dpiScaleOptions) {
         this.dpiScaleOptions = {
           statusCode: this.dpiScaleOptions.statusCode,
           statusMessage: this.dpiScaleOptions.statusMessage,
           success: this.dpiScaleOptions.success,
-          displayName: this.dpiScaleOptions.displayName,
-          deviceId: this.dpiScaleOptions.deviceId,
-          friendlyName: this.dpiScaleOptions.friendlyName,
+          displayName: result.displayName,
+          deviceId: result.deviceId,
+          friendlyName: result.displayName || this.dpiScaleOptions.friendlyName,
           isPrimary: this.dpiScaleOptions.isPrimary,
           currentScalePercent: result.currentScalePercent,
           recommendedScalePercent: this.dpiScaleOptions.recommendedScalePercent,
@@ -592,27 +574,16 @@ export struct GameMenuDialog {
       }
     } catch (error) {
       if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return;
-      if (error instanceof DisplayScaleError && error.errorCode === 'display_target_changed') {
-        this.dpiScaleOptions = null;
-        this.dpiCurrentScalePercent = 0;
-        ToastQueue.show({ message: '串流屏幕已切换，请重新选择 DPI', duration: 2400 });
-        try {
-          const refreshed = await this.loadDisplayScaleOptions();
-          if (refreshed && this.isDpiMenuVisible && generation === this.dpiMenuGeneration) {
-            this.showDisplayScalePicker(refreshed);
-          }
-        } catch (refreshError) {
-          if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return;
-          const refreshMessage = refreshError instanceof Error ? refreshError.message : String(refreshError);
-          ToastQueue.show({ message: '读取主机 DPI 失败: ' + refreshMessage, duration: 2400 });
-        }
-        return;
-      }
       const message = error instanceof Error ? error.message : String(error);
       ToastQueue.show({ message: '主机 DPI 调整失败: ' + message, duration: 2200 });
     } finally {
       if (generation === this.dpiMenuGeneration) this.isApplyingDpi = false;
     }
+  }
+
+  private getDpiCardLabel(): string {
+    const currentScale: number = this.dpiScaleOptions?.currentScalePercent ?? 0;
+    return currentScale > 0 ? currentScale.toString() + '%' : 'DPI';
   }
 
   private showExitDialog(): void {
@@ -1055,7 +1026,7 @@ export struct GameMenuDialog {
         .width(22)
         .height(22)
         .fillColor(StreamMenuColors.TextBright)
-      Text(this.isLoadingDpi ? '读取中' : (this.dpiCurrentScalePercent > 0 ? this.dpiCurrentScalePercent.toString() + '%' : 'DPI'))
+      Text(this.isLoadingDpi ? '读取中' : this.getDpiCardLabel())
         .fontSize(OV_FONT_MD)
         .fontWeight(FontWeight.Medium)
         .fontColor(StreamMenuColors.TextBright)

@@ -882,10 +882,10 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     return await this.nvHttp.getDisplayScaleOptions();
   }
 
-  /** 使用查询档位时返回的身份，确保修改的屏幕与弹窗展示一致。 */
-  async setDisplayScale(scalePercent: number, target: DisplayScaleOptions): Promise<DisplayScaleResult | null> {
+  /** 设置请求时当前串流屏幕的 DPI，目标由 Sunshine 在服务端解析。 */
+  async setDisplayScale(scalePercent: number): Promise<DisplayScaleResult | null> {
     if (!this.nvHttp) return null;
-    return await this.nvHttp.setDisplayScale(scalePercent, target);
+    return await this.nvHttp.setDisplayScale(scalePercent);
   }
 
   // ---------------------------------------------------------------------------

@@ -719,10 +719,10 @@ export class StreamViewModel {
     return await this.streamingSession.getDisplayScaleOptions();
   }
 
-  /** 设置当前串流目标显示器的 DPI 缩放。 */
-  async setDisplayScale(scalePercent: number, target: DisplayScaleOptions): Promise<DisplayScaleResult | null> {
+  /** 设置请求时当前串流屏幕的 DPI，目标由 Sunshine 在服务端解析。 */
+  async setDisplayScale(scalePercent: number): Promise<DisplayScaleResult | null> {
     if (!this.streamingSession) return null;
-    return await this.streamingSession.setDisplayScale(scalePercent, target);
+    return await this.streamingSession.setDisplayScale(scalePercent);
   }
 
   // ---------------------------------------------------------------------------

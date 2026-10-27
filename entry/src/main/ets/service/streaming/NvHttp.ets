@@ -154,8 +154,6 @@ interface DisplayScaleResultResponse {
 interface DisplayScaleRequest {
   target: 'current';
   scale_percent: number;
-  display_name?: string;
-  device_id: string;
 }
 
 /**
@@ -647,14 +645,8 @@ export class NvHttp {
       case 'display_not_found':
         message = '找不到当前串流显示器，请稍后重试';
         break;
-      case 'display_target_changed':
-        message = '串流显示器已切换，请重新选择 DPI 档位';
-        break;
       case 'no_active_stream':
         message = '当前没有正在串流的会话，请重新连接';
-        break;
-      case 'ambiguous_stream':
-        message = '当前客户端存在多个串流会话，暂时无法确定 DPI 目标';
         break;
       case 'display_target_unavailable':
         message = '串流显示器暂不可用，请稍后重试';
@@ -1342,19 +1334,14 @@ export class NvHttp {
     };
   }
 
-  /** 设置当前串流屏幕 DPI，并由 Sunshine 校验查询后目标没有切换。 */
-  async setDisplayScale(scalePercent: number, target: DisplayScaleOptions): Promise<DisplayScaleResult> {
+  /** 设置请求时当前串流屏幕的 DPI；目标由 Sunshine 在服务端解析。 */
+  async setDisplayScale(scalePercent: number): Promise<DisplayScaleResult> {
     if (!Number.isInteger(scalePercent) || scalePercent < 1 || scalePercent > 1000) {
       throw new Error('DPI 缩放值无效');
     }
-    if (target.deviceId.trim().length === 0) {
-      throw this.createDisplayScaleError(200, 'invalid_response', '');
-    }
     const requestBody: DisplayScaleRequest = {
       target: 'current',
-      scale_percent: scalePercent,
-      display_name: target.displayName || undefined,
-      device_id: target.deviceId
+      scale_percent: scalePercent
     };
     const body = JSON.stringify(requestBody);
     // 设置的是确定的 DPI 档位；仅复用已有的自定义端口超时兜底，不增加常规重放。
@@ -1376,8 +1363,7 @@ export class NvHttp {
     if (response.statusCode < 200 || response.statusCode >= 300 || statusCode < 200 || statusCode >= 300 || !success) {
       throw this.createDisplayScaleError(statusCode, json.error_code || '', json.status_message || '');
     }
-    if (json.target !== 'current' || typeof json.device_id !== 'string' ||
-      json.device_id.toLowerCase() !== target.deviceId.toLowerCase()) {
+    if (json.target !== 'current' || typeof json.device_id !== 'string' || json.device_id.trim().length === 0) {
       throw this.createDisplayScaleError(statusCode, 'invalid_response', '');
     }
     return {
