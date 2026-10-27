@@ -14,6 +14,8 @@ import { ComputerManager } from '../ComputerManager';
 import { ComputerInfo, selectBestAddress } from '../../model/ComputerInfo';
 import {
   NvHttp,
+  DisplayScaleOptions,
+  DisplayScaleResult,
   LaunchConfig,
   DEFAULT_HDR_MIN_BRIGHTNESS_NITS,
   DEFAULT_HDR_MAX_BRIGHTNESS_NITS,
@@ -68,6 +70,7 @@ import {
 } from './MoonBridge';
 import nativeLib from 'libmoonlight_nativelib.so';
 import { Logger } from '../../common/Logger';
+import { ControllerInputState as ControllerState, mergeControllerInput } from '../input/ControllerInputMerge';
 
 // =============================================================================
 // 类型定义
@@ -181,7 +184,7 @@ interface NativeModule {
     audioConfiguration: number, supportedVideoFormats: number, clientRefreshRateX100: number,
     riAesKey: ArrayBuffer, riAesIv: ArrayBuffer, videoCapabilities: number,
     colorSpace: number, colorRange: number, hdrMode: number,
-    enableMic: boolean, controlOnly: boolean
+    enableMic: boolean, controlOnly: boolean, videoFecPercentage?: number
   ): number;
   startConnectionAsync(
     address: string, appVersion: string, gfeVersion: string, rtspSessionUrl: string,
@@ -190,7 +193,7 @@ interface NativeModule {
     audioConfiguration: number, supportedVideoFormats: number, clientRefreshRateX100: number,
     riAesKey: ArrayBuffer, riAesIv: ArrayBuffer, videoCapabilities: number,
     colorSpace: number, colorRange: number, hdrMode: number,
-    enableMic: boolean, controlOnly: boolean
+    enableMic: boolean, controlOnly: boolean, videoFecPercentage?: number
   ): Promise<number>;
   stopConnection(): void;
   interruptConnection(): void;
@@ -322,16 +325,6 @@ interface VideoStats {
   presentationLead4To8Ms: number;
   presentationLeadAtLeast8Ms: number;
   presentationPendingHighWater: number;
-}
-
-interface ControllerState {
-  buttonFlags: number;
-  leftTrigger: number;
-  rightTrigger: number;
-  leftStickX: number;
-  leftStickY: number;
-  rightStickX: number;
-  rightStickY: number;
 }
 
 // =============================================================================
@@ -562,6 +555,11 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     leftStickY: 0,
     rightStickX: 0,
     rightStickY: 0
+  };
+  /** 自定义按键/快捷菜单独立保存，发送时与默认虚拟手柄或物理手柄快照合并。 */
+  private customControllerState: ControllerState = {
+    buttonFlags: 0, leftTrigger: 0, rightTrigger: 0,
+    leftStickX: 0, leftStickY: 0, rightStickX: 0, rightStickY: 0,
   };
 
   // ---------------------------------------------------------------------------
@@ -886,6 +884,18 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     }
   }
 
+  /** 由 Sunshine 定位本客户端会话当前实际捕获的屏幕。 */
+  async getDisplayScaleOptions(): Promise<DisplayScaleOptions | null> {
+    if (!this.nvHttp) return null;
+    return await this.nvHttp.getDisplayScaleOptions();
+  }
+
+  /** 设置请求时当前串流屏幕的 DPI，目标由 Sunshine 在服务端解析。 */
+  async setDisplayScale(scalePercent: number): Promise<DisplayScaleResult | null> {
+    if (!this.nvHttp) return null;
+    return await this.nvHttp.setDisplayScale(scalePercent);
+  }
+
   // ---------------------------------------------------------------------------
   // 智能码率 (ABR)
   // ---------------------------------------------------------------------------
@@ -1098,15 +1108,11 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     if (!this.isRunning) return;
     const controllerIndex = 0;
     this.ensureVirtualControllerArrival(controllerIndex);
-    this.controllerState.buttonFlags = buttonFlags;
-    this.controllerState.leftTrigger = leftTrigger;
-    this.controllerState.rightTrigger = rightTrigger;
-    this.controllerState.leftStickX = leftStickX;
-    this.controllerState.leftStickY = leftStickY;
-    this.controllerState.rightStickX = rightStickX;
-    this.controllerState.rightStickY = rightStickY;
-    this.controllerStates.set(controllerIndex, this.cloneControllerState(this.controllerState));
-    this.sendControllerStateSnapshot(controllerIndex, this.controllerState);
+    this.customControllerState = {
+      buttonFlags: buttonFlags, leftTrigger: leftTrigger, rightTrigger: rightTrigger,
+      leftStickX: leftStickX, leftStickY: leftStickY, rightStickX: rightStickX, rightStickY: rightStickY,
+    };
+    this.sendControllerStateSnapshot(controllerIndex, this.getControllerState(controllerIndex));
   }
 
   // ---------------------------------------------------------------------------
@@ -1853,7 +1859,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
           this.config!.colorRange,
           this.config!.hdr ? this.config!.hdrMode : HdrMode.SDR,
           this.config!.microphoneEnabled,
-          this.config!.controlOnly
+          this.config!.controlOnly,
+          this.config!.videoFecPercentage
         );
         this.connectionStartPromise = pendingStart;
         return await pendingStart;
@@ -2053,6 +2060,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.controllerState.leftStickY = 0;
     this.controllerState.rightStickX = 0;
     this.controllerState.rightStickY = 0;
+    this.customControllerState = this.cloneControllerState(this.controllerState);
   }
 
   private getControllerState(controllerIndex: number): ControllerState {
@@ -2076,6 +2084,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   }
 
   private sendControllerStateSnapshot(controllerIndex: number, state: ControllerState): void {
+    if (controllerIndex === 0) state = mergeControllerInput(state, this.customControllerState);
     const buttonFlags = controllerIndex === 0 && this.ds5TouchpadEnabled && this.ds5TouchpadButtonPressed
       ? state.buttonFlags | TOUCHPAD_FLAG
       : state.buttonFlags;

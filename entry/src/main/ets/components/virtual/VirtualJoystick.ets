@@ -37,6 +37,7 @@ export type EditModeGetter = () => boolean;
 
 @Component
 export struct VirtualJoystick {
+  @Prop @Watch('resetInput') inputEnabled: boolean = true;
   /** 摇杆尺寸 (vp)，外圆直径（避免与 CustomComponent.size 冲突） */
   @Prop joystickSize: number = 120;
   /** 外圆颜色 */
@@ -92,6 +93,22 @@ export struct VirtualJoystick {
     this.stickMaxTravel = this.stickOuterRadius - this.stickInnerRadius;
   }
 
+  aboutToDisappear(): void {
+    this.resetInput();
+  }
+
+  private resetInput(): void {
+    this.resetInputState(false);
+  }
+
+  private resetInputState(preserveDoubleTap: boolean): void {
+    const active = this.trackingTouchId >= 0 || this.isPressed;
+    this.trackingTouchId = -1;
+    this.isPressed = false;
+    if (!preserveDoubleTap) this.lastTapTime = 0;
+    if (active) this.resetStick();
+  }
+
   build() {
     Stack() {
       // 隐形模式下需要一个不可见但可点击的全尺寸触摸区
@@ -133,7 +150,7 @@ export struct VirtualJoystick {
     .hitTestBehavior(HitTestMode.Block)
     .onTouch((event: TouchEvent): void => {
       event.stopPropagation();
-      if (this.isEditMode()) return;
+      if (this.isEditMode() || !this.inputEnabled) return;
       this.handleTouch(event);
     })
   }
@@ -179,6 +196,8 @@ export struct VirtualJoystick {
         } else {
           this.updateStickPosition(touch.x - compCenterX, touch.y - compCenterY);
         }
+      } else {
+        this.resetInput();
       }
       return;
     }
@@ -195,9 +214,12 @@ export struct VirtualJoystick {
         }
       }
       if (isOurFinger) {
-        this.trackingTouchId = -1;
-        this.isPressed = false;
-        this.resetStick();
+        // 保留普通抬指后的时间戳，让连续两次按下仍能触发 L3/R3 双击。
+        this.resetInputState(event.type === TouchType.Up);
+      } else if (this.trackingTouchId >= 0 &&
+        ((event.type === TouchType.Cancel && changed.length === 0) || this.findTrackedTouch(event.touches) === null)) {
+        // 取消或丢失触点必须清掉双击窗口，避免下一次按下误判。
+        this.resetInput();
       }
     }
   }

@@ -36,6 +36,8 @@ export interface ShortcutEditorCallbacks {
 export struct ShortcutEditorDialog {
   controller: CustomDialogController;
   editingShortcut?: Shortcut;  // 如果传入则为编辑模式
+  /** 嵌入快捷菜单时仅编辑名称和按键，外观由菜单入口统一管理。 */
+  showAppearanceOptions: boolean = true;
   callbacks: ShortcutEditorCallbacks = {
     onSave: () => {},
     onCancel: () => {}
@@ -152,52 +154,56 @@ export struct ShortcutEditorDialog {
         .layoutWeight(1)
         
         // 图标选择
-        Column() {
-          Text('图标')
-            .fontSize(11)
-            .fontColor('#666')
-            .margin({ bottom: 4 })
-          Row() {
-            ForEach(this.iconOptions.slice(0, 6), (icon: string) => {
-              Text(icon || '∅')
-                .fontSize(icon ? 16 : 12)
-                .fontColor(icon ? undefined : '#888')
-                .width(28)
-                .height(28)
-                .textAlign(TextAlign.Center)
-                .backgroundColor(this.selectedIcon === icon ? `#50${this.selectedColor.replace('#', '')}` : 'transparent')
-                .borderRadius(6)
-                .onClick(() => { this.selectedIcon = icon; })
-            })
+        if (this.showAppearanceOptions) {
+          Column() {
+            Text('图标')
+              .fontSize(11)
+              .fontColor('#666')
+              .margin({ bottom: 4 })
+            Row() {
+              ForEach(this.iconOptions.slice(0, 6), (icon: string) => {
+                Text(icon || '∅')
+                  .fontSize(icon ? 16 : 12)
+                  .fontColor(icon ? undefined : '#888')
+                  .width(28)
+                  .height(28)
+                  .textAlign(TextAlign.Center)
+                  .backgroundColor(this.selectedIcon === icon ? `#50${this.selectedColor.replace('#', '')}` : 'transparent')
+                  .borderRadius(6)
+                  .onClick(() => { this.selectedIcon = icon; })
+              })
+            }
           }
+          .margin({ left: 12 })
         }
-        .margin({ left: 12 })
       }
       .width('100%')
       .margin({ bottom: 10 })
       
       // 颜色选择
-      Row() {
-        Text('颜色')
-          .fontSize(11)
-          .fontColor('#666')
-        Blank()
-        ForEach(this.colorOptions, (color: string, index: number) => {
-          Column()
-            .width(22)
-            .height(22)
-            .backgroundColor(color)
-            .borderRadius(11)
-            .border({ 
-              width: this.selectedColor.toUpperCase() === color.toUpperCase() ? 2 : 0, 
-              color: '#FFF' 
-            })
-            .margin({ left: 6 })
-            .onClick(() => { this.selectedColor = color; })
-        }, (color: string) => color)  // 使用颜色值作为唯一 key
+      if (this.showAppearanceOptions) {
+        Row() {
+          Text('颜色')
+            .fontSize(11)
+            .fontColor('#666')
+          Blank()
+          ForEach(this.colorOptions, (color: string, index: number) => {
+            Column()
+              .width(22)
+              .height(22)
+              .backgroundColor(color)
+              .borderRadius(11)
+              .border({
+                width: this.selectedColor.toUpperCase() === color.toUpperCase() ? 2 : 0,
+                color: '#FFF'
+              })
+              .margin({ left: 6 })
+              .onClick(() => { this.selectedColor = color; })
+          }, (color: string) => color)  // 使用颜色值作为唯一 key
+        }
+        .width('100%')
+        .margin({ bottom: 10 })
       }
-      .width('100%')
-      .margin({ bottom: 10 })
       
       // 模式切换
       Row() {

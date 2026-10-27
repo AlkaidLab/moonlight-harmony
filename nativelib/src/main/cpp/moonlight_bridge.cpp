@@ -351,6 +351,7 @@ static bool PrepareStartConnection(napi_env env, napi_value* args, size_t argc, 
     int32_t colorRange = 0;
     bool enableMic = false;
     bool controlOnly = false;
+    int32_t videoFecPercentage = -2;
 
     if (!GetInt32(env, args[4], &serverCodecModeSupport) ||
         !GetInt32(env, args[5], &width) ||
@@ -380,6 +381,16 @@ static bool PrepareStartConnection(napi_env env, napi_value* args, size_t argc, 
     if (argc > 21) {
         GetBool(env, args[21], &controlOnly);
     }
+    if (argc > 22) {
+        double rawVideoFecPercentage;
+        if (napi_get_value_double(env, args[22], &rawVideoFecPercentage) != napi_ok ||
+            !std::isfinite(rawVideoFecPercentage) ||
+            std::trunc(rawVideoFecPercentage) != rawVideoFecPercentage ||
+            rawVideoFecPercentage < -2 || rawVideoFecPercentage > 100) {
+            return false;
+        }
+        videoFecPercentage = static_cast<int32_t>(rawVideoFecPercentage);
+    }
 
     void* aesKeyData = nullptr;
     size_t aesKeyLength = 0;
@@ -389,7 +400,7 @@ static bool PrepareStartConnection(napi_env env, napi_value* args, size_t argc, 
     GetByteArrayData(env, args[15], &aesIvData, &aesIvLength);
 
     memset(serverInfo, 0, sizeof(*serverInfo));
-    memset(streamConfig, 0, sizeof(*streamConfig));
+    LiInitializeStreamConfiguration(streamConfig);
 
     serverInfo->address = strdup(address);
     serverInfo->serverInfoAppVersion = strdup(appVersion);
@@ -417,6 +428,7 @@ static bool PrepareStartConnection(napi_env env, napi_value* args, size_t argc, 
     streamConfig->colorRange = colorRange;
     streamConfig->enableMic = enableMic;
     streamConfig->controlOnly = controlOnly;
+    streamConfig->videoFecPercentage = videoFecPercentage;
 
     if (aesKeyData && aesKeyLength >= 16) {
         memcpy(streamConfig->remoteInputAesKey, aesKeyData, 16);
@@ -583,8 +595,8 @@ napi_value MoonBridge_Init(napi_env env, napi_callback_info info) {
 napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info) {
     OH_LOG_INFO(LOG_APP, "MoonBridge_StartConnection");
     
-    size_t argc = 22;
-    napi_value args[22];
+    size_t argc = 23;
+    napi_value args[23];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
     StartSlot startSlot = TryAcquireStartSlot();
@@ -605,7 +617,7 @@ napi_value MoonBridge_StartConnection(napi_env env, napi_callback_info info) {
     if (!PrepareStartConnection(env, args, argc, &g_serverInfo, &g_streamConfig,
                                 &videoCapabilities, &hdrMode)) {
         MarkConnectionIdle();
-        napi_throw_error(env, nullptr, "参数不足");
+        napi_throw_error(env, nullptr, "参数不足或参数无效");
         napi_value result;
         napi_create_int32(env, -1, &result);
         return result;
@@ -655,8 +667,8 @@ static void CompleteStartConnectionAsync(napi_env env, napi_status status, void*
 napi_value MoonBridge_StartConnectionAsync(napi_env env, napi_callback_info info) {
     OH_LOG_INFO(LOG_APP, "MoonBridge_StartConnectionAsync");
 
-    size_t argc = 22;
-    napi_value args[22];
+    size_t argc = 23;
+    napi_value args[23];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     StartSlot startSlot = TryAcquireStartSlot();
@@ -680,7 +692,7 @@ napi_value MoonBridge_StartConnectionAsync(napi_env env, napi_callback_info info
                                 &videoCapabilities, &hdrMode)) {
         MarkConnectionIdle();
         delete context;
-        napi_throw_error(env, nullptr, "参数不足");
+        napi_throw_error(env, nullptr, "参数不足或参数无效");
         napi_value result;
         napi_create_int32(env, -1, &result);
         return result;

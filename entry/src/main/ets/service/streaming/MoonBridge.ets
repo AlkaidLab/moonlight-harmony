@@ -368,6 +368,7 @@ export interface StreamConfiguration {
   hdrMode?: number;        // HDR 模式: 0=SDR, 1=HDR10/PQ, 2=HLG
   enableMic?: boolean;
   controlOnly?: boolean;
+  videoFecPercentage?: number;
 }
 
 // =============================================================================
@@ -411,7 +412,8 @@ class MoonBridgeClass {
       config.colorRange,
       config.hdrMode || HDR_MODE_SDR,
       config.enableMic || false,
-      config.controlOnly || false
+      config.controlOnly || false,
+      config.videoFecPercentage ?? -2
     );
   }
 
@@ -441,7 +443,8 @@ class MoonBridgeClass {
       config.colorRange,
       config.hdrMode || HDR_MODE_SDR,
       config.enableMic || false,
-      config.controlOnly || false
+      config.controlOnly || false,
+      config.videoFecPercentage ?? -2
     );
   }
 

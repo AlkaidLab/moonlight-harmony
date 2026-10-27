@@ -27,13 +27,18 @@ import {
   KeyBehavior,
   KeyShape,
   AnalogStickAction,
+  MouseLookAction,
   DPadAction,
   WheelPadAction,
-  WheelPadSegment,
+  KeyActionItem,
+  KeyMenuAction,
+  ShortcutAction,
   DigitalStickAction,
   KeyboardAction,
   createDefaultKeyDef,
   cloneKeyDef,
+  cloneKeyAction,
+  resolveMouseLookLayout,
   generateKeyId,
   getActionDisplayName,
   KEY_PRESET_CATEGORIES,
@@ -43,6 +48,7 @@ import {
 import { CustomKeyStore } from '../service/customkey/CustomKeyStore';
 import { QrShareService } from '../service/network/QrShareService';
 import { VirtualJoystick } from './virtual/VirtualJoystick';
+import { MouseLookRegion } from './virtual/MouseLookRegion';
 import { VirtualDPad } from './virtual/VirtualDPad';
 import { VirtualWheelPad } from './virtual/VirtualWheelPad';
 import { image } from '@kit.ImageKit';
@@ -69,6 +75,10 @@ import {
   kMeansPlusPlus, pickAccentFromClusters,
 } from '../service/customkey/CustomKeyTheme';
 import { CustomKeyBtn } from './CustomKeyBtn';
+import { CustomKeyMenuPanel } from './CustomKeyMenuPanel';
+import { KeyMenuController, isKeyMenuItemAction } from '../service/customkey/KeyMenuController';
+import { ShortcutEditorDialog, ShortcutEditData } from './dialogs/ShortcutEditorDialog';
+import { Shortcut } from './ShortcutManager';
 import { AiKeyRecommendation } from '../service/AiKeyService';
 import { Logger } from '../common/Logger';
 import { UI } from '../common/UI';
@@ -79,8 +89,12 @@ import { UI } from '../common/UI';
 
 @Component
 export struct CustomKeyOverlay {
+  @Prop @Watch('onMenuInputChanged') inputEnabled: boolean = true;
+  onMouseLookMovement: (deltaX: number, deltaY: number) => void = () => {};
   /** 按键事件回调（统一入口，包含 keyboard/mouse/gamepad/special 所有类型） */
   onKeyAction: (action: KeyAction, isDown: boolean) => void = () => {};
+  onPulseAction: (action: KeyAction) => void = () => {};
+  onInputReset: () => void = () => {};
   /** 模拟摇杆移动回调 */
   onAnalogStickMovement: (stick: string, x: number, y: number) => void = () => {};
   /** 模拟摇杆 L3/R3 点击回调（双击触发，自动短按+释放） */
@@ -92,7 +106,10 @@ export struct CustomKeyOverlay {
 
   // ── 状态 ──
   @State keys: CustomKeyDef[] = [];
-  @Link editMode: boolean;
+  @Link @Watch('onMenuInputChanged') editMode: boolean;
+  @State private openKeyMenuId: string = '';
+  private keyMenuController: KeyMenuController = new KeyMenuController();
+  private menuShortcutEditor: CustomDialogController | null = null;
   /** 配置版本号（外部递增触发重新加载按键） */
   @Prop @Watch('onProfileVersionChanged') profileVersion: number = 0;
   @State selectedKeyId: string = '';
@@ -210,7 +227,14 @@ export struct CustomKeyOverlay {
 
   /** 获取按 layer 升序排列的按键（layer 大的在上层） */
   private getSortedKeys(): CustomKeyDef[] {
-    return this.keys.slice().sort((a: CustomKeyDef, b: CustomKeyDef) => a.layer - b.layer);
+    return this.keys.map((key: CustomKeyDef) => resolveMouseLookLayout(key, this.screenWidthVp, this.screenHeightVp))
+      .sort((a: CustomKeyDef, b: CustomKeyDef) => {
+        // 游玩时按钮始终优先于大面积视角区，保证攻击/技能多指操作。
+        if (!this.editMode && (a.action.type === 'mouseLook') !== (b.action.type === 'mouseLook')) {
+          return a.action.type === 'mouseLook' ? -1 : 1;
+        }
+        return a.layer - b.layer;
+      });
   }
 
   private isEditToolbarVisible(): boolean {
@@ -259,7 +283,7 @@ export struct CustomKeyOverlay {
     const bandBottom = dockTop ? Math.min(this.screenHeightVp, EDIT_TOOLBAR_HEIGHT + margin) : this.screenHeightVp;
     let score = 0;
 
-    for (const key of this.keys) {
+    for (const key of this.getSortedKeys()) {
       if (targetOnly && !this.isToolbarTargetKey(key)) continue;
       const dy = this.getToolbarKeyVisualDy(key);
       const keyTop = key.yPercent * this.screenHeightVp - key.height / 2 + dy;
@@ -303,6 +327,10 @@ export struct CustomKeyOverlay {
   private captureAnimTimers: number[] = [];
 
   async aboutToAppear(): Promise<void> {
+    this.keyMenuController.onOpenChanged = (keyId: string): void => { this.openKeyMenuId = keyId; };
+    this.keyMenuController.onAction = (action: KeyAction, isDown: boolean): void => {
+      this.onKeyAction(action, isDown);
+    };
     // 获取屏幕尺寸（getDefaultDisplaySync 可能抛错；失败时保持初值 0，
     // 后续由 display.on('change') 监听在屏幕信息可获取时补偿更新）
     try {
@@ -346,6 +374,8 @@ export struct CustomKeyOverlay {
   }
 
   aboutToDisappear(): void {
+    this.resetCustomInputs();
+    this.menuShortcutEditor?.close();
     for (const t of this.captureAnimTimers) {
       clearTimeout(t);
     }
@@ -361,6 +391,8 @@ export struct CustomKeyOverlay {
 
   /** 外部配置版本变化时重新加载按键 */
   async onProfileVersionChanged(): Promise<void> {
+    this.resetCustomInputs();
+    this.menuShortcutEditor?.close();
     this.keys = await CustomKeyStore.getKeys();
     this.activeProfileName = await CustomKeyStore.getActiveProfileName();
     this.selectedKeyId = '';
@@ -378,10 +410,29 @@ export struct CustomKeyOverlay {
         // 自定义按键 —— 每个是独立 @Component，有自己的触摸生命周期
         // 按 layer 升序排列，layer 大的在上层
         ForEach(this.getSortedKeys(), (key: CustomKeyDef) => {
-          if (key.action.type === 'analogStick' && !this.editMode) {
+          if (key.action.type === 'mouseLook' && !this.editMode) {
+            // 自定义组件必须作为容器的子组件声明，避免 ArkTS UI 组件语法检查失败。
+            Column() {
+              MouseLookRegion({
+                regionWidth: key.width,
+                regionHeight: key.height,
+                sensitivity: (key.action as MouseLookAction).sensitivity ?? 1.5,
+                invertY: (key.action as MouseLookAction).invertY ?? false,
+                inputEnabled: this.inputEnabled,
+                onMovement: (dx: number, dy: number): void => this.onMouseLookMovement(dx, dy),
+              })
+            }
+            .width(key.width)
+            .height(key.height)
+            .position({
+              x: key.xPercent * this.screenWidthVp - key.width / 2,
+              y: key.yPercent * this.screenHeightVp - key.height / 2,
+            })
+          } else if (key.action.type === 'analogStick' && !this.editMode) {
             // 模拟摇杆：非编辑模式时渲染真正的虚拟摇杆 UI
             Column() {
               VirtualJoystick({
+                inputEnabled: this.inputEnabled,
                 joystickSize: Math.max(key.width, key.height),
                 ringColor: key.normalColor,
                 stickColor: key.bgColor,
@@ -418,6 +469,7 @@ export struct CustomKeyOverlay {
             // 十字键盘：非编辑模式时渲染 VirtualDPad 控件
             Column() {
               VirtualDPad({
+                inputEnabled: this.inputEnabled,
                 dpadSize: Math.max(key.width, key.height),
                 normalColor: key.normalColor,
                 pressedColor: key.pressedColor,
@@ -438,6 +490,7 @@ export struct CustomKeyOverlay {
             // 轮盘菜单：非编辑模式时渲染 VirtualWheelPad 控件
             Column() {
               VirtualWheelPad({
+                inputEnabled: this.inputEnabled,
                 wheelSize: Math.max(key.width, key.height),
                 normalColor: key.normalColor,
                 pressedColor: key.pressedColor,
@@ -460,6 +513,7 @@ export struct CustomKeyOverlay {
             // 数字摇杆：外观同模拟摇杆，输出离散四方向
             Column() {
               VirtualJoystick({
+                inputEnabled: this.inputEnabled,
                 joystickSize: Math.max(key.width, key.height),
                 ringColor: key.normalColor,
                 stickColor: key.bgColor,
@@ -473,10 +527,7 @@ export struct CustomKeyOverlay {
                   const dsAction = key.action as DigitalStickAction;
                   if (dsAction.clickAction) {
                     doKeyHaptic(key.haptic ?? 'light');
-                    this.onKeyAction(dsAction.clickAction, true);
-                    setTimeout(() => {
-                      this.onKeyAction(dsAction.clickAction!, false);
-                    }, 100);
+                    this.onPulseAction(dsAction.clickAction);
                   }
                 },
                 onRevoke: (): void => {
@@ -495,7 +546,14 @@ export struct CustomKeyOverlay {
               CustomKeyBtn({
                 keyDef: key,
                 editMode: this.editMode,
+                inputEnabled: this.inputEnabled,
                 isSelected: this.selectedKeyId === key.id,
+                menuOpen: this.openKeyMenuId === key.id,
+                onMenuToggle: (): void => {
+                  if (!this.inputEnabled || this.editMode) return;
+                  doKeyHaptic(key.haptic ?? 'light');
+                  this.keyMenuController.toggle(key.id);
+                },
                 snapCalculator: (keyId: string, rawDx: number, rawDy: number): SnapResult | null => {
                   return this.calcAlignmentSnap(keyId, rawDx, rawDy);
                 },
@@ -551,8 +609,35 @@ export struct CustomKeyOverlay {
         }, (key: CustomKeyDef) => {
           // key 包含位置和外观属性，任何变化都触发组件重建
           // 加上 editMode 以在模式切换时强制重建（切换 VirtualJoystick ↔ CustomKeyBtn）
-          return `${key.id}|${this.editMode}|${key.xPercent.toFixed(4)}|${key.yPercent.toFixed(4)}|${key.width}|${key.height}|${key.opacity}|${key.fontSize}|${key.borderRadius}|${key.borderWidth}|${key.shape}|${key.behavior}|${key.label}|${key.bgColor}|${key.textColor}`;
+          return `${key.id}|${this.editMode}|${key.xPercent.toFixed(4)}|${key.yPercent.toFixed(4)}|${key.width}|${key.height}|${key.opacity}|${key.fontSize}|${key.borderRadius}|${key.borderWidth}|${key.shape}|${key.behavior}|${key.label}|${key.bgColor}|${key.textColor}|${JSON.stringify(key.action)}`;
         })
+
+        // 菜单独立于入口渲染，始终在常驻按键和视角区上方；无全屏遮罩。
+        if (!this.editMode && this.inputEnabled) {
+          ForEach(this.getOpenKeyMenus(), (menuKey: CustomKeyDef) => {
+            Column() {
+              CustomKeyMenuPanel({
+                menuKey: menuKey,
+                viewWidth: this.screenWidthVp,
+                viewHeight: this.screenHeightVp,
+                onExecute: (action: KeyAction): void => {
+                  const key = this.getOpenKeyMenu();
+                  if (!key || key.id !== menuKey.id || !this.inputEnabled || this.editMode) return;
+                  if (this.keyMenuController.execute(action, (key.action as KeyMenuAction).autoClose !== false)) {
+                    doKeyHaptic(key.haptic ?? 'light');
+                  }
+                },
+                onClose: (): void => {
+                  if (this.openKeyMenuId === menuKey.id) this.keyMenuController.close();
+                },
+                onAutoCloseChanged: (autoClose: boolean): void => {
+                  if (this.openKeyMenuId === menuKey.id) this.updateKeyMenuAutoClose(menuKey.id, autoClose);
+                },
+              })
+            }
+            .width('100%').height('100%').hitTestBehavior(HitTestMode.Transparent)
+          }, (menuKey: CustomKeyDef) => this.getKeyMenuRenderKey(menuKey))
+        }
 
         // 缩放手柄：选中按键时显示在右下角
         if (this.editMode && this.selectedKeyId) {
@@ -860,6 +945,42 @@ export struct CustomKeyOverlay {
   // 撤销/重做
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+  private onMenuInputChanged(): void {
+    if (this.editMode || !this.inputEnabled) this.resetCustomInputs();
+  }
+
+  private resetCustomInputs(): void {
+    this.keyMenuController.reset();
+    this.digitalStickStates.clear();
+    this.onInputReset();
+  }
+
+  private getOpenKeyMenu(): CustomKeyDef | undefined {
+    return this.keys.find((key: CustomKeyDef) => key.id === this.openKeyMenuId && key.action.type === 'keyMenu');
+  }
+
+  private getOpenKeyMenus(): CustomKeyDef[] {
+    const key = this.getOpenKeyMenu();
+    return key ? [key] : [];
+  }
+
+  private getKeyMenuRenderKey(menuKey: CustomKeyDef): string {
+    if (menuKey.action.type !== 'keyMenu') return menuKey.id;
+    return menuKey.id + '|' + (menuKey.action.autoClose !== false ? 'auto-close' : 'pinned');
+  }
+
+  private updateKeyMenuAutoClose(keyId: string, autoClose: boolean): void {
+    const index = this.keys.findIndex((key: CustomKeyDef) => key.id === keyId && key.action.type === 'keyMenu');
+    if (index < 0) return;
+    if (this.editMode) this.pushUndoState();
+    const keys = this.keys.slice();
+    const key = cloneKeyDef(keys[index]);
+    (key.action as KeyMenuAction).autoClose = autoClose;
+    keys[index] = key;
+    this.keys = keys;
+    CustomKeyStore.saveKeys(this.keys);
+  }
+
   /** 保存当前状态到撤销栈（在操作之前调用） */
   private pushUndoState(): void {
     this.undoStack.push(this.keys.map(k => cloneKeyDef(k)));
@@ -965,7 +1086,8 @@ export struct CustomKeyOverlay {
    */
   private calcAlignmentSnap(keyId: string, rawDx: number, rawDy: number): SnapResult | null {
     if (!this.snapEnabled) return null;
-    const key = this.keys.find(k => k.id === keyId);
+    const layoutKeys = this.getSortedKeys();
+    const key = layoutKeys.find(k => k.id === keyId);
     if (!key || this.screenWidthVp <= 0) return null;
 
     const THRESHOLD = CustomKeyOverlay.SNAP_THRESHOLD_VP;
@@ -982,7 +1104,7 @@ export struct CustomKeyOverlay {
     const targetsX: number[] = [0, W / 2, W]; // 屏幕左、中、右
     const targetsY: number[] = [0, H / 2, H]; // 屏幕上、中、下
 
-    for (const other of this.keys) {
+    for (const other of layoutKeys) {
       if (other.id === keyId) continue;
       const ocx = other.xPercent * W;
       const ocy = other.yPercent * H;
@@ -1055,7 +1177,7 @@ export struct CustomKeyOverlay {
       const shouldMove = newKeys[i].id === keyId ||
         (groupId !== undefined && groupId !== '' && newKeys[i].groupId === groupId);
       if (shouldMove) {
-        const updated = cloneKeyDef(newKeys[i]);
+        const updated = this.toCustomMouseLookLayout(newKeys[i]);
         updated.xPercent = Math.max(0.0, Math.min(1.0, updated.xPercent + dxPercent));
         updated.yPercent = Math.max(0.0, Math.min(1.0, updated.yPercent + dyPercent));
         newKeys[i] = updated;
@@ -1115,6 +1237,14 @@ export struct CustomKeyOverlay {
         textColor = '#FFFFD080';
         fontSize = 11;
         break;
+      case 'keyMenu':
+        width = 112;
+        height = 48;
+        bgColor = '#80406070';
+        pressedColor = '#C06098B0';
+        textColor = '#F0FFFFFF';
+        fontSize = 13;
+        break;
       case 'mouse':
       case 'mouseScroll':
         // 鼠标：圆形、紫色系
@@ -1124,6 +1254,12 @@ export struct CustomKeyOverlay {
         bgColor = '#30A070C0';
         pressedColor = '#80A070C0';
         borderRadius = 26;
+        break;
+      case 'mouseLook':
+        width = this.screenWidthVp / 2;
+        height = this.screenHeightVp;
+        bgColor = '#10000000';
+        borderRadius = 8;
         break;
       case 'analogStick':
         // 模拟摇杆：大圆形、绿色系（与手柄按键同色调）
@@ -1192,7 +1328,13 @@ export struct CustomKeyOverlay {
       textColor: textColor,
       borderRadius: borderRadius,
       fontSize: fontSize,
+      layer: preset.action.type === 'mouseLook' ? -1 : 0,
+      haptic: preset.action.type === 'mouseLook' ? 'none' : 'light',
     });
+    if (preset.action.type === 'mouseLook') {
+      newKey.xPercent = 0.75;
+      newKey.yPercent = 0.5;
+    }
 
     const newArr: CustomKeyDef[] = this.keys.slice();
     newArr.push(newKey);
@@ -1201,6 +1343,13 @@ export struct CustomKeyOverlay {
     await CustomKeyStore.addKey(newKey);
     this.selectedKeyId = newKey.id;
     this.showAddPanel = false;
+    if (preset.action.type === 'mouseLook') {
+      ToastQueue.show({ message: '已添加视角滑动区，可拖动调整范围并在属性中设置灵敏度', duration: 2200 });
+    } else if (preset.action.type === 'keyMenu') {
+      this.showPropertyPanel = true;
+      this.segmentPickerIndex = -1;
+      ToastQueue.show({ message: '可编辑菜单项和收起方式，完成编辑后点击入口展开', duration: 2200 });
+    }
   }
 
   private async deleteSelectedKey(): Promise<void> {
@@ -1231,7 +1380,7 @@ export struct CustomKeyOverlay {
       const groupKeys = this.keys.filter(k => k.groupId === src.groupId);
       const newArr: CustomKeyDef[] = this.keys.slice();
       for (let i = 0; i < groupKeys.length; i++) {
-        const cloned = cloneKeyDef(groupKeys[i]);
+        const cloned = this.toCustomMouseLookLayout(groupKeys[i]);
         cloned.id = generateKeyId();
         cloned.groupId = newGroupId;
         cloned.xPercent = Math.min(1.0, cloned.xPercent + 0.05);
@@ -1242,7 +1391,7 @@ export struct CustomKeyOverlay {
       await CustomKeyStore.saveKeys(this.keys);
       ToastQueue.show({ message: `已复制整组（${groupKeys.length}个键）`, duration: 1200 });
     } else {
-      const cloned = cloneKeyDef(src);
+      const cloned = this.toCustomMouseLookLayout(src);
       cloned.id = generateKeyId();
       cloned.xPercent = Math.min(1.0, cloned.xPercent + 0.03);
       cloned.yPercent = Math.min(1.0, cloned.yPercent + 0.03);
@@ -1357,7 +1506,7 @@ export struct CustomKeyOverlay {
     const idx = this.keys.findIndex(k => k.id === this.selectedKeyId);
     if (idx === -1 || this.screenWidthVp <= 0) return;
     this.pushUndoState();
-    const updated = cloneKeyDef(this.keys[idx]);
+    const updated = this.toCustomMouseLookLayout(this.keys[idx]);
     updated.xPercent = Math.max(0, Math.min(1, updated.xPercent + dx / this.screenWidthVp));
     updated.yPercent = Math.max(0, Math.min(1, updated.yPercent + dy / this.screenHeightVp));
     const newKeys: CustomKeyDef[] = this.keys.slice();
@@ -1367,14 +1516,38 @@ export struct CustomKeyOverlay {
   }
 
   private getSelectedKey(): CustomKeyDef | undefined {
-    return this.keys.find(k => k.id === this.selectedKeyId);
+    const key = this.keys.find(k => k.id === this.selectedKeyId);
+    return key ? resolveMouseLookLayout(key, this.screenWidthVp, this.screenHeightVp) : undefined;
+  }
+
+  /** 拖动/缩放半屏区时，以当前可见布局切换到自由尺寸。 */
+  private toCustomMouseLookLayout(key: CustomKeyDef): CustomKeyDef {
+    const updated = cloneKeyDef(resolveMouseLookLayout(key, this.screenWidthVp, this.screenHeightVp));
+    if (key.action.type === 'mouseLook') {
+      const action = key.action as MouseLookAction;
+      updated.action = { type: 'mouseLook', region: 'custom', sensitivity: action.sensitivity, invertY: action.invertY } as MouseLookAction;
+    }
+    return updated;
+  }
+
+  private updateMouseLookOptions(region: string, sensitivity: number, invertY: boolean): void {
+    const key = this.getSelectedKey();
+    if (!key || key.action.type !== 'mouseLook') return;
+    this.pushUndoState();
+    const updated = cloneKeyDef(key);
+    updated.action = {
+      type: 'mouseLook', region: region as 'leftHalf' | 'rightHalf' | 'custom', sensitivity: sensitivity, invertY: invertY,
+    } as MouseLookAction;
+    this.keys = this.keys.map((item: CustomKeyDef) => item.id === updated.id ? updated : item);
+    CustomKeyStore.saveKeys(this.keys);
   }
 
   private updateSelectedKeyProp(prop: string, value: Object): void {
     const idx = this.keys.findIndex(k => k.id === this.selectedKeyId);
     if (idx === -1) return;
     this.pushUndoState();
-    const updated = cloneKeyDef(this.keys[idx]);
+    const updated = prop === 'width' || prop === 'height'
+      ? this.toCustomMouseLookLayout(this.keys[idx]) : cloneKeyDef(this.keys[idx]);
     switch (prop) {
       case 'width': updated.width = value as number; break;
       case 'height': updated.height = value as number; break;
@@ -1547,6 +1720,7 @@ export struct CustomKeyOverlay {
   }
 
   async reloadKeys(): Promise<void> {
+    this.resetCustomInputs();
     this.keys = await CustomKeyStore.getKeys();
   }
 
@@ -2702,9 +2876,11 @@ export struct CustomKeyOverlay {
         this.resizeDragDY = dy;
         // 实时预览：更新按键尺寸
         const minS = CustomKeyOverlay.MIN_KEY_SIZE;
-        const maxS = CustomKeyOverlay.MAX_KEY_SIZE;
-        const newW = Math.max(minS, Math.min(maxS, this.resizeOrigWidth + dx));
-        const newH = Math.max(minS, Math.min(maxS, this.resizeOrigHeight + dy));
+        const isMouseLook = this.getSelectedKey()?.action.type === 'mouseLook';
+        const maxW = isMouseLook ? this.screenWidthVp : CustomKeyOverlay.MAX_KEY_SIZE;
+        const maxH = isMouseLook ? this.screenHeightVp : CustomKeyOverlay.MAX_KEY_SIZE;
+        const newW = Math.max(minS, Math.min(maxW, this.resizeOrigWidth + dx));
+        const newH = Math.max(minS, Math.min(maxH, this.resizeOrigHeight + dy));
         this.applyResize(newW, newH);
         break;
       }
@@ -2725,7 +2901,7 @@ export struct CustomKeyOverlay {
   private applyResize(newWidth: number, newHeight: number): void {
     const idx = this.keys.findIndex(k => k.id === this.selectedKeyId);
     if (idx === -1) return;
-    const updated = cloneKeyDef(this.keys[idx]);
+    const updated = this.toCustomMouseLookLayout(this.keys[idx]);
     if (updated.shape === 'circle') {
       // 圆形按键：保持等比
       const s = Math.max(newWidth, newHeight);
@@ -3001,7 +3177,9 @@ export struct CustomKeyOverlay {
   PropertyPanel() {
     Column() {
       Row() {
-        Text('按键属性').fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
+        Text(this.getSelectedKey()?.action.type === 'keyMenu' ? '快捷菜单属性' :
+          (this.getSelectedKey()?.action.type === 'mouseLook' ? '视角滑动区属性' : '按键属性'))
+          .fontSize(16).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
         Blank()
         Text('✕').fontSize(14).fontColor('#99FFFFFF')
           .width(28).height(28).textAlign(TextAlign.Center)
@@ -3061,36 +3239,57 @@ export struct CustomKeyOverlay {
           .width('100%').padding({ left: 4, right: 4 })
 
           // 键值编辑（变更按键绑定的动作）
-          Column({ space: 4 }) {
-            Row() {
-              Text('键值').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(36)
-              Text(getActionDisplayName(this.getSelectedKey()?.action ?? { type: 'keyboard', vk: 0 } as KeyboardAction))
-                .fontSize(12).fontColor(OV_ACCENT_BLUE).fontWeight(FontWeight.Medium)
-                .layoutWeight(1).maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(this.propActionPickerOpen ? '收起' : '更改')
-                .fontSize(11).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
-                .padding({ left: 8, right: 8 }).height(28)
-                .borderRadius(14).backgroundColor(OV_BG_TRACK)
-                .border({ width: 1, color: '#20FFFFFF' })
-                .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
-                .onClick(() => {
-                  this.propActionPickerOpen = !this.propActionPickerOpen;
-                  this.propActionCategoryIdx = 0;
-                })
-            }
-            .width('100%')
+          if (this.getSelectedKey()?.action.type !== 'keyMenu') {
+            Column({ space: 4 }) {
+              Row() {
+                Text('键值').fontSize(12).fontColor(OV_TEXT_MEDIUM).width(36)
+                Text(getActionDisplayName(this.getSelectedKey()?.action ?? { type: 'keyboard', vk: 0 } as KeyboardAction))
+                  .fontSize(12).fontColor(OV_ACCENT_BLUE).fontWeight(FontWeight.Medium)
+                  .layoutWeight(1).maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(this.propActionPickerOpen ? '收起' : '更改')
+                  .fontSize(11).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Medium)
+                  .padding({ left: 8, right: 8 }).height(28)
+                  .borderRadius(14).backgroundColor(OV_BG_TRACK)
+                  .border({ width: 1, color: '#20FFFFFF' })
+                  .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
+                  .onClick(() => {
+                    this.propActionPickerOpen = !this.propActionPickerOpen;
+                    this.propActionCategoryIdx = 0;
+                  })
+              }
+              .width('100%')
 
-            if (this.propActionPickerOpen) {
-              this.PropActionPicker()
+              if (this.propActionPickerOpen) {
+                this.PropActionPicker()
+              }
             }
+            .width('100%').padding({ left: 4, right: 4 })
           }
-          .width('100%').padding({ left: 4, right: 4 })
+
+          if (this.getSelectedKey()?.action.type === 'keyMenu') {
+            Row({ space: 8 }) {
+              Text('执行后').fontSize(12).fontColor(OV_TEXT_MEDIUM)
+              Button((this.getSelectedKey()?.action as KeyMenuAction).autoClose !== false ? '自动收起 ✓' : '自动收起')
+                .fontSize(12).height(32).backgroundColor(OV_BG_TRACK).fontColor(OV_TEXT_WHITE)
+                .onClick(() => { this.updateKeyMenuAutoClose(this.selectedKeyId, true); })
+              Button((this.getSelectedKey()?.action as KeyMenuAction).autoClose === false ? '保持展开 ✓' : '保持展开')
+                .fontSize(12).height(32).backgroundColor(OV_BG_TRACK).fontColor(OV_TEXT_WHITE)
+                .onClick(() => { this.updateKeyMenuAutoClose(this.selectedKeyId, false); })
+            }
+            .width('100%').padding({ left: 4, right: 4 })
+            Text('入口可独立拖动和设置外观；菜单项为点按操作，可与常驻按键同时使用。')
+              .fontSize(11).fontColor(OV_TEXT_DIM).width('100%')
+          }
+
+          if (this.getSelectedKey()?.action.type === 'mouseLook') {
+            this.MouseLookProperties()
+          }
 
           // 尺寸/样式 滑块 — 两列紧凑排列
           Row({ space: 12 }) {
-            this.PropertySliderCompact('宽', 30, 200, this.getSelectedKey()?.width ?? 60, 'width')
-            this.PropertySliderCompact('高', 30, 200, this.getSelectedKey()?.height ?? 60, 'height')
+            this.PropertySliderCompact('宽', 30, this.getSelectedKey()?.action.type === 'mouseLook' ? Math.max(30, this.screenWidthVp) : 200, this.getSelectedKey()?.width ?? 60, 'width')
+            this.PropertySliderCompact('高', 30, this.getSelectedKey()?.action.type === 'mouseLook' ? Math.max(30, this.screenHeightVp) : 200, this.getSelectedKey()?.height ?? 60, 'height')
           }
           .width('100%').padding({ left: 4, right: 4 })
 
@@ -3142,19 +3341,23 @@ export struct CustomKeyOverlay {
           }
           .width('100%').padding({ left: 4, right: 4 })
 
-          Row({ space: 12 }) {
-            // 形状 + 模式 — 紧凑行内
-            Row({ space: 6 }) {
-              this.ShapeChip('方', 'rect')
-              this.ShapeChip('圆', 'circle')
-              this.ShapeChip('⬡', 'hexagon')
-              Text('|').fontSize(10).fontColor('#30FFFFFF')
-              this.BehaviorChip('点触', 'momentary')
-              this.BehaviorChip('切换', 'toggle')
+          if (this.getSelectedKey()?.action.type !== 'mouseLook') {
+            Row({ space: 12 }) {
+              // 形状 + 模式 — 紧凑行内
+              Row({ space: 6 }) {
+                this.ShapeChip('方', 'rect')
+                this.ShapeChip('圆', 'circle')
+                this.ShapeChip('⬡', 'hexagon')
+                Text('|').fontSize(10).fontColor('#30FFFFFF')
+                if (this.getSelectedKey()?.action.type !== 'keyMenu') {
+                  this.BehaviorChip('点触', 'momentary')
+                  this.BehaviorChip('切换', 'toggle')
+                }
+              }
+              .justifyContent(FlexAlign.End)
             }
-            .justifyContent(FlexAlign.End)
+            .width('100%').padding({ left: 4, right: 4 })
           }
-          .width('100%').padding({ left: 4, right: 4 })
 
           // 颜色行 — 底色 + 字色 并排
           Row({ space: 16 }) {
@@ -3247,22 +3450,23 @@ export struct CustomKeyOverlay {
           }
           .width('100%').padding({ left: 4, right: 4 })
 
-          // 轮盘分区编辑器（仅 wheelPad 类型显示）
-          if (this.getSelectedKey()?.action?.type === 'wheelPad') {
+          // 复用名称/动作编辑器；轮盘和快捷菜单保留各自的数据和交互。
+          if (this.getSelectedKey()?.action.type === 'wheelPad' || this.getSelectedKey()?.action.type === 'keyMenu') {
             Column({ space: 6 }) {
               Row() {
-                Text('轮盘分区').fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Medium)
+                Text(this.getSelectedKey()?.action.type === 'keyMenu' ? '菜单项' : '轮盘分区')
+                  .fontSize(12).fontColor(OV_TEXT_BRIGHT).fontWeight(FontWeight.Medium)
                 Blank()
                 Text('+')
                   .fontSize(14).fontColor(OV_TEXT_WHITE).fontWeight(FontWeight.Bold)
                   .width(24).height(24).textAlign(TextAlign.Center)
                   .borderRadius(12).backgroundColor('#50C080')
                   .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-                  .onClick(() => { this.addWheelPadSegment(); })
+                  .onClick(() => { this.addActionItem(); })
               }
               .width('100%')
 
-              ForEach(this.getWheelPadSegments(), (seg: WheelPadSegment, index?: number) => {
+              ForEach(this.getActionItems(), (seg: KeyActionItem, index?: number) => {
                 Column({ space: 4 }) {
                   Row({ space: 6 }) {
                     Text(`${(index ?? 0) + 1}`)
@@ -3272,7 +3476,7 @@ export struct CustomKeyOverlay {
                       .width(50).height(28).fontSize(11)
                       .fontColor(OV_TEXT_WHITE).backgroundColor(OV_BG_CARD_LIGHTER)
                       .borderRadius(6).padding({ left: 6, right: 6 })
-                      .maxLength(6)
+                      .maxLength(this.getSelectedKey()?.action.type === 'keyMenu' ? 8 : 6)
                       .onChange((value: string) => { this.updateSegmentLabel(index ?? 0, value); })
                     Text(getActionDisplayName(seg.action))
                       .fontSize(11).fontColor(OV_ACCENT_BLUE)
@@ -3288,23 +3492,30 @@ export struct CustomKeyOverlay {
                         this.segmentPickerIndex = (this.segmentPickerIndex === (index ?? 0)) ? -1 : (index ?? 0);
                         this.segmentPickerCategoryIdx = 0;
                       })
-                    if (this.getWheelPadSegments().length > 2) {
+                    if (this.getActionItems().length > (this.getSelectedKey()?.action.type === 'keyMenu' ? 1 : 2)) {
                       Text('✕')
                         .fontSize(11).fontColor('#FF8080')
                         .width(22).height(24).textAlign(TextAlign.Center)
                         .borderRadius(12).backgroundColor('#30FF6060')
                         .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-                        .onClick(() => { this.removeWheelPadSegment(index ?? 0); })
+                        .onClick(() => { this.removeActionItem(index ?? 0); })
                     }
                   }
                   .width('100%')
+
+                  if (this.getSelectedKey()?.action.type === 'keyMenu') {
+                    Button('自定义组合键 / 按键序列', { type: ButtonType.Normal })
+                      .height(30).fontSize(11).fontColor(OV_ACCENT_BLUE)
+                      .backgroundColor(OV_BG_TRACK).borderRadius(8)
+                      .onClick(() => { this.editMenuShortcut(index ?? 0); })
+                  }
 
                   // 按键选择器（展开时显示）
                   if (this.segmentPickerIndex === (index ?? 0)) {
                     this.SegmentActionPicker(index ?? 0)
                   }
                 }
-              }, (_seg: WheelPadSegment, index?: number) => `seg_${index}_${this.segmentPickerIndex}`)
+              }, (_seg: KeyActionItem, index?: number) => `seg_${index}_${this.segmentPickerIndex}`)
             }
             .width('100%').padding({ left: 4, right: 4 })
             .backgroundColor('#10FFFFFF')
@@ -3327,11 +3538,51 @@ export struct CustomKeyOverlay {
     .transition(TransitionEffect.move(TransitionEdge.BOTTOM).animation({ duration: 200 }))
   }
 
-  // ── 轮盘分区编辑 ──
+  // ── 快捷菜单 / 轮盘条目编辑 ──
 
-  /** 获取选中按键的轮盘分区（安全访问） */
-  private getWheelPadSegments(): WheelPadSegment[] {
+  private editMenuShortcut(itemIndex: number): void {
     const key = this.getSelectedKey();
+    const item = this.getActionItems()[itemIndex];
+    if (!key || key.action.type !== 'keyMenu' || !item) return;
+    const keyId = key.id;
+    const action = item.action;
+    const shortcut: Shortcut = {
+      id: keyId, name: item.label,
+      keys: action.type === 'shortcut' ? action.keys.slice() :
+        (action.type === 'keyboard' ? [action.vk] : []),
+      keySequence: action.type === 'shortcut' ? action.keySequence : undefined,
+    };
+    this.menuShortcutEditor = new CustomDialogController({
+      builder: ShortcutEditorDialog({
+        editingShortcut: shortcut,
+        showAppearanceOptions: false,
+        callbacks: {
+          onSave: (data: ShortcutEditData): void => {
+            if (!this.editMode || this.selectedKeyId !== keyId) return;
+            const current = this.getActionItems()[itemIndex];
+            if (!current) return;
+            this.pushUndoState();
+            current.label = data.name.trim().substring(0, 8) || item.label;
+            current.action = {
+              type: 'shortcut', keys: data.keys.slice(),
+              keySequence: data.keySequence?.map((step: number[]) => step.slice()),
+            } as ShortcutAction;
+            this.forceRefreshSelectedKey();
+          },
+          onCancel: (): void => {},
+        },
+      }),
+      alignment: DialogAlignment.Center,
+      customStyle: true,
+      autoCancel: true,
+    });
+    this.menuShortcutEditor.open();
+  }
+
+  /** 快捷菜单和轮盘复用条目编辑，不复用运行时展开状态。 */
+  private getActionItems(): KeyActionItem[] {
+    const key = this.getSelectedKey();
+    if (key?.action.type === 'keyMenu') return (key.action as KeyMenuAction).items;
     if (key && key.action.type === 'wheelPad') {
       return (key.action as WheelPadAction).segments;
     }
@@ -3341,9 +3592,9 @@ export struct CustomKeyOverlay {
   /** 更新分区标签 */
   private updateSegmentLabel(segIndex: number, label: string): void {
     const key = this.getSelectedKey();
-    if (!key || key.action.type !== 'wheelPad') return;
+    if (!key || (key.action.type !== 'wheelPad' && key.action.type !== 'keyMenu')) return;
     this.pushUndoState();
-    const segments = (key.action as WheelPadAction).segments;
+    const segments = this.getActionItems();
     if (segIndex >= 0 && segIndex < segments.length) {
       segments[segIndex].label = label;
     }
@@ -3353,24 +3604,25 @@ export struct CustomKeyOverlay {
   /** 更新分区绑定的按键动作 */
   private updateSegmentAction(segIndex: number, action: KeyAction): void {
     const key = this.getSelectedKey();
-    if (!key || key.action.type !== 'wheelPad') return;
+    if (!key || (key.action.type !== 'wheelPad' && key.action.type !== 'keyMenu')) return;
+    if (key.action.type === 'keyMenu' && !isKeyMenuItemAction(action)) return;
     this.pushUndoState();
-    const segments = (key.action as WheelPadAction).segments;
+    const segments = this.getActionItems();
     if (segIndex >= 0 && segIndex < segments.length) {
-      segments[segIndex].action = action;
+      segments[segIndex].action = cloneKeyAction(action);
     }
     this.segmentPickerIndex = -1;
     this.forceRefreshSelectedKey();
   }
 
   /** 添加新分区 */
-  private addWheelPadSegment(): void {
+  private addActionItem(): void {
     const key = this.getSelectedKey();
-    if (!key || key.action.type !== 'wheelPad') return;
+    if (!key || (key.action.type !== 'wheelPad' && key.action.type !== 'keyMenu')) return;
     this.pushUndoState();
-    const segments = (key.action as WheelPadAction).segments;
+    const segments = this.getActionItems();
     const idx = segments.length + 1;
-    const newSeg: WheelPadSegment = {
+    const newSeg: KeyActionItem = {
       label: `${idx}`,
       action: { type: 'keyboard', vk: 0x30 + (idx % 10) } as KeyboardAction,
     };
@@ -3378,12 +3630,12 @@ export struct CustomKeyOverlay {
     this.forceRefreshSelectedKey();
   }
 
-  /** 删除指定分区（至少保留 2 个） */
-  private removeWheelPadSegment(segIndex: number): void {
+  /** 菜单至少保留 1 项，轮盘至少保留 2 个分区。 */
+  private removeActionItem(segIndex: number): void {
     const key = this.getSelectedKey();
-    if (!key || key.action.type !== 'wheelPad') return;
-    const segments = (key.action as WheelPadAction).segments;
-    if (segments.length <= 2) return;
+    if (!key || (key.action.type !== 'wheelPad' && key.action.type !== 'keyMenu')) return;
+    const segments = this.getActionItems();
+    if (segments.length <= (key.action.type === 'keyMenu' ? 1 : 2)) return;
     this.pushUndoState();
     segments.splice(segIndex, 1);
     if (this.segmentPickerIndex >= segments.length) {
@@ -3398,8 +3650,6 @@ export struct CustomKeyOverlay {
     if (idx >= 0) {
       const newKeys = this.keys.slice();
       newKeys[idx] = cloneKeyDef(this.keys[idx]);
-      // 保留 action 引用（cloneKeyDef 浅拷贝 action）
-      newKeys[idx].action = this.keys[idx].action;
       this.keys = newKeys;
       CustomKeyStore.saveKeys(this.keys);
     }
@@ -3407,7 +3657,7 @@ export struct CustomKeyOverlay {
 
   /** 用于分区编辑的简化预设列表（排除复合类型） */
   private static readonly SEGMENT_PICKER_CATEGORIES: string[] = [
-    '常用键', '功能键', '鼠标', '手柄', '方向键', '字母', '数字', '符号',
+    '常用键', '功能键', '鼠标', '手柄', '方向键', '字母', '数字', '符号', '快捷键',
   ];
 
   @Builder
@@ -3462,8 +3712,9 @@ export struct CustomKeyOverlay {
       if (KEY_PRESET_CATEGORIES[i].name === catName) {
         // 过滤掉复合类型（摇杆、十字键、轮盘等不适合作为分区动作的类型）
         return KEY_PRESET_CATEGORIES[i].presets.filter((p: KeyPreset): boolean => {
+          if (this.getSelectedKey()?.action.type === 'keyMenu') return isKeyMenuItemAction(p.action);
           const t = p.action.type;
-          return t !== 'analogStick' && t !== 'dpad' && t !== 'wheelPad' && t !== 'digitalStick';
+          return t !== 'mouseLook' && t !== 'analogStick' && t !== 'dpad' && t !== 'wheelPad' && t !== 'digitalStick';
         });
       }
     }
@@ -3481,7 +3732,8 @@ export struct CustomKeyOverlay {
     if (!catName) return [];
     for (let i = 0; i < KEY_PRESET_CATEGORIES.length; i++) {
       if (KEY_PRESET_CATEGORIES[i].name === catName) {
-        return KEY_PRESET_CATEGORIES[i].presets;
+        // 连续区域需要独立控件，不能作为普通按钮的按下/释放绑定。
+        return KEY_PRESET_CATEGORIES[i].presets.filter((preset: KeyPreset) => preset.action.type !== 'mouseLook');
       }
     }
     return [];
@@ -3571,6 +3823,68 @@ export struct CustomKeyOverlay {
     .padding(6)
     .backgroundColor('#15FFFFFF')
     .borderRadius(6)
+  }
+
+  private getMouseLookAction(): MouseLookAction {
+    const key = this.getSelectedKey();
+    return key?.action.type === 'mouseLook' ? key.action as MouseLookAction : { type: 'mouseLook' } as MouseLookAction;
+  }
+
+  @Builder
+  MouseLookRegionChip(label: string, region: string) {
+    Text(label)
+      .fontSize(12).fontColor(OV_TEXT_WHITE)
+      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+      .height(40)
+      .textAlign(TextAlign.Center)
+      .borderRadius(8)
+      .backgroundColor((this.getMouseLookAction().region ?? 'rightHalf') === region ? OV_ACCENT_BLUE : OV_BG_TRACK)
+      .onClick(() => {
+        this.updateMouseLookOptions(region, this.getMouseLookAction().sensitivity ?? 1.5, this.getMouseLookAction().invertY ?? false);
+      })
+  }
+
+  @Builder
+  MouseLookProperties() {
+    Column({ space: 8 }) {
+      Text('仅滑动转视角，轻触、长按和双击均不点击。其他手指可同时操作按键。')
+        .fontSize(12).fontColor(OV_TEXT_MEDIUM)
+      Text(this.getMouseLookAction().region === 'custom'
+        ? '自由区域：拖动区域或右下角手柄调整大小和位置。切换到左右半屏会恢复整半屏。'
+        : '左右半屏会跟随当前画面尺寸；需要自定义范围时请选择“自由区域”。')
+        .fontSize(11).fontColor(OV_TEXT_DIM)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Row({ space: 8 }) {
+        this.MouseLookRegionChip('左半屏', 'leftHalf')
+        this.MouseLookRegionChip('右半屏', 'rightHalf')
+        this.MouseLookRegionChip('自由区域', 'custom')
+      }
+      Row({ space: 8 }) {
+        Text('灵敏度').fontSize(12).fontColor(OV_TEXT_MEDIUM)
+        Slider({ value: this.getMouseLookAction().sensitivity ?? 1.5, min: 0.1, max: 5, step: 0.1 })
+          .layoutWeight(1).blockColor(OV_ACCENT_BLUE)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click) return;
+            this.updateMouseLookOptions(this.getMouseLookAction().region ?? 'rightHalf', Math.round(value * 10) / 10, this.getMouseLookAction().invertY ?? false);
+          })
+        Text(`${(this.getMouseLookAction().sensitivity ?? 1.5).toFixed(1)}x`)
+          .fontSize(11).fontColor(OV_TEXT_DIM)
+      }
+      Text('0.1x 慢 · 1.5x 默认 · 5.0x 快')
+        .fontSize(10).fontColor(OV_TEXT_DIM)
+        .width('100%')
+        .textAlign(TextAlign.Center)
+      Row() {
+        Text('反转 Y 轴').fontSize(12).fontColor(OV_TEXT_MEDIUM)
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.getMouseLookAction().invertY ?? false })
+          .onChange((value: boolean) => {
+            this.updateMouseLookOptions(this.getMouseLookAction().region ?? 'rightHalf', this.getMouseLookAction().sensitivity ?? 1.5, value);
+          })
+      }
+    }
+    .width('100%').padding(8).backgroundColor(OV_BG_CARD_LIGHTER).borderRadius(8)
   }
 
   @Builder

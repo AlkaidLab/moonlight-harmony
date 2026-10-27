@@ -19,6 +19,14 @@ export const GAME_VIBRATION_STRENGTH_ORIGINAL = 100;
 export const GAME_VIBRATION_STRENGTH_DEFAULT = GAME_VIBRATION_STRENGTH_ORIGINAL;
 export const GAME_VIBRATION_STRENGTH_STEP = 5;
 
+// moonlight-common-c: host default, automatic, or fixed repair/source percentage.
+export const VIDEO_FEC_HOST = -2;
+export const VIDEO_FEC_AUTOMATIC = -1;
+
+export function normalizeVideoFecPercentage(value: number): number {
+  return Number.isInteger(value) && value >= VIDEO_FEC_HOST && value <= 100 ? value : VIDEO_FEC_HOST;
+}
+
 export function normalizeGameVibrationStrength(value: number): number {
   if (!Number.isFinite(value)) {
     return GAME_VIBRATION_STRENGTH_DEFAULT;
@@ -34,6 +42,7 @@ export interface StreamConfig {
   fps: number;
   clientRefreshRateX100: number;  // 客户端刷新率 x 100，用于 NTSC 帧率支持 (如 11988 = 119.88 Hz)
   bitrate: number;  // Kbps
+  videoFecPercentage: number;
   codec: 'H.264' | 'HEVC';  // HarmonyOS 不支持 AV1
   hdr: boolean;
   hdrMode: HdrMode;         // HDR 模式: SDR=0, HDR10=1, HLG=2
@@ -221,6 +230,7 @@ export function getDefaultStreamConfig(): StreamConfig {
     fps: 60,
     clientRefreshRateX100: 6000,  // 60.00 Hz
     bitrate: defaultBitrate,  // 使用推荐码率
+    videoFecPercentage: VIDEO_FEC_HOST,
     codec: 'H.264',  // 默认使用 H.264，因为某些设备不支持 HEVC
     hdr: false,
     hdrMode: HdrMode.SDR,  // 默认 SDR，启用 HDR 时根据用户选择使用 HDR10 或 HLG

@@ -19,6 +19,8 @@ import { display } from '@kit.ArkUI';
 import { ConnectionPath } from './network/ConnectionPathService';
 import {
   StreamConfig,
+  normalizeVideoFecPercentage,
+  VIDEO_FEC_HOST,
   AudioConfiguration,
   ColorRange,
   HdrMode,
@@ -45,6 +47,8 @@ export class SettingsKeys {
   static readonly REMOTE_RESOLUTION: string = 'settings_remote_resolution';
   static readonly REMOTE_FPS: string = 'settings_remote_fps';
   static readonly REMOTE_BITRATE: string = 'settings_remote_bitrate';
+  static readonly VIDEO_FEC_PERCENTAGE: string = 'settings_video_fec_percentage';
+  static readonly VIDEO_FEC_FIXED_PERCENTAGE: string = 'settings_video_fec_fixed_percentage';
   static readonly BANDWIDTH_PROBE_ENABLED: string = 'settings_bandwidth_probe_enabled';
   static readonly METERED_BANDWIDTH_PROBE_ENABLED: string = 'settings_metered_bandwidth_probe_enabled';
   static readonly HOST_SCALE: string = 'settings_host_scale';
@@ -697,6 +701,7 @@ export class SettingsService {
       fps: fps,
       clientRefreshRateX100: this.parseClientRefreshRateX100(fpsStr),
       bitrate: bitrate,
+      videoFecPercentage: normalizeVideoFecPercentage(await this.getNumber(SettingsKeys.VIDEO_FEC_PERCENTAGE, VIDEO_FEC_HOST)),
       codec: this.parseVideoFormat(videoFormatStr),
       hdr: enableHdr,
       hdrMode: hdrModeStr === 'HLG' ? HdrMode.HLG : HdrMode.HDR10,
@@ -853,7 +858,7 @@ export class SettingsService {
       gamepadMotionFallback: await this.getBoolean(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false),
       gamepadTouchpadMouse: await this.getBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false),
       enableStartKeyMenu: await this.getBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true),
-      enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false),
+      enableKeyInterceptor: await this.getBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, true),
       usbDriverEnabled: await this.getBoolean(SettingsKeys.USB_DRIVER_ENABLED, false),
       forceUsbDriverOnly: await this.getBoolean(SettingsKeys.FORCE_USB_DRIVER_ONLY, false),
       ddkHighSpeedPolling: await this.getBoolean(SettingsKeys.DDK_HIGH_SPEED_POLLING, false),

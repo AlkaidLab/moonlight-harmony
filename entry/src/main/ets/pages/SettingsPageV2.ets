@@ -24,7 +24,10 @@ import {
   GAME_VIBRATION_STRENGTH_MIN,
   GAME_VIBRATION_STRENGTH_ORIGINAL,
   GAME_VIBRATION_STRENGTH_STEP,
-  normalizeGameVibrationStrength
+  normalizeGameVibrationStrength,
+  normalizeVideoFecPercentage,
+  VIDEO_FEC_HOST,
+  VIDEO_FEC_AUTOMATIC
 } from '../model/StreamConfig';
 import { PerfLabels } from '../components/PerformanceOverlayManager';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
@@ -174,6 +177,8 @@ struct SettingsPageV2 {
   @State hdrBrightnessOverride: boolean = false;
   @State hdrPeakBrightnessNits: number = 1000;
   @State videoFormat: string = '自动';
+  @State videoFecPercentage: number = VIDEO_FEC_HOST;
+  @State fixedVideoFecPercentage: number = 20;
   @State stretchVideo: boolean = false;
   @State screenPosition: string = '居中';
   @State screenOffsetX: number = 0;
@@ -521,6 +526,11 @@ struct SettingsPageV2 {
       this.meteredBandwidthProbeEnabled = await this.loadBoolean(
         SettingsKeys.METERED_BANDWIDTH_PROBE_ENABLED, false);
       this.adaptiveBitrate = await this.loadBoolean(SettingsKeys.ADAPTIVE_BITRATE, false);
+      this.videoFecPercentage = normalizeVideoFecPercentage(
+        await PreferencesUtil.get<number>(SettingsKeys.VIDEO_FEC_PERCENTAGE, VIDEO_FEC_HOST));
+      const fixedFec = normalizeVideoFecPercentage(
+        await PreferencesUtil.get<number>(SettingsKeys.VIDEO_FEC_FIXED_PERCENTAGE, 20));
+      this.fixedVideoFecPercentage = this.videoFecPercentage >= 0 ? this.videoFecPercentage : fixedFec >= 0 ? fixedFec : 20;
       this.hostScale = await PreferencesUtil.get<number>(SettingsKeys.HOST_SCALE, 100);
       this.enableHdr = await this.loadBoolean(SettingsKeys.ENABLE_HDR, false);
       this.hdrMode = await PreferencesUtil.get<string>(SettingsKeys.HDR_MODE, 'HDR10');
@@ -563,7 +573,7 @@ struct SettingsPageV2 {
       this.gamepadMotionFallback = await this.loadBoolean(SettingsKeys.GAMEPAD_MOTION_FALLBACK, false);
       this.gamepadTouchpadMouse = await this.loadBoolean(SettingsKeys.GAMEPAD_TOUCHPAD_MOUSE, false);
       this.enableStartKeyMenu = await this.loadBoolean(SettingsKeys.ENABLE_START_KEY_MENU, true);
-      this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, false);
+      this.enableKeyInterceptor = await this.loadBoolean(SettingsKeys.ENABLE_KEY_INTERCEPTOR, true);
       // 检查按键注入 API 是否可用（API 13+），不可用则强制禁用反劫持
       this.keyInterceptorAvailable = InputInterceptorService.getInstance().isInjectApiAvailable();
       if (!this.keyInterceptorAvailable && this.enableKeyInterceptor) {
@@ -1185,6 +1195,32 @@ struct SettingsPageV2 {
                 }
               },
               {
+                title: '丢包保护（FEC）',
+                subtitle: this.videoFecPercentage === VIDEO_FEC_HOST ? '跟随主机' :
+                  this.videoFecPercentage === VIDEO_FEC_AUTOMATIC ? '自动 · 在码率预算内调整画质与保护' :
+                  `固定 ${this.videoFecPercentage}% · 优先使用客户端指定值`,
+                tooltip: '自动模式由支持此功能的主机根据网络反馈选择冗余，与自动调节码率独立。旧主机保持原有保护方式；设置在下次串流生效。',
+                type: 'select',
+                action: () => this.showVideoFecPicker()
+              },
+              {
+                title: '保护比例',
+                subtitle: '相对视频数据的额外冗余；0% 关闭纠错，增加保护会占用码率预算',
+                type: 'slider',
+                visible: this.videoFecPercentage >= 0,
+                value: this.fixedVideoFecPercentage,
+                min: 0,
+                max: 100,
+                step: 1,
+                unit: '%',
+                onSliderChange: (value: number) => {
+                  this.fixedVideoFecPercentage = Math.round(value);
+                  this.videoFecPercentage = this.fixedVideoFecPercentage;
+                  this.saveSetting(SettingsKeys.VIDEO_FEC_PERCENTAGE, this.videoFecPercentage);
+                  this.saveSetting(SettingsKeys.VIDEO_FEC_FIXED_PERCENTAGE, this.fixedVideoFecPercentage);
+                }
+              },
+              {
                 title: '主机分辨率缩放',
                 subtitle: '按所选串流分辨率调整主机渲染分辨率',
                 type: 'slider',
@@ -1721,7 +1757,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '按键反劫持',
-                subtitle: '拦截部分蓝牙手柄 Guide/Mode 键退出 App（需系统级签名，否则可能无效）',
+                subtitle: '在系统之前接管按键，使 Alt+Tab 等系统快捷键能转发到主机；同时拦截蓝牙手柄 Guide/Mode 键退出 App。关闭后这类按键会被系统吞掉',
                 type: 'toggle',
                 value: this.enableKeyInterceptor,
                 visible: this.keyInterceptorAvailable,
@@ -3712,6 +3748,23 @@ struct SettingsPageV2 {
       }
     };
     this.showPicker(config);
+  }
+
+  private showVideoFecPicker(): void {
+    this.showPicker({
+      title: '丢包保护（FEC）',
+      subtitle: '下次串流生效；需要主机支持，旧主机保持原有保护方式',
+      selectedValue: this.videoFecPercentage,
+      options: [
+        { title: '跟随主机', subtitle: '使用主机的保护设置', value: VIDEO_FEC_HOST } as PickerOption,
+        { title: '自动', subtitle: '根据网络反馈，在码率预算内调整画质与保护', value: VIDEO_FEC_AUTOMATIC } as PickerOption,
+        { title: '固定比例', subtitle: '优先使用客户端指定值，0% 关闭纠错', value: this.fixedVideoFecPercentage } as PickerOption
+      ],
+      onSelect: (option: PickerOption) => {
+        this.videoFecPercentage = option.value as number;
+        this.saveSetting(SettingsKeys.VIDEO_FEC_PERCENTAGE, this.videoFecPercentage);
+      }
+    });
   }
 
   private showVideoFormatPicker(): void {

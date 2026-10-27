@@ -40,6 +40,15 @@ export interface MouseScrollAction {
   direction: number;
 }
 
+/** 仅发送相对鼠标位移的触屏视角区域，不包含任何点击手势。 */
+export interface MouseLookAction {
+  type: 'mouseLook';
+  region?: 'leftHalf' | 'rightHalf' | 'custom';
+  /** 位移倍率，0.1~5.0，默认 1.5。 */
+  sensitivity?: number;
+  invertY?: boolean;
+}
+
 /** 手柄按钮动作 */
 export interface GamepadButtonAction {
   type: 'gamepadButton';
@@ -95,12 +104,23 @@ export interface DPadAction {
   type: 'dpad';
 }
 
-/** 轮盘菜单分区定义 */
-export interface WheelPadSegment {
-  /** 分区显示文字 */
+/** 菜单项和轮盘分区共用的名称及动作绑定。 */
+export interface KeyActionItem {
+  /** 显示文字 */
   label: string;
   /** 绑定的按键动作 */
   action: KeyAction;
+}
+
+/** 轮盘菜单分区定义 */
+export interface WheelPadSegment extends KeyActionItem {}
+
+/** 点击入口展开的快捷菜单；展开状态只属于本次串流，不写入配置。 */
+export interface KeyMenuAction {
+  type: 'keyMenu';
+  items: KeyActionItem[];
+  /** 未设置时默认执行后收起。 */
+  autoClose?: boolean;
 }
 
 /**
@@ -177,12 +197,14 @@ export type KeyAction =
   | KeyboardAction
   | MouseButtonAction
   | MouseScrollAction
+  | MouseLookAction
   | GamepadButtonAction
   | GamepadTriggerAction
   | GamepadStickAction
   | AnalogStickAction
   | DPadAction
   | WheelPadAction
+  | KeyMenuAction
   | DigitalStickAction
   | ComboAction
   | ShortcutAction
@@ -279,12 +301,26 @@ export function generateKeyId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 }
 
-/** 浅拷贝一个 CustomKeyDef（ArkTS 不支持 spread 对象字面量） */
+/** 复制含嵌套数据的动作，避免复制配置或撤销后共享菜单项/轮盘分区。 */
+export function cloneKeyAction(action: KeyAction): KeyAction {
+  switch (action.type) {
+    case 'keyMenu':
+    case 'wheelPad':
+    case 'digitalStick':
+    case 'combo':
+    case 'shortcut':
+      return JSON.parse(JSON.stringify(action)) as KeyAction;
+    default:
+      return action;
+  }
+}
+
+/** 拷贝一个 CustomKeyDef（ArkTS 不支持 spread 对象字面量） */
 export function cloneKeyDef(src: CustomKeyDef): CustomKeyDef {
   const dst: CustomKeyDef = {
     id: src.id,
     label: src.label,
-    action: src.action,
+    action: cloneKeyAction(src.action),
     shape: src.shape,
     behavior: src.behavior,
     xPercent: src.xPercent,
@@ -305,6 +341,22 @@ export function cloneKeyDef(src: CustomKeyDef): CustomKeyDef {
     icon: src.icon,
   };
   return dst;
+}
+
+/** 半屏区域跟随实际视图尺寸；保存的是区域选择，避免旋转后尺寸过时。 */
+export function resolveMouseLookLayout(src: CustomKeyDef, viewWidth: number, viewHeight: number): CustomKeyDef {
+  if (src.action.type !== 'mouseLook') return src;
+  const key = cloneKeyDef(src);
+  const action = src.action as MouseLookAction;
+  key.shape = 'rect';
+  key.behavior = 'momentary';
+  if (action.region !== 'custom' && viewWidth > 0 && viewHeight > 0) {
+    key.xPercent = action.region === 'leftHalf' ? 0.25 : 0.75;
+    key.yPercent = 0.5;
+    key.width = viewWidth / 2;
+    key.height = viewHeight;
+  }
+  return key;
 }
 
 /** 创建默认按键定义 */
@@ -333,7 +385,7 @@ export function createDefaultKeyDef(partial?: Partial<CustomKeyDef>): CustomKeyD
   if (partial) {
     if (partial.id !== undefined) def.id = partial.id;
     if (partial.label !== undefined) def.label = partial.label;
-    if (partial.action !== undefined) def.action = partial.action;
+    if (partial.action !== undefined) def.action = cloneKeyAction(partial.action);
     if (partial.shape !== undefined) def.shape = partial.shape;
     if (partial.behavior !== undefined) def.behavior = partial.behavior;
     if (partial.xPercent !== undefined) def.xPercent = partial.xPercent;
@@ -581,6 +633,8 @@ export function getActionDisplayName(action: KeyAction): string {
       return mouseNames[action.button] ?? `鼠标${action.button}`;
     case 'mouseScroll':
       return action.direction > 0 ? '滚轮↑' : '滚轮↓';
+    case 'mouseLook':
+      return '视角滑动区';
     case 'gamepadButton':
       return getGamepadDisplayName(action.mask);
     case 'gamepadTrigger':
@@ -605,6 +659,8 @@ export function getActionDisplayName(action: KeyAction): string {
       const wpAction = action as WheelPadAction;
       return `轮盘(${wpAction.segments.length})`;
     }
+    case 'keyMenu':
+      return `快捷菜单(${action.items.length})`;
     case 'digitalStick': {
       const dsAction = action as DigitalStickAction;
       const dirs = [dsAction.upAction, dsAction.downAction, dsAction.leftAction, dsAction.rightAction]
@@ -698,6 +754,7 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
       { label: '右键', action: { type: 'mouse', button: 3 } },
       { label: '滚轮↑', action: { type: 'mouseScroll', direction: 1 } },
       { label: '滚轮↓', action: { type: 'mouseScroll', direction: -1 } },
+      { label: '视角滑动区', action: { type: 'mouseLook', region: 'rightHalf', sensitivity: 1.5 } as MouseLookAction },
     ],
   },
   {
@@ -810,6 +867,22 @@ export const KEY_PRESET_CATEGORIES: KeyPresetCategory[] = [
   {
     name: '按键组',
     presets: buildWheelPadPresets(),
+  },
+  {
+    name: '快捷菜单',
+    presets: [{
+      label: '快捷菜单',
+      action: {
+        type: 'keyMenu', autoClose: true,
+        items: [
+          { label: '背包', action: { type: 'keyboard', vk: 0x42 } as KeyboardAction },
+          { label: '地图', action: { type: 'keyboard', vk: 0x4D } as KeyboardAction },
+          { label: '任务', action: { type: 'keyboard', vk: 0x4A } as KeyboardAction },
+          { label: '角色', action: { type: 'keyboard', vk: 0x43 } as KeyboardAction },
+          { label: '系统', action: { type: 'keyboard', vk: 0x1B } as KeyboardAction },
+        ],
+      } as KeyMenuAction,
+    }],
   },
   {
     name: '数字摇杆',

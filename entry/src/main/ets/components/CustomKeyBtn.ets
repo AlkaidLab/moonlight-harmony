@@ -23,6 +23,7 @@ import {
   createDefaultKeyDef,
 } from '../service/customkey/CustomKeyTypes';
 import { OV_TEXT_WHITE } from '../common/OverlayConstants';
+import { CustomKeyTouchHandler } from '../service/input/CustomKeyTouchHandler';
 import {
   EDIT_BORDER_COLOR,
   SELECT_BORDER_COLOR,
@@ -40,8 +41,12 @@ function resolveCustomKeyForegroundColor(isActive: boolean, textColor: string): 
 export struct CustomKeyBtn {
   // ── 配置属性 ──
   keyDef: CustomKeyDef = createDefaultKeyDef();
-  @Prop editMode: boolean = false;
+  @Prop @Watch('resetPlayTouch') editMode: boolean = false;
+  @Prop @Watch('resetPlayTouch') inputEnabled: boolean = true;
   @Prop isSelected: boolean = false;
+  /** 快捷菜单入口的展开高亮，与按键的持续按住/切换行为无关。 */
+  @Prop menuOpen: boolean = false;
+  onMenuToggle: () => void = () => {};
 
   // ── 回调 ──
   onAction: (action: KeyAction, isDown: boolean) => void = () => {};
@@ -70,6 +75,19 @@ export struct CustomKeyBtn {
   private dragStartX: number = 0;
   private dragStartY: number = 0;
   private longPressTimer: number = -1;
+  private playTouch: CustomKeyTouchHandler = new CustomKeyTouchHandler();
+  private editTouchId: number = -1;
+
+  aboutToDisappear(): void {
+    this.playTouch.reset();
+    this.cancelLongPress();
+  }
+
+  private resetPlayTouch(): void {
+    this.playTouch.reset();
+    this.isPressed = false;
+    this.isToggled = false;
+  }
 
   build() {
     if (this.keyDef.shape === 'hexagon') {
@@ -86,7 +104,7 @@ export struct CustomKeyBtn {
 
   private getForegroundColor(): ResourceColor {
     return resolveCustomKeyForegroundColor(
-      this.isPressed || this.isToggled,
+      this.isPressed || this.isToggled || this.menuOpen,
       this.keyDef.textColor);
   }
 
@@ -105,6 +123,11 @@ export struct CustomKeyBtn {
         .fontWeight(FontWeight.Bold)
         .textAlign(TextAlign.Center)
     }
+    if (this.keyDef.action.type === 'keyMenu') {
+      SymbolGlyph($r(this.menuOpen ? 'sys.symbol.chevron_up' : 'sys.symbol.chevron_down'))
+        .fontSize(12).fontColor([this.getForegroundColor()])
+        .position({ x: this.keyDef.width / 2 - 6, y: this.keyDef.height - 16 })
+    }
   }
 
   @Builder
@@ -117,7 +140,7 @@ export struct CustomKeyBtn {
     .borderRadius(this.keyDef.shape === 'circle'
       ? this.keyDef.width / 2
       : this.keyDef.borderRadius)
-    .backgroundColor(this.isPressed || this.isToggled
+    .backgroundColor(this.isPressed || this.isToggled || this.menuOpen
       ? this.keyDef.pressedColor
       : this.keyDef.bgColor)
     .border({
@@ -154,7 +177,7 @@ export struct CustomKeyBtn {
       // 六边形背景 + 边框
       Polygon()
         .points(this.hexPoints(this.keyDef.width, this.keyDef.height))
-        .fill(this.isPressed || this.isToggled
+        .fill(this.isPressed || this.isToggled || this.menuOpen
           ? this.keyDef.pressedColor
           : this.keyDef.bgColor)
         .stroke(this.editMode
@@ -179,11 +202,6 @@ export struct CustomKeyBtn {
     .hitTestBehavior(HitTestMode.Block)
     .onTouch((event: TouchEvent) => {
       event.stopPropagation();
-      // 游戏模式下只响应六边形内部的触摸
-      if (!this.editMode) {
-        const t = event.touches[0];
-        if (t && !this.isInsideHexagon(t.x, t.y)) return;
-      }
       if (this.editMode) {
         this.handleEditTouch(event);
       } else {
@@ -225,29 +243,40 @@ export struct CustomKeyBtn {
   // ── 普通模式触摸处理 ──
 
   private handlePlayTouch(event: TouchEvent): void {
-    if (this.keyDef.behavior === 'toggle') {
-      if (event.type === TouchType.Down) {
-        this.isToggled = !this.isToggled;
-        this.onAction(this.keyDef.action, this.isToggled);
-        this.doHaptic();
-      }
-      return;
-    }
-    // 点触模式
-    if (event.type === TouchType.Down) {
-      this.isPressed = true;
-      this.onAction(this.keyDef.action, true);
-      this.doHaptic();
-    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      this.isPressed = false;
-      this.onAction(this.keyDef.action, false);
-    }
+    if (!this.inputEnabled) return;
+    const action = this.keyDef.action;
+    const activated = this.playTouch.handleEvent(event,
+      action.type === 'keyMenu' ? 'tap' : this.keyDef.behavior,
+      (x: number, y: number): boolean => this.keyDef.shape === 'hexagon'
+        ? this.isInsideHexagon(x, y) : x >= 0 && y >= 0 && x <= this.keyDef.width && y <= this.keyDef.height,
+      (isDown: boolean): void => this.onAction(action, isDown),
+      (): void => this.onMenuToggle());
+    this.isPressed = this.playTouch.pressed;
+    this.isToggled = this.playTouch.toggled;
+    if (activated && action.type !== 'keyMenu') this.doHaptic();
   }
 
   // ── 编辑模式触摸处理（拖拽 + 长按 + 选中） ──
 
   private handleEditTouch(event: TouchEvent): void {
-    const touch = event.touches[0];
+    if (event.type === TouchType.Cancel) {
+      if (event.changedTouches.length > 0 &&
+        !event.changedTouches.some((touch: TouchObject) => touch.id === this.editTouchId)) return;
+      this.cancelLongPress();
+      this.onGroupDragMove(this.keyDef.id, 0, 0);
+      this.dragOffsetX = 0;
+      this.dragOffsetY = 0;
+      this.dragging = false;
+      this.editTouchId = -1;
+      return;
+    }
+    if (event.type === TouchType.Down) {
+      if (this.editTouchId >= 0 || event.changedTouches.length === 0) return;
+      this.editTouchId = event.changedTouches[0].id;
+    }
+    const touch = event.type === TouchType.Up
+      ? event.changedTouches.find((item: TouchObject) => item.id === this.editTouchId)
+      : event.touches.find((item: TouchObject) => item.id === this.editTouchId);
     if (!touch) return;
 
     switch (event.type) {
@@ -290,7 +319,7 @@ export struct CustomKeyBtn {
       }
 
       case TouchType.Up:
-      case TouchType.Cancel:
+        this.editTouchId = -1;
         this.cancelLongPress();
         if (this.dragging) {
           this.onGroupDragMove(this.keyDef.id, 0, 0); // 清除组拖拽视觉偏移
