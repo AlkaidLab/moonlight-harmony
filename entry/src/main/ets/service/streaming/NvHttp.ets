@@ -697,6 +697,19 @@ export class NvHttp {
     return new DisplayScaleError(message, statusCode, statusMessage, errorCode);
   }
 
+  /** 将 JSON 中的缩放值收敛为有限数字，避免错误响应污染 UI。 */
+  private toDisplayScaleNumber(value: number | null | undefined): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  /** 将 JSON 中的缩放档位收敛为有限数字数组。 */
+  private toDisplayScaleNumbers(value: number[] | undefined): number[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.filter((item: number): boolean => typeof item === 'number' && Number.isFinite(item));
+  }
+
   /**
    * 判断错误是否为超时错误
    */
@@ -1321,9 +1334,9 @@ export class NvHttp {
       deviceId: json.device_id,
       friendlyName: json.friendly_name || json.display_name || '当前串流显示器',
       isPrimary: json.is_primary ?? false,
-      currentScalePercent: json.current_scale_percent ?? null,
-      recommendedScalePercent: json.recommended_scale_percent ?? null,
-      supportedScalePercents: json.supported_scale_percents || [],
+      currentScalePercent: this.toDisplayScaleNumber(json.current_scale_percent),
+      recommendedScalePercent: this.toDisplayScaleNumber(json.recommended_scale_percent),
+      supportedScalePercents: this.toDisplayScaleNumbers(json.supported_scale_percents),
       scaleSetSupported: json.scale_set_supported ?? false
     };
   }
@@ -1372,9 +1385,9 @@ export class NvHttp {
       success: success,
       displayName: json.display_name || '',
       deviceId: json.device_id,
-      previousScalePercent: json.previous_scale_percent ?? null,
-      currentScalePercent: json.current_scale_percent ?? null,
-      supportedScalePercents: json.supported_scale_percents || [],
+      previousScalePercent: this.toDisplayScaleNumber(json.previous_scale_percent),
+      currentScalePercent: this.toDisplayScaleNumber(json.current_scale_percent),
+      supportedScalePercents: this.toDisplayScaleNumbers(json.supported_scale_percents),
       restartRequired: json.restart_required ?? false,
       effectiveImmediately: json.effective_immediately ?? false,
       errorCode: json.error_code || ''

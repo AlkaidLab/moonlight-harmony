@@ -141,6 +141,19 @@ async function run() {
     assert.equal(nullable.recommendedScalePercent, null, 'Unknown recommendation must stay unknown.');
   }
 
+  // Runtime JSON may contain values that satisfy the compile-time interface
+  // only on paper. Invalid scale fields must be discarded before reaching UI.
+  reply(options({ current_scale_percent: '500', recommended_scale_percent: '175',
+    supported_scale_percents: ['100', 150, null] }));
+  const malformedOptions = await client().getDisplayScaleOptions();
+  assert.equal(malformedOptions.currentScalePercent, null);
+  assert.equal(malformedOptions.recommendedScalePercent, null);
+  assert.deepEqual(Array.from(malformedOptions.supportedScalePercents), [150]);
+
+  reply(options({ supported_scale_percents: '500' }));
+  const nonArrayOptions = await client().getDisplayScaleOptions();
+  assert.deepEqual(Array.from(nonArrayOptions.supportedScalePercents), []);
+
   reply(result());
   const changed = await client().setDisplayScale(500, supported);
   assert.equal(changed.currentScalePercent, 500);
@@ -187,6 +200,17 @@ async function run() {
     assert.equal(nullable.currentScalePercent, null, 'Unknown applied DPI must not become the requested value.');
     assert.equal(nullable.effectiveImmediately, false);
   }
+
+  reply(result({ previous_scale_percent: '150', current_scale_percent: '500',
+    supported_scale_percents: ['100', 200, null] }));
+  const malformedResult = await client().setDisplayScale(500, supported);
+  assert.equal(malformedResult.previousScalePercent, null);
+  assert.equal(malformedResult.currentScalePercent, null);
+  assert.deepEqual(Array.from(malformedResult.supportedScalePercents), [200]);
+
+  reply(result({ supported_scale_percents: '500' }));
+  const nonArrayResult = await client().setDisplayScale(500, supported);
+  assert.deepEqual(Array.from(nonArrayResult.supportedScalePercents), []);
 
   const errors = [
     [400, 'unsupported_scale', 'Unsupported display scale', '不支持此 DPI'],
