@@ -16,6 +16,7 @@
 import { StreamConfig, getDefaultStreamConfig } from '../model/StreamConfig';
 import { SettingsService, InputSettings, DisplaySettings, SettingsKeys } from '../service/SettingsService';
 import { StreamingSession, StreamStats } from '../service/streaming/StreamingSession';
+import { DisplayScaleOptions, DisplayScaleResult } from '../service/streaming/NvHttp';
 import { InputEvent } from '../model/InputEvent';
 import { OverlayConfig, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/input/GamepadManager';
 import { CONTROLLER_TYPE_XBOX, CONN_STATUS_POOR, CONN_STATUS_OKAY } from '../service/streaming/MoonBridge';
@@ -710,6 +711,18 @@ export class StreamViewModel {
       this.streamConfig.bitrate = bitrateKbps;
     }
     return success;
+  }
+
+  /** 获取当前串流屏幕支持的 DPI 缩放档位。 */
+  async getDisplayScaleOptions(): Promise<DisplayScaleOptions | null> {
+    if (!this.streamingSession) return null;
+    return await this.streamingSession.getDisplayScaleOptions();
+  }
+
+  /** 设置当前串流目标显示器的 DPI 缩放。 */
+  async setDisplayScale(scalePercent: number, target: DisplayScaleOptions): Promise<DisplayScaleResult | null> {
+    if (!this.streamingSession) return null;
+    return await this.streamingSession.setDisplayScale(scalePercent, target);
   }
 
   // ---------------------------------------------------------------------------

@@ -19,7 +19,8 @@ import { VirtualKey, sendShortcutKeys } from '../../service/customkey/CustomKeyT
 import { CustomKeyStore } from '../../service/customkey/CustomKeyStore';
 import { ShortcutManager, Shortcut } from '../ShortcutManager';
 import { ActionDialog, ActionDialogConfig, ConfirmDialog, ConfirmDialogConfig } from './ConfirmDialog';
-import { SuperCmd } from '../../service/streaming/NvHttp';
+import { DisplayScaleError, DisplayScaleOptions, DisplayScaleResult, SuperCmd } from '../../service/streaming/NvHttp';
+import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem } from './OptionPickerDialog';
 import {
   GyroAssistService,
   GYRO_ACTIVATION_ALWAYS,
@@ -108,6 +109,7 @@ const CARD_CUSTOMKEY = 'customkey';
 const CARD_AUDIO_VIBRATION = 'audio_vibration';
 const CARD_UNLOCK = 'unlock';
 const CARD_MIC = 'mic';
+const CARD_DISPLAY_SCALE = 'display_scale';
 const CARD_USAGE_KEY = 'game_menu_card_usage';
 
 // 马卡龙色系菜单配置
@@ -170,6 +172,17 @@ export struct GameMenuDialog {
   @State private isAdjustingBitrate: boolean = false;
   @State private abrEnabled: boolean = false;
   private bitrateDebounceTimer: number = -1;
+
+  // 主机显示缩放（DPI）状态。Sunshine 返回的档位是离散值，因此使用选项弹窗。
+  @State private dpiCurrentScalePercent: number = 0;
+  @State private dpiScaleOptions: DisplayScaleOptions | null = null;
+  @State private isLoadingDpi: boolean = false;
+  @State private isApplyingDpi: boolean = false;
+  private dpiLoadPromise: Promise<DisplayScaleOptions | null> | null = null;
+  private isOpeningDpi: boolean = false;
+  private dpiMenuGeneration: number = 0;
+  private isDpiMenuVisible: boolean = false;
+  private dpiPickerDialogController: CustomDialogController | undefined = undefined;
   /** 入场交错动画定时器，aboutToDisappear 时清理，避免销毁后触发 getUIContext */
   private animateInTimers: number[] = [];
 
@@ -219,6 +232,10 @@ export struct GameMenuDialog {
   }
 
   aboutToDisappear(): void {
+    this.isDpiMenuVisible = false;
+    this.dpiMenuGeneration++;
+    this.dpiLoadPromise = null;
+    this.dpiPickerDialogController?.close();
     if (this.bitrateDebounceTimer !== -1) {
       clearTimeout(this.bitrateDebounceTimer);
       this.bitrateDebounceTimer = -1;
@@ -227,9 +244,16 @@ export struct GameMenuDialog {
       clearTimeout(t);
     }
     this.animateInTimers = [];
+    this.dpiPickerDialogController = undefined;
   }
 
   aboutToAppear(): void {
+    this.isDpiMenuVisible = true;
+    this.dpiMenuGeneration++;
+    this.isOpeningDpi = false;
+    this.isApplyingDpi = false;
+    this.dpiScaleOptions = null;
+    this.dpiCurrentScalePercent = 0;
     this.shortcuts = this.shortcutManager.getShortcuts();
     this.currentBitrate = this.viewModel.getCurrentBitrate();
     this.bitrateSliderValue = this.bitrateToSliderValue(this.currentBitrate);
@@ -252,6 +276,8 @@ export struct GameMenuDialog {
     this.loadCardUsageCounts();
     this.loadCustomKeyProfiles();
     this.micActive = this.viewModel.getSession()?.isMicrophoneActive() ?? false;
+    // 预取当前主机 DPI，不阻塞菜单入场动画。
+    this.loadDisplayScaleOptions().catch(() => {});
     this.detectLayoutMode();
     this.animateIn();
   }
@@ -428,6 +454,165 @@ export struct GameMenuDialog {
         this.bitrateDebounceTimer = -1;
       }
     }, BITRATE_DEBOUNCE_MS);
+  }
+
+  /** 复用预取请求，点击卡片时等待加载完成。 */
+  private loadDisplayScaleOptions(): Promise<DisplayScaleOptions | null> {
+    if (this.dpiLoadPromise) return this.dpiLoadPromise;
+    const pending = this.fetchDisplayScaleOptions();
+    this.dpiLoadPromise = pending;
+    return pending;
+  }
+
+  private async fetchDisplayScaleOptions(): Promise<DisplayScaleOptions | null> {
+    const generation = this.dpiMenuGeneration;
+    this.isLoadingDpi = true;
+    try {
+      const options = await this.viewModel.getDisplayScaleOptions();
+      if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return null;
+      if (options) {
+        this.dpiScaleOptions = options;
+        this.dpiCurrentScalePercent = options.currentScalePercent ?? 0;
+      }
+      return options;
+    } catch (error) {
+      if (this.isDpiMenuVisible && generation === this.dpiMenuGeneration) {
+        this.dpiScaleOptions = null;
+        this.dpiCurrentScalePercent = 0;
+      }
+      throw error instanceof Error ? error : new Error(String(error));
+    } finally {
+      if (generation === this.dpiMenuGeneration) {
+        this.isLoadingDpi = false;
+        this.dpiLoadPromise = null;
+      }
+    }
+  }
+
+  /** 打开 DPI 离散档位选择器。 */
+  private async openDisplayScalePicker(): Promise<void> {
+    if (this.isOpeningDpi || this.isApplyingDpi) return;
+    const generation = this.dpiMenuGeneration;
+    this.recordCardUsage(CARD_DISPLAY_SCALE);
+    this.isOpeningDpi = true;
+    try {
+      // 每次打开都重新查询，以跟随 Sunshine 的实时捕获屏切换。
+      const options = await this.loadDisplayScaleOptions();
+      if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return;
+      if (!options) throw new Error('串流连接已不可用');
+      this.showDisplayScalePicker(options);
+    } catch (error) {
+      if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return;
+      const message = error instanceof Error ? error.message : String(error);
+      ToastQueue.show({ message: '读取主机 DPI 失败: ' + message, duration: 2400 });
+    } finally {
+      if (generation === this.dpiMenuGeneration) this.isOpeningDpi = false;
+    }
+  }
+
+  private showDisplayScalePicker(options: DisplayScaleOptions): void {
+    if (!options.scaleSetSupported || options.supportedScalePercents.length === 0) {
+      ToastQueue.show({ message: '当前串流屏幕不支持调整 DPI', duration: 2200 });
+      return;
+    }
+
+    const scales: number[] = [...options.supportedScalePercents].sort((a: number, b: number) => a - b);
+    const pickerOptions: OptionItem[] = scales.map((scale: number): OptionItem => {
+      let subtitle = '';
+      if (scale === options.currentScalePercent) {
+        subtitle = '当前值';
+      } else if (scale === options.recommendedScalePercent) {
+        subtitle = '推荐';
+      }
+      return {
+        title: scale.toString() + '%',
+        subtitle: subtitle,
+        value: scale
+      };
+    });
+    const config: OptionPickerDialogConfig = {
+      title: '主机 DPI',
+      subtitle: options.friendlyName || options.displayName || '主机显示器',
+      options: pickerOptions,
+      selectedValue: options.currentScalePercent ?? undefined,
+      onSelect: (option: OptionItem) => {
+        this.applyDisplayScale(option, options).catch(() => {});
+      },
+      onCancel: () => {},
+      closeOnSelect: true
+    };
+    this.openDpiDialog(config);
+  }
+
+  private openDpiDialog(config: OptionPickerDialogConfig): void {
+    if (!this.isDpiMenuVisible) return;
+    this.dpiPickerDialogController = new CustomDialogController({
+      builder: OptionPickerDialog({ config }),
+      alignment: DialogAlignment.Bottom,
+      customStyle: true,
+      backgroundColor: Color.Transparent
+    });
+    this.dpiPickerDialogController.open();
+  }
+
+  /** 应用用户选择的 Sunshine DPI 档位。 */
+  private async applyDisplayScale(option: OptionItem, target: DisplayScaleOptions): Promise<void> {
+    if (typeof option.value !== 'number' || this.isApplyingDpi) {
+      return;
+    }
+    const generation = this.dpiMenuGeneration;
+    this.isApplyingDpi = true;
+    try {
+      const result: DisplayScaleResult | null = await this.viewModel.setDisplayScale(option.value, target);
+      if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return;
+      if (!result || !result.success) {
+        ToastQueue.show({ message: result?.statusMessage || '主机 DPI 调整失败', duration: 2200 });
+        return;
+      }
+      this.dpiCurrentScalePercent = result.currentScalePercent ?? 0;
+      if (this.dpiScaleOptions) {
+        this.dpiScaleOptions = {
+          statusCode: this.dpiScaleOptions.statusCode,
+          statusMessage: this.dpiScaleOptions.statusMessage,
+          success: this.dpiScaleOptions.success,
+          displayName: this.dpiScaleOptions.displayName,
+          deviceId: this.dpiScaleOptions.deviceId,
+          friendlyName: this.dpiScaleOptions.friendlyName,
+          isPrimary: this.dpiScaleOptions.isPrimary,
+          currentScalePercent: result.currentScalePercent,
+          recommendedScalePercent: this.dpiScaleOptions.recommendedScalePercent,
+          supportedScalePercents: result.supportedScalePercents,
+          scaleSetSupported: this.dpiScaleOptions.scaleSetSupported
+        };
+      }
+      if (!result.effectiveImmediately) {
+        ToastQueue.show({ message: '已提交 DPI ' + option.value.toString() + '%，尚未确认生效', duration: 2600 });
+      } else {
+        ToastQueue.show({ message: '主机 DPI 已调整为 ' + option.value.toString() + '%', duration: 2000 });
+      }
+    } catch (error) {
+      if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return;
+      if (error instanceof DisplayScaleError && error.errorCode === 'display_target_changed') {
+        this.dpiScaleOptions = null;
+        this.dpiCurrentScalePercent = 0;
+        ToastQueue.show({ message: '串流屏幕已切换，请重新选择 DPI', duration: 2400 });
+        try {
+          const refreshed = await this.loadDisplayScaleOptions();
+          if (refreshed && this.isDpiMenuVisible && generation === this.dpiMenuGeneration) {
+            this.showDisplayScalePicker(refreshed);
+          }
+        } catch (refreshError) {
+          if (!this.isDpiMenuVisible || generation !== this.dpiMenuGeneration) return;
+          const refreshMessage = refreshError instanceof Error ? refreshError.message : String(refreshError);
+          ToastQueue.show({ message: '读取主机 DPI 失败: ' + refreshMessage, duration: 2400 });
+        }
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      ToastQueue.show({ message: '主机 DPI 调整失败: ' + message, duration: 2200 });
+    } finally {
+      if (generation === this.dpiMenuGeneration) this.isApplyingDpi = false;
+    }
   }
 
   private showExitDialog(): void {
@@ -653,9 +838,7 @@ export struct GameMenuDialog {
 
   /** 是否有快捷按钮卡片（解锁、显示覆盖层、麦克风等 1x1 小按钮） */
   private hasButtonCards(): boolean {
-    return this.viewModel.overlayState.config.isLocked ||
-      !this.viewModel.showOverlay ||
-      (this.viewModel.getSession()?.isMicrophoneEnabled() ?? false);
+    return true;
   }
 
   /**
@@ -846,7 +1029,12 @@ export struct GameMenuDialog {
 
   @Builder
   ButtonCardsRow() {
-    Row({ space: 8 }) {
+    Flex({
+      wrap: FlexWrap.Wrap,
+      justifyContent: FlexAlign.Start,
+      space: { main: LengthMetrics.vp(8), cross: LengthMetrics.vp(8) }
+    }) {
+      this.DisplayScaleCard()
       if (this.viewModel.overlayState.config.isLocked) {
         this.UnlockOverlayCard()
       } else if (!this.viewModel.showOverlay) {
@@ -856,6 +1044,30 @@ export struct GameMenuDialog {
         this.MicCard()
       }
     }
+    .width(OV_CARD_WIDTH)
+  }
+
+  /** 主机 DPI 调整入口。显示为与覆盖层相同尺寸的 1×1 按钮卡片。 */
+  @Builder
+  DisplayScaleCard() {
+    Column() {
+      Image($r('app.media.ic_dial'))
+        .width(22)
+        .height(22)
+        .fillColor(StreamMenuColors.TextBright)
+      Text(this.isLoadingDpi ? '读取中' : (this.dpiCurrentScalePercent > 0 ? this.dpiCurrentScalePercent.toString() + '%' : 'DPI'))
+        .fontSize(OV_FONT_MD)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(StreamMenuColors.TextBright)
+        .margin({ top: 4 })
+    }
+    .width(BUTTON_CARD_SIZE)
+    .height(BUTTON_CARD_SIZE)
+    .justifyContent(FlexAlign.Center)
+    .cardStyle()
+    .onClick(() => {
+      this.openDisplayScalePicker().catch(() => {});
+    })
   }
 
   @Builder
