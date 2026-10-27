@@ -23,17 +23,15 @@ test('disconnected sessions return null without issuing DPI requests', async () 
   assert.equal(await session.setDisplayScale(150), null);
 });
 
-test('DPI queries use Sunshine current capture for every session mode', async () => {
-  for (const mode of ['default', 'vdd', 'different-launch-display']) {
-    const active = options('{capture-' + mode + '}');
-    let enumerated = false;
-    const session = makeSession({
-      getDisplays: async () => { enumerated = true; return []; },
-      getDisplayScaleOptions: async () => active
-    });
-    assert.strictEqual(await session.getDisplayScaleOptions(), active);
-    assert.equal(enumerated, false);
-  }
+test('DPI queries forward current capture lookup without enumerating displays', async () => {
+  const active = options();
+  let enumerated = false;
+  const session = makeSession({
+    getDisplays: async () => { enumerated = true; return []; },
+    getDisplayScaleOptions: async () => active
+  });
+  assert.strictEqual(await session.getDisplayScaleOptions(), active);
+  assert.equal(enumerated, false);
 });
 
 test('DPI apply forwards only the requested scale', async () => {

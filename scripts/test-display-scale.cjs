@@ -78,11 +78,12 @@ function assertRequest(request, path, method) {
   assert.equal(request.config.headers['Content-Type'], 'application/json');
 }
 
-async function rejectsWith(call, statusCode, errorCode) {
+async function rejectsWith(call, statusCode, errorCode, message = '') {
   await assert.rejects(call, error => {
     assert.ok(error instanceof DisplayScaleError);
     assert.equal(error.statusCode, statusCode);
     assert.equal(error.errorCode, errorCode);
+    if (message) assert.ok(error.message.includes(message), error.message);
     return true;
   });
 }
@@ -90,9 +91,31 @@ async function rejectsWith(call, statusCode, errorCode) {
 async function run() {
   reply(options());
   const supported = await client().getDisplayScaleOptions();
-  assert.equal(supported.deviceId, DEVICE_ID);
-  assert.equal(supported.currentScalePercent, 500);
-  assert.deepEqual(Array.from(supported.supportedScalePercents), STEPS);
+  assert.deepEqual({
+    statusCode: supported.statusCode,
+    statusMessage: supported.statusMessage,
+    success: supported.success,
+    displayName: supported.displayName,
+    deviceId: supported.deviceId,
+    friendlyName: supported.friendlyName,
+    isPrimary: supported.isPrimary,
+    currentScalePercent: supported.currentScalePercent,
+    recommendedScalePercent: supported.recommendedScalePercent,
+    supportedScalePercents: Array.from(supported.supportedScalePercents),
+    scaleSetSupported: supported.scaleSetSupported
+  }, {
+    statusCode: 200,
+    statusMessage: 'OK',
+    success: true,
+    displayName: DISPLAY_NAME,
+    deviceId: DEVICE_ID,
+    friendlyName: 'Streaming monitor',
+    isPrimary: false,
+    currentScalePercent: 500,
+    recommendedScalePercent: 175,
+    supportedScalePercents: STEPS,
+    scaleSetSupported: true
+  });
   assertRequest(requests[0], '/display-scale-options', 'GET');
   assert.equal(requests[0].body, undefined);
   assert.equal(requests[0].url.searchParams.get('target'), 'current');
@@ -111,7 +134,31 @@ async function run() {
 
   reply(result());
   const changed = await client().setDisplayScale(500);
-  assert.equal(changed.currentScalePercent, 500);
+  assert.deepEqual({
+    statusCode: changed.statusCode,
+    statusMessage: changed.statusMessage,
+    success: changed.success,
+    displayName: changed.displayName,
+    deviceId: changed.deviceId,
+    previousScalePercent: changed.previousScalePercent,
+    currentScalePercent: changed.currentScalePercent,
+    supportedScalePercents: Array.from(changed.supportedScalePercents),
+    restartRequired: changed.restartRequired,
+    effectiveImmediately: changed.effectiveImmediately,
+    errorCode: changed.errorCode
+  }, {
+    statusCode: 200,
+    statusMessage: 'Display scale changed successfully',
+    success: true,
+    displayName: DISPLAY_NAME,
+    deviceId: DEVICE_ID,
+    previousScalePercent: 150,
+    currentScalePercent: 500,
+    supportedScalePercents: STEPS,
+    restartRequired: false,
+    effectiveImmediately: true,
+    errorCode: ''
+  });
   assertRequest(requests[0], '/display-scale', 'POST');
   assert.deepEqual(JSON.parse(requests[0].body), { target: 'current', scale_percent: 500 });
 
@@ -129,11 +176,18 @@ async function run() {
   assert.equal(pending.previousScalePercent, null);
   assert.equal(pending.effectiveImmediately, false);
 
-  for (const [statusCode, errorCode] of [
-    [400, 'unsupported_scale'], [409, 'no_active_stream'], [501, 'unsupported_platform']
+  for (const [statusCode, errorCode, message] of [
+    [400, 'unsupported_scale', '不支持此 DPI'],
+    [409, 'no_active_stream', '串流'],
+    [501, 'unsupported_platform', '不支持调整 DPI']
   ]) {
-    reply({ status_code: statusCode, success: false, status_message: 'host error', error_code: errorCode }, statusCode);
-    await rejectsWith(() => client().setDisplayScale(500), statusCode, errorCode);
+    const errorBody = { status_code: statusCode, success: false,
+      status_message: 'host error', error_code: errorCode };
+    reply(errorBody, statusCode);
+    await rejectsWith(() => client().getDisplayScaleOptions(), statusCode, errorCode, message);
+    assert.equal(requests.length, 1);
+    reply(errorBody, statusCode);
+    await rejectsWith(() => client().setDisplayScale(500), statusCode, errorCode, message);
     assert.equal(requests.length, 1);
   }
 
