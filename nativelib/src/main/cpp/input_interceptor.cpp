@@ -307,7 +307,16 @@ static napi_value AddKeyInterceptor(napi_env env, napi_callback_info info)
 
     // 如果已经有拦截器，先移除
     if (g_interceptorActive) {
-        OH_Input_RemoveKeyEventInterceptor();
+        Input_Result removeRet = OH_Input_RemoveKeyEventInterceptor();
+        if (removeRet != INPUT_SUCCESS) {
+            LOGW("OH_Input_RemoveKeyEventInterceptor 失败: %{public}d", removeRet);
+            // 移除失败时旧拦截器仍在消费按键：保留旧回调与 active 并直接
+            // 返回错误码。若继续注册且新注册失败，会出现"按键被拦截却不
+            // 转发"的窗口，故这里立即放弃
+            napi_value ret;
+            napi_create_int32(env, removeRet, &ret);
+            return ret;
+        }
         g_interceptorActive = false;
     }
     if (g_tsCallback) {

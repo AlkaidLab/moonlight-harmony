@@ -938,9 +938,10 @@ struct StreamPage {
       ToastQueue.show({ message: '按键反劫持已开启，物理按键将转发主机', duration: 2000 });
     } else {
       if (interceptor.stop() !== 0) {
-        // 原生移除失败：拦截器仍在消费按键，保持开启状态允许重试，不写设置
+        // 原生移除失败：拦截器仍在消费按键。返回实际状态（仍开启）让卡片
+        // 保持"反劫持"，下次点击会再次尝试移除；不写设置
         ToastQueue.show({ message: '按键反劫持关闭失败，可再次点击重试', duration: 2500 });
-        return false;
+        return true;
       }
       // 拦截器路径按下未释放的键需要补发 KEY_UP，防止主机端卡键
       this.inputHandler.releaseAllKeys();
