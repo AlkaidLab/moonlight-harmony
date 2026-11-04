@@ -935,9 +935,13 @@ struct StreamPage {
         // 启动失败提示已在 startKeyInterceptor 内弹出
         return false;
       }
-      ToastQueue.show({ message: '按键反劫持已开启', duration: 2000 });
+      ToastQueue.show({ message: '按键反劫持已开启，物理按键将转发主机', duration: 2000 });
     } else {
-      interceptor.stop();
+      if (interceptor.stop() !== 0) {
+        // 原生移除失败：拦截器仍在消费按键，保持开启状态允许重试，不写设置
+        ToastQueue.show({ message: '按键反劫持关闭失败，可再次点击重试', duration: 2500 });
+        return false;
+      }
       // 拦截器路径按下未释放的键需要补发 KEY_UP，防止主机端卡键
       this.inputHandler.releaseAllKeys();
       ToastQueue.show({ message: '按键反劫持已关闭，手柄 Home 键恢复系统处理', duration: 2500 });
@@ -945,7 +949,10 @@ struct StreamPage {
     if (this.viewModel.inputSettings) {
       this.viewModel.inputSettings.enableKeyInterceptor = enable;
     }
-    PreferencesUtil.put(SettingsKeys.ENABLE_KEY_INTERCEPTOR, enable).catch(() => {});
+    PreferencesUtil.put(SettingsKeys.ENABLE_KEY_INTERCEPTOR, enable).catch(() => {
+      // 运行时状态已生效，仅持久化失败：提醒用户下次串流可能沿用旧值
+      ToastQueue.show({ message: '设置保存失败，下次串流可能沿用旧值', duration: 2500 });
+    });
     return enable;
   }
 

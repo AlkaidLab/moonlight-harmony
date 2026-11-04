@@ -373,12 +373,15 @@ static napi_value RemoveKeyInterceptor(napi_env env, napi_callback_info info)
         if (inputRet != INPUT_SUCCESS) {
             LOGW("OH_Input_RemoveKeyEventInterceptor 失败: %{public}d", inputRet);
             result = inputRet;
+            // 拦截器仍在 MMI 层消费按键：保留 g_interceptorActive 与回调，
+            // 置反会让后续 remove/start 直接跳过，永远失去重试移除的机会
+        } else {
+            g_interceptorActive = false;
+            LOGI("按键拦截器已移除");
         }
-        g_interceptorActive = false;
-        LOGI("按键拦截器已移除");
     }
 
-    if (g_tsCallback) {
+    if (result == 0 && g_tsCallback) {
         napi_release_threadsafe_function(g_tsCallback, napi_tsfn_release);
         g_tsCallback = nullptr;
     }
