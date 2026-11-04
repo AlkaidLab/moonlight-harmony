@@ -306,18 +306,20 @@ static napi_value AddKeyInterceptor(napi_env env, napi_callback_info info)
     }
 
     // 如果已经有拦截器，先移除
+    bool keepExistingInterceptor = false;
     if (g_interceptorActive) {
         Input_Result removeRet = OH_Input_RemoveKeyEventInterceptor();
         if (removeRet != INPUT_SUCCESS) {
             LOGW("OH_Input_RemoveKeyEventInterceptor 失败: %{public}d", removeRet);
-            // 移除失败时旧拦截器仍在消费按键：保留旧回调与 active 并直接
-            // 返回错误码。若继续注册且新注册失败，会出现"按键被拦截却不
-            // 转发"的窗口，故这里立即放弃
-            napi_value ret;
-            napi_create_int32(env, removeRet, &ret);
-            return ret;
+            // 移除失败时旧 MMI 拦截器仍在消费按键。注册在 MMI 层的是静态
+            // OnKeyEventCallback，转发目标由 g_tsCallback 决定——保留注册、
+            // 仅换绑下方新建的回调即可让按键继续转发到当前会话（旧回调绑
+            // 定的旧会话已失效，事件会被其 isConnected 守卫丢弃），且不会
+            // 重复注册 MMI 拦截器。
+            keepExistingInterceptor = true;
+        } else {
+            g_interceptorActive = false;
         }
-        g_interceptorActive = false;
     }
     if (g_tsCallback) {
         napi_release_threadsafe_function(g_tsCallback, napi_tsfn_abort);
@@ -349,15 +351,17 @@ static napi_value AddKeyInterceptor(napi_env env, napi_callback_info info)
         return ret;
     }
 
-    // 创建按键事件拦截器
-    Input_Result inputRet = OH_Input_AddKeyEventInterceptor(OnKeyEventCallback, nullptr);
-    if (inputRet != INPUT_SUCCESS) {
-        LOGE("OH_Input_AddKeyEventInterceptor 失败: %{public}d", inputRet);
-        napi_release_threadsafe_function(g_tsCallback, napi_tsfn_abort);
-        g_tsCallback = nullptr;
-        napi_value ret;
-        napi_create_int32(env, inputRet, &ret);
-        return ret;
+    if (!keepExistingInterceptor) {
+        // 创建按键事件拦截器（换绑模式下旧 MMI 注册仍有效，跳过重复注册）
+        Input_Result inputRet = OH_Input_AddKeyEventInterceptor(OnKeyEventCallback, nullptr);
+        if (inputRet != INPUT_SUCCESS) {
+            LOGE("OH_Input_AddKeyEventInterceptor 失败: %{public}d", inputRet);
+            napi_release_threadsafe_function(g_tsCallback, napi_tsfn_abort);
+            g_tsCallback = nullptr;
+            napi_value ret;
+            napi_create_int32(env, inputRet, &ret);
+            return ret;
+        }
     }
 
     g_interceptorActive = true;
