@@ -759,18 +759,22 @@ export class StreamInputHandler {
    * 拦截被系统劫持的手柄按键和特殊键盘按键，转发给 GamepadManager / StreamingSession 处理
    *
    * 启动条件在内部判断（而非调用方判断），保证所有启动路径口径一致：
-   * - 设置开关 enableKeyInterceptor 关闭时不启动；
+   * - 设置开关 enableKeyInterceptor 关闭时不启动（force=true 可跳过该检查，
+   *   供串流菜单反劫持卡片使用——用户显式意图优先于持久化设置）；
    * - 无按键注入 API（API 13 以下老设备）时强制跳过——拦截器是消费型的，
    *   音量键被吃掉后无法回注。与设置页的 keyInterceptorAvailable 检查一致，
    *   这里兜底覆盖从未打开过设置页的场景。
+   *
+   * @returns 是否启动成功（force=false 且设置关闭时返回 false 但不算失败；
+   *          真正启动失败时内部已弹 Toast）
    */
-  startKeyInterceptor(): void {
-    if (this.viewModel?.inputSettings?.enableKeyInterceptor !== true) {
-      return;
+  startKeyInterceptor(force: boolean = false): boolean {
+    if (!force && this.viewModel?.inputSettings?.enableKeyInterceptor !== true) {
+      return false;
     }
     if (!InputInterceptorService.getInstance().isInjectApiAvailable()) {
       Logger.warn('StreamInputHandler', 'StreamInputHandler: 无按键注入 API（API 13+），跳过按键拦截器');
-      return;
+      return false;
     }
     const result = InputInterceptorService.getInstance().start((event) => {
       if (!this.viewModel?.isConnected) {
@@ -875,7 +879,9 @@ export class StreamInputHandler {
         message: '按键反劫持启动失败：蓝牙手柄 Home 键可能导致退出（需系统级签名）',
         duration: 3500
       });
+      return false;
     }
+    return true;
   }
 
   /**

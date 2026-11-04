@@ -56,6 +56,8 @@ export interface GameMenuCallbacks {
   onControllerOpacityChange?: (opacity: number) => void;
   onControllerScaleChange?: (scale: number) => void;
   onTouchPassthroughChange?: (enabled: boolean) => void;
+  /** 切换按键反劫持，返回实际生效的状态（失败返回 false/原状态） */
+  onToggleKeyInterceptor?: (enable: boolean) => boolean;
   onClose?: () => void;
   onUnlockOverlay?: () => void;
   onToggleWindowMode?: () => void;
@@ -110,6 +112,7 @@ const CARD_AUDIO_VIBRATION = 'audio_vibration';
 const CARD_UNLOCK = 'unlock';
 const CARD_MIC = 'mic';
 const CARD_DISPLAY_SCALE = 'display_scale';
+const CARD_KEY_INTERCEPTOR = 'key_interceptor';
 const CARD_USAGE_KEY = 'game_menu_card_usage';
 
 // 马卡龙色系菜单配置
@@ -151,6 +154,10 @@ export struct GameMenuDialog {
   touchPassthrough: boolean = false;
   showCustomKeys: boolean = false;
   isPanZoomActive: boolean = false;
+  /** 按键注入 API 是否可用（API 13+），不可用时不显示反劫持卡片 */
+  keyInterceptorAvailable: boolean = false;
+  /** 反劫持拦截器的真实运行状态（而非设置值），打开菜单时传入 */
+  keyInterceptorEnabled: boolean = false;
 
   // 动画状态
   @State private positions: number[] = Array(MENU_ITEM_COUNT).fill(200);
@@ -206,6 +213,8 @@ export struct GameMenuDialog {
   @State private sortedMainCards: string[] = [];
   private cardUsageCounts: Map<string, number> = new Map();
   @State private micActive: boolean = false;
+  // 按键反劫持（1x1 卡片本地状态，点击后由回调返回值刷新）
+  @State private keyInterceptorEnabledLocal: boolean = false;
   // 自定义按键配置档案
   @State private customKeyProfileNames: string[] = [];
   @State private customKeyActiveProfile: string = '';
@@ -268,6 +277,7 @@ export struct GameMenuDialog {
     this.controllerOpacityLocal = this.controllerOpacity;
     this.controllerScaleLocal = this.controllerScale;
     this.touchPassthroughLocal = this.touchPassthrough;
+    this.keyInterceptorEnabledLocal = this.keyInterceptorEnabled;
     this.loadGyroSettings();
     this.loadCardUsageCounts();
     this.loadCustomKeyProfiles();
@@ -1014,6 +1024,9 @@ export struct GameMenuDialog {
       if (this.viewModel.getSession()?.isMicrophoneEnabled()) {
         this.MicCard()
       }
+      if (this.keyInterceptorAvailable) {
+        this.KeyInterceptorCard()
+      }
     }
     .width(OV_CARD_WIDTH)
   }
@@ -1119,6 +1132,33 @@ export struct GameMenuDialog {
           duration: 1500
         });
       });
+    })
+  }
+
+  /** 按键反劫持开关。运行时切换拦截器并持久化，实际启停由 StreamPage 回调完成。 */
+  @Builder
+  KeyInterceptorCard() {
+    Column() {
+      Image($r('app.media.ic_shield'))
+        .width(22)
+        .height(22)
+        .fillColor(this.keyInterceptorEnabledLocal ? StreamMenuColors.TextBright : StreamMenuColors.TextDim)
+      Text(this.keyInterceptorEnabledLocal ? '反劫持' : '已关闭')
+        .fontSize(OV_FONT_MD)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.keyInterceptorEnabledLocal ? StreamMenuColors.TextBright : StreamMenuColors.TextDim)
+        .margin({ top: 4 })
+    }
+    .width(BUTTON_CARD_SIZE)
+    .height(BUTTON_CARD_SIZE)
+    .justifyContent(FlexAlign.Center)
+    .cardStyle()
+    .onClick(() => {
+      this.recordCardUsage(CARD_KEY_INTERCEPTOR);
+      const applied = this.callbacks.onToggleKeyInterceptor?.(!this.keyInterceptorEnabledLocal);
+      if (applied !== undefined) {
+        this.keyInterceptorEnabledLocal = applied;
+      }
     })
   }
 
