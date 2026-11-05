@@ -19,9 +19,10 @@
  */
 
 import { netBoost, netQuality } from '@kit.NetworkBoostKit';
-import { Available, BusinessError, deviceInfo } from '@kit.BasicServicesKit';
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { StreamSocketFds } from '../streaming/MoonBridge';
 import { Logger } from '../../common/Logger';
+import { AppState, AppStateService } from '../AppStateService';
 
 /** NetworkBoost Kit 系统能力（netBoost/netQuality 全部 API 共用同一 syscap） */
 const NETWORK_BOOST_SYSCAP = 'SystemCapability.Communication.NetworkBoost.Core';
@@ -30,6 +31,8 @@ const STREAMING_SERVICE_TYPE: netQuality.ServiceType = 'realtimeGame';
 
 /** setDataFlowDesc 起始 API 版本 */
 const DATA_FLOW_DESC_MIN_API = 26;
+// API 26: foreground applications may describe at most two flows.
+const MAX_DATA_FLOW_DESCRIPTIONS = 2;
 
 type StreamQoeState = 'good' | 'poor';
 
@@ -96,6 +99,11 @@ export class NetworkBoostService {
   private sceneListeners: Set<SystemNetSceneListener> = new Set();
   private registeredFlowFds: number[] = [];
   private sceneEntered: boolean = false;
+  private dataFlowSupported: boolean = true;
+  private streamingFlows: StreamSocketFds | null = null;
+  private appStateListener: (state: AppState) => void = (_state: AppState): void => {
+    this.refreshDataFlowDesc();
+  };
 
   static getInstance(): NetworkBoostService {
     if (!NetworkBoostService.instance) {
@@ -110,6 +118,7 @@ export class NetworkBoostService {
       return;
     }
     this.active = true;
+    AppStateService.getInstance().addListener(this.appStateListener);
     this.lastState = null;
     this.reportInternal('good');
     this.subscribeQos();
@@ -122,6 +131,8 @@ export class NetworkBoostService {
       return;
     }
     this.active = false;
+    AppStateService.getInstance().removeListener(this.appStateListener);
+    this.streamingFlows = null;
     this.lastState = null;
     this.unsubscribeQos();
     this.unsubscribeScene();
@@ -191,14 +202,21 @@ export class NetworkBoostService {
    * 会话结束或 socket 关闭前由 clearDataFlowDesc() 注销。
    */
   registerStreamingFlows(fds: StreamSocketFds): void {
-    if (!this.supported || !this.active) {
+    if (!this.active) {
       return;
     }
-    if (deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API) {
-      Logger.info('NetworkBoostService', `[NetworkBoost] API ${deviceInfo.sdkApiVersion} < ${DATA_FLOW_DESC_MIN_API},跳过流描述注册`);
-      return;
-    }
+    this.streamingFlows = fds;
+    this.refreshDataFlowDesc();
+  }
 
+  private refreshDataFlowDesc(): void {
+    // Release the previous descriptors before reconnecting or going into background.
+    this.clearDataFlowDesc();
+    if (!this.active || !this.supported || !this.dataFlowSupported || !this.streamingFlows ||
+      this.registeredFlowFds.length > 0 || deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API ||
+      AppStateService.getInstance().getCurrentState() !== AppState.FOREGROUND) {
+      return;
+    }
     if (canIUse(NETWORK_BOOST_SYSCAP)) {
       try {
         netBoost.setSceneDesc({
@@ -211,30 +229,38 @@ export class NetworkBoostService {
         return;
       }
 
-      this.registeredFlowFds = [];
-      this.registerOneFlow('videoRtp', fds.videoRtp.fd);
-      this.registerOneFlow('audioRtp', fds.audioRtp.fd);
-      this.registerOneFlow('control', fds.control.fd);
+      // Input latency and video delivery take priority; audio can fill an unused slot.
+      this.registerOneFlow('control', this.streamingFlows.control.fd);
+      this.registerOneFlow('videoRtp', this.streamingFlows.videoRtp.fd);
+      this.registerOneFlow('audioRtp', this.streamingFlows.audioRtp.fd);
     }
   }
 
   private registerOneFlow(name: string, fd: number): void {
-    if (fd < 0) {
-      Logger.info('NetworkBoostService', `[NetworkBoost] ${name} fd 不可用,跳过注册`);
+    if (!this.dataFlowSupported || !Number.isInteger(fd) || fd < 0 ||
+      this.registeredFlowFds.includes(fd) ||
+      this.registeredFlowFds.length >= MAX_DATA_FLOW_DESCRIPTIONS) {
       return;
     }
     if (canIUse(NETWORK_BOOST_SYSCAP)) {
       try {
-        netBoost.setDataFlowDesc({
+        const description: netBoost.DataFlowDesc = {
           dataFlowInfo: fd,
           scene: STREAMING_SERVICE_TYPE,
           sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER,
           expectations: { priority: netBoost.PriorityLevel.PRIO_HIGH }
-        });
+        };
+        netBoost.setDataFlowDesc(description);
         this.registeredFlowFds.push(fd);
-        Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc ${name} fd=${fd} priority=HIGH`);
+        Logger.info('NetworkBoostService', '[NetworkBoost] setDataFlowDesc ' + name + ' fd=' + fd);
       } catch (err) {
-        this.handleErr(`setDataFlowDesc(${name})`, err);
+        const error: BusinessError = err;
+        if (error.code === 801) {
+          // This optional API may be unavailable while QoE reporting still works.
+          this.dataFlowSupported = false;
+        }
+        Logger.warn('NetworkBoostService', '[NetworkBoost] setDataFlowDesc ' + name +
+          ' failed: ' + error.message);
       }
     }
   }
@@ -245,18 +271,20 @@ export class NetworkBoostService {
     fds.forEach((fd) => {
       if (canIUse(NETWORK_BOOST_SYSCAP)) {
         try {
-          netBoost.setDataFlowDesc({
+          const description: netBoost.DataFlowDesc = {
             dataFlowInfo: fd,
             scene: STREAMING_SERVICE_TYPE,
             sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
-          });
+          };
+          netBoost.setDataFlowDesc(description);
           Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc fd=${fd} event=leave`);
         } catch (err) {
+          this.registeredFlowFds.push(fd);
           Logger.warn('NetworkBoostService', `[NetworkBoost] setDataFlowDesc(fd=${fd}) leave 失败: ${(err as Error).message}`);
         }
       }
     });
-    if (!this.sceneEntered) {
+    if (this.registeredFlowFds.length > 0 || !this.sceneEntered) {
       return;
     }
     this.sceneEntered = false;
