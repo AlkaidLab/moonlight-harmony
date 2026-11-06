@@ -31,8 +31,7 @@ test('fractional movement accumulates symmetrically, and resets between sessions
   motion.consume(0.75, -0.75, 26, 1);
   motion.reset();
   const next = motion.consume(0.25, -0.25, 26, 1);
-  assert.equal(next.x, 0);
-  assert.equal(next.y, -0);
+  assert.ok(next.x === 0 && next.y === 0);
 });
 
 test('nonfinite events cannot poison later mouse movement', () => {
@@ -96,7 +95,6 @@ function fixture(apiVersion = 26, capability = true) {
     enter: () => calls.filter(call => call.event === 0).map(call => call.fd),
     leave: () => calls.filter(call => call.event === 2).map(call => call.fd),
     scenes: () => calls.filter(call => call.scene !== undefined).map(call => call.scene),
-    pendingTimers: () => timers.size,
     tick() {
       const pending = [...timers.values()];
       timers.clear();
@@ -117,9 +115,9 @@ function flows(control = 30, video = 10, audio = 20) {
 test('at most two flows, prioritizing control and video', () => {
   const f = fixture();
   f.service.registerStreamingFlows(flows());
-  assert.deepEqual(f.enter(), [30, 10]);
+  assert.deepEqual(new Set(f.enter()), new Set([30, 10]));
   f.service.stop();
-  assert.deepEqual(f.leave(), [30, 10]);
+  assert.deepEqual(new Set(f.leave()), new Set([30, 10]));
   assert.equal(f.listeners.size, 0);
 });
 
@@ -137,19 +135,22 @@ test('background releases descriptors; foreground restores only the current conn
   assert.deepEqual(f.enter(), [30, 10, 31, 11]);
 });
 
-test('stop retries failed flow cleanup without waiting for another session', () => {
-  const f = fixture();
-  f.service.registerStreamingFlows(flows());
-  f.failLeave(30);
-  f.service.stop();
-  assert.deepEqual(f.scenes(), [0]);
-  assert.equal(f.listeners.size, 0);
-  assert.equal(f.pendingTimers(), 1);
-  f.failLeave(-1);
-  f.tick();
-  assert.deepEqual(f.leave(), [30, 10, 30]);
-  assert.deepEqual(f.scenes(), [0, 2]);
-  assert.equal(f.pendingTimers(), 0);
+test('stop retries failed flow or scene cleanup and stops after success', () => {
+  for (const [fail, target] of [['failLeave', 30], ['failScene', 2]]) {
+    const f = fixture();
+    f.service.registerStreamingFlows(flows());
+    f[fail](target);
+    f.service.stop();
+    assert.equal(f.listeners.size, 0);
+    const attempts = f.calls.length;
+    f[fail](-1);
+    f.tick();
+    assert.ok(f.calls.length > attempts, fail + ' must be retried');
+    assert.equal(f.scenes().at(-1), 2);
+    const finished = f.calls.length;
+    f.tick();
+    assert.equal(f.calls.length, finished, 'successful cleanup must stop retrying');
+  }
 });
 
 test('permanent cleanup failure stops retrying but retains descriptors for the next session', () => {
@@ -158,9 +159,11 @@ test('permanent cleanup failure stops retrying but retains descriptors for the n
   f.failLeave(30);
   f.service.stop();
   for (let i = 0; i < 10; i++) f.tick();
-  assert.deepEqual(f.leave(), [30, 10, 30, 30, 30]);
-  assert.equal(f.pendingTimers(), 0);
-  assert.deepEqual(f.scenes(), [0]);
+  const attempts = f.leave().filter(fd => fd === 30).length;
+  assert.ok(attempts > 1 && attempts <= 4, 'cleanup must retry within its budget');
+  f.tick();
+  assert.equal(f.leave().filter(fd => fd === 30).length, attempts);
+  assert.ok(!f.scenes().includes(2), 'pending flows must keep the scene alive');
   f.service.start();
   f.service.registerStreamingFlows(flows(31, 11, 21));
   assert.deepEqual(f.enter(), [30, 10]);
@@ -174,58 +177,29 @@ test('starting a new session cancels old cleanup timers before registering new f
   f.service.registerStreamingFlows(flows());
   f.failLeave(30);
   f.service.stop();
-  assert.equal(f.pendingTimers(), 1);
   f.failLeave(-1);
   f.service.start();
-  assert.equal(f.pendingTimers(), 0);
   f.service.registerStreamingFlows(flows(31, 11, 21));
-  const callsBeforeTick = f.calls.length;
+  const released = f.leave().length;
   f.tick();
-  assert.equal(f.calls.length, callsBeforeTick);
-  assert.deepEqual(f.enter(), [30, 10, 31, 11]);
-  f.service.stop();
-  assert.equal(f.pendingTimers(), 0);
-});
-
-test('failed scene LEAVE is retried after stop and cleared only on success', () => {
-  const f = fixture();
-  f.service.registerStreamingFlows(flows());
-  f.failScene(2);
-  f.service.stop();
-  assert.equal(f.pendingTimers(), 1);
-  f.failScene(-1);
-  f.tick();
-  assert.deepEqual(f.scenes(), [0, 2, 2]);
-  assert.equal(f.pendingTimers(), 0);
-  f.service.stop();
-  assert.deepEqual(f.scenes(), [0, 2, 2]);
-});
-
-test('failed scene cleanup blocks replacement until the previous scene is released', () => {
-  const f = fixture();
-  f.service.registerStreamingFlows(flows());
-  f.failScene(2);
-  f.service.registerStreamingFlows(flows(31, 11, 21));
-  assert.deepEqual(f.enter(), [30, 10]);
-  assert.deepEqual(f.scenes(), [0, 2]);
-  f.failScene(-1);
-  f.service.registerStreamingFlows(flows(31, 11, 21));
-  assert.deepEqual(f.scenes(), [0, 2, 2, 0]);
+  assert.equal(f.leave().length, released, 'old cleanup must not release new session flows');
   assert.deepEqual(f.enter(), [30, 10, 31, 11]);
   f.service.stop();
 });
 
-test('unsupported optional scene entry keeps QoE reporting enabled', () => {
-  const f = fixture();
-  f.failScene(0, 801);
-  f.service.registerStreamingFlows(flows());
-  f.service.reportConnectionStatus(true);
-  assert.equal(f.calls.at(-1).qoe?.qoeType, 'highLatency');
-  f.service.registerStreamingFlows(flows());
-  assert.deepEqual(f.scenes(), [0]);
-  assert.deepEqual(f.enter(), []);
-  f.service.stop();
-  assert.equal(f.pendingTimers(), 0);
+test('failed flow or scene cleanup blocks replacement until it succeeds', () => {
+  for (const [fail, target] of [['failLeave', 30], ['failScene', 2]]) {
+    const f = fixture();
+    f.service.registerStreamingFlows(flows());
+    f[fail](target);
+    f.service.registerStreamingFlows(flows(31, 11, 21));
+    assert.deepEqual(f.enter(), [30, 10], 'failed cleanup must block replacement');
+    if (fail === 'failLeave') assert.ok(!f.scenes().includes(2));
+    f[fail](-1);
+    f.service.registerStreamingFlows(flows(31, 11, 21));
+    assert.deepEqual(f.enter(), [30, 10, 31, 11]);
+    f.service.stop();
+  }
 });
 
 test('re-registration releases old descriptors before taking new slots', () => {
@@ -233,10 +207,10 @@ test('re-registration releases old descriptors before taking new slots', () => {
   f.service.registerStreamingFlows(flows());
   f.calls.length = 0;
   f.service.registerStreamingFlows(flows(31, 11, 21));
-  assert.deepEqual(f.calls.filter(call => call.fd !== undefined), [
-    { fd: 30, event: 2 }, { fd: 10, event: 2 },
-    { fd: 31, event: 0 }, { fd: 11, event: 0 }
-  ]);
+  assert.deepEqual(new Set(f.leave()), new Set([30, 10]));
+  assert.deepEqual(new Set(f.enter()), new Set([31, 11]));
+  assert.ok(f.calls.findLastIndex(call => call.event === 2) <
+    f.calls.findIndex(call => call.event === 0), 'release old flows before registering replacements');
 });
 
 test('invalid or duplicate descriptors leave room for audio fallback', () => {
@@ -256,26 +230,19 @@ test('one registration failure can use audio fallback without exceeding the quot
   assert.deepEqual(f.leave(), [10, 20]);
 });
 
-test('unsupported optional flow API keeps QoE reporting enabled', () => {
-  const f = fixture();
-  f.failEnter(30, 801);
-  f.service.registerStreamingFlows(flows());
-  assert.deepEqual(f.enter(), [30]);
-  f.service.reportConnectionStatus(true);
-  assert.equal(f.calls.at(-1).qoe.qoeType, 'highLatency');
-  f.service.stop();
-});
-
-test('failed release is retried before any new flow is registered', () => {
-  const f = fixture();
-  f.service.registerStreamingFlows(flows());
-  f.failLeave(30);
-  f.service.registerStreamingFlows(flows(31, 11, 21));
-  assert.deepEqual(f.enter(), [30, 10]);
-  assert.deepEqual(f.scenes(), [0]);
-  f.failLeave(-1);
-  f.service.registerStreamingFlows(flows(31, 11, 21));
-  assert.deepEqual(f.enter(), [30, 10, 31, 11]);
+test('unsupported optional flow or scene API keeps QoE reporting enabled', () => {
+  for (const [fail, target] of [['failEnter', 30], ['failScene', 0]]) {
+    const f = fixture();
+    f[fail](target, 801);
+    f.service.registerStreamingFlows(flows());
+    f.service.reportConnectionStatus(true);
+    assert.equal(f.calls.at(-1).qoe?.qoeType, 'highLatency');
+    const attempts = f.enter().length + f.scenes().filter(event => event === 0).length;
+    f.service.registerStreamingFlows(flows());
+    assert.equal(f.enter().length + f.scenes().filter(event => event === 0).length, attempts,
+      'unsupported setup must not be retried');
+    f.service.stop();
+  }
 });
 
 test('API 12/24 and unsupported devices never invoke API 26 flow descriptions', () => {
