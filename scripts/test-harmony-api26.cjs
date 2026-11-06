@@ -43,6 +43,7 @@ test('nonfinite events cannot poison later mouse movement', () => {
   assert.equal(next.y, -3);
 });
 
+/** Load the production service with controllable platform failures and a deterministic timer queue. */
 function fixture(apiVersion = 26, capability = true) {
   const calls = [];
   const listeners = new Set();
@@ -108,6 +109,7 @@ function fixture(apiVersion = 26, capability = true) {
   };
 }
 
+/** Create socket metadata with overridable descriptors for reconnect and fallback scenarios. */
 function flows(control = 30, video = 10, audio = 20) {
   return { control: { fd: control }, videoRtp: { fd: video }, audioRtp: { fd: audio } };
 }
