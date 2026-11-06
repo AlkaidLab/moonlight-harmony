@@ -24,6 +24,7 @@
 #include <hilog/log.h>
 #include <cstring>
 #include <dlfcn.h>
+#include <pthread.h>
 
 #define LOGI(...) OH_LOG_Print(LOG_APP, LOG_INFO, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) OH_LOG_Print(LOG_APP, LOG_WARN, LOG_DOMAIN, LOG_TAG, __VA_ARGS__)
@@ -44,6 +45,9 @@ struct InterceptedKeyEvent {
 // ==================== 全局状态 ====================
 
 static napi_threadsafe_function g_tsCallback = nullptr;
+// 保护 g_tsCallback 的换绑/释放与 Input 线程的读取（OnKeyEventCallback 在
+// Input 线程执行，与 JS 线程并发；指针置空与使用之间存在 use-after-free 窗口）
+static pthread_mutex_t g_tsfnMutex = PTHREAD_MUTEX_INITIALIZER;
 static bool g_interceptorActive = false;
 
 // ==================== 按键注入 API 动态加载 (API 13+) ====================
@@ -231,16 +235,26 @@ static void OnKeyEventCallback(const Input_KeyEvent *keyEvent)
         // 回注失败（无权限或 API 不可用），回退：转发给 ArkTS 做应用音量调节
     }
 
-    // 转发给 ArkTS
-    if (!g_tsCallback) return;
-
+    // 转发给 ArkTS。g_tsCallback 可能被 JS 线程并发换绑/释放：锁内取指针并
+    // acquire（引用计数+1 阻止 finalize），解锁后调用，用完释放。
     auto *data = new InterceptedKeyEvent();
     data->keyCode = keyCode;
     data->action = OH_Input_GetKeyEventAction(keyEvent);
     data->actionTime = OH_Input_GetKeyEventActionTime(keyEvent);
     data->deviceId = g_pfnGetKeyEventDeviceId ? g_pfnGetKeyEventDeviceId(keyEvent) : -1;
 
-    napi_status status = napi_call_threadsafe_function(g_tsCallback, data, napi_tsfn_nonblocking);
+    pthread_mutex_lock(&g_tsfnMutex);
+    napi_threadsafe_function tsfn = g_tsCallback;
+    if (!tsfn || napi_acquire_threadsafe_function(tsfn) != napi_ok) {
+        // 拦截器正在换绑/已关闭（acquire 失败=已在关闭流程），丢弃该事件
+        pthread_mutex_unlock(&g_tsfnMutex);
+        delete data;
+        return;
+    }
+    pthread_mutex_unlock(&g_tsfnMutex);
+
+    napi_status status = napi_call_threadsafe_function(tsfn, data, napi_tsfn_nonblocking);
+    napi_release_threadsafe_function(tsfn, napi_tsfn_release);
     if (status != napi_ok) {
         LOGW("napi_call_threadsafe_function failed: %{public}d", status);
         delete data;
@@ -306,19 +320,27 @@ static napi_value AddKeyInterceptor(napi_env env, napi_callback_info info)
     }
 
     // 如果已经有拦截器，先移除
+    bool keepExistingInterceptor = false;
     if (g_interceptorActive) {
-        OH_Input_RemoveKeyEventInterceptor();
-        g_interceptorActive = false;
+        Input_Result removeRet = OH_Input_RemoveKeyEventInterceptor();
+        if (removeRet != INPUT_SUCCESS) {
+            LOGW("OH_Input_RemoveKeyEventInterceptor 失败: %{public}d", removeRet);
+            // 移除失败时旧 MMI 拦截器仍在消费按键。注册在 MMI 层的是静态
+            // OnKeyEventCallback，转发目标由 g_tsCallback 决定——保留注册、
+            // 仅换绑下方新建的回调即可让按键继续转发到当前会话（旧回调绑
+            // 定的旧会话已失效，事件会被其 isConnected 守卫丢弃），且不会
+            // 重复注册 MMI 拦截器。
+            keepExistingInterceptor = true;
+        } else {
+            g_interceptorActive = false;
+        }
     }
-    if (g_tsCallback) {
-        napi_release_threadsafe_function(g_tsCallback, napi_tsfn_abort);
-        g_tsCallback = nullptr;
-    }
-
-    // 创建 threadsafe function
+    // 创建 threadsafe function（先建局部变量，成功后才在锁内换绑：
+    // 创建失败时保留旧 g_tsCallback，MMI 拦截器仍活跃时旧链路至少可继续转发）
     napi_value asyncResourceName;
     napi_create_string_utf8(env, "KeyInterceptorCallback", NAPI_AUTO_LENGTH, &asyncResourceName);
 
+    napi_threadsafe_function newCallback = nullptr;
     napi_status status = napi_create_threadsafe_function(
         env,
         argv[0],           // JS callback
@@ -330,7 +352,7 @@ static napi_value AddKeyInterceptor(napi_env env, napi_callback_info info)
         nullptr,           // thread finalize callback
         nullptr,           // context
         CallJsCallback,    // call JS callback
-        &g_tsCallback
+        &newCallback
     );
 
     if (status != napi_ok) {
@@ -340,15 +362,27 @@ static napi_value AddKeyInterceptor(napi_env env, napi_callback_info info)
         return ret;
     }
 
-    // 创建按键事件拦截器
-    Input_Result inputRet = OH_Input_AddKeyEventInterceptor(OnKeyEventCallback, nullptr);
-    if (inputRet != INPUT_SUCCESS) {
-        LOGE("OH_Input_AddKeyEventInterceptor 失败: %{public}d", inputRet);
+    pthread_mutex_lock(&g_tsfnMutex);
+    if (g_tsCallback) {
+        // 换绑：abort 丢弃旧回调上未派发的事件（其所属会话已失效）
         napi_release_threadsafe_function(g_tsCallback, napi_tsfn_abort);
-        g_tsCallback = nullptr;
-        napi_value ret;
-        napi_create_int32(env, inputRet, &ret);
-        return ret;
+    }
+    g_tsCallback = newCallback;
+    pthread_mutex_unlock(&g_tsfnMutex);
+
+    if (!keepExistingInterceptor) {
+        // 创建按键事件拦截器（换绑模式下旧 MMI 注册仍有效，跳过重复注册）
+        Input_Result inputRet = OH_Input_AddKeyEventInterceptor(OnKeyEventCallback, nullptr);
+        if (inputRet != INPUT_SUCCESS) {
+            LOGE("OH_Input_AddKeyEventInterceptor 失败: %{public}d", inputRet);
+            pthread_mutex_lock(&g_tsfnMutex);
+            napi_release_threadsafe_function(g_tsCallback, napi_tsfn_abort);
+            g_tsCallback = nullptr;
+            pthread_mutex_unlock(&g_tsfnMutex);
+            napi_value ret;
+            napi_create_int32(env, inputRet, &ret);
+            return ret;
+        }
     }
 
     g_interceptorActive = true;
@@ -373,14 +407,21 @@ static napi_value RemoveKeyInterceptor(napi_env env, napi_callback_info info)
         if (inputRet != INPUT_SUCCESS) {
             LOGW("OH_Input_RemoveKeyEventInterceptor 失败: %{public}d", inputRet);
             result = inputRet;
+            // 拦截器仍在 MMI 层消费按键：保留 g_interceptorActive 与回调，
+            // 置反会让后续 remove/start 直接跳过，永远失去重试移除的机会
+        } else {
+            g_interceptorActive = false;
+            LOGI("按键拦截器已移除");
         }
-        g_interceptorActive = false;
-        LOGI("按键拦截器已移除");
     }
 
-    if (g_tsCallback) {
-        napi_release_threadsafe_function(g_tsCallback, napi_tsfn_release);
-        g_tsCallback = nullptr;
+    if (result == 0) {
+        pthread_mutex_lock(&g_tsfnMutex);
+        if (g_tsCallback) {
+            napi_release_threadsafe_function(g_tsCallback, napi_tsfn_release);
+            g_tsCallback = nullptr;
+        }
+        pthread_mutex_unlock(&g_tsfnMutex);
     }
 
     napi_value ret;

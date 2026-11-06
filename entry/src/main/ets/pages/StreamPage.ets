@@ -921,6 +921,43 @@ struct StreamPage {
   }
   
   /**
+   * 串流中切换按键反劫持（GameMenuDialog 1x1 卡片），同时写回设置供下次串流使用
+   * @returns 实际生效的状态，启动失败等场景返回 false
+   */
+  private setKeyInterceptorEnabled(enable: boolean): boolean {
+    const interceptor = InputInterceptorService.getInstance();
+    if (enable) {
+      if (!interceptor.isInjectApiAvailable()) {
+        ToastQueue.show({ message: '当前设备不支持按键反劫持（需 API 13+）', duration: 2500 });
+        return false;
+      }
+      if (!this.inputHandler.startKeyInterceptor(true)) {
+        // 启动失败提示已在 startKeyInterceptor 内弹出
+        return false;
+      }
+      ToastQueue.show({ message: '按键反劫持已开启，物理按键将转发主机', duration: 2000 });
+    } else {
+      if (interceptor.stop() !== 0) {
+        // 原生移除失败：拦截器仍在消费按键。返回实际状态（仍开启）让卡片
+        // 保持"反劫持"，下次点击会再次尝试移除；不写设置
+        ToastQueue.show({ message: '按键反劫持关闭失败，可再次点击重试', duration: 2500 });
+        return true;
+      }
+      // 拦截器路径按下未释放的键需要补发 KEY_UP，防止主机端卡键
+      this.inputHandler.releaseAllKeys();
+      ToastQueue.show({ message: '按键反劫持已关闭，手柄 Home 键恢复系统处理', duration: 2500 });
+    }
+    if (this.viewModel.inputSettings) {
+      this.viewModel.inputSettings.enableKeyInterceptor = enable;
+    }
+    PreferencesUtil.put(SettingsKeys.ENABLE_KEY_INTERCEPTOR, enable).catch(() => {
+      // 运行时状态已生效，仅持久化失败：提醒用户下次串流可能沿用旧值
+      ToastQueue.show({ message: '设置保存失败，下次串流可能沿用旧值', duration: 2500 });
+    });
+    return enable;
+  }
+
+  /**
    * 构建游戏菜单回调（从 showStreamMenu 提取，减少嵌套层级）
    */
   private buildGameMenuCallbacks(): GameMenuCallbacks {
@@ -989,6 +1026,9 @@ struct StreamPage {
           message: active ? '手柄鼠标模拟已开启' : '手柄鼠标模拟已关闭',
           duration: 2000
         });
+      },
+      onToggleKeyInterceptor: (enable: boolean): boolean => {
+        return this.setKeyInterceptorEnabled(enable);
       },
       onControllerOpacityChange: (opacity: number) => {
         this.controllerOpacityValue = opacity;
@@ -1082,6 +1122,8 @@ struct StreamPage {
         touchPassthrough: this.touchPassthrough,
         showCustomKeys: this.showCustomKeys,
         isPanZoomActive: this.isTouchOverrideEnabled,
+        keyInterceptorAvailable: InputInterceptorService.getInstance().isInjectApiAvailable(),
+        keyInterceptorEnabled: InputInterceptorService.getInstance().isActive(),
         callbacks: this.buildGameMenuCallbacks()
       }),
       alignment: DialogAlignment.CenterEnd,
