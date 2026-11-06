@@ -41,6 +41,8 @@ import { KeyboardTranslator } from '../input/KeyboardTranslator';
 import { InputInterceptorService, MouseInterceptorService } from '../input/InputInterceptorService';
 import { Logger } from '../../common/Logger';
 import { UI } from '../../common/UI';
+import { deviceInfo } from '@kit.BasicServicesKit';
+import { RawMouseMotion } from '../../utils/RawMouseMotion';
 
 export class StreamInputHandler {
   // ── 键盘修饰键状态追踪（位掩码：Shift=0x01, Ctrl=0x02, Alt=0x04, Meta=0x08）──
@@ -53,6 +55,7 @@ export class StreamInputHandler {
 
   // ── 鼠标拦截器（绕过 ArkUI 帧率限制，全速鼠标轮询）──
   private mouseInterceptorActive: boolean = false;
+  private rawMouseMotion: RawMouseMotion = new RawMouseMotion();
 
   // ── XComponent 实际渲染尺寸（vp，用于绝对模式坐标归一化）──
   private viewWidthVp: number = 0;
@@ -408,6 +411,7 @@ export class StreamInputHandler {
    */
   startMouseInterceptor(viewWidth: number, viewHeight: number,
                         windowId: number, isFullscreen: boolean): boolean {
+    this.rawMouseMotion.reset();
     const mouseInterceptor = MouseInterceptorService.getInstance();
     mouseInterceptor.stop();
     this.mouseInterceptorActive = false;
@@ -581,6 +585,7 @@ export class StreamInputHandler {
    * 停止鼠标高速轮询
    */
   stopMouseInterceptor(): void {
+    this.rawMouseMotion.reset();
     MouseInterceptorService.getInstance().stop();
     this.mouseInterceptorActive = false;
   }
@@ -599,7 +604,7 @@ export class StreamInputHandler {
    * 当鼠标拦截器启用时，鼠标事件由 C++ 层直接处理，此方法不再执行。
    */
   @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
-  handleMouseEvent(event: MouseEvent): void {
+  handleMouseEvent(event: MouseEvent, pixelsPerVp: number): void {
     if (!this.viewModel?.isConnected) return;
 
     // 阻止事件继续传递，避免触发系统默认行为（无论 Monitor 是否启用都要调用）
@@ -611,13 +616,13 @@ export class StreamInputHandler {
     if (event.action === MouseAction.Move) {
       const relativeMode = this.viewModel?.inputSettings?.gameMouseMode ?? false;
       if (relativeMode) {
-        // rawDelta 是鼠标硬件上报的原始位移，不是 vp/px，直接转发给远端。
-        const dx = event.rawDeltaX ?? 0;
-        const dy = event.rawDeltaY ?? 0;
-        if (dx !== 0 || dy !== 0) {
-          MoonBridge.sendMouseMove(Math.round(dx), Math.round(dy));
+        const motion = this.rawMouseMotion.consume(event.rawDeltaX ?? 0, event.rawDeltaY ?? 0,
+          deviceInfo.sdkApiVersion, pixelsPerVp);
+        if (motion.x !== 0 || motion.y !== 0) {
+          MoonBridge.sendMouseMove(motion.x, motion.y);
         }
       } else {
+        this.rawMouseMotion.reset();
         // 绝对模式：发送坐标位置
         // event.x/y 为相对于 XComponent 的 vp 坐标，用 XComponent 尺寸作为参考域
         MoonBridge.sendMousePosition(

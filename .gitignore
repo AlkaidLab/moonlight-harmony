@@ -78,6 +78,7 @@ scripts/*
 !scripts/test-display-frame-rate.cjs
 !scripts/test-display-scale.cjs
 !scripts/test-display-scale-targets.cjs
+!scripts/test-harmony-api26.cjs
 !scripts/test-helpers/
 scripts/test-helpers/*
 !scripts/test-helpers/load-arkts.cjs

@@ -2476,7 +2476,7 @@ struct StreamPage {
           })
           .onMouse((event: MouseEvent) => {
             // 物理鼠标事件处理 → 委托给输入处理器
-            this.inputHandler.handleMouseEvent(event);
+            this.inputHandler.handleMouseEvent(event, this.getUIContext().vp2px(1));
           })
           .onAxisEvent((event: AxisEvent) => {
             // 鼠标滚轮事件处理 → 委托给输入处理器
