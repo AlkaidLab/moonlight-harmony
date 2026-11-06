@@ -4,15 +4,18 @@ export class MouseMotion {
   y: number = 0;
 }
 
+/** Normalizes rawDelta units while retaining sub-count motion between events. */
 export class RawMouseMotion {
   private remainderX: number = 0;
   private remainderY: number = 0;
 
+  /** Drop motion left over from a previous session or input path. */
   reset(): void {
     this.remainderX = 0;
     this.remainderY = 0;
   }
 
+  /** Return integral hardware counts using the event window's display scaling. */
   consume(rawX: number, rawY: number, apiVersion: number, pixelsPerVp: number): MouseMotion {
     const motion: MouseMotion = new MouseMotion();
     if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) {

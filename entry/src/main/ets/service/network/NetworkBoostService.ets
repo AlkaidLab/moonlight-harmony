@@ -33,6 +33,8 @@ const STREAMING_SERVICE_TYPE: netQuality.ServiceType = 'realtimeGame';
 const DATA_FLOW_DESC_MIN_API = 26;
 // API 26: foreground applications may describe at most two flows.
 const MAX_DATA_FLOW_DESCRIPTIONS = 2;
+const MAX_CLEANUP_RETRIES = 3;
+const CLEANUP_RETRY_DELAY_MS = 250;
 
 type StreamQoeState = 'good' | 'poor';
 
@@ -101,6 +103,8 @@ export class NetworkBoostService {
   private sceneEntered: boolean = false;
   private dataFlowSupported: boolean = true;
   private streamingFlows: StreamSocketFds | null = null;
+  private cleanupRetryTimer: number = -1;
+  private cleanupRetryCount: number = 0;
   private appStateListener: (state: AppState) => void = (_state: AppState): void => {
     this.refreshDataFlowDesc();
   };
@@ -117,6 +121,7 @@ export class NetworkBoostService {
     if (this.active) {
       return;
     }
+    this.cancelCleanupRetry();
     this.active = true;
     AppStateService.getInstance().addListener(this.appStateListener);
     this.lastState = null;
@@ -137,6 +142,7 @@ export class NetworkBoostService {
     this.unsubscribeQos();
     this.unsubscribeScene();
     this.clearDataFlowDesc();
+    this.scheduleCleanupRetry();
     this.latestQos = null;
     this.latestScene = null;
   }
@@ -209,11 +215,13 @@ export class NetworkBoostService {
     this.refreshDataFlowDesc();
   }
 
+  /** Release stale descriptions before registering the current foreground session. */
   private refreshDataFlowDesc(): void {
     // Release the previous descriptors before reconnecting or going into background.
     this.clearDataFlowDesc();
     if (!this.active || !this.supported || !this.dataFlowSupported || !this.streamingFlows ||
-      this.registeredFlowFds.length > 0 || deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API ||
+      this.registeredFlowFds.length > 0 || this.sceneEntered ||
+      deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API ||
       AppStateService.getInstance().getCurrentState() !== AppState.FOREGROUND) {
       return;
     }
@@ -225,7 +233,8 @@ export class NetworkBoostService {
         });
         this.sceneEntered = true;
       } catch (err) {
-        this.handleErr('registerStreamingFlows/setSceneDesc', err);
+        const error: BusinessError = err;
+        this.handleDataFlowError('setSceneDesc', error);
         return;
       }
 
@@ -236,6 +245,7 @@ export class NetworkBoostService {
     }
   }
 
+  /** Fill one priority slot with a valid, distinct socket descriptor. */
   private registerOneFlow(name: string, fd: number): void {
     if (!this.dataFlowSupported || !Number.isInteger(fd) || fd < 0 ||
       this.registeredFlowFds.includes(fd) ||
@@ -255,16 +265,20 @@ export class NetworkBoostService {
         Logger.info('NetworkBoostService', '[NetworkBoost] setDataFlowDesc ' + name + ' fd=' + fd);
       } catch (err) {
         const error: BusinessError = err;
-        if (error.code === 801) {
-          // This optional API may be unavailable while QoE reporting still works.
-          this.dataFlowSupported = false;
-        }
-        Logger.warn('NetworkBoostService', '[NetworkBoost] setDataFlowDesc ' + name +
-          ' failed: ' + error.message);
+        this.handleDataFlowError('setDataFlowDesc ' + name, error);
       }
     }
   }
 
+  /** Disable only optional flow setup when its scene or flow API is unavailable. */
+  private handleDataFlowError(api: string, error: BusinessError): void {
+    if (error.code === 801) {
+      this.dataFlowSupported = false;
+    }
+    Logger.warn('NetworkBoostService', '[NetworkBoost] ' + api + ' failed: ' + error.message);
+  }
+
+  /** Keep failed releases pending, and leave the scene only after all flows are released. */
   private clearDataFlowDesc(): void {
     const fds = this.registeredFlowFds;
     this.registeredFlowFds = [];
@@ -287,19 +301,41 @@ export class NetworkBoostService {
     if (this.registeredFlowFds.length > 0 || !this.sceneEntered) {
       return;
     }
-    this.sceneEntered = false;
-
     if (canIUse(NETWORK_BOOST_SYSCAP)) {
       try {
         netBoost.setSceneDesc({
           scene: STREAMING_SERVICE_TYPE,
           sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
         });
+        this.sceneEntered = false;
         Logger.info('NetworkBoostService', '[NetworkBoost] setSceneDesc scene=realtimeGame event=leave');
       } catch (err) {
         Logger.warn('NetworkBoostService', `[NetworkBoost] clearDataFlowDesc 失败: ${(err as Error).message}`);
       }
     }
+  }
+
+  /** Retry stopped-session cleanup at most three times without retaining app listeners. */
+  private scheduleCleanupRetry(): void {
+    if (this.active || this.cleanupRetryTimer !== -1 || this.cleanupRetryCount >= MAX_CLEANUP_RETRIES ||
+      (this.registeredFlowFds.length === 0 && !this.sceneEntered)) {
+      return;
+    }
+    this.cleanupRetryTimer = setTimeout((): void => {
+      this.cleanupRetryTimer = -1;
+      this.cleanupRetryCount++;
+      this.clearDataFlowDesc();
+      this.scheduleCleanupRetry();
+    }, CLEANUP_RETRY_DELAY_MS);
+  }
+
+  /** A new session owns cleanup from here, so stale timers must not touch its flows. */
+  private cancelCleanupRetry(): void {
+    if (this.cleanupRetryTimer !== -1) {
+      clearTimeout(this.cleanupRetryTimer);
+      this.cleanupRetryTimer = -1;
+    }
+    this.cleanupRetryCount = 0;
   }
 
   // ───── reportQoe ─────
