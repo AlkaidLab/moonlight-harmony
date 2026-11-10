@@ -217,7 +217,13 @@ const gyrox = readShortLE(buffer, 13);
     data[7] = 0x00;  // G
     data[8] = 0xFF;  // B (蓝色)
     
-    this.bulkWrite(data);
+    this.bulkWrite(data).then((ret: number): void => {
+      // 写入失败且缓存未被更新的报告覆盖时作废缓存, 让后续相同的 rumble 能重试
+      if (ret < 0 && this.rumbleLowByte === lowByte && this.rumbleHighByte === highByte) {
+        this.rumbleLowByte = -1;
+        this.rumbleHighByte = -1;
+      }
+    });
   }
   
   /**

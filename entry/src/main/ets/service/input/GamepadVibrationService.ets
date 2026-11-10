@@ -1256,8 +1256,11 @@ export class GamepadVibrationService {
       pattern: builder.build()
     }, gameActive ? 'physicalFeedback' : 'media', (): void => {
       // The rejection may arrive after newer deduplicated renders; never let
-      // the cache claim a pattern is playing when it was refused.
-      this.invalidateSteadyDeviceEffect();
+      // the cache claim a pattern is playing when it was refused, but keep a
+      // newer, different effect that has since started successfully.
+      if (this.steadyDeviceEffectKey === steadyKey) {
+        this.invalidateSteadyDeviceEffect();
+      }
       this.triggerMixedTimeFallback(
         mixedContinuous, mixedTransient, hasAudioTransient, renderEpoch);
     });
