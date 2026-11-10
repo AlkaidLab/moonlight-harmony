@@ -51,6 +51,7 @@ function createBindings(serialBytes) {
   return { util, cryptoFramework, signCalls: () => signCalls };
 }
 
+/** 用受控的随机序列号加载 CryptoUtil */
 function loadCryptoUtil(serialBytes) {
   const bindings = createBindings(serialBytes);
   const { CryptoUtil } = loadArkTsModule(CRYPTO_UTIL, {
@@ -73,12 +74,14 @@ async function generateCert(serialBytes) {
   return { CryptoUtil, certDer };
 }
 
+/** 编码 DER 长度字段（短格式与 0x81/0x82 长格式） */
 function derLength(length) {
   if (length < 0x80) return Buffer.from([length]);
   if (length < 0x100) return Buffer.from([0x81, length]);
   return Buffer.from([0x82, (length >> 8) & 0xff, length & 0xff]);
 }
 
+/** 拼装一个 DER TLV 元素 */
 function der(tag, content) {
   const buffer = Buffer.from(content);
   return Buffer.concat([Buffer.from([tag]), derLength(buffer.length), buffer]);
@@ -92,13 +95,17 @@ function certWithSerial(serialBytes) {
   return new Uint8Array(der(0x30, tbs));
 }
 
+/** 把 DER 证书包装为 PEM 文本 */
 function pemOf(certDer) {
   const base64 = Buffer.from(certDer).toString('base64');
   return `-----BEGIN CERTIFICATE-----\n${base64}\n-----END CERTIFICATE-----\n`;
 }
 
-/** 内存文件系统，覆盖 PairingManager 读写证书/私钥用到的 fileIo API */
-function createFileIo(files) {
+/**
+ * 内存文件系统，覆盖 PairingManager 读写证书/私钥用到的 fileIo API。
+ * failCertWrite 用于模拟证书写入失败（验证内存回退）。
+ */
+function createFileIo(files, options = {}) {
   const handles = new Map();
   let nextFd = 1;
   const mode = { READ_ONLY: 0, WRITE_ONLY: 1, CREATE: 2, TRUNC: 4 };
@@ -124,14 +131,26 @@ function createFileIo(files) {
       return data.length;
     },
     write: async (fd, content) => {
+      const path = handles.get(fd);
+      if (options.failCertWrite && path.includes('client_cert.pem')) {
+        throw new Error('simulated write failure');
+      }
       const data = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
-      files.set(handles.get(fd), data);
+      files.set(path, data);
       return data.length;
+    },
+    rename: async (oldPath, newPath) => {
+      if (!files.has(oldPath)) {
+        throw new Error('no such file');
+      }
+      files.set(newPath, files.get(oldPath));
+      files.delete(oldPath);
     }
   };
 }
 
-function loadPairingManager(files, serialBytes) {
+/** 用同一套 mock 加载 PairingManager，并暴露签名调用计数 */
+function loadPairingManager(files, serialBytes, options = {}) {
   const bindings = createBindings(serialBytes);
   // 与 PairingManager 共用同一套 cryptoFramework 绑定，便于统计签名次数
   const { CryptoUtil } = loadArkTsModule(CRYPTO_UTIL, {
@@ -140,7 +159,7 @@ function loadPairingManager(files, serialBytes) {
     canIUse: () => true,
     Logger: quietLogger
   }, ['CryptoUtil']);
-  const fileIo = createFileIo(files);
+  const fileIo = createFileIo(files, options);
 
   const { PairingManager } = loadArkTsModule(PAIRING_MANAGER, {
     cryptoFramework: bindings.cryptoFramework,
@@ -226,13 +245,30 @@ test('加载到坏缓存证书时用原私钥重签，重启后不再重签', as
   assert.equal(files.get('/files/client_key.pem').toString('utf8'), keyPem);
 });
 
+test('重签证书写盘失败时回退内存证书，磁盘文件保持不变', async () => {
+  const keyPem = '-----BEGIN PRIVATE KEY-----\nTEST KEY\n-----END PRIVATE KEY-----\n';
+  const badPem = pemOf(certWithSerial([0x00, 0x7f, 0x64, 0xec, 0x1a, 0x8f, 0xc4, 0xa2]));
+  const files = new Map([
+    ['/files/client_cert.pem', Buffer.from(badPem, 'utf8')],
+    ['/files/client_key.pem', Buffer.from(keyPem, 'utf8')]
+  ]);
+
+  const { PairingManager, signCalls } = loadPairingManager(
+    files, [0x00, 0x7f, 0x64, 0xec, 0x1a, 0x8f, 0xc4, 0xa2], { failCertWrite: true });
+  const manager = new PairingManager('192.168.2.15', 'ABCDEF0123456789', { filesDir: '/files' });
+
+  await manager.initialize();
+
+  assert.equal(signCalls(), 1, '坏证书仍会触发一次重签');
+  assert.equal(files.get('/files/client_cert.pem').toString('utf8'), badPem,
+    '写盘失败不能破坏磁盘上的原证书');
+  assert.equal(Buffer.from(manager.clientCertPem).toString('utf8'), badPem,
+    '内存证书应回退到原证书，保证配对全程使用同一份证书');
+});
+
 test('已有的合法证书和私钥在升级后保持不变', async () => {
-  const { CryptoUtil } = loadCryptoUtil([]);
-  const validDer = await CryptoUtil.generateSelfSignedCert({
-    pubKey: { getEncoded: () => ({ data: new Uint8Array(RSA_SPKI) }) },
-    priKey: { getEncodedPem: () => '' }
-  });
-  const certPem = CryptoUtil.derToPem(validDer);
+  const { CryptoUtil, certDer } = await generateCert([0x7f, 0x64, 0xec, 0x1a, 0x8f, 0xc4, 0xa2, 0x11]);
+  const certPem = CryptoUtil.derToPem(certDer);
   const keyPem = '-----BEGIN PRIVATE KEY-----\nTEST KEY\n-----END PRIVATE KEY-----\n';
   const files = new Map([
     ['/files/client_cert.pem', Buffer.from(certPem, 'utf8')],
