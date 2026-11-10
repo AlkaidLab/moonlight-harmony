@@ -46,11 +46,14 @@ int LiSendClipboardData(const void* payload, int length);
 #include <arpa/inet.h>
 #include <native_window/external_window.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <dlfcn.h>
 #include <cstdlib>
 #include <cerrno>
 #include <mutex>
+#include <unistd.h>
+#include <sys/socket.h>
 
 
 // =============================================================================
@@ -1530,6 +1533,70 @@ napi_value MoonBridge_GetStreamSocketFds(napi_env env, napi_callback_info info) 
     }
 
     return result;
+}
+
+// Keep a duplicate alive until Network Boost releases its flow description.
+// Otherwise a closed descriptor can be reused for an unrelated socket.
+static std::mutex g_boostSocketMutex;
+static std::unordered_set<int> g_boostSockets;
+
+napi_value MoonBridge_RetainStreamSocket(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    int32_t fd = -1;
+    int32_t port = 0;
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    int retained = -1;
+    if (argc == 2 && napi_get_value_int32(env, args[0], &fd) == napi_ok &&
+        napi_get_value_int32(env, args[1], &port) == napi_ok && fd >= 0 && port > 0 && port <= 65535) {
+        retained = dup(fd);
+        if (retained >= 0) {
+            sockaddr_storage address {};
+            socklen_t length = sizeof(address);
+            int socketType = 0;
+            socklen_t typeLength = sizeof(socketType);
+            int actualPort = 0;
+            if (getsockopt(retained, SOL_SOCKET, SO_TYPE, &socketType, &typeLength) == 0 &&
+                socketType == SOCK_DGRAM &&
+                getsockname(retained, reinterpret_cast<sockaddr*>(&address), &length) == 0) {
+                if (address.ss_family == AF_INET) {
+                    actualPort = ntohs(reinterpret_cast<sockaddr_in*>(&address)->sin_port);
+                } else if (address.ss_family == AF_INET6) {
+                    actualPort = ntohs(reinterpret_cast<sockaddr_in6*>(&address)->sin6_port);
+                }
+            }
+            LI_STREAM_SOCKETS current;
+            LiGetStreamSockets(&current);
+            const bool isCurrent =
+                (current.videoRtp.fd == fd && current.videoRtp.localPort == port) ||
+                (current.audioRtp.fd == fd && current.audioRtp.localPort == port) ||
+                (current.control.fd == fd && current.control.localPort == port);
+            if (actualPort != port || !isCurrent) {
+                close(retained);
+                retained = -1;
+            } else {
+                std::lock_guard<std::mutex> lock(g_boostSocketMutex);
+                g_boostSockets.insert(retained);
+            }
+        }
+    }
+    napi_value result;
+    napi_create_int32(env, retained, &result);
+    return result;
+}
+
+napi_value MoonBridge_ReleaseStreamSocket(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    int32_t fd = -1;
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc == 1 && napi_get_value_int32(env, args[0], &fd) == napi_ok) {
+        std::lock_guard<std::mutex> lock(g_boostSocketMutex);
+        if (g_boostSockets.erase(fd) != 0) {
+            close(fd);
+        }
+    }
+    return GetUndefined(env);
 }
 
 napi_value MoonBridge_SendClientSdrWhiteNits(napi_env env, napi_callback_info info) {

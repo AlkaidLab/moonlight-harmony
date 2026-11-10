@@ -20,7 +20,7 @@
 
 import { netBoost, netQuality } from '@kit.NetworkBoostKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
-import { StreamSocketFds } from '../streaming/MoonBridge';
+import { MoonBridge, StreamSocketFds, StreamSocketInfo } from '../streaming/MoonBridge';
 import { Logger } from '../../common/Logger';
 import { AppState, AppStateService } from '../AppStateService';
 
@@ -35,6 +35,13 @@ const DATA_FLOW_DESC_MIN_API = 26;
 const MAX_DATA_FLOW_DESCRIPTIONS = 2;
 const MAX_CLEANUP_RETRIES = 3;
 const CLEANUP_RETRY_DELAY_MS = 250;
+const FLOW_MONITOR_INTERVAL_MS = 1000;
+const MAX_FLOW_REFRESH_RETRIES = 3;
+
+interface RegisteredFlow {
+  sourceFd: number;
+  retainedFd: number;
+}
 
 type StreamQoeState = 'good' | 'poor';
 
@@ -99,14 +106,23 @@ export class NetworkBoostService {
   private sceneCallback: ((list: Array<netQuality.NetworkScene>) => void) | null = null;
   private latestScene: SystemNetScene | null = null;
   private sceneListeners: Set<SystemNetSceneListener> = new Set();
-  private registeredFlowFds: number[] = [];
+  private registeredFlows: RegisteredFlow[] = [];
   private sceneEntered: boolean = false;
   private dataFlowSupported: boolean = true;
   private streamingFlows: StreamSocketFds | null = null;
   private cleanupRetryTimer: number = -1;
   private cleanupRetryCount: number = 0;
+  private flowMonitorTimer: number = -1;
+  private flowRefreshPending: boolean = false;
+  private flowRefreshRetries: number = 0;
   private appStateListener: (state: AppState) => void = (_state: AppState): void => {
+    this.cancelFlowMonitor();
+    this.flowRefreshRetries = 0;
+    if (AppStateService.getInstance().getCurrentState() === AppState.FOREGROUND && this.streamingFlows) {
+      this.updateSocketSnapshot();
+    }
     this.refreshDataFlowDesc();
+    this.scheduleFlowMonitor();
   };
 
   static getInstance(): NetworkBoostService {
@@ -136,6 +152,7 @@ export class NetworkBoostService {
       return;
     }
     this.active = false;
+    this.cancelFlowMonitor();
     AppStateService.getInstance().removeListener(this.appStateListener);
     this.streamingFlows = null;
     this.lastState = null;
@@ -204,23 +221,79 @@ export class NetworkBoostService {
   /**
    * HarmonyOS 26.0.0: 为关键串流 socket 注册系统级流描述,获得 per-flow 调度优先级。
    *
-   * fd 来自 native 层 getStreamSocketFds()。注册失败不影响串流;
-   * 会话结束或 socket 关闭前由 clearDataFlowDesc() 注销。
+   * 原始 fd 来自 native 层 getStreamSocketFds()。登记使用独立副本，
+   * 让 socket 替换后仍可注销旧流；注册失败不影响串流。
    */
   registerStreamingFlows(fds: StreamSocketFds): void {
     if (!this.active) {
       return;
     }
     this.streamingFlows = fds;
+    this.flowRefreshRetries = 0;
     this.refreshDataFlowDesc();
+    this.scheduleFlowMonitor();
+  }
+
+  /** Refresh the snapshot when a stream replaces its socket, not for a NAT-only port change. */
+  private updateSocketSnapshot(): boolean {
+    try {
+      const next = MoonBridge.getStreamSocketFds();
+      const current = this.streamingFlows;
+      if (!next || !current) {
+        return false;
+      }
+      const controlChanged = next.control.fd !== current.control.fd || next.control.localPort !== current.control.localPort;
+      const videoChanged = next.videoRtp.fd !== current.videoRtp.fd || next.videoRtp.localPort !== current.videoRtp.localPort;
+      const audioChanged = next.audioRtp.fd !== current.audioRtp.fd || next.audioRtp.localPort !== current.audioRtp.localPort;
+      const audioRegistered = this.registeredFlows.some((flow: RegisteredFlow): boolean =>
+        flow.sourceFd === current.audioRtp.fd);
+      if (controlChanged || videoChanged || audioChanged) {
+        this.streamingFlows = next;
+      }
+      // Audio does not occupy a slot when control and video are registered.
+      return controlChanged || videoChanged || (audioChanged && audioRegistered);
+    } catch (err) {
+      Logger.warn('NetworkBoostService', `[NetworkBoost] 获取串流 socket 失败: ${(err as Error).message}`);
+      return false;
+    }
+  }
+
+  private scheduleFlowMonitor(): void {
+    if (this.flowMonitorTimer !== -1 || !this.active || !this.streamingFlows || !this.supported ||
+      !this.dataFlowSupported || deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API ||
+      !canIUse(NETWORK_BOOST_SYSCAP) ||
+      AppStateService.getInstance().getCurrentState() !== AppState.FOREGROUND) {
+      return;
+    }
+    this.flowMonitorTimer = setTimeout((): void => {
+      this.flowMonitorTimer = -1;
+      if (this.active && AppStateService.getInstance().getCurrentState() === AppState.FOREGROUND) {
+        if (this.updateSocketSnapshot()) {
+          this.flowRefreshRetries = 0;
+          this.refreshDataFlowDesc();
+        } else if (this.flowRefreshPending && this.flowRefreshRetries < MAX_FLOW_REFRESH_RETRIES) {
+          this.flowRefreshRetries++;
+          this.refreshDataFlowDesc();
+        }
+      }
+      this.scheduleFlowMonitor();
+    }, FLOW_MONITOR_INTERVAL_MS);
+  }
+
+  private cancelFlowMonitor(): void {
+    if (this.flowMonitorTimer !== -1) {
+      clearTimeout(this.flowMonitorTimer);
+      this.flowMonitorTimer = -1;
+    }
   }
 
   /** Release stale descriptions before registering the current foreground session. */
   private refreshDataFlowDesc(): void {
     // Release the previous descriptors before reconnecting or going into background.
     this.clearDataFlowDesc();
+    this.flowRefreshPending = this.registeredFlows.length > 0 || this.sceneEntered;
     if (!this.active || !this.supported || !this.dataFlowSupported || !this.streamingFlows ||
-      this.registeredFlowFds.length > 0 || this.sceneEntered ||
+      this.flowRefreshPending ||
       deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API ||
       AppStateService.getInstance().getCurrentState() !== AppState.FOREGROUND) {
       return;
@@ -239,31 +312,43 @@ export class NetworkBoostService {
       }
 
       // Input latency and video delivery take priority; audio can fill an unused slot.
-      this.registerOneFlow('control', this.streamingFlows.control.fd);
-      this.registerOneFlow('videoRtp', this.streamingFlows.videoRtp.fd);
-      this.registerOneFlow('audioRtp', this.streamingFlows.audioRtp.fd);
+      this.registerOneFlow('control', this.streamingFlows.control);
+      this.registerOneFlow('videoRtp', this.streamingFlows.videoRtp);
+      this.registerOneFlow('audioRtp', this.streamingFlows.audioRtp);
     }
   }
 
   /** Fill one priority slot with a valid, distinct socket descriptor. */
-  private registerOneFlow(name: string, fd: number): void {
+  private registerOneFlow(name: string, socket: StreamSocketInfo): void {
+    const fd = socket.fd;
     if (!this.dataFlowSupported || !Number.isInteger(fd) || fd < 0 ||
-      this.registeredFlowFds.includes(fd) ||
-      this.registeredFlowFds.length >= MAX_DATA_FLOW_DESCRIPTIONS) {
+      this.registeredFlows.some((flow: RegisteredFlow): boolean => flow.sourceFd === fd) ||
+      this.registeredFlows.length >= MAX_DATA_FLOW_DESCRIPTIONS) {
       return;
     }
     if (canIUse(NETWORK_BOOST_SYSCAP)) {
+      let retainedFd = -1;
+      try {
+        retainedFd = MoonBridge.retainStreamSocket(fd, socket.localPort);
+      } catch (err) {
+        Logger.warn('NetworkBoostService', `[NetworkBoost] 复制串流 socket 失败: ${(err as Error).message}`);
+      }
+      if (!Number.isInteger(retainedFd) || retainedFd < 0) {
+        this.flowRefreshPending = true;
+        return;
+      }
       try {
         const description: netBoost.DataFlowDesc = {
-          dataFlowInfo: fd,
+          dataFlowInfo: retainedFd,
           scene: STREAMING_SERVICE_TYPE,
           sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER,
           expectations: { priority: netBoost.PriorityLevel.PRIO_HIGH }
         };
         netBoost.setDataFlowDesc(description);
-        this.registeredFlowFds.push(fd);
-        Logger.info('NetworkBoostService', '[NetworkBoost] setDataFlowDesc ' + name + ' fd=' + fd);
+        this.registeredFlows.push({ sourceFd: fd, retainedFd: retainedFd });
+        Logger.info('NetworkBoostService', '[NetworkBoost] setDataFlowDesc ' + name + ' fd=' + retainedFd);
       } catch (err) {
+        MoonBridge.releaseStreamSocket(retainedFd);
         const error: BusinessError = err;
         this.handleDataFlowError('setDataFlowDesc ' + name, error);
       }
@@ -280,9 +365,10 @@ export class NetworkBoostService {
 
   /** Keep failed releases pending, and leave the scene only after all flows are released. */
   private clearDataFlowDesc(): void {
-    const fds = this.registeredFlowFds;
-    this.registeredFlowFds = [];
-    fds.forEach((fd) => {
+    const flows = this.registeredFlows;
+    this.registeredFlows = [];
+    flows.forEach((flow: RegisteredFlow) => {
+      const fd = flow.retainedFd;
       if (canIUse(NETWORK_BOOST_SYSCAP)) {
         try {
           const description: netBoost.DataFlowDesc = {
@@ -291,14 +377,17 @@ export class NetworkBoostService {
             sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
           };
           netBoost.setDataFlowDesc(description);
+          MoonBridge.releaseStreamSocket(fd);
           Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc fd=${fd} event=leave`);
         } catch (err) {
-          this.registeredFlowFds.push(fd);
+          this.registeredFlows.push(flow);
           Logger.warn('NetworkBoostService', `[NetworkBoost] setDataFlowDesc(fd=${fd}) leave 失败: ${(err as Error).message}`);
         }
+      } else {
+        MoonBridge.releaseStreamSocket(fd);
       }
     });
-    if (this.registeredFlowFds.length > 0 || !this.sceneEntered) {
+    if (this.registeredFlows.length > 0 || !this.sceneEntered) {
       return;
     }
     if (canIUse(NETWORK_BOOST_SYSCAP)) {
@@ -318,13 +407,20 @@ export class NetworkBoostService {
   /** Retry stopped-session cleanup at most three times without retaining app listeners. */
   private scheduleCleanupRetry(): void {
     if (this.active || this.cleanupRetryTimer !== -1 || this.cleanupRetryCount >= MAX_CLEANUP_RETRIES ||
-      (this.registeredFlowFds.length === 0 && !this.sceneEntered)) {
+      (this.registeredFlows.length === 0 && !this.sceneEntered)) {
       return;
     }
     this.cleanupRetryTimer = setTimeout((): void => {
       this.cleanupRetryTimer = -1;
       this.cleanupRetryCount++;
       this.clearDataFlowDesc();
+      if (this.cleanupRetryCount >= MAX_CLEANUP_RETRIES && this.registeredFlows.length > 0) {
+        // Never retain sockets indefinitely if the system refuses flow cleanup.
+        Logger.warn('NetworkBoostService', '[NetworkBoost] 流描述清理失败，释放保留的 socket');
+        this.registeredFlows.forEach((flow: RegisteredFlow) => MoonBridge.releaseStreamSocket(flow.retainedFd));
+        this.registeredFlows = [];
+        this.clearDataFlowDesc();
+      }
       this.scheduleCleanupRetry();
     }, CLEANUP_RETRY_DELAY_MS);
   }
