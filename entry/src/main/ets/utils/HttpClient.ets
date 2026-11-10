@@ -170,25 +170,6 @@ export class HttpClient {
     return data
   }
 
-  /** Do not propagate the launch/resume session key through network errors. */
-  private static redactRiKey(message: string, url: string): string {
-    const queryStart = url.indexOf('?');
-    if (queryStart < 0) {
-      return message;
-    }
-    const parameters = url.slice(queryStart + 1).split('#')[0].split('&');
-    for (const parameter of parameters) {
-      const separator = parameter.indexOf('=');
-      if (separator > 0 && parameter.slice(0, separator).toLowerCase() === 'rikey') {
-        const value = parameter.slice(separator + 1);
-        if (value) {
-          message = message.split(value).join('[redacted]');
-        }
-      }
-    }
-    return message;
-  }
-
   /**
    * 通用 GET 执行器（文本响应）
    */
@@ -199,8 +180,7 @@ export class HttpClient {
     const key = RcpSessionPool.keyFor(url, config?.clientCertPath);
     const session = RcpSessionPool.acquire(key, { skipServerValidation: skipValidation, clientCertPath: config?.clientCertPath, clientKeyPath: config?.clientKeyPath });
 
-    const logUrl = url.split('?')[0];
-    Logger.debug('HttpClient', `HttpClient: GET ${logUrl} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
+    Logger.debug('HttpClient', `HttpClient: GET ${url} (connect=${connectTimeout}ms, transfer=${transferTimeout}ms, sessionKey=${key})`);
 
     try {
       // 构造也在 try 内：同步抛出（如非法 URL）时 finally 的 release 仍会执行
@@ -227,17 +207,15 @@ export class HttpClient {
       return { statusCode: response.statusCode, body: body };
     } catch (err) {
       const error = err as Error;
-      const message = error?.message ?? String(err);
-      const safeMessage = HttpClient.redactRiKey(message, url);
-      if (HttpClient.isConnectionError(message) || HttpClient.isTimeoutError(message)) {
+      if (HttpClient.isConnectionError(error.message) || HttpClient.isTimeoutError(error.message)) {
         RcpSessionPool.invalidate(session);
       }
-      if (HttpClient.isTimeoutError(message)) {
-        Logger.warn('HttpClient', `HttpClient: 请求超时 - ${logUrl}`);
+      if (HttpClient.isTimeoutError(error.message)) {
+        Logger.warn('HttpClient', `HttpClient: 请求超时 - ${url}`);
       } else {
-        Logger.error('HttpClient', `HttpClient: 请求失败 - ${safeMessage}`);
+        Logger.error('HttpClient', `HttpClient: 请求失败 - ${error.message}`);
       }
-      throw new Error(`HTTP 请求失败: ${safeMessage}`);
+      throw new Error(`HTTP 请求失败: ${error.message}`);
     } finally {
       RcpSessionPool.release(session);
     }
