@@ -217,8 +217,15 @@ export class PairingManager {
     Logger.info('PairingManager', `PairingManager: 证书 PEM 生成完成，长度 = ${this.clientCertPem.length}`);
     
     // 保存证书和私钥到文件（供 HTTPS 请求使用）
-    await this.saveCertificatesToFile();
-    
+    if (!await this.saveCertificatesToFile()) {
+      // 证书写盘失败时不能只写私钥，否则会留下证书与私钥不匹配的缓存；
+      // 清空未完成的初始化状态，让下次配对重新开始
+      this.keyPair = null;
+      this.clientCertDer = null;
+      this.clientCertPem = null;
+      throw new Error('保存客户端证书失败');
+    }
+
     Logger.info('PairingManager', 'PairingManager: 密钥对和证书生成完成');
   }
 
@@ -266,8 +273,12 @@ export class PairingManager {
       // 先写临时文件再 rename，避免写盘失败时截断已有证书
       const certContent = StringUtil.uint8ArrayToString(this.clientCertPem);
       const certFile = await fileIo.open(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      await fileIo.write(certFile.fd, certContent);
-      await fileIo.close(certFile);
+      try {
+        await fileIo.write(certFile.fd, certContent);
+      } finally {
+        // 写入失败也要关闭句柄，避免重复配对时累积未释放的文件描述符
+        await fileIo.close(certFile);
+      }
       await fileIo.rename(tempPath, this.certFilePath);
       Logger.info('PairingManager', `PairingManager: 证书已保存到 ${this.certFilePath}`);
       return true;
@@ -278,15 +289,23 @@ export class PairingManager {
   }
 
   /**
-   * 保存证书和私钥到文件
+   * 保存证书和私钥到文件，返回是否成功
+   * 未配置沙箱路径时没有可持久化的身份，按无需保存处理
    */
-  private async saveCertificatesToFile(): Promise<void> {
-    if (!this.certFilePath || !this.keyFilePath || !this.keyPair || !this.clientCertPem) {
+  private async saveCertificatesToFile(): Promise<boolean> {
+    if (!this.certFilePath || !this.keyFilePath) {
+      return true;
+    }
+    if (!this.keyPair || !this.clientCertPem) {
       Logger.warn('PairingManager', 'PairingManager: 无法保存证书（路径或数据不完整）');
-      return;
+      return false;
     }
 
-    await this.saveCertificateToFile();
+    if (!await this.saveCertificateToFile()) {
+      // 证书没写成功时不能再覆盖私钥，否则会留下证书与私钥不匹配的缓存
+      Logger.error('PairingManager', 'PairingManager: 证书保存失败，跳过私钥写入');
+      return false;
+    }
 
     try {
       // 保存私钥
@@ -303,6 +322,7 @@ export class PairingManager {
     } catch (err) {
       Logger.error('PairingManager', `PairingManager: 保存私钥失败: ${err}`);
     }
+    return true;
   }
 
   /**

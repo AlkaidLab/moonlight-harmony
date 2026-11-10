@@ -122,8 +122,9 @@ function createFileIo(files, options = {}) {
       }
       return { fd };
     },
-    close: async fd => {
-      handles.delete(fd);
+    close: async file => {
+      // 生产代码传入 fileIo.open 返回的 File 对象
+      handles.delete(typeof file === 'number' ? file : file.fd);
     },
     read: async (fd, buffer) => {
       const data = files.get(handles.get(fd)) || Buffer.alloc(0);
@@ -132,7 +133,10 @@ function createFileIo(files, options = {}) {
     },
     write: async (fd, content) => {
       const path = handles.get(fd);
-      if (options.failCertWrite && path.includes('client_cert.pem')) {
+      const fail = typeof options.failCertWrite === 'function'
+        ? options.failCertWrite()
+        : options.failCertWrite;
+      if (fail && path.includes('client_cert.pem')) {
         throw new Error('simulated write failure');
       }
       const data = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
@@ -145,7 +149,9 @@ function createFileIo(files, options = {}) {
       }
       files.set(newPath, files.get(oldPath));
       files.delete(oldPath);
-    }
+    },
+    /** 仍未关闭的文件句柄数量，用于断言没有 fd 泄漏 */
+    openHandles: () => handles.size
   };
 }
 
@@ -177,7 +183,7 @@ function loadPairingManager(files, serialBytes, options = {}) {
     Logger: quietLogger
   }, ['PairingManager']);
 
-  return { PairingManager, signCalls: bindings.signCalls };
+  return { PairingManager, signCalls: bindings.signCalls, fileIo };
 }
 
 test('序列号含冗余前导 0 时生成最短 DER，OpenSSL 可解析证书', async () => {
@@ -253,7 +259,7 @@ test('重签证书写盘失败时回退内存证书，磁盘文件保持不变',
     ['/files/client_key.pem', Buffer.from(keyPem, 'utf8')]
   ]);
 
-  const { PairingManager, signCalls } = loadPairingManager(
+  const { PairingManager, signCalls, fileIo } = loadPairingManager(
     files, [0x00, 0x7f, 0x64, 0xec, 0x1a, 0x8f, 0xc4, 0xa2], { failCertWrite: true });
   const manager = new PairingManager('192.168.2.15', 'ABCDEF0123456789', { filesDir: '/files' });
 
@@ -264,6 +270,27 @@ test('重签证书写盘失败时回退内存证书，磁盘文件保持不变',
     '写盘失败不能破坏磁盘上的原证书');
   assert.equal(Buffer.from(manager.clientCertPem).toString('utf8'), badPem,
     '内存证书应回退到原证书，保证配对全程使用同一份证书');
+  assert.equal(fileIo.openHandles(), 0, '写入失败后不能泄漏文件句柄');
+});
+
+test('证书写盘失败时中止初始化，不写私钥，清除状态后可重试', async () => {
+  const files = new Map();
+  let fail = true;
+  const { PairingManager, fileIo } = loadPairingManager(
+    files, [0x7f, 0x64, 0xec, 0x1a, 0x8f, 0xc4, 0xa2, 0x11],
+    { failCertWrite: () => fail });
+  const manager = new PairingManager('192.168.2.15', 'ABCDEF0123456789', { filesDir: '/files' });
+
+  await assert.rejects(manager.initialize(), /保存客户端证书失败/);
+  assert.equal(files.has('/files/client_key.pem'), false, '证书写盘失败时不能写入私钥');
+  assert.equal(files.has('/files/client_cert.pem'), false);
+  assert.equal(fileIo.openHandles(), 0, '写入失败后不能泄漏文件句柄');
+
+  // 同一实例重试：初始化状态已清除，写盘恢复后应能正常保存身份
+  fail = false;
+  await manager.initialize();
+  assert.equal(files.has('/files/client_cert.pem'), true);
+  assert.equal(files.has('/files/client_key.pem'), true);
 });
 
 test('已有的合法证书和私钥在升级后保持不变', async () => {
