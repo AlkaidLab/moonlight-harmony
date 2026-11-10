@@ -605,7 +605,7 @@ export class NvHttp {
     const transferTimeout = options?.transferTimeout ?? NvHttp.READ_TIMEOUT;
     const connectTimeout = options?.connectTimeout ?? NvHttp.CONNECTION_TIMEOUT;
     const useClientCert = options?.useClientCert ?? false;
-    Logger.debug('NvHttp', `NvHttp: 请求 ${url}`);
+    Logger.debug('NvHttp', `NvHttp: 请求 ${url.split('?')[0]}`);
 
     if (useClientCert && this.certFilePath && this.keyFilePath) {
       return HttpClient.getWithClientCert(url, this.certFilePath, this.keyFilePath, {
@@ -1125,7 +1125,6 @@ export class NvHttp {
 
     // 启动可能需要较长时间，使用客户端证书
     const response = await this.doRequest(url, { transferTimeout: 60000, useClientCert: true });
-    Logger.info('NvHttp', `NvHttp: launchApp 响应: ${response}`);
 
     // 检查是否成功
     const gamesession = XmlUtil.getValue(response, 'gamesession');
@@ -1147,7 +1146,7 @@ export class NvHttp {
     const query = this.buildLaunchQuery(config.appId, config, 'resume');
     const url = this.buildUrl(await this.getHttpsBaseUrl(), 'resume', query);
 
-    Logger.info('NvHttp', `NvHttp: resumeApp URL: ${url}`);
+    Logger.info('NvHttp', 'NvHttp: resumeApp');
 
     // 使用客户端证书
     const response = await this.doRequest(url, { transferTimeout: 60000, useClientCert: true });
@@ -1552,7 +1551,7 @@ export class NvHttp {
       params.push(`customScreenMode=${config.screenCombinationMode}`);
     }
 
-    Logger.info('NvHttp', `NvHttp: buildLaunchQuery: ${params.join('&')}`);
+    Logger.debug('NvHttp', `NvHttp: ${verb} appId=${appId}`);
     return params.join('&');
   }
 
