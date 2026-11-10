@@ -785,6 +785,14 @@ class MoonBridgeClass {
     return result;
   }
 
+  retainStreamSocket(fd: number, localPort: number): number {
+    return nativeLib.retainStreamSocket(fd, localPort) as number;
+  }
+
+  releaseStreamSocket(fd: number): void {
+    nativeLib.releaseStreamSocket(fd);
+  }
+
   sendClientSdrWhiteNits(nits: number): number {
     return nativeLib.sendClientSdrWhiteNits(nits);
   }

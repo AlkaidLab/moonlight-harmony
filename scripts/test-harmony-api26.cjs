@@ -43,7 +43,7 @@ test('nonfinite events cannot poison later mouse movement', () => {
 });
 
 /** Load the production service with controllable platform failures and a deterministic timer queue. */
-function fixture(apiVersion = 26, capability = true) {
+function fixture(apiVersion = 26, capability = true, duplicateDescriptors = false) {
   const calls = [];
   const listeners = new Set();
   let state = 'foreground';
@@ -52,6 +52,10 @@ function fixture(apiVersion = 26, capability = true) {
   let failureCode = 500;
   let failSceneEvent = -1;
   let sceneFailureCode = 500;
+  let currentFlows = null;
+  let failedRetain = -1;
+  const retained = [];
+  const released = [];
   const timers = new Map();
   let nextTimer = 0;
   const { NetworkBoostService } = loadArkTsModule(
@@ -59,6 +63,14 @@ function fixture(apiVersion = 26, capability = true) {
       deviceInfo: { sdkApiVersion: apiVersion },
       canIUse: () => capability,
       Logger: { info() {}, warn() {} },
+      MoonBridge: {
+        getStreamSocketFds: () => currentFlows,
+        retainStreamSocket: fd => {
+          retained.push(fd);
+          return fd === failedRetain ? -1 : duplicateDescriptors ? fd + 1000 : fd;
+        },
+        releaseStreamSocket: fd => released.push(fd)
+      },
       setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
       clearTimeout: id => timers.delete(id),
       AppState: { FOREGROUND: 'foreground' },
@@ -92,6 +104,9 @@ function fixture(apiVersion = 26, capability = true) {
   service.start();
   return {
     service, calls, listeners,
+    retained, released,
+    snapshot(value) { currentFlows = value; },
+    failRetain(fd) { failedRetain = fd; },
     enter: () => calls.filter(call => call.event === 0).map(call => call.fd),
     leave: () => calls.filter(call => call.event === 2).map(call => call.fd),
     scenes: () => calls.filter(call => call.scene !== undefined).map(call => call.scene),
@@ -109,8 +124,96 @@ function fixture(apiVersion = 26, capability = true) {
 
 /** Create socket metadata with overridable descriptors for reconnect and fallback scenarios. */
 function flows(control = 30, video = 10, audio = 20) {
-  return { control: { fd: control }, videoRtp: { fd: video }, audioRtp: { fd: audio } };
+  return { control: { fd: control, localPort: 5000 + control },
+    videoRtp: { fd: video, localPort: 5000 + video },
+    audioRtp: { fd: audio, localPort: 5000 + audio } };
 }
+
+test('socket replacement releases retained flows before registering the new snapshot', () => {
+  const f = fixture(26, true, true);
+  f.service.registerStreamingFlows(flows());
+  f.snapshot(flows(30, 11, 20));
+  f.tick();
+  assert.deepEqual(f.leave(), [1030, 1010]);
+  assert.deepEqual(f.enter(), [1030, 1010, 1030, 1011]);
+  assert.deepEqual(f.released, [1030, 1010]);
+  f.service.stop();
+  assert.deepEqual(f.released, [1030, 1010, 1030, 1011]);
+});
+
+test('unchanged sockets do not re-register and a foreground return reads the latest snapshot', () => {
+  const f = fixture();
+  f.service.registerStreamingFlows(flows());
+  f.snapshot(flows());
+  f.tick();
+  assert.deepEqual(f.enter(), [30, 10]);
+  assert.deepEqual(f.leave(), []);
+  f.state('background');
+  f.snapshot(flows(30, 11, 20));
+  f.tick();
+  assert.deepEqual(f.enter(), [30, 10]);
+  f.state('foreground');
+  assert.deepEqual(f.enter(), [30, 10, 30, 11]);
+  f.service.stop();
+});
+
+test('audio replacement refreshes only when audio occupies a flow slot', () => {
+  const activeVideo = fixture();
+  activeVideo.service.registerStreamingFlows(flows());
+  activeVideo.snapshot(flows(30, 10, 21));
+  activeVideo.tick();
+  assert.deepEqual(activeVideo.leave(), []);
+  assert.deepEqual(activeVideo.enter(), [30, 10]);
+  activeVideo.service.stop();
+
+  const audioFallback = fixture();
+  audioFallback.service.registerStreamingFlows(flows(30, -1, 20));
+  audioFallback.snapshot(flows(30, -1, 21));
+  audioFallback.tick();
+  assert.deepEqual(audioFallback.leave(), [30, 20]);
+  assert.deepEqual(audioFallback.enter(), [30, 20, 30, 21]);
+  audioFallback.service.stop();
+});
+
+test('a reused descriptor with a new local port triggers a refresh', () => {
+  const f = fixture();
+  f.service.registerStreamingFlows(flows());
+  const replacement = flows();
+  replacement.videoRtp.localPort++;
+  f.snapshot(replacement);
+  f.tick();
+  assert.deepEqual(f.leave(), [30, 10]);
+  assert.deepEqual(f.enter(), [30, 10, 30, 10]);
+  f.service.stop();
+});
+
+test('failed socket retention is retried within a fixed budget and does not outlive the session', () => {
+  const f = fixture();
+  f.failRetain(10);
+  f.service.registerStreamingFlows(flows());
+  f.snapshot(flows());
+  for (let i = 0; i < 8; i++) f.tick();
+  assert.equal(f.retained.filter(fd => fd === 10).length, 4);
+  f.service.stop();
+  const attempts = f.retained.length;
+  f.tick();
+  assert.equal(f.retained.length, attempts);
+});
+
+test('failed flow cleanup retains the old duplicate until it can be unregistered', () => {
+  const f = fixture(26, true, true);
+  f.service.registerStreamingFlows(flows());
+  f.failLeave(1010);
+  f.snapshot(flows(30, 11, 20));
+  f.tick();
+  assert.deepEqual(f.enter(), [1030, 1010]);
+  assert.deepEqual(f.released, [1030]);
+  f.failLeave(-1);
+  f.tick();
+  assert.deepEqual(f.enter(), [1030, 1010, 1030, 1011]);
+  assert.deepEqual(f.released, [1030, 1010]);
+  f.service.stop();
+});
 
 test('at most two flows, prioritizing control and video', () => {
   const f = fixture();
@@ -153,23 +256,22 @@ test('stop retries failed flow or scene cleanup and stops after success', () => 
   }
 });
 
-test('permanent cleanup failure stops retrying but retains descriptors for the next session', () => {
-  const f = fixture();
+test('permanent cleanup failure releases retained sockets after bounded retries', () => {
+  const f = fixture(26, true, true);
   f.service.registerStreamingFlows(flows());
-  f.failLeave(30);
+  f.failLeave(1030);
   f.service.stop();
   for (let i = 0; i < 10; i++) f.tick();
-  const attempts = f.leave().filter(fd => fd === 30).length;
+  const attempts = f.leave().filter(fd => fd === 1030).length;
   assert.ok(attempts > 1 && attempts <= 4, 'cleanup must retry within its budget');
   f.tick();
-  assert.equal(f.leave().filter(fd => fd === 30).length, attempts);
-  assert.ok(!f.scenes().includes(2), 'pending flows must keep the scene alive');
+  assert.equal(f.leave().filter(fd => fd === 1030).length, attempts);
+  assert.deepEqual(new Set(f.released), new Set([1030, 1010]));
   f.service.start();
-  f.service.registerStreamingFlows(flows(31, 11, 21));
-  assert.deepEqual(f.enter(), [30, 10]);
   f.failLeave(-1);
   f.service.registerStreamingFlows(flows(31, 11, 21));
-  assert.deepEqual(f.enter(), [30, 10, 31, 11]);
+  assert.deepEqual(f.enter(), [1030, 1010, 1031, 1011]);
+  f.service.stop();
 });
 
 test('starting a new session cancels old cleanup timers before registering new flows', () => {
