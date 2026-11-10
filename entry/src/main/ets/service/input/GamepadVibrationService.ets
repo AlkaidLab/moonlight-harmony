@@ -47,6 +47,7 @@ interface IrStreamState {
   hasSequence: boolean;
   lastSequence: number;
   watchdogTimer: number;
+  lastFrameAtMs: number;
   gateOpen: boolean;
   quietFrameCount: number;
 }
@@ -76,6 +77,12 @@ export class GamepadVibrationService {
   private static readonly IR_USB_RENDER_INTERVAL_MS = 10;
   /** Device vibrator APIs are relatively expensive; coalesce authored IR frames. */
   private static readonly DEVICE_RENDER_INTERVAL_MS = 40;
+  /**
+   * While IR renders every DEVICE_RENDER_INTERVAL_MS, an unchanged steady
+   * effect is only re-submitted after this age. The 500 ms lease therefore
+   * always keeps >= 250 ms of headroom while avoiding ~25 vibrator IPCs/s.
+   */
+  private static readonly STEADY_DEVICE_REFRESH_MS = 250;
   /**
    * The body actuator is a single, broad-band motor. In 协同 mode it should
    * add weight rather than mirror the controller's high-frequency detail.
@@ -134,12 +141,16 @@ export class GamepadVibrationService {
   private lastDeviceRenderAtMs: number = 0;
   private pendingDeviceRenderTimer: number = -1;
   private pendingDeviceRenderTransient = false;
+  private steadyDeviceEffectKey: string = '';
+  private steadyDeviceEffectStartedAtMs: number = 0;
 
   constructor(usbDriverService: UsbDriverService, deviceKeyToSlot: Map<string, number>) {
     this.usbDriverService = usbDriverService;
     this.deviceKeyToSlotLookup = deviceKeyToSlot;
     this.deviceVibrationCoordinator = DeviceVibrationCoordinator.getInstance();
     this.deviceVibrationCoordinator.setSourceResumeCallback((): void => {
+      // A touch haptic stopped the body motor; the steady effect must restart.
+      this.invalidateSteadyDeviceEffect();
       this.renderMixedDevice(false);
     });
   }
@@ -264,10 +275,10 @@ export class GamepadVibrationService {
     }
 
     if (!this.updateIrNoiseGate(state, frame)) {
-      // The frame advanced the sequence domain. clearIrSource cancels the
-      // watchdog, so re-arm it: a stalled gated stream must still reset the
-      // sequence domain or a restarted producer would be rejected forever.
-      this.clearIrSource(controllerNumber, false);
+      // The frame advanced the sequence domain. Keep the watchdog alive: a
+      // stalled gated stream must still reset the sequence domain or a
+      // restarted producer would be rejected forever.
+      this.clearIrSource(controllerNumber, false, true);
       this.armIrWatchdog(controllerNumber);
       return;
     }
@@ -276,7 +287,7 @@ export class GamepadVibrationService {
     if (motors.low === 0 && motors.high === 0) {
       // A valid silent analysis frame is still a lifecycle update, but it must
       // not leave a zero-valued entry that keeps the IR source "active".
-      this.clearIrSource(controllerNumber, false);
+      this.clearIrSource(controllerNumber, false, true);
       this.armIrWatchdog(controllerNumber);
       return;
     }
@@ -284,8 +295,7 @@ export class GamepadVibrationService {
     this.irDeviceRumble.set(controllerNumber, motors);
     this.armIrWatchdog(controllerNumber);
 
-    const controllers = this.usbDriverService.getControllers();
-    if (controllers.length > 0) {
+    if (this.usbDriverService.getControllerCount() > 0) {
       this.scheduleIrUsbRender(controllerNumber);
     }
     this.renderMixedDevice(false);
@@ -403,7 +413,7 @@ export class GamepadVibrationService {
    * 检查是否有 USB 控制器连接
    */
   hasUsbControllers(): boolean {
-    return this.usbDriverService.getControllers().length > 0;
+    return this.usbDriverService.getControllerCount() > 0;
   }
 
   /**
@@ -428,6 +438,7 @@ export class GamepadVibrationService {
     this.lastHighFreq = 0;
 
     this.deviceVibrationCoordinator.stopAll();
+    this.invalidateSteadyDeviceEffect();
     this.isVibrating = false;
 
     try {
@@ -567,6 +578,7 @@ export class GamepadVibrationService {
       hasSequence: false,
       lastSequence: 0,
       watchdogTimer: -1,
+      lastFrameAtMs: 0,
       gateOpen: false,
       quietFrameCount: 0
     };
@@ -574,25 +586,46 @@ export class GamepadVibrationService {
     return state;
   }
 
+  /**
+   * Record frame liveness. The 200 Hz stream would otherwise cancel and create
+   * a timer for every frame; a single timer re-arms itself for the remaining
+   * time and still fires IR_WATCHDOG_MS after the last frame.
+   */
   private armIrWatchdog(controllerNumber: number): void {
     const state = this.getOrCreateIrStreamState(controllerNumber);
-    this.clearIrTimer(controllerNumber);
+    state.lastFrameAtMs = Date.now();
+    if (state.watchdogTimer !== -1) return;
+    this.startIrWatchdogTimer(controllerNumber, state,
+      GamepadVibrationService.IR_WATCHDOG_MS);
+  }
+
+  private startIrWatchdogTimer(controllerNumber: number, state: IrStreamState,
+    delayMs: number): void {
     let timerId: number = -1;
     timerId = setTimeout((): void => {
       const current = this.irStreamStates.get(controllerNumber);
       if (!current || current.watchdogTimer !== timerId) return;
       current.watchdogTimer = -1;
+      const remainingMs = current.lastFrameAtMs +
+        GamepadVibrationService.IR_WATCHDOG_MS - Date.now();
+      if (remainingMs > 0) {
+        this.startIrWatchdogTimer(controllerNumber, current, remainingMs);
+        return;
+      }
       Logger.warn('GamepadVibrationService', '[Vibration] DS5 IR watchdog: stream stalled, clearing IR source');
       this.clearIrSource(controllerNumber, true);
-    }, GamepadVibrationService.IR_WATCHDOG_MS);
+    }, delayMs);
     state.watchdogTimer = timerId;
   }
 
-  private clearIrSource(controllerNumber: number, resetSequence: boolean): void {
+  private clearIrSource(controllerNumber: number, resetSequence: boolean,
+    keepWatchdog: boolean = false): void {
     this.clearIrUsbRenderSchedule(controllerNumber);
     const hadUsbOutput = this.irUsbRumble.delete(controllerNumber);
     const hadDeviceOutput = this.irDeviceRumble.delete(controllerNumber);
-    this.clearIrTimer(controllerNumber);
+    if (!keepWatchdog) {
+      this.clearIrTimer(controllerNumber);
+    }
     if (resetSequence) {
       const state = this.irStreamStates.get(controllerNumber);
       if (state) {
@@ -602,9 +635,8 @@ export class GamepadVibrationService {
       }
     }
 
-    const controllers = this.usbDriverService.getControllers();
-    if (hadUsbOutput && controllers.length > 0) {
-      this.renderMixedUsb(controllers, controllerNumber);
+    if (hadUsbOutput && this.usbDriverService.getControllerCount() > 0) {
+      this.renderMixedUsb(this.usbDriverService.getControllers(), controllerNumber);
     }
     if (hadDeviceOutput) {
       this.renderMixedDevice(false);
@@ -790,7 +822,7 @@ export class GamepadVibrationService {
   }
 
   private shouldRenderUsbOutput(): boolean {
-    if (this.usbDriverService.getControllers().length === 0) return false;
+    if (this.usbDriverService.getControllerCount() === 0) return false;
     switch (this.vibrationMode) {
       case '仅设备':
         return false;
@@ -815,7 +847,7 @@ export class GamepadVibrationService {
         // Bluetooth/GCK gamepads expose no rumble backend, so the body is the
         // only usable actuator whenever no USB-driven controller exists —
         // same policy as the audio haptics path.
-        return this.usbDriverService.getControllers().length === 0;
+        return this.usbDriverService.getControllerCount() === 0;
     }
   }
 
@@ -1128,8 +1160,41 @@ export class GamepadVibrationService {
    */
   private stopVibrationImmediate(): void {
     this.deviceRenderEpoch++;
+    this.invalidateSteadyDeviceEffect();
     this.deviceVibrationCoordinator.stopSourceVibration();
     this.isVibrating = false;
+  }
+
+  private invalidateSteadyDeviceEffect(): void {
+    this.steadyDeviceEffectKey = '';
+    this.steadyDeviceEffectStartedAtMs = 0;
+  }
+
+  /**
+   * Only an IR-driven, transient-free constant effect is deduplicated: IR
+   * guarantees a render every DEVICE_RENDER_INTERVAL_MS while it is active,
+   * so the lease is always refreshed long before it expires. Audio envelopes
+   * and transients keep restarting exactly as before.
+   */
+  private getSteadyDeviceEffectKey(kind: string, gameActive: boolean,
+    hasTransient: boolean, value: number, frequency: number): string {
+    if (!gameActive || hasTransient || this.irDeviceRumble.size === 0) return '';
+    return `${kind}|${value}|${frequency}`;
+  }
+
+  private isSteadyDeviceEffectFresh(key: string): boolean {
+    return key !== '' && key === this.steadyDeviceEffectKey &&
+      Date.now() - this.steadyDeviceEffectStartedAtMs <
+        GamepadVibrationService.STEADY_DEVICE_REFRESH_MS;
+  }
+
+  private recordDeviceEffect(started: boolean, key: string): void {
+    if (!started || key === '') {
+      this.invalidateSteadyDeviceEffect();
+      return;
+    }
+    this.steadyDeviceEffectKey = key;
+    this.steadyDeviceEffectStartedAtMs = Date.now();
   }
 
   @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
@@ -1142,9 +1207,19 @@ export class GamepadVibrationService {
       mixedTransient > 0;
 
     const gameActive = Math.max(lowIntensity, highIntensity) > 0;
-    const builder = new vibrator.VibratorPatternBuilder();
     const audioFrequency = Math.round(
       30 + this.audioDeviceSharpness * 40);
+    const frequency = Math.max(25,
+      Math.round(gameActive
+        ? this.getGameDeviceFrequency(lowIntensity, highIntensity)
+        : audioFrequency - 8));
+    const steadyKey = hasContinuous
+      ? this.getSteadyDeviceEffectKey(
+        'pattern', gameActive, hasTransient, mixedContinuous, frequency)
+      : '';
+    if (this.isSteadyDeviceEffectFresh(steadyKey)) return;
+
+    const builder = new vibrator.VibratorPatternBuilder();
     if (hasTransient) {
       builder.addTransientEvent(0, {
         intensity: mixedTransient,
@@ -1154,12 +1229,6 @@ export class GamepadVibrationService {
     }
 
     if (hasContinuous) {
-      const gameFrequency = this.getGameDeviceFrequency(
-        lowIntensity, highIntensity);
-      const frequency = Math.max(25,
-        Math.round(Math.max(lowIntensity, highIntensity) > 0
-          ? gameFrequency
-          : audioFrequency - 8));
       const startMs = hasTransient
         ? Math.max(8, Math.min(35, this.audioDeviceTransientDurationMs))
         : 0;
@@ -1182,13 +1251,20 @@ export class GamepadVibrationService {
       }
     }
 
-    this.deviceVibrationCoordinator.startSourceVibration({
+    const started = this.deviceVibrationCoordinator.startSourceVibration({
       type: 'pattern',
       pattern: builder.build()
     }, gameActive ? 'physicalFeedback' : 'media', (): void => {
+      // The rejection may arrive after newer deduplicated renders; never let
+      // the cache claim a pattern is playing when it was refused, but keep a
+      // newer, different effect that has since started successfully.
+      if (this.steadyDeviceEffectKey === steadyKey) {
+        this.invalidateSteadyDeviceEffect();
+      }
       this.triggerMixedTimeFallback(
         mixedContinuous, mixedTransient, hasAudioTransient, renderEpoch);
     });
+    this.recordDeviceEffect(started, steadyKey);
   }
 
   private createAudioEnvelope(durationMs: number,
@@ -1240,10 +1316,16 @@ export class GamepadVibrationService {
     }
 
     const gameActive = this.isGameOrIrDeviceActive();
-    this.deviceVibrationCoordinator.startSourceVibration({
+    // 'time' effects carry no intensity, so an unchanged duration/usage is the
+    // whole effect; restarting it every render only costs vibrator IPC.
+    const steadyKey = this.getSteadyDeviceEffectKey(
+      'time', gameActive, hasAudioTransient, duration, 0);
+    if (this.isSteadyDeviceEffectFresh(steadyKey)) return;
+    const started = this.deviceVibrationCoordinator.startSourceVibration({
       type: 'time',
       duration: duration
     }, gameActive ? 'physicalFeedback' : 'media');
+    this.recordDeviceEffect(started, steadyKey);
   }
 
   private getAudioContinuousLeaseMs(scene: number): number {

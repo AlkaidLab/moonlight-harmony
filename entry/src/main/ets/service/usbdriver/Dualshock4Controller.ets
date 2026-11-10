@@ -24,6 +24,8 @@ import { Logger } from '../../common/Logger';
 const TAG = '[USB-DS4]';
 
 export class Dualshock4Controller extends AbstractDualSenseController {
+  private rumbleLowByte: number = 0;
+  private rumbleHighByte: number = 0;
   
   constructor(
     device: usbManager.USBDevice,
@@ -194,18 +196,34 @@ const gyrox = readShortLE(buffer, 13);
    * 震动反馈
    */
   rumble(lowFreqMotor: number, highFreqMotor: number): void {
+    const lowByte = (lowFreqMotor >> 8) & 0xFF;
+    const highByte = (highFreqMotor >> 8) & 0xFF;
+    // 零值(停止振动)始终发送; 非零且报告字节不变时跳过, 避免高频重复 USB 写入
+    if ((lowByte !== 0 || highByte !== 0) &&
+        lowByte === this.rumbleLowByte && highByte === this.rumbleHighByte) {
+      return;
+    }
+    this.rumbleLowByte = lowByte;
+    this.rumbleHighByte = highByte;
+
     // DualShock 4 震动命令
     const data = new Uint8Array(32);
     data[0] = 0x05;  // 报告 ID
     data[1] = 0xFF;  // 标志
-    data[4] = (highFreqMotor >> 8) & 0xFF;  // 小马达
-    data[5] = (lowFreqMotor >> 8) & 0xFF;   // 大马达
+    data[4] = highByte;  // 小马达
+    data[5] = lowByte;   // 大马达
     // 灯光颜色 (可选)
     data[6] = 0x00;  // R
     data[7] = 0x00;  // G
     data[8] = 0xFF;  // B (蓝色)
     
-    this.bulkWrite(data);
+    this.bulkWrite(data).then((ret: number): void => {
+      // 写入失败且缓存未被更新的报告覆盖时作废缓存, 让后续相同的 rumble 能重试
+      if (ret < 0 && this.rumbleLowByte === lowByte && this.rumbleHighByte === highByte) {
+        this.rumbleLowByte = -1;
+        this.rumbleHighByte = -1;
+      }
+    });
   }
   
   /**
