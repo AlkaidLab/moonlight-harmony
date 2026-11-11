@@ -773,6 +773,10 @@ class MoonBridgeClass {
     return nativeLib.getHostFeatureFlags();
   }
 
+  isConnectionActive(): boolean {
+    return nativeLib.isConnectionActive() as boolean;
+  }
+
   getStreamSocketFds(): StreamSocketFds | null {
     const raw = nativeLib.getStreamSocketFds() as NativeStreamSocketFds | null;
     if (!raw) {
