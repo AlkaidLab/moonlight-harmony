@@ -110,9 +110,6 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "getEstimatedRttInfo", nullptr, MoonBridge_GetEstimatedRttInfo, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getHostFeatureFlags", nullptr, MoonBridge_GetHostFeatureFlags, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getStreamSocketFds", nullptr, MoonBridge_GetStreamSocketFds, nullptr, nullptr, nullptr, napi_default, nullptr },
-        { "isConnectionActive", nullptr, MoonBridge_IsConnectionActive, nullptr, nullptr, nullptr, napi_default, nullptr },
-        { "retainStreamSocket", nullptr, MoonBridge_RetainStreamSocket, nullptr, nullptr, nullptr, napi_default, nullptr },
-        { "releaseStreamSocket", nullptr, MoonBridge_ReleaseStreamSocket, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "sendClientSdrWhiteNits", nullptr, MoonBridge_SendClientSdrWhiteNits, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getLaunchUrlQueryParameters", nullptr, MoonBridge_GetLaunchUrlQueryParameters, nullptr, nullptr, nullptr, napi_default, nullptr },
         

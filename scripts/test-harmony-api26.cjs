@@ -43,7 +43,7 @@ test('nonfinite events cannot poison later mouse movement', () => {
 });
 
 /** Load the production service with controllable platform failures and a deterministic timer queue. */
-function fixture(apiVersion = 26, capability = true, duplicateDescriptors = false) {
+function fixture(apiVersion = 26, capability = true) {
   const calls = [];
   const listeners = new Set();
   let state = 'foreground';
@@ -52,12 +52,6 @@ function fixture(apiVersion = 26, capability = true, duplicateDescriptors = fals
   let failureCode = 500;
   let failSceneEvent = -1;
   let sceneFailureCode = 500;
-  let currentFlows = null;
-  let connectionActive = true;
-  let failConnectionQuery = false;
-  let failedRetain = -1;
-  const retained = [];
-  const released = [];
   const timers = new Map();
   let nextTimer = 0;
   const { NetworkBoostService } = loadArkTsModule(
@@ -65,18 +59,6 @@ function fixture(apiVersion = 26, capability = true, duplicateDescriptors = fals
       deviceInfo: { sdkApiVersion: apiVersion },
       canIUse: () => capability,
       Logger: { info() {}, warn() {} },
-      MoonBridge: {
-        isConnectionActive: () => {
-          if (failConnectionQuery) throw new Error('connection query failed');
-          return connectionActive;
-        },
-        getStreamSocketFds: () => currentFlows,
-        retainStreamSocket: fd => {
-          retained.push(fd);
-          return fd === failedRetain ? -1 : duplicateDescriptors ? fd + 1000 : fd;
-        },
-        releaseStreamSocket: fd => released.push(fd)
-      },
       setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
       clearTimeout: id => timers.delete(id),
       AppState: { FOREGROUND: 'foreground' },
@@ -110,16 +92,9 @@ function fixture(apiVersion = 26, capability = true, duplicateDescriptors = fals
   service.start();
   return {
     service, calls, listeners,
-    retained, released,
-    snapshot(value) { currentFlows = value; },
-    connectionActive(value) { connectionActive = value; },
-    failConnectionQuery() { failConnectionQuery = true; },
-    failRetain(fd) { failedRetain = fd; },
     enter: () => calls.filter(call => call.event === 0).map(call => call.fd),
     leave: () => calls.filter(call => call.event === 2).map(call => call.fd),
     scenes: () => calls.filter(call => call.scene !== undefined).map(call => call.scene),
-    timerCallbacks: () => [...timers.values()],
-    timerCount: () => timers.size,
     tick() {
       const pending = [...timers.values()];
       timers.clear();
@@ -134,223 +109,8 @@ function fixture(apiVersion = 26, capability = true, duplicateDescriptors = fals
 
 /** Create socket metadata with overridable descriptors for reconnect and fallback scenarios. */
 function flows(control = 30, video = 10, audio = 20) {
-  return { control: { fd: control, localPort: 5000 + control },
-    videoRtp: { fd: video, localPort: 5000 + video },
-    audioRtp: { fd: audio, localPort: 5000 + audio } };
+  return { control: { fd: control }, videoRtp: { fd: video }, audioRtp: { fd: audio } };
 }
-
-test('socket replacement releases retained flows before registering the new snapshot', () => {
-  const f = fixture(26, true, true);
-  f.service.registerStreamingFlows(flows());
-  f.snapshot(flows(30, 11, 20));
-  f.tick();
-  assert.deepEqual(f.leave(), [1030, 1010]);
-  assert.deepEqual(f.enter(), [1030, 1010, 1030, 1011]);
-  assert.deepEqual(f.released, [1030, 1010]);
-  f.service.stop();
-  assert.deepEqual(f.released, [1030, 1010, 1030, 1011]);
-});
-
-test('unchanged sockets do not re-register and a foreground return reads the latest snapshot', () => {
-  const f = fixture();
-  f.service.registerStreamingFlows(flows());
-  f.snapshot(flows());
-  f.tick();
-  assert.deepEqual(f.enter(), [30, 10]);
-  assert.deepEqual(f.leave(), []);
-  f.state('background');
-  f.snapshot(flows(30, 11, 20));
-  f.tick();
-  assert.deepEqual(f.enter(), [30, 10]);
-  f.state('foreground');
-  assert.deepEqual(f.enter(), [30, 10, 30, 11]);
-  f.service.stop();
-});
-
-test('audio replacement refreshes only when audio occupies a flow slot', () => {
-  const activeVideo = fixture();
-  activeVideo.service.registerStreamingFlows(flows());
-  activeVideo.snapshot(flows(30, 10, 21));
-  activeVideo.tick();
-  assert.deepEqual(activeVideo.leave(), []);
-  assert.deepEqual(activeVideo.enter(), [30, 10]);
-  activeVideo.service.stop();
-
-  const audioFallback = fixture();
-  audioFallback.service.registerStreamingFlows(flows(30, -1, 20));
-  audioFallback.snapshot(flows(30, -1, 21));
-  audioFallback.tick();
-  assert.deepEqual(audioFallback.leave(), [30, 20]);
-  assert.deepEqual(audioFallback.enter(), [30, 20, 30, 21]);
-  audioFallback.service.stop();
-});
-
-test('a reused descriptor with a new local port triggers a refresh', () => {
-  const f = fixture();
-  f.service.registerStreamingFlows(flows());
-  const replacement = flows();
-  replacement.videoRtp.localPort++;
-  f.snapshot(replacement);
-  f.tick();
-  assert.deepEqual(f.leave(), [30, 10]);
-  assert.deepEqual(f.enter(), [30, 10, 30, 10]);
-  f.service.stop();
-});
-
-test('failed socket retention is retried within a fixed budget and does not outlive the session', () => {
-  const f = fixture();
-  f.failRetain(10);
-  f.service.registerStreamingFlows(flows());
-  f.snapshot(flows());
-  for (let i = 0; i < 8; i++) f.tick();
-  assert.equal(f.retained.filter(fd => fd === 10).length, 4);
-  f.service.stop();
-  const attempts = f.retained.length;
-  f.tick();
-  assert.equal(f.retained.length, attempts);
-});
-
-test('failed flow cleanup retains the old duplicate until it can be unregistered', () => {
-  const f = fixture(26, true, true);
-  f.service.registerStreamingFlows(flows());
-  f.failLeave(1010);
-  f.snapshot(flows(30, 11, 20));
-  f.tick();
-  assert.deepEqual(f.enter(), [1030, 1010]);
-  assert.deepEqual(f.released, [1030]);
-  f.failLeave(-1);
-  f.tick();
-  assert.deepEqual(f.enter(), [1030, 1010, 1030, 1011]);
-  assert.deepEqual(f.released, [1030, 1010]);
-  f.service.stop();
-});
-
-test('background cleanup retries are bounded and release sockets without waiting for foreground', () => {
-  const f = fixture(26, true, true);
-  f.service.registerStreamingFlows(flows());
-  f.failLeave(1010);
-  f.state('background');
-  assert.deepEqual(f.released, [1030]);
-  for (let i = 0; i < 6; i++) f.tick();
-  assert.deepEqual(f.released, [1030, 1010]);
-  assert.equal(f.timerCount(), 0);
-  assert.equal(f.leave().filter(fd => fd === 1010).length, 4);
-  f.failLeave(-1);
-  f.snapshot(flows(30, 11, 20));
-  f.state('foreground');
-  assert.deepEqual(f.enter(), [1030, 1010, 1030, 1011]);
-  f.service.stop();
-});
-
-test('an already queued monitor from an old session cannot affect a new session', () => {
-  const f = fixture();
-  f.service.registerStreamingFlows(flows());
-  const oldMonitor = f.timerCallbacks()[0];
-  f.service.stop();
-  f.service.start();
-  f.service.registerStreamingFlows(flows(31, 11, 21));
-  f.snapshot(flows(31, 11, 21));
-  const callsBefore = f.calls.length;
-  oldMonitor();
-  assert.equal(f.calls.length, callsBefore);
-  assert.equal(f.timerCount(), 1);
-  f.service.stop();
-});
-
-test('an already queued cleanup retry cannot unregister a new session', () => {
-  const f = fixture();
-  f.service.registerStreamingFlows(flows());
-  f.failLeave(30);
-  f.service.stop();
-  const oldRetry = f.timerCallbacks()[0];
-  f.failLeave(-1);
-  f.service.start();
-  f.service.registerStreamingFlows(flows(31, 11, 21));
-  const callsBefore = f.calls.length;
-  oldRetry();
-  assert.equal(f.calls.length, callsBefore);
-  assert.equal(f.timerCount(), 1);
-  f.service.stop();
-});
-
-test('a stale session owner cannot stop Network Boost for a newer session', () => {
-  const f = fixture();
-  const oldGeneration = f.service.start();
-  f.service.registerStreamingFlows(flows());
-  f.service.stop(oldGeneration);
-  const newGeneration = f.service.start();
-  f.service.registerStreamingFlows(flows(31, 11, 21));
-  const callsBefore = f.calls.length;
-  f.service.stop(oldGeneration);
-  assert.equal(f.calls.length, callsBefore);
-  assert.equal(f.timerCount(), 1);
-  f.service.stop(newGeneration);
-  assert.equal(f.timerCount(), 0);
-});
-
-test('a late app-state callback cannot cancel cleanup after the session stops', () => {
-  const f = fixture();
-  f.service.registerStreamingFlows(flows());
-  const oldListener = [...f.listeners][0];
-  f.failLeave(30);
-  f.service.stop();
-  assert.equal(f.timerCount(), 1);
-  oldListener('background');
-  assert.equal(f.timerCount(), 1);
-  f.failLeave(-1);
-  f.tick();
-  assert.equal(f.timerCount(), 0);
-  assert.deepEqual(new Set(f.released), new Set([30, 10]));
-});
-
-test('an already queued background cleanup cannot unregister foreground flows', () => {
-  const f = fixture(26, true, true);
-  f.service.registerStreamingFlows(flows());
-  f.failLeave(1010);
-  f.state('background');
-  const oldRetry = f.timerCallbacks()[0];
-  f.failLeave(-1);
-  f.snapshot(flows(30, 11, 20));
-  f.state('foreground');
-  const callsBefore = f.calls.length;
-  oldRetry();
-  assert.equal(f.calls.length, callsBefore);
-  assert.equal(f.timerCount(), 1);
-  f.service.stop();
-});
-
-test('monitor stops and releases resources if the native connection has ended', () => {
-  const f = fixture(26, true, true);
-  f.service.registerStreamingFlows(flows());
-  f.connectionActive(false);
-  f.tick();
-  assert.deepEqual(f.released, [1030, 1010]);
-  assert.equal(f.timerCount(), 0);
-  assert.equal(f.listeners.size, 0);
-});
-
-test('monitor releases resources when checking the native connection throws', () => {
-  const f = fixture(26, true, true);
-  f.service.registerStreamingFlows(flows());
-  f.failConnectionQuery();
-  f.tick();
-  assert.deepEqual(f.released, [1030, 1010]);
-  assert.equal(f.timerCount(), 0);
-  assert.equal(f.listeners.size, 0);
-});
-
-test('repeated sessions release every retained flow and leave no monitor timers', () => {
-  const f = fixture(26, true, true);
-  for (let i = 0; i < 25; i++) {
-    f.service.registerStreamingFlows(flows());
-    f.service.stop();
-    assert.equal(f.timerCount(), 0);
-    assert.equal(f.listeners.size, 0);
-    if (i < 24) f.service.start();
-  }
-  assert.equal(f.retained.length, 50);
-  assert.equal(f.released.length, 50);
-});
 
 test('at most two flows, prioritizing control and video', () => {
   const f = fixture();
@@ -393,22 +153,23 @@ test('stop retries failed flow or scene cleanup and stops after success', () => 
   }
 });
 
-test('permanent cleanup failure releases retained sockets after bounded retries', () => {
-  const f = fixture(26, true, true);
+test('permanent cleanup failure stops retrying but retains descriptors for the next session', () => {
+  const f = fixture();
   f.service.registerStreamingFlows(flows());
-  f.failLeave(1030);
+  f.failLeave(30);
   f.service.stop();
   for (let i = 0; i < 10; i++) f.tick();
-  const attempts = f.leave().filter(fd => fd === 1030).length;
+  const attempts = f.leave().filter(fd => fd === 30).length;
   assert.ok(attempts > 1 && attempts <= 4, 'cleanup must retry within its budget');
   f.tick();
-  assert.equal(f.leave().filter(fd => fd === 1030).length, attempts);
-  assert.deepEqual(new Set(f.released), new Set([1030, 1010]));
+  assert.equal(f.leave().filter(fd => fd === 30).length, attempts);
+  assert.ok(!f.scenes().includes(2), 'pending flows must keep the scene alive');
   f.service.start();
+  f.service.registerStreamingFlows(flows(31, 11, 21));
+  assert.deepEqual(f.enter(), [30, 10]);
   f.failLeave(-1);
   f.service.registerStreamingFlows(flows(31, 11, 21));
-  assert.deepEqual(f.enter(), [1030, 1010, 1031, 1011]);
-  f.service.stop();
+  assert.deepEqual(f.enter(), [30, 10, 31, 11]);
 });
 
 test('starting a new session cancels old cleanup timers before registering new flows', () => {
@@ -488,8 +249,6 @@ test('API 12/24 and unsupported devices never invoke API 26 flow descriptions', 
   for (const [version, capability] of [[12, true], [24, true], [26, false]]) {
     const f = fixture(version, capability);
     f.service.registerStreamingFlows(flows());
-    assert.equal(f.timerCount(), 0);
-    assert.deepEqual(f.retained, []);
     f.state('background');
     f.state('foreground');
     f.service.stop();
@@ -497,91 +256,4 @@ test('API 12/24 and unsupported devices never invoke API 26 flow descriptions', 
     assert.deepEqual(f.leave(), []);
     assert.equal(f.listeners.size, 0);
   }
-});
-
-/** Exercise the real session startup and termination callbacks without device APIs. */
-function sessionFixture(terminateDuringStart, socketsAvailable = true) {
-  const calls = { boostStart: 0, boostStop: 0, boostStopGenerations: [], nativeStop: 0 };
-  let callbacks;
-  let connectionActive = true;
-  const gamepad = {
-    setSensorDataCallback() {}, setControllerTouchCallback() {}, setControllerBatteryCallback() {},
-    stopAllSensors() {}, stopAllVibration() {}
-  };
-  const { StreamingSession } = loadArkTsModule('entry/src/main/ets/service/streaming/StreamingSession.ets', {
-    nativeLib: {}, MoonlightButton: {},
-    Logger: { info() {}, warn() {}, error() {}, debug() {} },
-    sampleDisplayBrightness: async () => null,
-    GamepadManager: { getInstance: () => gamepad },
-    ComputerManager: { getInstance: () => ({ invalidateServerInfoCache() {} }) },
-    UsbForwardingService: { getInstance: () => ({ endStreamForwarding() {} }) },
-    NetworkBoostService: { getInstance: () => ({
-      start: () => {
-        calls.boostStart++;
-        return calls.boostStart;
-      },
-      stop: generation => {
-        calls.boostStop++;
-        calls.boostStopGenerations.push(generation);
-      },
-      registerStreamingFlows() {}
-    }) },
-    MoonBridge: { getStreamSocketFds: () => socketsAvailable ? flows() : null,
-      isConnectionActive: () => connectionActive }
-  }, ['StreamingSession']);
-  const session = Object.assign(Object.create(StreamingSession.prototype), {
-    networkBoostGeneration: null,
-    nativeModule: {
-      init(value) { callbacks = value; },
-      setPerformanceModeEnabled() {},
-      stopConnection() { calls.nativeStop++; },
-      releaseVideoSurface() {}
-    },
-    audioVibrationService: { stop() {} },
-    resolveComputer: async () => {}, applyInitialBitratePolicy: async () => {},
-    generateInputKey() {}, fetchServerInfo: async () => {},
-    applyPreConnectionSettings() {}, setupVideoSurface: async () => {},
-    getCachedCurrentGame: () => 0, launchApp: async () => {},
-    applyPostConnectionSettings() {}, registerBrightnessProbe() {}, stopBrightnessUpdates() {},
-    readHostFeatureFlags() {}, scheduleBrightnessResample() {}, startMicrophoneIfNeeded() {},
-    stopMicrophone() {}, stopAbr: async () => {},
-    connectToServer: async () => {
-      callbacks.connectionStarted();
-      if (terminateDuringStart) {
-        connectionActive = false;
-        callbacks.connectionTerminated(-1);
-      }
-    }
-  });
-  return { session, calls, callbacks: () => callbacks };
-}
-
-test('termination before startup completes cannot start the Network Boost monitor', async () => {
-  const f = sessionFixture(true);
-  await assert.rejects(f.session.start('host', 1, { width: 1, height: 1, fps: 60, bitrate: 1 }, 'surface'),
-    /连接在启动期间已终止/);
-  assert.equal(f.calls.boostStart, 0);
-  assert.equal(f.calls.nativeStop, 1);
-});
-
-test('shared cleanup stops an owned Network Boost session once', async () => {
-  const f = sessionFixture(false);
-  await f.session.start('host', 1, { width: 1, height: 1, fps: 60, bitrate: 1 }, 'surface');
-  assert.equal(f.calls.boostStart, 1);
-  assert.equal(f.calls.boostStop, 0);
-  await f.session.cleanup();
-  await f.session.cleanup();
-  assert.equal(f.calls.boostStop, 1);
-  assert.deepEqual(f.calls.boostStopGenerations, [1]);
-});
-
-test('missing socket snapshot stops Network Boost without interrupting the stream', async () => {
-  const f = sessionFixture(false, false);
-  await f.session.start('host', 1, { width: 1, height: 1, fps: 60, bitrate: 1 }, 'surface');
-  assert.equal(f.calls.boostStart, 1);
-  assert.equal(f.calls.boostStop, 1);
-  assert.equal(f.calls.nativeStop, 0);
-  await f.session.cleanup();
-  assert.equal(f.calls.boostStop, 1);
-  assert.deepEqual(f.calls.boostStopGenerations, [1]);
 });

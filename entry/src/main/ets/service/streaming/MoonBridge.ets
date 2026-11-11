@@ -773,10 +773,6 @@ class MoonBridgeClass {
     return nativeLib.getHostFeatureFlags();
   }
 
-  isConnectionActive(): boolean {
-    return nativeLib.isConnectionActive() as boolean;
-  }
-
   getStreamSocketFds(): StreamSocketFds | null {
     const raw = nativeLib.getStreamSocketFds() as NativeStreamSocketFds | null;
     if (!raw) {
@@ -787,14 +783,6 @@ class MoonBridgeClass {
     const control: StreamSocketInfo = { fd: raw.controlFd, localPort: raw.controlPort };
     const result: StreamSocketFds = { videoRtp: video, audioRtp: audio, control: control };
     return result;
-  }
-
-  retainStreamSocket(fd: number, localPort: number): number {
-    return nativeLib.retainStreamSocket(fd, localPort) as number;
-  }
-
-  releaseStreamSocket(fd: number): void {
-    nativeLib.releaseStreamSocket(fd);
   }
 
   sendClientSdrWhiteNits(nits: number): number {
