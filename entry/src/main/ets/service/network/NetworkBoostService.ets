@@ -96,6 +96,7 @@ export class NetworkBoostService {
   private static instance: NetworkBoostService | null = null;
 
   private active: boolean = false;
+  private sessionGeneration: number = 0;
   private lastState: StreamQoeState | null = null;
   private supported: boolean = true;
 
@@ -112,16 +113,29 @@ export class NetworkBoostService {
   private streamingFlows: StreamSocketFds | null = null;
   private cleanupRetryTimer: number = -1;
   private cleanupRetryCount: number = 0;
+  private cleanupRetryGeneration: number = 0;
   private flowMonitorTimer: number = -1;
+  private flowMonitorGeneration: number = 0;
   private flowRefreshPending: boolean = false;
   private flowRefreshRetries: number = 0;
   private appStateListener: (state: AppState) => void = (_state: AppState): void => {
+    if (!this.active) {
+      return;
+    }
     this.cancelFlowMonitor();
+    this.cancelCleanupRetry();
     this.flowRefreshRetries = 0;
+    if (this.active && !this.isNativeConnectionActive()) {
+      this.stop();
+      return;
+    }
     if (AppStateService.getInstance().getCurrentState() === AppState.FOREGROUND && this.streamingFlows) {
       this.updateSocketSnapshot();
     }
     this.refreshDataFlowDesc();
+    if (AppStateService.getInstance().getCurrentState() !== AppState.FOREGROUND) {
+      this.scheduleCleanupRetry();
+    }
     this.scheduleFlowMonitor();
   };
 
@@ -133,26 +147,34 @@ export class NetworkBoostService {
   }
 
   /** 串流会话开始：声明业务类型 + 订阅网络质量回调 */
-  start(): void {
+  start(): number {
     if (this.active) {
-      return;
+      return this.sessionGeneration;
     }
     this.cancelCleanupRetry();
     this.active = true;
-    AppStateService.getInstance().addListener(this.appStateListener);
-    this.lastState = null;
-    this.reportInternal('good');
-    this.subscribeQos();
-    this.subscribeScene();
+    const generation = ++this.sessionGeneration;
+    try {
+      AppStateService.getInstance().addListener(this.appStateListener);
+      this.lastState = null;
+      this.reportInternal('good');
+      this.subscribeQos();
+      this.subscribeScene();
+    } catch (err) {
+      this.stop(generation);
+      throw err;
+    }
+    return generation;
   }
 
   /** 串流会话结束：取消订阅 */
-  stop(): void {
-    if (!this.active) {
+  stop(generation?: number): void {
+    if (!this.active || (generation !== undefined && generation !== this.sessionGeneration)) {
       return;
     }
     this.active = false;
     this.cancelFlowMonitor();
+    this.cancelCleanupRetry();
     AppStateService.getInstance().removeListener(this.appStateListener);
     this.streamingFlows = null;
     this.lastState = null;
@@ -234,6 +256,15 @@ export class NetworkBoostService {
     this.scheduleFlowMonitor();
   }
 
+  private isNativeConnectionActive(): boolean {
+    try {
+      return MoonBridge.isConnectionActive();
+    } catch (err) {
+      Logger.warn('NetworkBoostService', `[NetworkBoost] 查询连接状态失败: ${(err as Error).message}`);
+      return false;
+    }
+  }
+
   /** Refresh the snapshot when a stream replaces its socket, not for a NAT-only port change. */
   private updateSocketSnapshot(): boolean {
     try {
@@ -265,9 +296,17 @@ export class NetworkBoostService {
       AppStateService.getInstance().getCurrentState() !== AppState.FOREGROUND) {
       return;
     }
+    const generation = this.flowMonitorGeneration;
     this.flowMonitorTimer = setTimeout((): void => {
+      if (generation !== this.flowMonitorGeneration) {
+        return;
+      }
       this.flowMonitorTimer = -1;
       if (this.active && AppStateService.getInstance().getCurrentState() === AppState.FOREGROUND) {
+        if (!this.isNativeConnectionActive()) {
+          this.stop();
+          return;
+        }
         if (this.updateSocketSnapshot()) {
           this.flowRefreshRetries = 0;
           this.refreshDataFlowDesc();
@@ -281,6 +320,7 @@ export class NetworkBoostService {
   }
 
   private cancelFlowMonitor(): void {
+    this.flowMonitorGeneration++;
     if (this.flowMonitorTimer !== -1) {
       clearTimeout(this.flowMonitorTimer);
       this.flowMonitorTimer = -1;
@@ -404,14 +444,22 @@ export class NetworkBoostService {
     }
   }
 
-  /** Retry stopped-session cleanup at most three times without retaining app listeners. */
+  /** Retry background or stopped-session cleanup at most three times. */
   private scheduleCleanupRetry(): void {
-    if (this.active || this.cleanupRetryTimer !== -1 || this.cleanupRetryCount >= MAX_CLEANUP_RETRIES ||
+    if ((this.active && AppStateService.getInstance().getCurrentState() === AppState.FOREGROUND) ||
+      this.cleanupRetryTimer !== -1 || this.cleanupRetryCount >= MAX_CLEANUP_RETRIES ||
       (this.registeredFlows.length === 0 && !this.sceneEntered)) {
       return;
     }
+    const generation = this.cleanupRetryGeneration;
     this.cleanupRetryTimer = setTimeout((): void => {
+      if (generation !== this.cleanupRetryGeneration) {
+        return;
+      }
       this.cleanupRetryTimer = -1;
+      if (this.active && AppStateService.getInstance().getCurrentState() === AppState.FOREGROUND) {
+        return;
+      }
       this.cleanupRetryCount++;
       this.clearDataFlowDesc();
       if (this.cleanupRetryCount >= MAX_CLEANUP_RETRIES && this.registeredFlows.length > 0) {
@@ -427,6 +475,7 @@ export class NetworkBoostService {
 
   /** A new session owns cleanup from here, so stale timers must not touch its flows. */
   private cancelCleanupRetry(): void {
+    this.cleanupRetryGeneration++;
     if (this.cleanupRetryTimer !== -1) {
       clearTimeout(this.cleanupRetryTimer);
       this.cleanupRetryTimer = -1;
