@@ -476,6 +476,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private userBitrateLimitKbps: number = 0;
   private surfaceId: string = '';
   private isRunning: boolean = false;
+  private networkBoostGeneration: number | null = null;
   /** 用户主动发起的停止（菜单断开/退出游戏），抑制 connectionTerminated 回调弹窗 */
   private userInitiatedStop: boolean = false;
   private isStartingConnection: boolean = false;
@@ -744,7 +745,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
       this.isRunning = true;
       // Network Boost Kit: 声明实时游戏类业务，让系统优先调度
-      NetworkBoostService.getInstance().start();
+      this.networkBoostGeneration = NetworkBoostService.getInstance().start();
       // Network Boost Kit: 注册串流 socket 流描述，获得 per-flow 调度优先级。
       // startConnectionAsync 已返回，video/audio/control socket 均已建立。
       try {
@@ -754,9 +755,12 @@ export class StreamingSession implements Ds5TouchpadInputSink {
             `audio fd=${sockets.audioRtp.fd} port=${sockets.audioRtp.localPort}, ` +
             `control fd=${sockets.control.fd} port=${sockets.control.localPort}`);
           NetworkBoostService.getInstance().registerStreamingFlows(sockets);
+        } else {
+          this.stopNetworkBoost();
         }
       } catch (err) {
         Logger.warn('StreamingSession', `[StreamingSession] 串流流描述注册失败(不影响串流): ${(err as Error).message}`);
+        this.stopNetworkBoost();
       }
     } catch (err) {
       await this.cleanup();
@@ -777,7 +781,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.resetControllerState();
     GamepadManager.getInstance().stopAllSensors();
     this.audioVibrationService.stop();
-    NetworkBoostService.getInstance().stop();
+    this.stopNetworkBoost();
     await this.cleanup();
   }
 
@@ -801,7 +805,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     // 与 stop() 相同：在 isRunning 翻转前注销触点回调并发送 CANCEL
     GamepadManager.getInstance().setControllerTouchCallback(null);
     this.isRunning = false;
-    NetworkBoostService.getInstance().stop();
+    this.stopNetworkBoost();
     await this.cleanup();
     return quitSuccess;
   }
@@ -1545,7 +1549,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         this.stopBrightnessUpdates();
         this.hostFeatureFlags = 0;
         this.hostFeatureFlagsKnown = false;
-        NetworkBoostService.getInstance().stop();
+        this.stopNetworkBoost();
         GamepadManager.getInstance().stopAllSensors();
         // 立即停止所有振动（设备马达 + USB 手柄马达 + 音频振动）
         GamepadManager.getInstance().stopAllVibration();
@@ -2295,8 +2299,17 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     }
   }
 
+  private stopNetworkBoost(): void {
+    const generation = this.networkBoostGeneration;
+    this.networkBoostGeneration = null;
+    if (generation !== null) {
+      NetworkBoostService.getInstance().stop(generation);
+    }
+  }
+
   private async cleanup(): Promise<void> {
     Logger.info('StreamingSession', '清理串流资源');
+    this.stopNetworkBoost();
     this.isRunning = false;
     this.stopBrightnessUpdates();
     // USB/IP 反向隧道随会话回收（stop/quit/启动失败共用此路径）
