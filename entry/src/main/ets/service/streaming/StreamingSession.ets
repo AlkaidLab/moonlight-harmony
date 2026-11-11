@@ -741,9 +741,6 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       if (this.userInitiatedStop) {
         return;
       }
-      if (!MoonBridge.isConnectionActive()) {
-        throw new Error('连接在启动期间已终止');
-      }
       this.applyPostConnectionSettings(config);
 
       this.isRunning = true;

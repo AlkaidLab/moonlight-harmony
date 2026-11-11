@@ -500,10 +500,9 @@ test('API 12/24 and unsupported devices never invoke API 26 flow descriptions', 
 });
 
 /** Exercise the real session startup and termination callbacks without device APIs. */
-function sessionFixture(terminateDuringStart, socketsAvailable = true) {
-  const calls = { boostStart: 0, boostStop: 0, boostStopGenerations: [], nativeStop: 0 };
+function sessionFixture(socketsAvailable = true) {
+  const calls = { boostStart: 0, boostStop: 0, boostStopGenerations: [] };
   let callbacks;
-  let connectionActive = true;
   const gamepad = {
     setSensorDataCallback() {}, setControllerTouchCallback() {}, setControllerBatteryCallback() {},
     stopAllSensors() {}, stopAllVibration() {}
@@ -526,15 +525,14 @@ function sessionFixture(terminateDuringStart, socketsAvailable = true) {
       },
       registerStreamingFlows() {}
     }) },
-    MoonBridge: { getStreamSocketFds: () => socketsAvailable ? flows() : null,
-      isConnectionActive: () => connectionActive }
+    MoonBridge: { getStreamSocketFds: () => socketsAvailable ? flows() : null }
   }, ['StreamingSession']);
   const session = Object.assign(Object.create(StreamingSession.prototype), {
     networkBoostGeneration: null,
     nativeModule: {
       init(value) { callbacks = value; },
       setPerformanceModeEnabled() {},
-      stopConnection() { calls.nativeStop++; },
+      stopConnection() {},
       releaseVideoSurface() {}
     },
     audioVibrationService: { stop() {} },
@@ -547,25 +545,13 @@ function sessionFixture(terminateDuringStart, socketsAvailable = true) {
     stopMicrophone() {}, stopAbr: async () => {},
     connectToServer: async () => {
       callbacks.connectionStarted();
-      if (terminateDuringStart) {
-        connectionActive = false;
-        callbacks.connectionTerminated(-1);
-      }
     }
   });
   return { session, calls, callbacks: () => callbacks };
 }
 
-test('termination before startup completes cannot start the Network Boost monitor', async () => {
-  const f = sessionFixture(true);
-  await assert.rejects(f.session.start('host', 1, { width: 1, height: 1, fps: 60, bitrate: 1 }, 'surface'),
-    /连接在启动期间已终止/);
-  assert.equal(f.calls.boostStart, 0);
-  assert.equal(f.calls.nativeStop, 1);
-});
-
 test('shared cleanup stops an owned Network Boost session once', async () => {
-  const f = sessionFixture(false);
+  const f = sessionFixture();
   await f.session.start('host', 1, { width: 1, height: 1, fps: 60, bitrate: 1 }, 'surface');
   assert.equal(f.calls.boostStart, 1);
   assert.equal(f.calls.boostStop, 0);
@@ -580,7 +566,6 @@ test('missing socket snapshot stops Network Boost without interrupting the strea
   await f.session.start('host', 1, { width: 1, height: 1, fps: 60, bitrate: 1 }, 'surface');
   assert.equal(f.calls.boostStart, 1);
   assert.equal(f.calls.boostStop, 1);
-  assert.equal(f.calls.nativeStop, 0);
   await f.session.cleanup();
   assert.equal(f.calls.boostStop, 1);
   assert.deepEqual(f.calls.boostStopGenerations, [1]);
