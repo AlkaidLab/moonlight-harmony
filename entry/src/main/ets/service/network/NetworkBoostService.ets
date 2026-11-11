@@ -162,7 +162,7 @@ export class NetworkBoostService {
       this.subscribeScene();
     } catch (err) {
       this.stop(generation);
-      throw err;
+      throw new Error((err as Error).message);
     }
     return generation;
   }
