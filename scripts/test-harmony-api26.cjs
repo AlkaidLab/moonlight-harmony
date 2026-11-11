@@ -501,7 +501,7 @@ test('API 12/24 and unsupported devices never invoke API 26 flow descriptions', 
 
 /** Exercise the real session startup and termination callbacks without device APIs. */
 function sessionFixture(terminateDuringStart, socketsAvailable = true) {
-  const calls = { boostStart: 0, boostStop: 0, nativeStop: 0 };
+  const calls = { boostStart: 0, boostStop: 0, boostStopGenerations: [], nativeStop: 0 };
   let callbacks;
   let connectionActive = true;
   const gamepad = {
@@ -516,7 +516,15 @@ function sessionFixture(terminateDuringStart, socketsAvailable = true) {
     ComputerManager: { getInstance: () => ({ invalidateServerInfoCache() {} }) },
     UsbForwardingService: { getInstance: () => ({ endStreamForwarding() {} }) },
     NetworkBoostService: { getInstance: () => ({
-      start: () => calls.boostStart++, stop: () => calls.boostStop++, registerStreamingFlows() {}
+      start: () => {
+        calls.boostStart++;
+        return calls.boostStart;
+      },
+      stop: generation => {
+        calls.boostStop++;
+        calls.boostStopGenerations.push(generation);
+      },
+      registerStreamingFlows() {}
     }) },
     MoonBridge: { getStreamSocketFds: () => socketsAvailable ? flows() : null,
       isConnectionActive: () => connectionActive }
@@ -564,6 +572,7 @@ test('shared cleanup stops an owned Network Boost session once', async () => {
   await f.session.cleanup();
   await f.session.cleanup();
   assert.equal(f.calls.boostStop, 1);
+  assert.deepEqual(f.calls.boostStopGenerations, [1]);
 });
 
 test('missing socket snapshot stops Network Boost without interrupting the stream', async () => {
@@ -574,4 +583,5 @@ test('missing socket snapshot stops Network Boost without interrupting the strea
   assert.equal(f.calls.nativeStop, 0);
   await f.session.cleanup();
   assert.equal(f.calls.boostStop, 1);
+  assert.deepEqual(f.calls.boostStopGenerations, [1]);
 });
