@@ -44,6 +44,18 @@ import { UI } from '../../common/UI';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { RawMouseMotion } from '../../utils/RawMouseMotion';
 
+/**
+ * 三修饰键本地热键动作（Ctrl+Alt+Shift+{Q,S,X}，对齐 Android 原版 Game.java）
+ */
+export enum StreamHotkeyAction {
+  /** 断开连接（远端游戏继续运行） */
+  QUIT = 'quit',
+  /** 切换性能监控浮层 */
+  TOGGLE_OVERLAY = 'toggle_overlay',
+  /** 显示快捷键帮助 */
+  HELP = 'help'
+}
+
 export class StreamInputHandler {
   // ── 键盘修饰键状态追踪（位掩码：Shift=0x01, Ctrl=0x02, Alt=0x04, Meta=0x08）──
   private modifierFlags: number = 0;
@@ -84,6 +96,11 @@ export class StreamInputHandler {
   private escMenuEnabled: boolean = true;
   private onShowStreamMenu: (() => void) | null = null;
 
+  // ── 本地热键（Ctrl+Alt+Shift 组合命中后消费事件，不转发主机）──
+  private onHotkeyAction: ((action: StreamHotkeyAction) => void) | null = null;
+  /** 已触发动作且尚未抬起的热键 VK（过滤按键重复事件，长按只触发一次） */
+  private hotkeyArmedKeys: Set<number> = new Set<number>();
+
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
   private appVolume: number = 1.0;
   private preMuteVolume: number = 1.0;
@@ -111,6 +128,13 @@ export class StreamInputHandler {
    */
   setOnShowStreamMenu(callback: () => void): void {
     this.onShowStreamMenu = callback;
+  }
+
+  /**
+   * 设置本地热键回调（由 StreamPage 注入）
+   */
+  setOnHotkeyAction(callback: (action: StreamHotkeyAction) => void): void {
+    this.onHotkeyAction = callback;
   }
 
   /**
@@ -213,6 +237,9 @@ export class StreamInputHandler {
     this.activeVkKeys.clear();
     // 2. 清空本地修饰键位掩码，防止后续按键被错误拼上残留的 Alt/Ctrl 位
     this.modifierFlags = 0;
+    // 失焦期间热键目标键的 KEY_UP 收不到，武装标记一并清掉，
+    // 否则恢复焦点后的首次按键会被当作重复事件吞掉
+    this.hotkeyArmedKeys.clear();
   }
 
   /**
@@ -737,6 +764,10 @@ export class StreamInputHandler {
     if (KeyboardTranslator.isKeyboardKey(keyCode)) {
       const vkCode = KeyboardTranslator.translate(keyCode);
       if (vkCode > 0) {
+        // 三修饰键本地热键：命中即消费，不转发主机（对齐 Android Game.java）
+        if (this.tryHandleLocalHotkey(vkCode, event.type === KeyType.Down)) {
+          return true;
+        }
         this.updateModifierFlags(vkCode, event.type === KeyType.Down);
         const session = this.viewModel?.getSession();
         if (session) {
@@ -755,6 +786,56 @@ export class StreamInputHandler {
 
     // 未识别的按键，不拦截
     return false;
+  }
+
+  // ==================== 本地热键 ====================
+
+  // 三修饰键位掩码（Shift+Ctrl+Alt 全按住才触发；Meta 不参与判定，与 Android 一致）
+  private static readonly HOTKEY_MODIFIER_MASK: number = MODIFIER_SHIFT | MODIFIER_CTRL | MODIFIER_ALT;
+
+  /**
+   * 热键目标键 VK → 本地动作
+   * Android 原版的 Z（切换鼠标捕获）在本项目无对应功能，暂缺
+   */
+  private static hotkeyActionForVk(vkCode: number): StreamHotkeyAction | null {
+    switch (vkCode) {
+      case 0x51: return StreamHotkeyAction.QUIT;           // VK_Q
+      case 0x53: return StreamHotkeyAction.TOGGLE_OVERLAY; // VK_S
+      case 0x58: return StreamHotkeyAction.HELP;           // VK_X
+      default: return null;
+    }
+  }
+
+  /**
+   * 三修饰键本地热键（对齐 Android Game.java handleSpecialKeys）
+   *
+   * Ctrl+Alt+Shift 全按住时 Q/S/X 触发本地动作并被消费，不转发主机。
+   * 与 Android 一致：只吞目标键，修饰键自身的 DOWN/UP 照常转发，
+   * Windows 端看到的是三修饰键短暂按下后松开，无副作用。
+   *
+   * armedKeys 过滤按键重复：按住目标键不放只触发一次，抬起后重新武装。
+   *
+   * @returns true 表示事件已消费，调用方不应再转发主机
+   */
+  private tryHandleLocalHotkey(vkCode: number, isDown: boolean): boolean {
+    if ((this.modifierFlags & StreamInputHandler.HOTKEY_MODIFIER_MASK)
+      !== StreamInputHandler.HOTKEY_MODIFIER_MASK) {
+      return false;
+    }
+    const action = StreamInputHandler.hotkeyActionForVk(vkCode);
+    if (action === null) {
+      return false;
+    }
+    if (isDown) {
+      if (!this.hotkeyArmedKeys.has(vkCode)) {
+        this.hotkeyArmedKeys.add(vkCode);
+        Logger.info('StreamInputHandler', `[INPUT] 本地热键触发: ${action}`);
+        this.onHotkeyAction?.(action);
+      }
+    } else {
+      this.hotkeyArmedKeys.delete(vkCode);
+    }
+    return true;
   }
 
   // ==================== 按键拦截器 ====================
@@ -837,6 +918,10 @@ export class StreamInputHandler {
       if (KeyboardTranslator.isKeyboardKey(keyCode)) {
         const vkCode = KeyboardTranslator.translate(keyCode);
         if (vkCode > 0) {
+          // 三修饰键本地热键：命中即消费，不转发主机（与 ArkUI 路径一致）
+          if (this.tryHandleLocalHotkey(vkCode, isPressed)) {
+            return;
+          }
           this.updateModifierFlags(vkCode, isPressed);
           const session = this.viewModel?.getSession();
           if (session) {

@@ -52,7 +52,7 @@ import { InputInterceptorService } from '../service/input/InputInterceptorServic
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { SettingsKeys } from '../service/SettingsService';
 import { AihdrModifier, isAihdrSupported } from '../components/AihdrModifier';
-import { StreamInputHandler } from '../service/streaming/StreamInputHandler';
+import { StreamInputHandler, StreamHotkeyAction } from '../service/streaming/StreamInputHandler';
 import { StreamLifecycleManager } from '../service/streaming/StreamLifecycleManager';
 import { StreamIMEManager } from '../service/streaming/StreamIMEManager';
 import { VirtualKeyboard } from '../components/virtual/VirtualKeyboard';
@@ -444,6 +444,10 @@ struct StreamPage {
     // 初始化输入处理器
     this.inputHandler.initialize(this.viewModel, this.gamepadManager);
     this.inputHandler.setOnShowStreamMenu(() => this.showStreamMenu());
+    // 三修饰键本地热键（Ctrl+Alt+Shift+{Q,S,X}，对齐 Android 原版）
+    this.inputHandler.setOnHotkeyAction((action: StreamHotkeyAction): void => {
+      this.handleStreamHotkey(action);
+    });
 
     // 初始化双指缩放处理器
     this.panZoomHandler.setOnStateChanged((state: PanZoomState) => {
@@ -1095,6 +1099,51 @@ struct StreamPage {
     // 菜单打开期间按键被强制释放过，恢复前对账仍按下的键
     this.inputHandler.reconcileKeyState();
     this.resumeMouseInterceptor();
+  }
+
+  /**
+   * 三修饰键本地热键处理（Ctrl+Alt+Shift+{Q,S,X}，对齐 Android Game.java handleSpecialKeys）
+   */
+  private handleStreamHotkey(action: StreamHotkeyAction): void {
+    switch (action) {
+      case StreamHotkeyAction.QUIT:
+        // 与菜单「断开连接」一致：结束串流，远端游戏继续运行
+        this.stopStreaming();
+        break;
+      case StreamHotkeyAction.TOGGLE_OVERLAY:
+        this.viewModel.toggleOverlay();
+        break;
+      case StreamHotkeyAction.HELP:
+        this.showHotkeyHelpDialog();
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * 快捷键帮助对话框（对齐 Android 原版 Ctrl+Alt+Shift+X 帮助浮层）
+   *
+   * 与串流菜单同一套按键保护：打开前释放全部按键（弹窗接管焦点后
+   * 松键的 KEY_UP 会失联导致主机卡键），关闭后对账恢复仍被物理按住的键。
+   */
+  private showHotkeyHelpDialog(): void {
+    this.inputHandler.releaseAllKeys();
+    this.getUIContext().getPromptAction().showDialog({
+      title: '⌨️ 串流快捷键',
+      message: '双击菜单键（默认 ESC）：打开串流菜单\n'
+        + 'Ctrl+Alt+Shift+Q：断开连接\n'
+        + 'Ctrl+Alt+Shift+S：切换性能监控\n'
+        + 'Ctrl+Alt+Shift+X：显示本帮助',
+      buttons: [{ text: '知道了', color: '#1F8AFF' }]
+    }).then((): void => {
+      this.inputHandler.reconcileKeyState();
+      this.requestStreamFocus();
+    }).catch((err: Error): void => {
+      Logger.warn('StreamPage', '快捷键帮助对话框关闭异常:', err);
+      this.inputHandler.reconcileKeyState();
+      this.requestStreamFocus();
+    });
   }
 
   /**
