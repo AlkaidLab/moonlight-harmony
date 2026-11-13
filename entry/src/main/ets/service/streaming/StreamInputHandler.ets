@@ -44,6 +44,18 @@ import { UI } from '../../common/UI';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { RawMouseMotion } from '../../utils/RawMouseMotion';
 
+/**
+ * 三修饰键本地热键动作（Ctrl+Alt+Shift+{Q,S,X}，对齐 Android 原版 Game.java）
+ */
+export enum StreamHotkeyAction {
+  /** 断开连接（远端游戏继续运行） */
+  QUIT = 'quit',
+  /** 切换性能监控浮层 */
+  TOGGLE_OVERLAY = 'toggle_overlay',
+  /** 显示快捷键帮助 */
+  HELP = 'help'
+}
+
 export class StreamInputHandler {
   // ── 键盘修饰键状态追踪（位掩码：Shift=0x01, Ctrl=0x02, Alt=0x04, Meta=0x08）──
   private modifierFlags: number = 0;
@@ -84,6 +96,30 @@ export class StreamInputHandler {
   private escMenuEnabled: boolean = true;
   private onShowStreamMenu: (() => void) | null = null;
 
+  // ── 本地热键（Ctrl+Alt+Shift 组合命中后消费事件，不转发主机）──
+  private onHotkeyAction: ((action: StreamHotkeyAction) => void) | null = null;
+  /** KEY_DOWN 被本地热键消费的目标键：决定 KEY_UP 的消费归属，兼过滤按键重复 */
+  private hotkeyClaimedKeys: Set<number> = new Set<number>();
+  // ── 查询失败降级策略（物理状态不可用时无法消除的歧义，按保守处理）──
+  // 1) 未核实认领上再次按下：无法区分旧键仍按住的重复与全新按下，一律消费
+  //    不触发（最多吞掉一次动作，查询成功或复检清认领后自愈）；
+  // 2) 静默复检清认领后目标键仍被按住（无自动重复事件的设备）：后续 KEY_UP
+  //    以 stray UP 形式转发主机，Windows 端对未按下键的 UP 是 no-op，无副作用；
+  //    若复检后仍按住期间才收到重复 DOWN，该事件可能被转发主机，或在修饰键
+  //    仍齐全时再次触发本地动作；
+  // 3) 区分信号不存在：ArkUI KeyEvent（API 26）仅有 type/keyCode/timestamp 等
+  //    字段、原生拦截器事件仅有 actionTime，均无重复标志或次数，事件时间无法
+  //    可靠区分重复与重按。
+  // 两种降级都有界且自愈，仅出现在 OH_Input_GetKeyState 查询失败的场景。
+  /** 认领键最近一次事件时间（重复 DOWN 视为活动）：查询失败时的静默复检依据 */
+  private hotkeyClaimActivity: Map<number, number> = new Map();
+  /** 未能确认物理按住的认领（查询失败遗留）：复检与按下时按需核实的对象 */
+  private hotkeyClaimUnverified: Set<number> = new Set<number>();
+  /** 认领静默复检定时器（物理状态查询失败时启动，一次性） */
+  private hotkeyClaimRecheckTimer: number = -1;
+  /** 复检前静默时长：超过视为已在弹窗期间松开（持续按住会有连续重复 DOWN） */
+  private static readonly HOTKEY_CLAIM_RECHECK_DELAY: number = 1500; // ms
+
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
   private appVolume: number = 1.0;
   private preMuteVolume: number = 1.0;
@@ -111,6 +147,13 @@ export class StreamInputHandler {
    */
   setOnShowStreamMenu(callback: () => void): void {
     this.onShowStreamMenu = callback;
+  }
+
+  /**
+   * 设置本地热键回调（由 StreamPage 注入）
+   */
+  setOnHotkeyAction(callback: (action: StreamHotkeyAction) => void): void {
+    this.onHotkeyAction = callback;
   }
 
   /**
@@ -147,6 +190,11 @@ export class StreamInputHandler {
   resetState(): void {
     this.releaseAllKeys();
     this.stopModifierWatchdog();
+    // 取消在途的热键认领静默复检（认领已随 releaseAllKeys 清理，复检空转无意义）
+    if (this.hotkeyClaimRecheckTimer >= 0) {
+      clearTimeout(this.hotkeyClaimRecheckTimer);
+      this.hotkeyClaimRecheckTimer = -1;
+    }
     // 拦截器是消费型的，串流结束后必须停止，否则应用界面收不到物理键盘
     this.stopKeyInterceptor();
     // 对账记录不跨串流残留：新串流主机端状态全新，旧记录无意义
@@ -190,8 +238,12 @@ export class StreamInputHandler {
    * 对齐 Android Game.onWindowFocusChanged → KeyboardInputHandler.clearModifierState()：
    * 切后台期间 KEY_UP 不会送达应用，若不清除，Windows 端 Alt/Ctrl 会永久按下，
    * 导致返回串流后无法打字、Blender 鼠标选择异常（Alt+左键=旋转视图）。
+   *
+   * @param preserveHotkeyClaims 热键动作自身触发的释放（帮助浮层）传 true：
+   *        目标键可能仍被按住，保留认领以继续消费重复 KEY_DOWN 与 KEY_UP，
+   *        弹窗关闭时经 reconcileHotkeyClaims 按物理状态对账清理
    */
-  releaseAllKeys(): void {
+  releaseAllKeys(preserveHotkeyClaims: boolean = false): void {
     const session = this.viewModel?.getSession();
     if (session) {
       // 1. 释放所有追踪到的按键，并补齐 8 个 Windows 修饰键，兜底处理
@@ -213,6 +265,13 @@ export class StreamInputHandler {
     this.activeVkKeys.clear();
     // 2. 清空本地修饰键位掩码，防止后续按键被错误拼上残留的 Alt/Ctrl 位
     this.modifierFlags = 0;
+    // 失焦期间热键目标键的 KEY_UP 收不到，归属标记一并清掉，
+    // 否则恢复焦点后的首次按键会被当作重复事件吞掉
+    if (!preserveHotkeyClaims) {
+      this.hotkeyClaimedKeys.clear();
+      this.hotkeyClaimUnverified.clear();
+      this.hotkeyClaimActivity.clear();
+    }
   }
 
   /**
@@ -737,6 +796,10 @@ export class StreamInputHandler {
     if (KeyboardTranslator.isKeyboardKey(keyCode)) {
       const vkCode = KeyboardTranslator.translate(keyCode);
       if (vkCode > 0) {
+        // 三修饰键本地热键：命中即消费，不转发主机（对齐 Android Game.java）
+        if (this.tryHandleLocalHotkey(vkCode, event.type === KeyType.Down)) {
+          return true;
+        }
         this.updateModifierFlags(vkCode, event.type === KeyType.Down);
         const session = this.viewModel?.getSession();
         if (session) {
@@ -755,6 +818,197 @@ export class StreamInputHandler {
 
     // 未识别的按键，不拦截
     return false;
+  }
+
+  // ==================== 本地热键 ====================
+
+  // 三修饰键位掩码（Shift+Ctrl+Alt 全按住才触发；Meta 不参与判定，与 Android 一致）
+  private static readonly HOTKEY_MODIFIER_MASK: number = MODIFIER_SHIFT | MODIFIER_CTRL | MODIFIER_ALT;
+
+  /**
+   * 热键目标键 VK → 本地动作
+   * Android 原版的 Z（切换鼠标捕获）在本项目无对应功能，暂缺
+   */
+  private static hotkeyActionForVk(vkCode: number): StreamHotkeyAction | null {
+    switch (vkCode) {
+      case 0x51: return StreamHotkeyAction.QUIT;           // VK_Q
+      case 0x53: return StreamHotkeyAction.TOGGLE_OVERLAY; // VK_S
+      case 0x58: return StreamHotkeyAction.HELP;           // VK_X
+      default: return null;
+    }
+  }
+
+  /**
+   * 三修饰键本地热键（对齐 Android Game.java handleSpecialKeys）
+   *
+   * Ctrl+Alt+Shift 全按住时 Q/S/X 的 KEY_DOWN 触发本地动作并被消费，不转发主机。
+   * 与 Android 一致：只吞目标键，修饰键自身的 DOWN/UP 照常转发，
+   * Windows 端看到的是三修饰键短暂按下后松开，无副作用。
+   *
+   * 目标键的归属在首次 KEY_DOWN 时固定，后续重复 DOWN 与 UP 一律沿用：
+   * - 首次按下时组合齐全 → 本地认领（claimedKeys）：重复 DOWN 与 UP 均消费，
+   *   UP 时清理认领，无论修饰键当前是否仍按住；
+   * - 首次按下时组合未齐 → 已转发主机（activeVkKeys 跟踪）：重复 DOWN 与 UP
+   *   均继续转发完成释放，不因修饰键中途补齐而改为本地归属。
+   * 归属不固定会造成 DOWN/UP 各进一条通道，主机端卡键或热键失效。
+   *
+   * claimedKeys 同时过滤按键重复：按住目标键不放只触发一次。
+   *
+   * @returns true 表示事件已消费，调用方不应再转发主机
+   */
+  private tryHandleLocalHotkey(vkCode: number, isDown: boolean): boolean {
+    const action = StreamInputHandler.hotkeyActionForVk(vkCode);
+    if (action === null) {
+      return false;
+    }
+    if (isDown) {
+      // 归属已固定的键沿用首次按下的分类，重复 KEY_DOWN 不改变归属
+      if (this.hotkeyClaimedKeys.has(vkCode)) {
+        if (this.hotkeyClaimUnverified.has(vkCode)) {
+          // 未核实的认领（此前查询失败遗留）可能已随弹窗期间松开失效：
+          // 借这次按下核实物理状态，避免复检窗口内的重按被误吞
+          const released = this.isHotkeyKeyPhysicallyReleased(vkCode);
+          if (released === true) {
+            // 已松开：本次 DOWN 是全新按下，清除归属后走正常判定
+            this.hotkeyClaimedKeys.delete(vkCode);
+            this.hotkeyClaimUnverified.delete(vkCode);
+            this.hotkeyClaimActivity.delete(vkCode);
+          } else {
+            if (released === false) {
+              this.hotkeyClaimUnverified.delete(vkCode); // 确认仍按住，转正
+            }
+            this.hotkeyClaimActivity.set(vkCode, Date.now());
+            return true;
+          }
+        } else {
+          this.hotkeyClaimActivity.set(vkCode, Date.now());
+          return true;
+        }
+      }
+      if (this.activeVkKeys.has(vkCode)) {
+        return false;
+      }
+      if ((this.modifierFlags & StreamInputHandler.HOTKEY_MODIFIER_MASK)
+        !== StreamInputHandler.HOTKEY_MODIFIER_MASK) {
+        return false;
+      }
+      this.hotkeyClaimedKeys.add(vkCode);
+      this.hotkeyClaimActivity.set(vkCode, Date.now());
+      Logger.info('StreamInputHandler', `[INPUT] 本地热键触发: ${action}`);
+      this.onHotkeyAction?.(action);
+      return true;
+    }
+    // KEY_UP：只对按下时被本地消费的键消费并清理，已转发主机的键继续转发
+    const claimed = this.hotkeyClaimedKeys.delete(vkCode);
+    if (claimed) {
+      this.hotkeyClaimUnverified.delete(vkCode);
+      this.hotkeyClaimActivity.delete(vkCode);
+    }
+    return claimed;
+  }
+
+  /**
+   * 对账本地热键认领（帮助浮层关闭时调用）
+   *
+   * 浮层显示期间页面收不到按键事件，目标键可能在弹窗期间已松开。
+   * 通过 OH_Input_GetKeyState 查询物理状态：已松开的清除认领（避免残留认领
+   * 把下一次组合当作重复事件吞掉），仍按住的保留（重复 KEY_DOWN 继续被消费，
+   * KEY_UP 到达时自然清理）。
+   * 查询不可用（API 缺失返回 null / 单键 -1）的认领标记为未核实并启动静默
+   * 复检兜底：复检时仍无任何按键活动的视为已松开清除；此后目标键再次按下
+   * 时也会先按需核实（tryHandleLocalHotkey），避免残留认领吞掉下一次组合。
+   * 已确认仍按住的认领不参与复检，防止无自动重复事件的设备误清认领。
+   */
+  reconcileHotkeyClaims(): void {
+    if (this.hotkeyClaimedKeys.size === 0) return;
+    const vkCodes: number[] = [];
+    const harmonyCodes: number[] = [];
+    this.hotkeyClaimedKeys.forEach((vkCode: number) => {
+      const harmony = KeyboardTranslator.reverseTranslate(vkCode);
+      if (harmony > 0) {
+        vkCodes.push(vkCode);
+        harmonyCodes.push(harmony);
+      }
+    });
+    if (vkCodes.length === 0) {
+      this.hotkeyClaimedKeys.clear();
+      this.hotkeyClaimUnverified.clear();
+      this.hotkeyClaimActivity.clear();
+      return;
+    }
+    const states = InputInterceptorService.getInstance().queryKeyStates(harmonyCodes);
+    if (states === null || states.length !== vkCodes.length) {
+      // 查询整体不可用：全部转未核实，静默复检兜底
+      this.hotkeyClaimedKeys.forEach((vkCode: number) => {
+        this.hotkeyClaimUnverified.add(vkCode);
+      });
+      this.scheduleHotkeyClaimRecheck();
+      return;
+    }
+    let hasUnverified = false;
+    for (let i = 0; i < vkCodes.length; i++) {
+      if (states[i] === 0) {
+        // 弹窗期间已松开：清除归属
+        this.hotkeyClaimedKeys.delete(vkCodes[i]);
+        this.hotkeyClaimUnverified.delete(vkCodes[i]);
+        this.hotkeyClaimActivity.delete(vkCodes[i]);
+      } else if (states[i] === 1) {
+        this.hotkeyClaimUnverified.delete(vkCodes[i]); // 确认仍按住，无需复检
+      } else {
+        this.hotkeyClaimUnverified.add(vkCodes[i]); // 单键查询失败：未核实
+        hasUnverified = true;
+      }
+    }
+    if (hasUnverified) {
+      this.scheduleHotkeyClaimRecheck();
+    }
+  }
+
+  /**
+   * 查询热键目标键的物理状态（单键）
+   *
+   * @returns true=已松开, false=仍按住, null=查询不可用
+   */
+  private isHotkeyKeyPhysicallyReleased(vkCode: number): boolean | null {
+    const harmony = KeyboardTranslator.reverseTranslate(vkCode);
+    if (harmony <= 0) return null;
+    const states = InputInterceptorService.getInstance().queryKeyStates([harmony]);
+    if (states === null || states.length !== 1 || states[0] < 0) return null;
+    return states[0] === 0;
+  }
+
+  /**
+   * 认领静默复检（物理状态查询失败时的兜底）
+   *
+   * 一次性定时器：启动后仍无任何按键活动的未核实认领视为已在弹窗期间
+   * 松开并清除（持续按住的键会持续产生重复 KEY_DOWN，活动时间戳保持
+   * 新鲜，不受影响）。已确认按住的认领不参与复检；若期间认领因 KEY_UP /
+   * releaseAllKeys 正常清理则自动空转，无副作用。
+   */
+  private scheduleHotkeyClaimRecheck(): void {
+    if (this.hotkeyClaimRecheckTimer >= 0) return;
+    const armedAt = Date.now();
+    this.hotkeyClaimRecheckTimer = setTimeout(() => {
+      this.hotkeyClaimRecheckTimer = -1;
+      if (this.hotkeyClaimedKeys.size === 0) return;
+      // 只复检未核实的认领：已确认按住的认领不参与（防止无自动重复
+      // 事件的设备误清认领），其 KEY_UP 到达时自然清理
+      const stale: number[] = [];
+      this.hotkeyClaimUnverified.forEach((vkCode: number) => {
+        const last = this.hotkeyClaimActivity.get(vkCode);
+        if (last === undefined || last <= armedAt) {
+          stale.push(vkCode);
+        }
+      });
+      if (stale.length === 0) return;
+      stale.forEach((vkCode: number) => {
+        this.hotkeyClaimedKeys.delete(vkCode);
+        this.hotkeyClaimUnverified.delete(vkCode);
+        this.hotkeyClaimActivity.delete(vkCode);
+      });
+      Logger.info('StreamInputHandler',
+        `[INPUT] 热键认领静默复检: 清除 ${stale.length} 个无活动认领`);
+    }, StreamInputHandler.HOTKEY_CLAIM_RECHECK_DELAY);
   }
 
   // ==================== 按键拦截器 ====================
@@ -837,6 +1091,10 @@ export class StreamInputHandler {
       if (KeyboardTranslator.isKeyboardKey(keyCode)) {
         const vkCode = KeyboardTranslator.translate(keyCode);
         if (vkCode > 0) {
+          // 三修饰键本地热键：命中即消费，不转发主机（与 ArkUI 路径一致）
+          if (this.tryHandleLocalHotkey(vkCode, isPressed)) {
+            return;
+          }
           this.updateModifierFlags(vkCode, isPressed);
           const session = this.viewModel?.getSession();
           if (session) {
@@ -894,9 +1152,12 @@ export class StreamInputHandler {
    *
    * 拦截器是消费型的：被它接管的按键不会再传给应用自身。因此串流结束后必须
    * 停止，否则停留在应用界面时物理键盘会全部失效（事件被吞掉且无处转发）。
+   *
+   * @returns true 表示已停止（或本就未运行）；false 表示原生移除失败、
+   *          拦截器仍在消费按键，调用方不应假定键盘输入已恢复应用侧
    */
-  stopKeyInterceptor(): void {
-    InputInterceptorService.getInstance().stop();
+  stopKeyInterceptor(): boolean {
+    return InputInterceptorService.getInstance().stop() === 0;
   }
 
   // ==================== 映射工具 ====================

@@ -52,7 +52,8 @@ import { InputInterceptorService } from '../service/input/InputInterceptorServic
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { SettingsKeys } from '../service/SettingsService';
 import { AihdrModifier, isAihdrSupported } from '../components/AihdrModifier';
-import { StreamInputHandler } from '../service/streaming/StreamInputHandler';
+import { StreamInputHandler, StreamHotkeyAction } from '../service/streaming/StreamInputHandler';
+import { StreamingSession } from '../service/streaming/StreamingSession';
 import { StreamLifecycleManager } from '../service/streaming/StreamLifecycleManager';
 import { StreamIMEManager } from '../service/streaming/StreamIMEManager';
 import { VirtualKeyboard } from '../components/virtual/VirtualKeyboard';
@@ -237,7 +238,15 @@ struct StreamPage {
   private streamFrameDiagnosticTimer: number | null = null;
   private streamDisplayCallbacks: number = 0;
   private xComponentFrameRequestActive: boolean = false;
-  @State private mouseInputSuspended: boolean = false;
+  /** 游戏菜单的鼠标挂起所有权（帮助浮层侧由 hotkeyHelpVisible 表达，两者取或） */
+  @State private menuMouseSuspended: boolean = false;
+  @State private hotkeyHelpVisible: boolean = false; // 快捷键帮助浮层（交互弹层，参与复焦守卫+鼠标挂起）
+  /** 帮助浮层跨重连留存且关闭时新会话尚未就绪（CONNECTING）：CONNECTED 后补做恢复 */
+  private pendingHotkeyDialogRecovery: boolean = false;
+  /** 帮助浮层显示期间被跳过的拦截器启动：浮层关闭后按当前设置补启动 */
+  private pendingHotkeyInterceptorStart: boolean = false;
+  /** 退出串流流程开始（stopStreaming / quitGameAndReturn）：浮层关闭不再恢复输入 */
+  private streamExiting: boolean = false;
   @State private streamWindowFocused: boolean = true;
   
   // ── 解耦的处理器/管理器 ──
@@ -374,7 +383,7 @@ struct StreamPage {
         // 焦点可能已被系统弹窗/切走时重置，重新拉回本页以保证键盘可达
         this.requestStreamFocus();
         this.inputHandler.reconcileKeyState();
-        if (!this.mouseInputSuspended) {
+        if (!this.menuMouseSuspended && !this.hotkeyHelpVisible) {
           this.resumeMouseInterceptor();
         }
       }
@@ -444,6 +453,17 @@ struct StreamPage {
     // 初始化输入处理器
     this.inputHandler.initialize(this.viewModel, this.gamepadManager);
     this.inputHandler.setOnShowStreamMenu(() => this.showStreamMenu());
+    // 三修饰键本地热键（Ctrl+Alt+Shift+{Q,S,X}，对齐 Android 原版）
+    this.inputHandler.setOnHotkeyAction((action: StreamHotkeyAction): void => {
+      this.handleStreamHotkey(action);
+    });
+    // 帮助浮层跨重连留存且关闭时新会话未就绪：CONNECTED 翻转（首帧上屏）后补做恢复
+    this.viewModel.onConnected = (): void => {
+      if (!this.pendingHotkeyDialogRecovery) return;
+      this.pendingHotkeyDialogRecovery = false;
+      if (this.pageDisposed || this.viewModel.isStopping || this.streamExiting) return;
+      this.finishHotkeyDialogRecovery(false);
+    };
 
     // 初始化双指缩放处理器
     this.panZoomHandler.setOnStateChanged((state: PanZoomState) => {
@@ -807,6 +827,7 @@ struct StreamPage {
 
     // 标记销毁：阻止异步启动链路在销毁后重新启用帧率保活
     this.pageDisposed = true;
+    this.viewModel.onConnected = null;
     // 兜底复位帧率请求（含注销 XComponent 每帧回调），防高刷请求残留
     this.resetStreamFrameHints();
 
@@ -1090,11 +1111,134 @@ struct StreamPage {
     // 键鼠状态在此恢复；焦点恢复不在此做——onWillDismiss/onDismiss 时
     // CustomDialog 尚在移除中，过早抢焦会覆盖弹层，改由控制器
     // onDidDisappear（弹窗真正移除后）触发 requestStreamFocus
-    if (!this.mouseInputSuspended) return;
-    this.mouseInputSuspended = false;
+    if (!this.menuMouseSuspended) return;
+    this.menuMouseSuspended = false;
     // 菜单打开期间按键被强制释放过，恢复前对账仍按下的键
     this.inputHandler.reconcileKeyState();
     this.resumeMouseInterceptor();
+  }
+
+  /**
+   * 三修饰键本地热键处理（Ctrl+Alt+Shift+{Q,S,X}，对齐 Android Game.java handleSpecialKeys）
+   */
+  private handleStreamHotkey(action: StreamHotkeyAction): void {
+    switch (action) {
+      case StreamHotkeyAction.QUIT:
+        // 与菜单「断开连接」一致：结束串流，远端游戏继续运行
+        this.stopStreaming();
+        break;
+      case StreamHotkeyAction.TOGGLE_OVERLAY:
+        this.viewModel.toggleOverlay();
+        break;
+      case StreamHotkeyAction.HELP:
+        this.showHotkeyHelpDialog();
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * 快捷键帮助对话框（对齐 Android 原版 Ctrl+Alt+Shift+X 帮助浮层）
+   *
+   * 与串流菜单同一套保护：打开前暂停鼠标输入、暂停反劫持拦截器
+   * （两者都不感知应用弹窗——C++ Monitor 与拦截器回调会把鼠标/按键
+   * 继续送进游戏，对话框也收不到 Enter/Esc），并释放全部按键防主机卡键；
+   * 关闭（含异常路径）后 closeHotkeyHelpDialog 统一恢复。
+   */
+  private showHotkeyHelpDialog(): void {
+    const interceptorWasActive = InputInterceptorService.getInstance().isActive();
+    if (interceptorWasActive && !this.inputHandler.stopKeyInterceptor()) {
+      // 原生移除失败 = 拦截器仍在消费按键，对话框收不到键盘输入，放弃打开
+      Logger.warn('StreamPage', '快捷键帮助：反劫持拦截器停止失败，取消打开帮助');
+      ToastQueue.show({ message: '反劫持停止失败，暂无法打开快捷键帮助', duration: 2500 });
+      return;
+    }
+    this.hotkeyHelpVisible = true;
+    this.inputHandler.stopMouseInterceptor();
+    this.stopMouseKeepAlive();
+    // 热键自身触发的释放：目标键（X）可能仍被按住，保留认领以消费
+    // 弹窗期间的重复 KEY_DOWN，关闭时经 reconcileHotkeyClaims 对账
+    this.inputHandler.releaseAllKeys(true);
+    const sessionAtOpen = this.viewModel.getSession();
+    this.getUIContext().getPromptAction().showDialog({
+      title: '⌨️ 串流快捷键',
+      message: '双击菜单键（默认 ESC）：打开串流菜单\n'
+        + 'Ctrl+Alt+Shift+Q：断开连接\n'
+        + 'Ctrl+Alt+Shift+S：切换性能监控\n'
+        + 'Ctrl+Alt+Shift+X：显示本帮助',
+      buttons: [{ text: '知道了', color: '#1F8AFF' }]
+    }).then((): void => {
+      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen);
+    }).catch((err: Error): void => {
+      Logger.warn('StreamPage', '快捷键帮助对话框关闭异常:', err);
+      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen);
+    });
+  }
+
+  /**
+   * 帮助对话框关闭后的统一恢复（成功与异常路径共用，对齐 handleGameMenuDismissed）
+   */
+  private closeHotkeyHelpDialog(interceptorWasActive: boolean, sessionAtOpen: StreamingSession | null): void {
+    this.hotkeyHelpVisible = false;
+    if (this.pageDisposed || this.streamExiting) {
+      // 页面已销毁 / 退出串流流程已开始：不再恢复任何输入——战报页/列表页
+      // 需要物理按键，teardown 期间的恢复无意义（含跨会话分支）
+      return;
+    }
+    if (this.viewModel.getSession() !== sessionAtOpen) {
+      // 浮层跨重连留存：按键拦截器不按旧会话状态重启（新会话启动流程已接管）
+      if (this.viewModel.isStopping) {
+        // 连续重连的 teardown 期间关闭：挂起待恢复标记，本次重连 CONNECTED
+        // 时由 onConnected 补做；退出串流场景由后台 teardown 回调完成时丢弃
+        this.pendingHotkeyDialogRecovery = true;
+        return;
+      }
+      if (this.viewModel.isConnected) {
+        // 已连接：立即补做被弹窗守卫拦下的恢复
+        this.finishHotkeyDialogRecovery(interceptorWasActive);
+      } else {
+        // CONNECTING（CONNECTED 等首帧翻转）：挂起待恢复标记，onConnected 处补做
+        this.pendingHotkeyDialogRecovery = true;
+      }
+      return;
+    }
+    if (this.viewModel.isStopping || !this.viewModel.isConnected) {
+      // 停止流程进行中（重连的静默停止 teardown）或已断开（非正常断开保留
+      // 会话、显示错误对话框）：挂起待恢复标记，CONNECTED 翻转时由
+      // onConnected 补做对账/鼠标/复焦；退出串流的 teardown 完成后由后台
+      // 停止回调丢弃标记
+      this.pendingHotkeyDialogRecovery = true;
+      return;
+    }
+    this.finishHotkeyDialogRecovery(interceptorWasActive);
+  }
+
+  /**
+   * 帮助浮层关闭后的输入恢复（同会话关闭与跨重连留存共用）
+   *
+   * 对账热键认领与按键状态；拦截器优先补启动被浮层搁置的重连启动
+   * （按当前设置），否则按浮层前的运行状态恢复；最后恢复鼠标与焦点。
+   * 鼠标挂起由 menuMouseSuspended / hotkeyHelpVisible 共同表达，
+   * 清 hotkeyHelpVisible 后 resumeMouseInterceptor 自带守卫判定。
+   */
+  private finishHotkeyDialogRecovery(interceptorWasActive: boolean): void {
+    // 浮层显示期间页面收不到按键，先对账热键认领（目标键可能在弹窗期间已松开）
+    this.inputHandler.reconcileHotkeyClaims();
+    // 浮层显示期间按键被强制释放过，恢复前对账仍被物理按住的键
+    this.inputHandler.reconcileKeyState();
+    if (this.pendingHotkeyInterceptorStart) {
+      // 重连曾因浮层显示跳过启动：按当前设置补启动
+      this.pendingHotkeyInterceptorStart = false;
+      this.inputHandler.startKeyInterceptor();
+      this.inputHandler.startModifierWatchdog();
+    } else if (interceptorWasActive) {
+      // 非强制启动：帮助显示期间用户可能在菜单里显式关闭过反劫持，
+      // 恢复与否由当前设置决定（设置关闭时本调用直接返回）
+      this.inputHandler.startKeyInterceptor();
+    }
+    this.resumeMouseInterceptor();
+    this.requestStreamFocus();
   }
 
   /**
@@ -1104,7 +1248,7 @@ struct StreamPage {
     if (!this.menuManager) return;
 
     // 暂停鼠标全速轮询（Monitor 暂停 + DisplaySync 停止）
-    this.mouseInputSuspended = true;
+    this.menuMouseSuspended = true;
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
     
@@ -1263,7 +1407,7 @@ struct StreamPage {
    * 恢复鼠标全速轮询（对话框关闭后调用）
    */
   private resumeMouseInterceptor(): void {
-    if (!this.viewModel.isConnected || this.mouseInputSuspended) return;
+    if (!this.viewModel.isConnected || this.menuMouseSuspended || this.hotkeyHelpVisible) return;
     this.stopMouseKeepAlive();
     const monitorOk = this.inputHandler.startMouseInterceptor(
       this.getXComponentWidthVp(),
@@ -1495,7 +1639,7 @@ struct StreamPage {
    */
   private hasInteractiveOverlay(): boolean {
     return this.showVirtualKeyboard || this.showKeyboardPanel || this.customKeyEditMode ||
-      this.gameMenuDialogController !== null || this.showStreamReport;
+      this.gameMenuDialogController !== null || this.showStreamReport || this.hotkeyHelpVisible;
   }
 
   /**
@@ -1671,24 +1815,37 @@ struct StreamPage {
 
       // 启动按键拦截器与修饰键自愈看门狗（开关与注入 API 检查在
       // startKeyInterceptor 内部）。不能用 isConnected 复核：CONNECTED 等首帧
-      // 才翻转，此处是 CONNECTING。需排除两类过期链路：连接已终止
+      // 才翻转，此处是 CONNECTING。需排除三类过期链路：连接已终止
       // （DISCONNECTED）；停止流程在原生 teardown 中尚未翻转状态（isStopping，
-      // 此时停止入口的 resetState 清理已先行执行，重启将无人回收）
-      if (!this.pageDisposed && !this.viewModel.isStopping &&
+      // 此时停止入口的 resetState 清理已先行执行，重启将无人回收）；退出串流
+      // （streamExiting：quit 清理已先行执行，重启会占用战报页的物理按键）
+      if (!this.pageDisposed && !this.viewModel.isStopping && !this.streamExiting &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
-        this.inputHandler.startKeyInterceptor();
-        this.inputHandler.startModifierWatchdog();
+        if (this.hotkeyHelpVisible) {
+          // 帮助浮层显示期间不启动拦截器（浮层需接收物理按键且暂停转发主机），
+          // 记入待恢复，浮层关闭后按当前设置补启动
+          this.pendingHotkeyInterceptorStart = true;
+        } else {
+          this.inputHandler.startKeyInterceptor();
+          this.inputHandler.startModifierWatchdog();
+        }
       }
 
-      // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底
-      const monitorOk = this.inputHandler.startMouseInterceptor(
-        this.getXComponentWidthVp(),
-        this.getXComponentHeightVp(),
-        this.windowManager?.windowId ?? -1,
-        this.windowManager?.isFullscreen ?? false
-      );
-      if (!monitorOk) {
-        this.startMouseKeepAlive();
+      // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底。
+      // 帮助浮层显示期间（启动异步链路执行中可能已由 Ctrl+Alt+Shift+X 打开）
+      // 跳过，浮层关闭时经 finishHotkeyDialogRecovery → resumeMouseInterceptor
+      // 补启动，避免弹窗期间的鼠标输入被送往主机；退出串流（streamExiting）
+      // 同样跳过——quit 的清理已先行执行，启动会占用战报页的物理按键与鼠标
+      if (!this.streamExiting && !this.menuMouseSuspended && !this.hotkeyHelpVisible) {
+        const monitorOk = this.inputHandler.startMouseInterceptor(
+          this.getXComponentWidthVp(),
+          this.getXComponentHeightVp(),
+          this.windowManager?.windowId ?? -1,
+          this.windowManager?.isFullscreen ?? false
+        );
+        if (!monitorOk) {
+          this.startMouseKeepAlive();
+        }
       }
 
       // 初始化体感助手
@@ -2085,6 +2242,13 @@ struct StreamPage {
       return;
     }
 
+    // 丢弃帮助浮层相关的跨会话待恢复标记
+    this.pendingHotkeyDialogRecovery = false;
+    this.pendingHotkeyInterceptorStart = false;
+    // 退出串流开始：浮层此后关闭不再恢复任何输入（战报页需要物理按键，
+    // teardown 期间的恢复也无意义；页面销毁时随页面终结）
+    this.streamExiting = true;
+
     this.stopClipboardSync();
     this.touchInputHandler.cancelActiveInput();
     this.clearDs5TouchIndicators();
@@ -2095,7 +2259,12 @@ struct StreamPage {
     if (!this.endStreamReportEnabled) {
       await this.prepareStreamEndUi();
       await this.exitStreamAndReturn();
-      this.runDetachedAsyncTask('后台停止串流', (): Promise<void> => this.viewModel.stopStreaming());
+      this.runDetachedAsyncTask('后台停止串流', async (): Promise<void> => {
+        await this.viewModel.stopStreaming();
+        // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+        this.pendingHotkeyDialogRecovery = false;
+        this.pendingHotkeyInterceptorStart = false;
+      });
       return;
     }
 
@@ -2109,6 +2278,9 @@ struct StreamPage {
         this.lifecycleManager.stopBackgroundTask(),
         this.viewModel.stopStreaming()
       ]);
+      // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+      this.pendingHotkeyDialogRecovery = false;
+      this.pendingHotkeyInterceptorStart = false;
     });
   }
 
@@ -2121,6 +2293,13 @@ struct StreamPage {
       return;
     }
 
+    // 丢弃帮助浮层相关的跨会话待恢复标记
+    this.pendingHotkeyDialogRecovery = false;
+    this.pendingHotkeyInterceptorStart = false;
+    // 退出串流开始：浮层此后关闭不再恢复任何输入（战报页需要物理按键，
+    // teardown 期间的恢复也无意义；页面销毁时随页面终结）
+    this.streamExiting = true;
+
     this.stopClipboardSync();
     this.touchInputHandler.cancelActiveInput();
 
@@ -2132,7 +2311,12 @@ struct StreamPage {
       await this.lifecycleManager.stopBackgroundTask();
       await this.sendLockScreenShortcutBeforeDisconnect();
       await this.exitStreamAndReturn();
-      this.runDetachedAsyncTask('后台退出游戏', (): Promise<void> => this.viewModel.quitGame());
+      this.runDetachedAsyncTask('后台退出游戏', async (): Promise<void> => {
+        await this.viewModel.quitGame();
+        // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+        this.pendingHotkeyDialogRecovery = false;
+        this.pendingHotkeyInterceptorStart = false;
+      });
       return;
     }
 
@@ -2148,6 +2332,9 @@ struct StreamPage {
         stopBackgroundTaskPromise,
         this.viewModel.quitGame()
       ]);
+      // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+      this.pendingHotkeyDialogRecovery = false;
+      this.pendingHotkeyInterceptorStart = false;
     });
   }
 
@@ -2178,10 +2365,16 @@ struct StreamPage {
       // 连接终止时已停用键盘转发，重连成功后恢复（条件判断在 startKeyInterceptor
       // 内部；复核逻辑同 startStreaming：不能用等首帧才翻转的 isConnected，
       // 并经 isStopping 排除与停止流程的交叠）
-      if (!this.pageDisposed && !this.viewModel.isStopping &&
+      if (!this.pageDisposed && !this.viewModel.isStopping && !this.streamExiting &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
-        this.inputHandler.startKeyInterceptor();
-        this.inputHandler.startModifierWatchdog();
+        if (this.hotkeyHelpVisible) {
+          // 帮助浮层显示期间不启动拦截器（浮层需接收物理按键且暂停转发主机），
+          // 记入待恢复，浮层关闭后按当前设置补启动
+          this.pendingHotkeyInterceptorStart = true;
+        } else {
+          this.inputHandler.startKeyInterceptor();
+          this.inputHandler.startModifierWatchdog();
+        }
       }
 
       await this.startClipboardSync();
@@ -2585,9 +2778,9 @@ struct StreamPage {
       if (this.showCustomKeys && this.viewModel.isConnected) {
         Column() {
           CustomKeyOverlay({
-            inputEnabled: !this.mouseInputSuspended && this.streamWindowFocused,
+            inputEnabled: !this.menuMouseSuspended && !this.hotkeyHelpVisible && this.streamWindowFocused,
             onMouseLookMovement: (dx: number, dy: number): void => {
-              if (!this.viewModel.isConnected || this.mouseInputSuspended || !this.streamWindowFocused) return;
+              if (!this.viewModel.isConnected || this.menuMouseSuspended || this.hotkeyHelpVisible || !this.streamWindowFocused) return;
               this.customKeyManager?.handleMouseLookMovement(dx, dy);
             },
             editMode: $customKeyEditMode,
