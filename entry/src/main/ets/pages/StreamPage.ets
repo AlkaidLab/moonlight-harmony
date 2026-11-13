@@ -238,6 +238,7 @@ struct StreamPage {
   private streamDisplayCallbacks: number = 0;
   private xComponentFrameRequestActive: boolean = false;
   @State private mouseInputSuspended: boolean = false;
+  @State private hotkeyHelpVisible: boolean = false; // 快捷键帮助浮层（交互弹层，参与复焦守卫）
   @State private streamWindowFocused: boolean = true;
   
   // ── 解耦的处理器/管理器 ──
@@ -1131,9 +1132,13 @@ struct StreamPage {
    */
   private showHotkeyHelpDialog(): void {
     const interceptorWasActive = InputInterceptorService.getInstance().isActive();
-    if (interceptorWasActive) {
-      this.inputHandler.stopKeyInterceptor();
+    if (interceptorWasActive && !this.inputHandler.stopKeyInterceptor()) {
+      // 原生移除失败 = 拦截器仍在消费按键，对话框收不到键盘输入，放弃打开
+      Logger.warn('StreamPage', '快捷键帮助：反劫持拦截器停止失败，取消打开帮助');
+      ToastQueue.show({ message: '反劫持停止失败，暂无法打开快捷键帮助', duration: 2500 });
+      return;
     }
+    this.hotkeyHelpVisible = true;
     this.mouseInputSuspended = true;
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
@@ -1157,7 +1162,14 @@ struct StreamPage {
    * 帮助对话框关闭后的统一恢复（成功与异常路径共用，对齐 handleGameMenuDismissed）
    */
   private closeHotkeyHelpDialog(interceptorWasActive: boolean): void {
+    this.hotkeyHelpVisible = false;
     this.mouseInputSuspended = false;
+    if (this.pageDisposed || this.viewModel.isStopping || !this.viewModel.isConnected) {
+      // 页面已销毁 / 停止中 / 已断开：清理归对应流程（aboutToDisappear、
+      // 停止流程）负责，这里不得重启消费型拦截器，否则它会在无人管理的
+      // 页面上继续吞掉物理按键且再无人停止它
+      return;
+    }
     // 弹窗显示期间按键被强制释放过，恢复前对账仍被物理按住的键
     this.inputHandler.reconcileKeyState();
     if (interceptorWasActive) {
@@ -1565,7 +1577,7 @@ struct StreamPage {
    */
   private hasInteractiveOverlay(): boolean {
     return this.showVirtualKeyboard || this.showKeyboardPanel || this.customKeyEditMode ||
-      this.gameMenuDialogController !== null || this.showStreamReport;
+      this.gameMenuDialogController !== null || this.showStreamReport || this.hotkeyHelpVisible;
   }
 
   /**

@@ -813,12 +813,12 @@ export class StreamInputHandler {
    * 与 Android 一致：只吞目标键，修饰键自身的 DOWN/UP 照常转发，
    * Windows 端看到的是三修饰键短暂按下后松开，无副作用。
    *
-   * KEY_UP 按按下时的归属处理（claimedKeys）：
-   * - 按下时被本地消费的键，无论修饰键当前是否仍按住，UP 一并消费并清理归属。
-   *   否则先松修饰键再松目标键时，UP 会以「非热键」身份发给主机，且归属残留
-   *   导致同一目标的下一次组合被当作按键重复而不触发；
-   * - 按下时已转发主机的键（组合未齐时按下），UP 必须继续转发完成释放，
-   *   否则主机端卡键。
+   * 目标键的归属在首次 KEY_DOWN 时固定，后续重复 DOWN 与 UP 一律沿用：
+   * - 首次按下时组合齐全 → 本地认领（claimedKeys）：重复 DOWN 与 UP 均消费，
+   *   UP 时清理认领，无论修饰键当前是否仍按住；
+   * - 首次按下时组合未齐 → 已转发主机（activeVkKeys 跟踪）：重复 DOWN 与 UP
+   *   均继续转发完成释放，不因修饰键中途补齐而改为本地归属。
+   * 归属不固定会造成 DOWN/UP 各进一条通道，主机端卡键或热键失效。
    *
    * claimedKeys 同时过滤按键重复：按住目标键不放只触发一次。
    *
@@ -830,12 +830,16 @@ export class StreamInputHandler {
       return false;
     }
     if (isDown) {
+      // 归属已固定的键沿用首次按下的分类，重复 KEY_DOWN 不改变归属
+      if (this.hotkeyClaimedKeys.has(vkCode)) {
+        return true;
+      }
+      if (this.activeVkKeys.has(vkCode)) {
+        return false;
+      }
       if ((this.modifierFlags & StreamInputHandler.HOTKEY_MODIFIER_MASK)
         !== StreamInputHandler.HOTKEY_MODIFIER_MASK) {
         return false;
-      }
-      if (this.hotkeyClaimedKeys.has(vkCode)) {
-        return true; // 按键重复：动作已触发过，吞掉
       }
       this.hotkeyClaimedKeys.add(vkCode);
       Logger.info('StreamInputHandler', `[INPUT] 本地热键触发: ${action}`);
@@ -987,9 +991,12 @@ export class StreamInputHandler {
    *
    * 拦截器是消费型的：被它接管的按键不会再传给应用自身。因此串流结束后必须
    * 停止，否则停留在应用界面时物理键盘会全部失效（事件被吞掉且无处转发）。
+   *
+   * @returns true 表示已停止（或本就未运行）；false 表示原生移除失败、
+   *          拦截器仍在消费按键，调用方不应假定键盘输入已恢复应用侧
    */
-  stopKeyInterceptor(): void {
-    InputInterceptorService.getInstance().stop();
+  stopKeyInterceptor(): boolean {
+    return InputInterceptorService.getInstance().stop() === 0;
   }
 
   // ==================== 映射工具 ====================
