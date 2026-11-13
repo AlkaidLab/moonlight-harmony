@@ -1815,10 +1815,11 @@ struct StreamPage {
 
       // 启动按键拦截器与修饰键自愈看门狗（开关与注入 API 检查在
       // startKeyInterceptor 内部）。不能用 isConnected 复核：CONNECTED 等首帧
-      // 才翻转，此处是 CONNECTING。需排除两类过期链路：连接已终止
+      // 才翻转，此处是 CONNECTING。需排除三类过期链路：连接已终止
       // （DISCONNECTED）；停止流程在原生 teardown 中尚未翻转状态（isStopping，
-      // 此时停止入口的 resetState 清理已先行执行，重启将无人回收）
-      if (!this.pageDisposed && !this.viewModel.isStopping &&
+      // 此时停止入口的 resetState 清理已先行执行，重启将无人回收）；退出串流
+      // （streamExiting：quit 清理已先行执行，重启会占用战报页的物理按键）
+      if (!this.pageDisposed && !this.viewModel.isStopping && !this.streamExiting &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
         if (this.hotkeyHelpVisible) {
           // 帮助浮层显示期间不启动拦截器（浮层需接收物理按键且暂停转发主机），
@@ -1833,8 +1834,9 @@ struct StreamPage {
       // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底。
       // 帮助浮层显示期间（启动异步链路执行中可能已由 Ctrl+Alt+Shift+X 打开）
       // 跳过，浮层关闭时经 finishHotkeyDialogRecovery → resumeMouseInterceptor
-      // 补启动，避免弹窗期间的鼠标输入被送往主机
-      if (!this.menuMouseSuspended && !this.hotkeyHelpVisible) {
+      // 补启动，避免弹窗期间的鼠标输入被送往主机；退出串流（streamExiting）
+      // 同样跳过——quit 的清理已先行执行，启动会占用战报页的物理按键与鼠标
+      if (!this.streamExiting && !this.menuMouseSuspended && !this.hotkeyHelpVisible) {
         const monitorOk = this.inputHandler.startMouseInterceptor(
           this.getXComponentWidthVp(),
           this.getXComponentHeightVp(),
@@ -2363,7 +2365,7 @@ struct StreamPage {
       // 连接终止时已停用键盘转发，重连成功后恢复（条件判断在 startKeyInterceptor
       // 内部；复核逻辑同 startStreaming：不能用等首帧才翻转的 isConnected，
       // 并经 isStopping 排除与停止流程的交叠）
-      if (!this.pageDisposed && !this.viewModel.isStopping &&
+      if (!this.pageDisposed && !this.viewModel.isStopping && !this.streamExiting &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
         if (this.hotkeyHelpVisible) {
           // 帮助浮层显示期间不启动拦截器（浮层需接收物理按键且暂停转发主机），
