@@ -104,7 +104,12 @@ export class StreamInputHandler {
   // 1) 未核实认领上再次按下：无法区分旧键仍按住的重复与全新按下，一律消费
   //    不触发（最多吞掉一次动作，查询成功或复检清认领后自愈）；
   // 2) 静默复检清认领后目标键仍被按住（无自动重复事件的设备）：后续 KEY_UP
-  //    以 stray UP 形式转发主机，Windows 端对未按下键的 UP 是 no-op，无副作用。
+  //    以 stray UP 形式转发主机，Windows 端对未按下键的 UP 是 no-op，无副作用；
+  //    若复检后仍按住期间才收到重复 DOWN，该事件可能被转发主机，或在修饰键
+  //    仍齐全时再次触发本地动作；
+  // 3) 区分信号不存在：ArkUI KeyEvent（API 26）仅有 type/keyCode/timestamp 等
+  //    字段、原生拦截器事件仅有 actionTime，均无重复标志或次数，事件时间无法
+  //    可靠区分重复与重按。
   // 两种降级都有界且自愈，仅出现在 OH_Input_GetKeyState 查询失败的场景。
   /** 认领键最近一次事件时间（重复 DOWN 视为活动）：查询失败时的静默复检依据 */
   private hotkeyClaimActivity: Map<number, number> = new Map();

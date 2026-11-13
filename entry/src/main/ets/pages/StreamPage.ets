@@ -245,6 +245,8 @@ struct StreamPage {
   private pendingHotkeyDialogRecovery: boolean = false;
   /** 帮助浮层显示期间被跳过的拦截器启动：浮层关闭后按当前设置补启动 */
   private pendingHotkeyInterceptorStart: boolean = false;
+  /** 退出串流流程开始（stopStreaming / quitGameAndReturn）：浮层关闭不再恢复输入 */
+  private streamExiting: boolean = false;
   @State private streamWindowFocused: boolean = true;
   
   // ── 解耦的处理器/管理器 ──
@@ -1181,7 +1183,13 @@ struct StreamPage {
     this.hotkeyHelpVisible = false;
     if (this.viewModel.getSession() !== sessionAtOpen) {
       // 浮层跨重连留存：按键拦截器不按旧会话状态重启（新会话启动流程已接管）
-      if (this.pageDisposed || this.viewModel.isStopping) {
+      if (this.pageDisposed) {
+        return;
+      }
+      if (this.viewModel.isStopping) {
+        // 连续重连的 teardown 期间关闭：挂起待恢复标记，本次重连 CONNECTED
+        // 时由 onConnected 补做；退出串流场景由后台 teardown 回调完成时丢弃
+        this.pendingHotkeyDialogRecovery = true;
         return;
       }
       if (this.viewModel.isConnected) {
@@ -1193,7 +1201,9 @@ struct StreamPage {
       }
       return;
     }
-    if (this.pageDisposed) {
+    if (this.pageDisposed || this.streamExiting) {
+      // 页面已销毁 / 退出串流流程已开始：清理归对应流程负责——战报页/列表页
+      // 需要物理按键，teardown 期间的输入恢复无意义
       return;
     }
     if (this.viewModel.isStopping || !this.viewModel.isConnected) {
@@ -2236,6 +2246,9 @@ struct StreamPage {
     // 丢弃帮助浮层相关的跨会话待恢复标记
     this.pendingHotkeyDialogRecovery = false;
     this.pendingHotkeyInterceptorStart = false;
+    // 退出串流开始：浮层此后关闭不再恢复任何输入（战报页需要物理按键，
+    // teardown 期间的恢复也无意义；页面销毁时随页面终结）
+    this.streamExiting = true;
 
     this.stopClipboardSync();
     this.touchInputHandler.cancelActiveInput();
@@ -2284,6 +2297,9 @@ struct StreamPage {
     // 丢弃帮助浮层相关的跨会话待恢复标记
     this.pendingHotkeyDialogRecovery = false;
     this.pendingHotkeyInterceptorStart = false;
+    // 退出串流开始：浮层此后关闭不再恢复任何输入（战报页需要物理按键，
+    // teardown 期间的恢复也无意义；页面销毁时随页面终结）
+    this.streamExiting = true;
 
     this.stopClipboardSync();
     this.touchInputHandler.cancelActiveInput();
