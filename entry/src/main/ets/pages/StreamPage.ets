@@ -1193,15 +1193,14 @@ struct StreamPage {
       }
       return;
     }
-    if (this.pageDisposed || this.viewModel.isStopping) {
-      // 页面已销毁 / 停止中：清理归对应流程（aboutToDisappear、停止流程）
-      // 负责，这里不得重启消费型拦截器，否则它会在无人管理的页面上继续
-      // 吞掉物理按键且再无人停止它
+    if (this.pageDisposed) {
       return;
     }
-    if (!this.viewModel.isConnected) {
-      // 已断开但页面仍在（非正常断开保留会话、显示错误对话框）：挂起恢复，
-      // 重连成功 CONNECTED 翻转时由 onConnected 补做对账/鼠标/复焦
+    if (this.viewModel.isStopping || !this.viewModel.isConnected) {
+      // 停止流程进行中（重连的静默停止 teardown）或已断开（非正常断开保留
+      // 会话、显示错误对话框）：挂起待恢复标记，CONNECTED 翻转时由
+      // onConnected 补做对账/鼠标/复焦；退出串流的 teardown 完成后由后台
+      // 停止回调丢弃标记
       this.pendingHotkeyDialogRecovery = true;
       return;
     }
@@ -1824,15 +1823,20 @@ struct StreamPage {
         }
       }
 
-      // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底
-      const monitorOk = this.inputHandler.startMouseInterceptor(
-        this.getXComponentWidthVp(),
-        this.getXComponentHeightVp(),
-        this.windowManager?.windowId ?? -1,
-        this.windowManager?.isFullscreen ?? false
-      );
-      if (!monitorOk) {
-        this.startMouseKeepAlive();
+      // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底。
+      // 帮助浮层显示期间（启动异步链路执行中可能已由 Ctrl+Alt+Shift+X 打开）
+      // 跳过，浮层关闭时经 finishHotkeyDialogRecovery → resumeMouseInterceptor
+      // 补启动，避免弹窗期间的鼠标输入被送往主机
+      if (!this.menuMouseSuspended && !this.hotkeyHelpVisible) {
+        const monitorOk = this.inputHandler.startMouseInterceptor(
+          this.getXComponentWidthVp(),
+          this.getXComponentHeightVp(),
+          this.windowManager?.windowId ?? -1,
+          this.windowManager?.isFullscreen ?? false
+        );
+        if (!monitorOk) {
+          this.startMouseKeepAlive();
+        }
       }
 
       // 初始化体感助手
@@ -2243,7 +2247,12 @@ struct StreamPage {
     if (!this.endStreamReportEnabled) {
       await this.prepareStreamEndUi();
       await this.exitStreamAndReturn();
-      this.runDetachedAsyncTask('后台停止串流', (): Promise<void> => this.viewModel.stopStreaming());
+      this.runDetachedAsyncTask('后台停止串流', async (): Promise<void> => {
+        await this.viewModel.stopStreaming();
+        // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+        this.pendingHotkeyDialogRecovery = false;
+        this.pendingHotkeyInterceptorStart = false;
+      });
       return;
     }
 
@@ -2257,6 +2266,9 @@ struct StreamPage {
         this.lifecycleManager.stopBackgroundTask(),
         this.viewModel.stopStreaming()
       ]);
+      // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+      this.pendingHotkeyDialogRecovery = false;
+      this.pendingHotkeyInterceptorStart = false;
     });
   }
 
@@ -2284,7 +2296,12 @@ struct StreamPage {
       await this.lifecycleManager.stopBackgroundTask();
       await this.sendLockScreenShortcutBeforeDisconnect();
       await this.exitStreamAndReturn();
-      this.runDetachedAsyncTask('后台退出游戏', (): Promise<void> => this.viewModel.quitGame());
+      this.runDetachedAsyncTask('后台退出游戏', async (): Promise<void> => {
+        await this.viewModel.quitGame();
+        // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+        this.pendingHotkeyDialogRecovery = false;
+        this.pendingHotkeyInterceptorStart = false;
+      });
       return;
     }
 
@@ -2300,6 +2317,9 @@ struct StreamPage {
         stopBackgroundTaskPromise,
         this.viewModel.quitGame()
       ]);
+      // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+      this.pendingHotkeyDialogRecovery = false;
+      this.pendingHotkeyInterceptorStart = false;
     });
   }
 

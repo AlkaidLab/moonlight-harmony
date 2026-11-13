@@ -100,6 +100,12 @@ export class StreamInputHandler {
   private onHotkeyAction: ((action: StreamHotkeyAction) => void) | null = null;
   /** KEY_DOWN 被本地热键消费的目标键：决定 KEY_UP 的消费归属，兼过滤按键重复 */
   private hotkeyClaimedKeys: Set<number> = new Set<number>();
+  // ── 查询失败降级策略（物理状态不可用时无法消除的歧义，按保守处理）──
+  // 1) 未核实认领上再次按下：无法区分旧键仍按住的重复与全新按下，一律消费
+  //    不触发（最多吞掉一次动作，查询成功或复检清认领后自愈）；
+  // 2) 静默复检清认领后目标键仍被按住（无自动重复事件的设备）：后续 KEY_UP
+  //    以 stray UP 形式转发主机，Windows 端对未按下键的 UP 是 no-op，无副作用。
+  // 两种降级都有界且自愈，仅出现在 OH_Input_GetKeyState 查询失败的场景。
   /** 认领键最近一次事件时间（重复 DOWN 视为活动）：查询失败时的静默复检依据 */
   private hotkeyClaimActivity: Map<number, number> = new Map();
   /** 未能确认物理按住的认领（查询失败遗留）：复检与按下时按需核实的对象 */
