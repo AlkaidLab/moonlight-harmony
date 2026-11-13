@@ -1193,10 +1193,16 @@ struct StreamPage {
       }
       return;
     }
-    if (this.pageDisposed || this.viewModel.isStopping || !this.viewModel.isConnected) {
-      // 页面已销毁 / 停止中 / 已断开：清理归对应流程（aboutToDisappear、
-      // 停止流程）负责，这里不得重启消费型拦截器，否则它会在无人管理的
-      // 页面上继续吞掉物理按键且再无人停止它
+    if (this.pageDisposed || this.viewModel.isStopping) {
+      // 页面已销毁 / 停止中：清理归对应流程（aboutToDisappear、停止流程）
+      // 负责，这里不得重启消费型拦截器，否则它会在无人管理的页面上继续
+      // 吞掉物理按键且再无人停止它
+      return;
+    }
+    if (!this.viewModel.isConnected) {
+      // 已断开但页面仍在（非正常断开保留会话、显示错误对话框）：挂起恢复，
+      // 重连成功 CONNECTED 翻转时由 onConnected 补做对账/鼠标/复焦
+      this.pendingHotkeyDialogRecovery = true;
       return;
     }
     this.finishHotkeyDialogRecovery(interceptorWasActive);
@@ -1221,7 +1227,9 @@ struct StreamPage {
       this.inputHandler.startKeyInterceptor();
       this.inputHandler.startModifierWatchdog();
     } else if (interceptorWasActive) {
-      this.inputHandler.startKeyInterceptor(true);
+      // 非强制启动：帮助显示期间用户可能在菜单里显式关闭过反劫持，
+      // 恢复与否由当前设置决定（设置关闭时本调用直接返回）
+      this.inputHandler.startKeyInterceptor();
     }
     this.resumeMouseInterceptor();
     this.requestStreamFocus();
