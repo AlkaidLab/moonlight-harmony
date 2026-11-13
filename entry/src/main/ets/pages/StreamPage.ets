@@ -1124,10 +1124,19 @@ struct StreamPage {
   /**
    * 快捷键帮助对话框（对齐 Android 原版 Ctrl+Alt+Shift+X 帮助浮层）
    *
-   * 与串流菜单同一套按键保护：打开前释放全部按键（弹窗接管焦点后
-   * 松键的 KEY_UP 会失联导致主机卡键），关闭后对账恢复仍被物理按住的键。
+   * 与串流菜单同一套保护：打开前暂停鼠标输入、暂停反劫持拦截器
+   * （两者都不感知应用弹窗——C++ Monitor 与拦截器回调会把鼠标/按键
+   * 继续送进游戏，对话框也收不到 Enter/Esc），并释放全部按键防主机卡键；
+   * 关闭（含异常路径）后 closeHotkeyHelpDialog 统一恢复。
    */
   private showHotkeyHelpDialog(): void {
+    const interceptorWasActive = InputInterceptorService.getInstance().isActive();
+    if (interceptorWasActive) {
+      this.inputHandler.stopKeyInterceptor();
+    }
+    this.mouseInputSuspended = true;
+    this.inputHandler.stopMouseInterceptor();
+    this.stopMouseKeepAlive();
     this.inputHandler.releaseAllKeys();
     this.getUIContext().getPromptAction().showDialog({
       title: '⌨️ 串流快捷键',
@@ -1137,13 +1146,25 @@ struct StreamPage {
         + 'Ctrl+Alt+Shift+X：显示本帮助',
       buttons: [{ text: '知道了', color: '#1F8AFF' }]
     }).then((): void => {
-      this.inputHandler.reconcileKeyState();
-      this.requestStreamFocus();
+      this.closeHotkeyHelpDialog(interceptorWasActive);
     }).catch((err: Error): void => {
       Logger.warn('StreamPage', '快捷键帮助对话框关闭异常:', err);
-      this.inputHandler.reconcileKeyState();
-      this.requestStreamFocus();
+      this.closeHotkeyHelpDialog(interceptorWasActive);
     });
+  }
+
+  /**
+   * 帮助对话框关闭后的统一恢复（成功与异常路径共用，对齐 handleGameMenuDismissed）
+   */
+  private closeHotkeyHelpDialog(interceptorWasActive: boolean): void {
+    this.mouseInputSuspended = false;
+    // 弹窗显示期间按键被强制释放过，恢复前对账仍被物理按住的键
+    this.inputHandler.reconcileKeyState();
+    if (interceptorWasActive) {
+      this.inputHandler.startKeyInterceptor(true);
+    }
+    this.resumeMouseInterceptor();
+    this.requestStreamFocus();
   }
 
   /**

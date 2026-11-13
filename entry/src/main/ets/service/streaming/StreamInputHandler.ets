@@ -98,8 +98,8 @@ export class StreamInputHandler {
 
   // ── 本地热键（Ctrl+Alt+Shift 组合命中后消费事件，不转发主机）──
   private onHotkeyAction: ((action: StreamHotkeyAction) => void) | null = null;
-  /** 已触发动作且尚未抬起的热键 VK（过滤按键重复事件，长按只触发一次） */
-  private hotkeyArmedKeys: Set<number> = new Set<number>();
+  /** KEY_DOWN 被本地热键消费的目标键：决定 KEY_UP 的消费归属，兼过滤按键重复 */
+  private hotkeyClaimedKeys: Set<number> = new Set<number>();
 
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
   private appVolume: number = 1.0;
@@ -237,9 +237,9 @@ export class StreamInputHandler {
     this.activeVkKeys.clear();
     // 2. 清空本地修饰键位掩码，防止后续按键被错误拼上残留的 Alt/Ctrl 位
     this.modifierFlags = 0;
-    // 失焦期间热键目标键的 KEY_UP 收不到，武装标记一并清掉，
+    // 失焦期间热键目标键的 KEY_UP 收不到，归属标记一并清掉，
     // 否则恢复焦点后的首次按键会被当作重复事件吞掉
-    this.hotkeyArmedKeys.clear();
+    this.hotkeyClaimedKeys.clear();
   }
 
   /**
@@ -809,33 +809,41 @@ export class StreamInputHandler {
   /**
    * 三修饰键本地热键（对齐 Android Game.java handleSpecialKeys）
    *
-   * Ctrl+Alt+Shift 全按住时 Q/S/X 触发本地动作并被消费，不转发主机。
+   * Ctrl+Alt+Shift 全按住时 Q/S/X 的 KEY_DOWN 触发本地动作并被消费，不转发主机。
    * 与 Android 一致：只吞目标键，修饰键自身的 DOWN/UP 照常转发，
    * Windows 端看到的是三修饰键短暂按下后松开，无副作用。
    *
-   * armedKeys 过滤按键重复：按住目标键不放只触发一次，抬起后重新武装。
+   * KEY_UP 按按下时的归属处理（claimedKeys）：
+   * - 按下时被本地消费的键，无论修饰键当前是否仍按住，UP 一并消费并清理归属。
+   *   否则先松修饰键再松目标键时，UP 会以「非热键」身份发给主机，且归属残留
+   *   导致同一目标的下一次组合被当作按键重复而不触发；
+   * - 按下时已转发主机的键（组合未齐时按下），UP 必须继续转发完成释放，
+   *   否则主机端卡键。
+   *
+   * claimedKeys 同时过滤按键重复：按住目标键不放只触发一次。
    *
    * @returns true 表示事件已消费，调用方不应再转发主机
    */
   private tryHandleLocalHotkey(vkCode: number, isDown: boolean): boolean {
-    if ((this.modifierFlags & StreamInputHandler.HOTKEY_MODIFIER_MASK)
-      !== StreamInputHandler.HOTKEY_MODIFIER_MASK) {
-      return false;
-    }
     const action = StreamInputHandler.hotkeyActionForVk(vkCode);
     if (action === null) {
       return false;
     }
     if (isDown) {
-      if (!this.hotkeyArmedKeys.has(vkCode)) {
-        this.hotkeyArmedKeys.add(vkCode);
-        Logger.info('StreamInputHandler', `[INPUT] 本地热键触发: ${action}`);
-        this.onHotkeyAction?.(action);
+      if ((this.modifierFlags & StreamInputHandler.HOTKEY_MODIFIER_MASK)
+        !== StreamInputHandler.HOTKEY_MODIFIER_MASK) {
+        return false;
       }
-    } else {
-      this.hotkeyArmedKeys.delete(vkCode);
+      if (this.hotkeyClaimedKeys.has(vkCode)) {
+        return true; // 按键重复：动作已触发过，吞掉
+      }
+      this.hotkeyClaimedKeys.add(vkCode);
+      Logger.info('StreamInputHandler', `[INPUT] 本地热键触发: ${action}`);
+      this.onHotkeyAction?.(action);
+      return true;
     }
-    return true;
+    // KEY_UP：只对按下时被本地消费的键消费并清理，已转发主机的键继续转发
+    return this.hotkeyClaimedKeys.delete(vkCode);
   }
 
   // ==================== 按键拦截器 ====================
