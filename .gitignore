@@ -84,6 +84,7 @@ scripts/test-helpers/*
 !scripts/test-helpers/load-arkts.cjs
 !scripts/test-mouse-look.cjs
 !scripts/test-key-menu.cjs
+!scripts/test-cert-der-serial.cjs
 
 # Local release artifacts
 release-symbols/
