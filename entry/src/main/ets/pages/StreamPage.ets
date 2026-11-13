@@ -461,7 +461,7 @@ struct StreamPage {
     this.viewModel.onConnected = (): void => {
       if (!this.pendingHotkeyDialogRecovery) return;
       this.pendingHotkeyDialogRecovery = false;
-      if (this.pageDisposed || this.viewModel.isStopping) return;
+      if (this.pageDisposed || this.viewModel.isStopping || this.streamExiting) return;
       this.finishHotkeyDialogRecovery(false);
     };
 
@@ -1181,11 +1181,13 @@ struct StreamPage {
    */
   private closeHotkeyHelpDialog(interceptorWasActive: boolean, sessionAtOpen: StreamingSession | null): void {
     this.hotkeyHelpVisible = false;
+    if (this.pageDisposed || this.streamExiting) {
+      // 页面已销毁 / 退出串流流程已开始：不再恢复任何输入——战报页/列表页
+      // 需要物理按键，teardown 期间的恢复无意义（含跨会话分支）
+      return;
+    }
     if (this.viewModel.getSession() !== sessionAtOpen) {
       // 浮层跨重连留存：按键拦截器不按旧会话状态重启（新会话启动流程已接管）
-      if (this.pageDisposed) {
-        return;
-      }
       if (this.viewModel.isStopping) {
         // 连续重连的 teardown 期间关闭：挂起待恢复标记，本次重连 CONNECTED
         // 时由 onConnected 补做；退出串流场景由后台 teardown 回调完成时丢弃
@@ -1199,11 +1201,6 @@ struct StreamPage {
         // CONNECTING（CONNECTED 等首帧翻转）：挂起待恢复标记，onConnected 处补做
         this.pendingHotkeyDialogRecovery = true;
       }
-      return;
-    }
-    if (this.pageDisposed || this.streamExiting) {
-      // 页面已销毁 / 退出串流流程已开始：清理归对应流程负责——战报页/列表页
-      // 需要物理按键，teardown 期间的输入恢复无意义
       return;
     }
     if (this.viewModel.isStopping || !this.viewModel.isConnected) {
