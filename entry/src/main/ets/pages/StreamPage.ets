@@ -1140,6 +1140,7 @@ struct StreamPage {
       return;
     }
     this.hotkeyHelpVisible = true;
+    const mouseWasSuspended = this.mouseInputSuspended;
     this.mouseInputSuspended = true;
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
@@ -1155,22 +1156,31 @@ struct StreamPage {
         + 'Ctrl+Alt+Shift+X：显示本帮助',
       buttons: [{ text: '知道了', color: '#1F8AFF' }]
     }).then((): void => {
-      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen);
+      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen, mouseWasSuspended);
     }).catch((err: Error): void => {
       Logger.warn('StreamPage', '快捷键帮助对话框关闭异常:', err);
-      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen);
+      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen, mouseWasSuspended);
     });
   }
 
   /**
    * 帮助对话框关闭后的统一恢复（成功与异常路径共用，对齐 handleGameMenuDismissed）
    */
-  private closeHotkeyHelpDialog(interceptorWasActive: boolean, sessionAtOpen: StreamingSession | null): void {
+  private closeHotkeyHelpDialog(interceptorWasActive: boolean, sessionAtOpen: StreamingSession | null,
+    mouseWasSuspended: boolean): void {
     this.hotkeyHelpVisible = false;
-    this.mouseInputSuspended = false;
+    // 恢复进入浮层前的挂起状态而非盲清：该标志与游戏菜单共用，菜单先挂起时
+    // 归菜单所有，菜单关闭时仍按其自身路径恢复
+    this.mouseInputSuspended = mouseWasSuspended;
     if (this.viewModel.getSession() !== sessionAtOpen) {
-      // 浮层跨重连留存：旧回调不恢复任何状态（拦截器/鼠标由新会话的启动流程
-      // 接管），只清弹层标志，避免复焦守卫卡在已消失的浮层上
+      // 浮层跨重连留存：按键拦截器不按旧会话状态重启（新会话启动流程已接管）；
+      // 但新会话启动时的复焦/鼠标恢复会被弹窗守卫拦下，此处补齐
+      if (!this.pageDisposed && !this.viewModel.isStopping && this.viewModel.isConnected) {
+        this.inputHandler.reconcileHotkeyClaims();
+        this.inputHandler.reconcileKeyState();
+        this.resumeMouseInterceptor();
+        this.requestStreamFocus();
+      }
       return;
     }
     if (this.pageDisposed || this.viewModel.isStopping || !this.viewModel.isConnected) {

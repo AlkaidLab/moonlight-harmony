@@ -100,6 +100,12 @@ export class StreamInputHandler {
   private onHotkeyAction: ((action: StreamHotkeyAction) => void) | null = null;
   /** KEY_DOWN 被本地热键消费的目标键：决定 KEY_UP 的消费归属，兼过滤按键重复 */
   private hotkeyClaimedKeys: Set<number> = new Set<number>();
+  /** 认领键最近一次事件时间（重复 DOWN 视为活动）：查询失败时的静默复检依据 */
+  private hotkeyClaimActivity: Map<number, number> = new Map();
+  /** 认领静默复检定时器（物理状态查询失败时启动，一次性） */
+  private hotkeyClaimRecheckTimer: number = -1;
+  /** 复检前静默时长：超过视为已在弹窗期间松开（持续按住会有连续重复 DOWN） */
+  private static readonly HOTKEY_CLAIM_RECHECK_DELAY: number = 1500; // ms
 
   // ── 应用音频音量回退（C++ 层无法回注音量键时的应用级音量补偿）──
   private appVolume: number = 1.0;
@@ -171,6 +177,11 @@ export class StreamInputHandler {
   resetState(): void {
     this.releaseAllKeys();
     this.stopModifierWatchdog();
+    // 取消在途的热键认领静默复检（认领已随 releaseAllKeys 清理，复检空转无意义）
+    if (this.hotkeyClaimRecheckTimer >= 0) {
+      clearTimeout(this.hotkeyClaimRecheckTimer);
+      this.hotkeyClaimRecheckTimer = -1;
+    }
     // 拦截器是消费型的，串流结束后必须停止，否则应用界面收不到物理键盘
     this.stopKeyInterceptor();
     // 对账记录不跨串流残留：新串流主机端状态全新，旧记录无意义
@@ -245,6 +256,7 @@ export class StreamInputHandler {
     // 否则恢复焦点后的首次按键会被当作重复事件吞掉
     if (!preserveHotkeyClaims) {
       this.hotkeyClaimedKeys.clear();
+      this.hotkeyClaimActivity.clear();
     }
   }
 
@@ -838,6 +850,7 @@ export class StreamInputHandler {
     if (isDown) {
       // 归属已固定的键沿用首次按下的分类，重复 KEY_DOWN 不改变归属
       if (this.hotkeyClaimedKeys.has(vkCode)) {
+        this.hotkeyClaimActivity.set(vkCode, Date.now());
         return true;
       }
       if (this.activeVkKeys.has(vkCode)) {
@@ -848,12 +861,17 @@ export class StreamInputHandler {
         return false;
       }
       this.hotkeyClaimedKeys.add(vkCode);
+      this.hotkeyClaimActivity.set(vkCode, Date.now());
       Logger.info('StreamInputHandler', `[INPUT] 本地热键触发: ${action}`);
       this.onHotkeyAction?.(action);
       return true;
     }
     // KEY_UP：只对按下时被本地消费的键消费并清理，已转发主机的键继续转发
-    return this.hotkeyClaimedKeys.delete(vkCode);
+    const claimed = this.hotkeyClaimedKeys.delete(vkCode);
+    if (claimed) {
+      this.hotkeyClaimActivity.delete(vkCode);
+    }
+    return claimed;
   }
 
   /**
@@ -863,7 +881,8 @@ export class StreamInputHandler {
    * 通过 OH_Input_GetKeyState 查询物理状态：已松开的清除认领（避免残留认领
    * 把下一次组合当作重复事件吞掉），仍按住的保留（重复 KEY_DOWN 继续被消费，
    * KEY_UP 到达时自然清理）。
-   * API 不可用时保持现状，认领由后续 KEY_UP 或下一次 releaseAllKeys 清理。
+   * 查询不可用（API 缺失返回 null / 单键 -1）时保留认领并启动静默复检兜底：
+   * 复检时仍无任何按键活动的认领视为已松开清除，避免残留认领吞掉下一次组合。
    */
   reconcileHotkeyClaims(): void {
     if (this.hotkeyClaimedKeys.size === 0) return;
@@ -878,15 +897,54 @@ export class StreamInputHandler {
     });
     if (vkCodes.length === 0) {
       this.hotkeyClaimedKeys.clear();
+      this.hotkeyClaimActivity.clear();
       return;
     }
     const states = InputInterceptorService.getInstance().queryKeyStates(harmonyCodes);
-    if (states === null || states.length !== vkCodes.length) return;
+    if (states === null || states.length !== vkCodes.length) {
+      this.scheduleHotkeyClaimRecheck();
+      return;
+    }
     for (let i = 0; i < vkCodes.length; i++) {
       if (states[i] === 0) {
         this.hotkeyClaimedKeys.delete(vkCodes[i]);
+        this.hotkeyClaimActivity.delete(vkCodes[i]);
       }
     }
+    if (this.hotkeyClaimedKeys.size > 0) {
+      // 仍有认领（键被按住或单键查询失败）：静默复检兜底
+      this.scheduleHotkeyClaimRecheck();
+    }
+  }
+
+  /**
+   * 认领静默复检（物理状态查询失败时的兜底）
+   *
+   * 一次性定时器：启动后仍无任何按键活动的认领视为已在弹窗期间松开并清除
+   * （持续按住的键会持续产生重复 KEY_DOWN，活动时间戳保持新鲜，不受影响）。
+   * 若期间认领因 KEY_UP / releaseAllKeys 正常清理则自动空转，无副作用。
+   */
+  private scheduleHotkeyClaimRecheck(): void {
+    if (this.hotkeyClaimRecheckTimer >= 0) return;
+    const armedAt = Date.now();
+    this.hotkeyClaimRecheckTimer = setTimeout(() => {
+      this.hotkeyClaimRecheckTimer = -1;
+      if (this.hotkeyClaimedKeys.size === 0) return;
+      const stale: number[] = [];
+      this.hotkeyClaimedKeys.forEach((vkCode: number) => {
+        const last = this.hotkeyClaimActivity.get(vkCode);
+        if (last === undefined || last <= armedAt) {
+          stale.push(vkCode);
+        }
+      });
+      if (stale.length === 0) return;
+      stale.forEach((vkCode: number) => {
+        this.hotkeyClaimedKeys.delete(vkCode);
+        this.hotkeyClaimActivity.delete(vkCode);
+      });
+      Logger.info('StreamInputHandler',
+        `[INPUT] 热键认领静默复检: 清除 ${stale.length} 个无活动认领`);
+    }, StreamInputHandler.HOTKEY_CLAIM_RECHECK_DELAY);
   }
 
   // ==================== 按键拦截器 ====================
