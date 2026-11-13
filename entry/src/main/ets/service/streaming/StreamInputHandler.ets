@@ -102,6 +102,8 @@ export class StreamInputHandler {
   private hotkeyClaimedKeys: Set<number> = new Set<number>();
   /** 认领键最近一次事件时间（重复 DOWN 视为活动）：查询失败时的静默复检依据 */
   private hotkeyClaimActivity: Map<number, number> = new Map();
+  /** 未能确认物理按住的认领（查询失败遗留）：复检与按下时按需核实的对象 */
+  private hotkeyClaimUnverified: Set<number> = new Set<number>();
   /** 认领静默复检定时器（物理状态查询失败时启动，一次性） */
   private hotkeyClaimRecheckTimer: number = -1;
   /** 复检前静默时长：超过视为已在弹窗期间松开（持续按住会有连续重复 DOWN） */
@@ -256,6 +258,7 @@ export class StreamInputHandler {
     // 否则恢复焦点后的首次按键会被当作重复事件吞掉
     if (!preserveHotkeyClaims) {
       this.hotkeyClaimedKeys.clear();
+      this.hotkeyClaimUnverified.clear();
       this.hotkeyClaimActivity.clear();
     }
   }
@@ -850,8 +853,26 @@ export class StreamInputHandler {
     if (isDown) {
       // 归属已固定的键沿用首次按下的分类，重复 KEY_DOWN 不改变归属
       if (this.hotkeyClaimedKeys.has(vkCode)) {
-        this.hotkeyClaimActivity.set(vkCode, Date.now());
-        return true;
+        if (this.hotkeyClaimUnverified.has(vkCode)) {
+          // 未核实的认领（此前查询失败遗留）可能已随弹窗期间松开失效：
+          // 借这次按下核实物理状态，避免复检窗口内的重按被误吞
+          const released = this.isHotkeyKeyPhysicallyReleased(vkCode);
+          if (released === true) {
+            // 已松开：本次 DOWN 是全新按下，清除归属后走正常判定
+            this.hotkeyClaimedKeys.delete(vkCode);
+            this.hotkeyClaimUnverified.delete(vkCode);
+            this.hotkeyClaimActivity.delete(vkCode);
+          } else {
+            if (released === false) {
+              this.hotkeyClaimUnverified.delete(vkCode); // 确认仍按住，转正
+            }
+            this.hotkeyClaimActivity.set(vkCode, Date.now());
+            return true;
+          }
+        } else {
+          this.hotkeyClaimActivity.set(vkCode, Date.now());
+          return true;
+        }
       }
       if (this.activeVkKeys.has(vkCode)) {
         return false;
@@ -869,6 +890,7 @@ export class StreamInputHandler {
     // KEY_UP：只对按下时被本地消费的键消费并清理，已转发主机的键继续转发
     const claimed = this.hotkeyClaimedKeys.delete(vkCode);
     if (claimed) {
+      this.hotkeyClaimUnverified.delete(vkCode);
       this.hotkeyClaimActivity.delete(vkCode);
     }
     return claimed;
@@ -881,8 +903,10 @@ export class StreamInputHandler {
    * 通过 OH_Input_GetKeyState 查询物理状态：已松开的清除认领（避免残留认领
    * 把下一次组合当作重复事件吞掉），仍按住的保留（重复 KEY_DOWN 继续被消费，
    * KEY_UP 到达时自然清理）。
-   * 查询不可用（API 缺失返回 null / 单键 -1）时保留认领并启动静默复检兜底：
-   * 复检时仍无任何按键活动的认领视为已松开清除，避免残留认领吞掉下一次组合。
+   * 查询不可用（API 缺失返回 null / 单键 -1）的认领标记为未核实并启动静默
+   * 复检兜底：复检时仍无任何按键活动的视为已松开清除；此后目标键再次按下
+   * 时也会先按需核实（tryHandleLocalHotkey），避免残留认领吞掉下一次组合。
+   * 已确认仍按住的认领不参与复检，防止无自动重复事件的设备误清认领。
    */
   reconcileHotkeyClaims(): void {
     if (this.hotkeyClaimedKeys.size === 0) return;
@@ -897,24 +921,49 @@ export class StreamInputHandler {
     });
     if (vkCodes.length === 0) {
       this.hotkeyClaimedKeys.clear();
+      this.hotkeyClaimUnverified.clear();
       this.hotkeyClaimActivity.clear();
       return;
     }
     const states = InputInterceptorService.getInstance().queryKeyStates(harmonyCodes);
     if (states === null || states.length !== vkCodes.length) {
+      // 查询整体不可用：全部转未核实，静默复检兜底
+      this.hotkeyClaimedKeys.forEach((vkCode: number) => {
+        this.hotkeyClaimUnverified.add(vkCode);
+      });
       this.scheduleHotkeyClaimRecheck();
       return;
     }
+    let hasUnverified = false;
     for (let i = 0; i < vkCodes.length; i++) {
       if (states[i] === 0) {
+        // 弹窗期间已松开：清除归属
         this.hotkeyClaimedKeys.delete(vkCodes[i]);
+        this.hotkeyClaimUnverified.delete(vkCodes[i]);
         this.hotkeyClaimActivity.delete(vkCodes[i]);
+      } else if (states[i] === 1) {
+        this.hotkeyClaimUnverified.delete(vkCodes[i]); // 确认仍按住，无需复检
+      } else {
+        this.hotkeyClaimUnverified.add(vkCodes[i]); // 单键查询失败：未核实
+        hasUnverified = true;
       }
     }
-    if (this.hotkeyClaimedKeys.size > 0) {
-      // 仍有认领（键被按住或单键查询失败）：静默复检兜底
+    if (hasUnverified) {
       this.scheduleHotkeyClaimRecheck();
     }
+  }
+
+  /**
+   * 查询热键目标键的物理状态（单键）
+   *
+   * @returns true=已松开, false=仍按住, null=查询不可用
+   */
+  private isHotkeyKeyPhysicallyReleased(vkCode: number): boolean | null {
+    const harmony = KeyboardTranslator.reverseTranslate(vkCode);
+    if (harmony <= 0) return null;
+    const states = InputInterceptorService.getInstance().queryKeyStates([harmony]);
+    if (states === null || states.length !== 1 || states[0] < 0) return null;
+    return states[0] === 0;
   }
 
   /**
@@ -935,11 +984,14 @@ export class StreamInputHandler {
         const last = this.hotkeyClaimActivity.get(vkCode);
         if (last === undefined || last <= armedAt) {
           stale.push(vkCode);
+        } else {
+          this.hotkeyClaimUnverified.delete(vkCode); // 期间有事件到达，按住已证实
         }
       });
       if (stale.length === 0) return;
       stale.forEach((vkCode: number) => {
         this.hotkeyClaimedKeys.delete(vkCode);
+        this.hotkeyClaimUnverified.delete(vkCode);
         this.hotkeyClaimActivity.delete(vkCode);
       });
       Logger.info('StreamInputHandler',
