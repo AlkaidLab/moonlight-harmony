@@ -969,9 +969,10 @@ export class StreamInputHandler {
   /**
    * 认领静默复检（物理状态查询失败时的兜底）
    *
-   * 一次性定时器：启动后仍无任何按键活动的认领视为已在弹窗期间松开并清除
-   * （持续按住的键会持续产生重复 KEY_DOWN，活动时间戳保持新鲜，不受影响）。
-   * 若期间认领因 KEY_UP / releaseAllKeys 正常清理则自动空转，无副作用。
+   * 一次性定时器：启动后仍无任何按键活动的未核实认领视为已在弹窗期间
+   * 松开并清除（持续按住的键会持续产生重复 KEY_DOWN，活动时间戳保持
+   * 新鲜，不受影响）。已确认按住的认领不参与复检；若期间认领因 KEY_UP /
+   * releaseAllKeys 正常清理则自动空转，无副作用。
    */
   private scheduleHotkeyClaimRecheck(): void {
     if (this.hotkeyClaimRecheckTimer >= 0) return;
@@ -979,13 +980,13 @@ export class StreamInputHandler {
     this.hotkeyClaimRecheckTimer = setTimeout(() => {
       this.hotkeyClaimRecheckTimer = -1;
       if (this.hotkeyClaimedKeys.size === 0) return;
+      // 只复检未核实的认领：已确认按住的认领不参与（防止无自动重复
+      // 事件的设备误清认领），其 KEY_UP 到达时自然清理
       const stale: number[] = [];
-      this.hotkeyClaimedKeys.forEach((vkCode: number) => {
+      this.hotkeyClaimUnverified.forEach((vkCode: number) => {
         const last = this.hotkeyClaimActivity.get(vkCode);
         if (last === undefined || last <= armedAt) {
           stale.push(vkCode);
-        } else {
-          this.hotkeyClaimUnverified.delete(vkCode); // 期间有事件到达，按住已证实
         }
       });
       if (stale.length === 0) return;
