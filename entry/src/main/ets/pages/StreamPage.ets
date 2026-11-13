@@ -53,6 +53,7 @@ import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { SettingsKeys } from '../service/SettingsService';
 import { AihdrModifier, isAihdrSupported } from '../components/AihdrModifier';
 import { StreamInputHandler, StreamHotkeyAction } from '../service/streaming/StreamInputHandler';
+import { StreamingSession } from '../service/streaming/StreamingSession';
 import { StreamLifecycleManager } from '../service/streaming/StreamLifecycleManager';
 import { StreamIMEManager } from '../service/streaming/StreamIMEManager';
 import { VirtualKeyboard } from '../components/virtual/VirtualKeyboard';
@@ -1142,7 +1143,10 @@ struct StreamPage {
     this.mouseInputSuspended = true;
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
-    this.inputHandler.releaseAllKeys();
+    // 热键自身触发的释放：目标键（X）可能仍被按住，保留认领以消费
+    // 弹窗期间的重复 KEY_DOWN，关闭时经 reconcileHotkeyClaims 对账
+    this.inputHandler.releaseAllKeys(true);
+    const sessionAtOpen = this.viewModel.getSession();
     this.getUIContext().getPromptAction().showDialog({
       title: '⌨️ 串流快捷键',
       message: '双击菜单键（默认 ESC）：打开串流菜单\n'
@@ -1151,25 +1155,32 @@ struct StreamPage {
         + 'Ctrl+Alt+Shift+X：显示本帮助',
       buttons: [{ text: '知道了', color: '#1F8AFF' }]
     }).then((): void => {
-      this.closeHotkeyHelpDialog(interceptorWasActive);
+      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen);
     }).catch((err: Error): void => {
       Logger.warn('StreamPage', '快捷键帮助对话框关闭异常:', err);
-      this.closeHotkeyHelpDialog(interceptorWasActive);
+      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen);
     });
   }
 
   /**
    * 帮助对话框关闭后的统一恢复（成功与异常路径共用，对齐 handleGameMenuDismissed）
    */
-  private closeHotkeyHelpDialog(interceptorWasActive: boolean): void {
+  private closeHotkeyHelpDialog(interceptorWasActive: boolean, sessionAtOpen: StreamingSession | null): void {
     this.hotkeyHelpVisible = false;
     this.mouseInputSuspended = false;
+    if (this.viewModel.getSession() !== sessionAtOpen) {
+      // 浮层跨重连留存：旧回调不恢复任何状态（拦截器/鼠标由新会话的启动流程
+      // 接管），只清弹层标志，避免复焦守卫卡在已消失的浮层上
+      return;
+    }
     if (this.pageDisposed || this.viewModel.isStopping || !this.viewModel.isConnected) {
       // 页面已销毁 / 停止中 / 已断开：清理归对应流程（aboutToDisappear、
       // 停止流程）负责，这里不得重启消费型拦截器，否则它会在无人管理的
       // 页面上继续吞掉物理按键且再无人停止它
       return;
     }
+    // 浮层显示期间页面收不到按键，先对账热键认领（目标键可能在弹窗期间已松开）
+    this.inputHandler.reconcileHotkeyClaims();
     // 弹窗显示期间按键被强制释放过，恢复前对账仍被物理按住的键
     this.inputHandler.reconcileKeyState();
     if (interceptorWasActive) {

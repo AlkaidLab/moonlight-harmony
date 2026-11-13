@@ -214,8 +214,12 @@ export class StreamInputHandler {
    * 对齐 Android Game.onWindowFocusChanged → KeyboardInputHandler.clearModifierState()：
    * 切后台期间 KEY_UP 不会送达应用，若不清除，Windows 端 Alt/Ctrl 会永久按下，
    * 导致返回串流后无法打字、Blender 鼠标选择异常（Alt+左键=旋转视图）。
+   *
+   * @param preserveHotkeyClaims 热键动作自身触发的释放（帮助浮层）传 true：
+   *        目标键可能仍被按住，保留认领以继续消费重复 KEY_DOWN 与 KEY_UP，
+   *        弹窗关闭时经 reconcileHotkeyClaims 按物理状态对账清理
    */
-  releaseAllKeys(): void {
+  releaseAllKeys(preserveHotkeyClaims: boolean = false): void {
     const session = this.viewModel?.getSession();
     if (session) {
       // 1. 释放所有追踪到的按键，并补齐 8 个 Windows 修饰键，兜底处理
@@ -239,7 +243,9 @@ export class StreamInputHandler {
     this.modifierFlags = 0;
     // 失焦期间热键目标键的 KEY_UP 收不到，归属标记一并清掉，
     // 否则恢复焦点后的首次按键会被当作重复事件吞掉
-    this.hotkeyClaimedKeys.clear();
+    if (!preserveHotkeyClaims) {
+      this.hotkeyClaimedKeys.clear();
+    }
   }
 
   /**
@@ -848,6 +854,39 @@ export class StreamInputHandler {
     }
     // KEY_UP：只对按下时被本地消费的键消费并清理，已转发主机的键继续转发
     return this.hotkeyClaimedKeys.delete(vkCode);
+  }
+
+  /**
+   * 对账本地热键认领（帮助浮层关闭时调用）
+   *
+   * 浮层显示期间页面收不到按键事件，目标键可能在弹窗期间已松开。
+   * 通过 OH_Input_GetKeyState 查询物理状态：已松开的清除认领（避免残留认领
+   * 把下一次组合当作重复事件吞掉），仍按住的保留（重复 KEY_DOWN 继续被消费，
+   * KEY_UP 到达时自然清理）。
+   * API 不可用时保持现状，认领由后续 KEY_UP 或下一次 releaseAllKeys 清理。
+   */
+  reconcileHotkeyClaims(): void {
+    if (this.hotkeyClaimedKeys.size === 0) return;
+    const vkCodes: number[] = [];
+    const harmonyCodes: number[] = [];
+    this.hotkeyClaimedKeys.forEach((vkCode: number) => {
+      const harmony = KeyboardTranslator.reverseTranslate(vkCode);
+      if (harmony > 0) {
+        vkCodes.push(vkCode);
+        harmonyCodes.push(harmony);
+      }
+    });
+    if (vkCodes.length === 0) {
+      this.hotkeyClaimedKeys.clear();
+      return;
+    }
+    const states = InputInterceptorService.getInstance().queryKeyStates(harmonyCodes);
+    if (states === null || states.length !== vkCodes.length) return;
+    for (let i = 0; i < vkCodes.length; i++) {
+      if (states[i] === 0) {
+        this.hotkeyClaimedKeys.delete(vkCodes[i]);
+      }
+    }
   }
 
   // ==================== 按键拦截器 ====================
