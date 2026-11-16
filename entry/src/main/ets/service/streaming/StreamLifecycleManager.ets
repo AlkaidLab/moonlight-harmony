@@ -431,6 +431,8 @@ export class StreamLifecycleManager {
    *           -102 = 意外提前终止
    *           -103 = 受保护内容
    *           -104 = 帧转换错误
+   *           -105 = 控制连接超时
+   *           -106 = 音视频连接自动恢复失败
    */
   handleConnectionTerminated(errorCode: number): void {
     Logger.info('StreamLifecycleManager', `StreamPage: 连接终止, errorCode=${errorCode}, inBackground=${this.wasInBackground}`);
@@ -446,6 +448,8 @@ export class StreamLifecycleManager {
     const ML_ERROR_UNEXPECTED_EARLY_TERMINATION = -102;
     const ML_ERROR_PROTECTED_CONTENT = -103;
     const ML_ERROR_FRAME_CONVERSION = -104;
+    const ML_ERROR_CONTROL_TRANSPORT_TIMEOUT = -105;
+    const ML_ERROR_ENDPOINT_REFRESH_FAILED = -106;
 
     // 应用在后台时连接断开：延迟处理，等回到前台时尝试重连
     if (this.wasInBackground) {
@@ -490,6 +494,12 @@ export class StreamLifecycleManager {
             break;
           case ML_ERROR_FRAME_CONVERSION:
             message = '帧转换错误。请尝试调整分辨率或关闭 HDR。';
+            break;
+          case ML_ERROR_CONTROL_TRANSPORT_TIMEOUT:
+            message = '控制连接超时。请检查网络后重新连接。';
+            break;
+          case ML_ERROR_ENDPOINT_REFRESH_FAILED:
+            message = '音视频连接中断，自动恢复失败。请检查网络后重新连接。';
             break;
           default:
             const errorHex = Math.abs(errorCode) > 1000 ? `0x${errorCode.toString(16)}` : errorCode.toString();

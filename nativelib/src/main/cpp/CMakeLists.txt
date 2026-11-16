@@ -120,6 +120,8 @@ set(MOONLIGHT_COMMON_SOURCES
     ${MOONLIGHT_COMMON_PATH}/src/CursorStream.c
     ${MOONLIGHT_COMMON_PATH}/src/Ds5HapticsStream.c
     ${MOONLIGHT_COMMON_PATH}/src/Ds5HapticsIrStream.c
+    ${MOONLIGHT_COMMON_PATH}/src/EndpointRefresh.c
+    ${MOONLIGHT_COMMON_PATH}/src/EndpointRefreshProtocol.c
     ${MOONLIGHT_COMMON_PATH}/src/VideoStream.c
     ${MOONLIGHT_COMMON_PATH}/src/AudioStream.c
     ${MOONLIGHT_COMMON_PATH}/src/InputStream.c
@@ -127,6 +129,9 @@ set(MOONLIGHT_COMMON_SOURCES
     ${MOONLIGHT_COMMON_PATH}/src/RtspParser.c
     ${MOONLIGHT_COMMON_PATH}/src/SdpGenerator.c
     ${MOONLIGHT_COMMON_PATH}/src/RtpVideoQueue.c
+    ${MOONLIGHT_COMMON_PATH}/src/MatDepacketizer.c
+    ${MOONLIGHT_COMMON_PATH}/src/MatLivePlayback.c
+    ${MOONLIGHT_COMMON_PATH}/src/MatReceiver.c
     ${MOONLIGHT_COMMON_PATH}/src/PyrowaveProtocol.c
     ${MOONLIGHT_COMMON_PATH}/src/PyrowaveReassembly.c
     ${MOONLIGHT_COMMON_PATH}/src/RtpAudioQueue.c
@@ -143,6 +148,7 @@ set(MOONLIGHT_COMMON_SOURCES
     ${MOONLIGHT_COMMON_PATH}/src/MicrophoneStream.c
     ${MOONLIGHT_COMMON_PATH}/src/RemoteTextContextStream.c
     ${MOONLIGHT_COMMON_PATH}/src/FakeCallbacks.c
+    ${MOONLIGHT_COMMON_PATH}/src/RecorderCallbacks.c
     ${MOONLIGHT_COMMON_PATH}/nanors/rs.c
     ${MOONLIGHT_COMMON_PATH}/nanors/deps/obl/oblas_common.c
     ${MOONLIGHT_COMMON_PATH}/nanors/deps/obl/oblas_lite.c

@@ -171,9 +171,20 @@ export class PairingManager {
               .replace('-----END CERTIFICATE-----', '')
               .replace(/\s/g, '');
             const base64Helper = new util.Base64Helper();
-            this.clientCertDer = base64Helper.decodeSync(certBase64);
+            const certDer = base64Helper.decodeSync(certBase64);
+            this.clientCertDer = certDer;
 
-            Logger.info('PairingManager', `PairingManager: 成功加载已存在的证书，PEM长度=${this.clientCertPem.length}, DER长度=${this.clientCertDer.length}`);
+            try {
+              if (CryptoUtil.hasNonMinimalSerialNumber(certDer)) {
+                await this.reissueClientCertificate();
+              }
+            } catch (repairErr) {
+              // 修复失败时保留原证书继续使用，不能落入外层 catch 重新生成密钥对
+              Logger.error('PairingManager', `PairingManager: 修复缓存证书失败，保留原证书: ${repairErr}`);
+            }
+
+            const loadedDerLength = this.clientCertDer ? this.clientCertDer.length : 0;
+            Logger.info('PairingManager', `PairingManager: 成功加载已存在的证书，PEM长度=${this.clientCertPem.length}, DER长度=${loadedDerLength}`);
             return;
           }
           Logger.warn('PairingManager', 'PairingManager: 当前设备不支持非对称密钥系统能力，无法加载已存在证书');
@@ -206,28 +217,97 @@ export class PairingManager {
     Logger.info('PairingManager', `PairingManager: 证书 PEM 生成完成，长度 = ${this.clientCertPem.length}`);
     
     // 保存证书和私钥到文件（供 HTTPS 请求使用）
-    await this.saveCertificatesToFile();
-    
+    if (!await this.saveCertificatesToFile()) {
+      // 证书写盘失败时不能只写私钥，否则会留下证书与私钥不匹配的缓存；
+      // 清空未完成的初始化状态，让下次配对重新开始
+      this.keyPair = null;
+      this.clientCertDer = null;
+      this.clientCertPem = null;
+      throw new Error('保存客户端证书失败');
+    }
+
     Logger.info('PairingManager', 'PairingManager: 密钥对和证书生成完成');
   }
 
   /**
-   * 保存证书和私钥到文件
+   * 已保存的证书带非最短 DER INTEGER 时，用现有密钥对重新签发证书。
+   * 只覆盖证书文件：私钥保持不变，避免无谓地更换客户端身份。
+   * 旧证书无法被 OpenSSL 解析，重新签发后需要重新配对才能被服务器信任。
    */
-  private async saveCertificatesToFile(): Promise<void> {
-    if (!this.certFilePath || !this.keyFilePath || !this.keyPair || !this.clientCertPem) {
-      Logger.warn('PairingManager', 'PairingManager: 无法保存证书（路径或数据不完整）');
+  private async reissueClientCertificate(): Promise<void> {
+    if (!this.keyPair) {
       return;
+    }
+    Logger.warn('PairingManager', 'PairingManager: 已保存证书含非最短 DER INTEGER，重新签发客户端证书');
+    const clientCertDer = await CryptoUtil.generateSelfSignedCert(this.keyPair);
+    if (!clientCertDer) {
+      Logger.error('PairingManager', 'PairingManager: 重新签发客户端证书失败，保留原证书');
+      return;
+    }
+    const previousDer = this.clientCertDer;
+    const previousPem = this.clientCertPem;
+    this.clientCertDer = clientCertDer;
+    this.clientCertPem = CryptoUtil.getPemCertBytes(clientCertDer);
+    if (!await this.saveCertificateToFile()) {
+      // 写盘失败时回退内存证书，避免同一次配对分别使用内存和磁盘上的两份证书
+      this.clientCertDer = previousDer;
+      this.clientCertPem = previousPem;
+      Logger.error('PairingManager', 'PairingManager: 保存重新签发的证书失败，已回退到原证书');
+      return;
+    }
+    Logger.info('PairingManager', 'PairingManager: 客户端证书已重新签发，私钥未改变');
+  }
+
+  /**
+   * 保存证书到文件，返回是否写入成功
+   */
+  private async saveCertificateToFile(): Promise<boolean> {
+    if (!this.certFilePath || !this.clientCertPem) {
+      Logger.warn('PairingManager', 'PairingManager: 无法保存证书（路径或数据不完整）');
+      return false;
+    }
+
+    const tempPath = `${this.certFilePath}.tmp`;
+
+    try {
+      // 先写临时文件再 rename，避免写盘失败时截断已有证书
+      const certContent = StringUtil.uint8ArrayToString(this.clientCertPem);
+      const certFile = await fileIo.open(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      try {
+        await fileIo.write(certFile.fd, certContent);
+      } finally {
+        // 写入失败也要关闭句柄，避免重复配对时累积未释放的文件描述符
+        await fileIo.close(certFile);
+      }
+      await fileIo.rename(tempPath, this.certFilePath);
+      Logger.info('PairingManager', `PairingManager: 证书已保存到 ${this.certFilePath}`);
+      return true;
+    } catch (err) {
+      Logger.error('PairingManager', `PairingManager: 保存证书失败: ${err}`);
+      return false;
+    }
+  }
+
+  /**
+   * 保存证书和私钥到文件，返回是否成功
+   * 未配置沙箱路径时没有可持久化的身份，按无需保存处理
+   */
+  private async saveCertificatesToFile(): Promise<boolean> {
+    if (!this.certFilePath || !this.keyFilePath) {
+      return true;
+    }
+    if (!this.keyPair || !this.clientCertPem) {
+      Logger.warn('PairingManager', 'PairingManager: 无法保存证书（路径或数据不完整）');
+      return false;
+    }
+
+    if (!await this.saveCertificateToFile()) {
+      // 证书没写成功时不能再覆盖私钥，否则会留下证书与私钥不匹配的缓存
+      Logger.error('PairingManager', 'PairingManager: 证书保存失败，跳过私钥写入');
+      return false;
     }
 
     try {
-      // 保存证书（clientCertPem 已是 Uint8Array，直接转为字符串）
-      const certContent = StringUtil.uint8ArrayToString(this.clientCertPem);
-      const certFile = await fileIo.open(this.certFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      await fileIo.write(certFile.fd, certContent);
-      await fileIo.close(certFile);
-      Logger.info('PairingManager', `PairingManager: 证书已保存到 ${this.certFilePath}`);
-
       // 保存私钥
       if (canIUse('SystemCapability.Security.CryptoFramework.Key.AsymKey')) {
         const priKeyBlob = this.keyPair.priKey.getEncodedPem('PKCS8');
@@ -240,8 +320,9 @@ export class PairingManager {
         Logger.warn('PairingManager', 'PairingManager: 当前设备不支持导出私钥的系统能力，跳过保存私钥');
       }
     } catch (err) {
-      Logger.error('PairingManager', `PairingManager: 保存证书失败: ${err}`);
+      Logger.error('PairingManager', `PairingManager: 保存私钥失败: ${err}`);
     }
+    return true;
   }
 
   /**

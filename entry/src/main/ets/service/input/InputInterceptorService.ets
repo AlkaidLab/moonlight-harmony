@@ -105,15 +105,21 @@ export class InputInterceptorService {
 
   /**
    * 停止按键拦截器
+   * @returns 0 成功，其他为原生移除错误码（失败时保留 active，调用方可重试）
    */
-  stop(): void {
+  stop(): number {
     if (!this.active || !this.native) {
-      return;
+      return 0;
     }
 
-    this.native.removeKeyInterceptor();
-    this.active = false;
-    Logger.info('InputInterceptorService', 'InputInterceptor: 按键拦截器已停止');
+    const result = this.native.removeKeyInterceptor();
+    if (result === 0) {
+      this.active = false;
+      Logger.info('InputInterceptorService', 'InputInterceptor: 按键拦截器已停止');
+    } else {
+      Logger.warn('InputInterceptorService', `InputInterceptor: 移除失败，错误码=${result}，保留状态待重试`);
+    }
+    return result;
   }
 
   /**

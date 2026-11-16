@@ -19,9 +19,10 @@
  */
 
 import { netBoost, netQuality } from '@kit.NetworkBoostKit';
-import { Available, BusinessError, deviceInfo } from '@kit.BasicServicesKit';
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { StreamSocketFds } from '../streaming/MoonBridge';
 import { Logger } from '../../common/Logger';
+import { AppState, AppStateService } from '../AppStateService';
 
 /** NetworkBoost Kit 系统能力（netBoost/netQuality 全部 API 共用同一 syscap） */
 const NETWORK_BOOST_SYSCAP = 'SystemCapability.Communication.NetworkBoost.Core';
@@ -30,6 +31,10 @@ const STREAMING_SERVICE_TYPE: netQuality.ServiceType = 'realtimeGame';
 
 /** setDataFlowDesc 起始 API 版本 */
 const DATA_FLOW_DESC_MIN_API = 26;
+// API 26: foreground applications may describe at most two flows.
+const MAX_DATA_FLOW_DESCRIPTIONS = 2;
+const MAX_CLEANUP_RETRIES = 3;
+const CLEANUP_RETRY_DELAY_MS = 250;
 
 type StreamQoeState = 'good' | 'poor';
 
@@ -96,6 +101,13 @@ export class NetworkBoostService {
   private sceneListeners: Set<SystemNetSceneListener> = new Set();
   private registeredFlowFds: number[] = [];
   private sceneEntered: boolean = false;
+  private dataFlowSupported: boolean = true;
+  private streamingFlows: StreamSocketFds | null = null;
+  private cleanupRetryTimer: number = -1;
+  private cleanupRetryCount: number = 0;
+  private appStateListener: (state: AppState) => void = (_state: AppState): void => {
+    this.refreshDataFlowDesc();
+  };
 
   static getInstance(): NetworkBoostService {
     if (!NetworkBoostService.instance) {
@@ -109,7 +121,9 @@ export class NetworkBoostService {
     if (this.active) {
       return;
     }
+    this.cancelCleanupRetry();
     this.active = true;
+    AppStateService.getInstance().addListener(this.appStateListener);
     this.lastState = null;
     this.reportInternal('good');
     this.subscribeQos();
@@ -122,10 +136,13 @@ export class NetworkBoostService {
       return;
     }
     this.active = false;
+    AppStateService.getInstance().removeListener(this.appStateListener);
+    this.streamingFlows = null;
     this.lastState = null;
     this.unsubscribeQos();
     this.unsubscribeScene();
     this.clearDataFlowDesc();
+    this.scheduleCleanupRetry();
     this.latestQos = null;
     this.latestScene = null;
   }
@@ -191,14 +208,23 @@ export class NetworkBoostService {
    * 会话结束或 socket 关闭前由 clearDataFlowDesc() 注销。
    */
   registerStreamingFlows(fds: StreamSocketFds): void {
-    if (!this.supported || !this.active) {
+    if (!this.active) {
       return;
     }
-    if (deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API) {
-      Logger.info('NetworkBoostService', `[NetworkBoost] API ${deviceInfo.sdkApiVersion} < ${DATA_FLOW_DESC_MIN_API},跳过流描述注册`);
-      return;
-    }
+    this.streamingFlows = fds;
+    this.refreshDataFlowDesc();
+  }
 
+  /** Release stale descriptions before registering the current foreground session. */
+  private refreshDataFlowDesc(): void {
+    // Release the previous descriptors before reconnecting or going into background.
+    this.clearDataFlowDesc();
+    if (!this.active || !this.supported || !this.dataFlowSupported || !this.streamingFlows ||
+      this.registeredFlowFds.length > 0 || this.sceneEntered ||
+      deviceInfo.sdkApiVersion < DATA_FLOW_DESC_MIN_API ||
+      AppStateService.getInstance().getCurrentState() !== AppState.FOREGROUND) {
+      return;
+    }
     if (canIUse(NETWORK_BOOST_SYSCAP)) {
       try {
         netBoost.setSceneDesc({
@@ -207,71 +233,109 @@ export class NetworkBoostService {
         });
         this.sceneEntered = true;
       } catch (err) {
-        this.handleErr('registerStreamingFlows/setSceneDesc', err);
+        const error: BusinessError = err;
+        this.handleDataFlowError('setSceneDesc', error);
         return;
       }
 
-      this.registeredFlowFds = [];
-      this.registerOneFlow('videoRtp', fds.videoRtp.fd);
-      this.registerOneFlow('audioRtp', fds.audioRtp.fd);
-      this.registerOneFlow('control', fds.control.fd);
+      // Input latency and video delivery take priority; audio can fill an unused slot.
+      this.registerOneFlow('control', this.streamingFlows.control.fd);
+      this.registerOneFlow('videoRtp', this.streamingFlows.videoRtp.fd);
+      this.registerOneFlow('audioRtp', this.streamingFlows.audioRtp.fd);
     }
   }
 
+  /** Fill one priority slot with a valid, distinct socket descriptor. */
   private registerOneFlow(name: string, fd: number): void {
-    if (fd < 0) {
-      Logger.info('NetworkBoostService', `[NetworkBoost] ${name} fd 不可用,跳过注册`);
+    if (!this.dataFlowSupported || !Number.isInteger(fd) || fd < 0 ||
+      this.registeredFlowFds.includes(fd) ||
+      this.registeredFlowFds.length >= MAX_DATA_FLOW_DESCRIPTIONS) {
       return;
     }
     if (canIUse(NETWORK_BOOST_SYSCAP)) {
       try {
-        netBoost.setDataFlowDesc({
+        const description: netBoost.DataFlowDesc = {
           dataFlowInfo: fd,
           scene: STREAMING_SERVICE_TYPE,
           sceneEvent: netBoost.SceneEvent.SCENE_EVENT_ENTER,
           expectations: { priority: netBoost.PriorityLevel.PRIO_HIGH }
-        });
+        };
+        netBoost.setDataFlowDesc(description);
         this.registeredFlowFds.push(fd);
-        Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc ${name} fd=${fd} priority=HIGH`);
+        Logger.info('NetworkBoostService', '[NetworkBoost] setDataFlowDesc ' + name + ' fd=' + fd);
       } catch (err) {
-        this.handleErr(`setDataFlowDesc(${name})`, err);
+        const error: BusinessError = err;
+        this.handleDataFlowError('setDataFlowDesc ' + name, error);
       }
     }
   }
 
+  /** Disable only optional flow setup when its scene or flow API is unavailable. */
+  private handleDataFlowError(api: string, error: BusinessError): void {
+    if (error.code === 801) {
+      this.dataFlowSupported = false;
+    }
+    Logger.warn('NetworkBoostService', '[NetworkBoost] ' + api + ' failed: ' + error.message);
+  }
+
+  /** Keep failed releases pending, and leave the scene only after all flows are released. */
   private clearDataFlowDesc(): void {
     const fds = this.registeredFlowFds;
     this.registeredFlowFds = [];
     fds.forEach((fd) => {
       if (canIUse(NETWORK_BOOST_SYSCAP)) {
         try {
-          netBoost.setDataFlowDesc({
+          const description: netBoost.DataFlowDesc = {
             dataFlowInfo: fd,
             scene: STREAMING_SERVICE_TYPE,
             sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
-          });
+          };
+          netBoost.setDataFlowDesc(description);
           Logger.info('NetworkBoostService', `[NetworkBoost] setDataFlowDesc fd=${fd} event=leave`);
         } catch (err) {
+          this.registeredFlowFds.push(fd);
           Logger.warn('NetworkBoostService', `[NetworkBoost] setDataFlowDesc(fd=${fd}) leave 失败: ${(err as Error).message}`);
         }
       }
     });
-    if (!this.sceneEntered) {
+    if (this.registeredFlowFds.length > 0 || !this.sceneEntered) {
       return;
     }
-    this.sceneEntered = false;
-
     if (canIUse(NETWORK_BOOST_SYSCAP)) {
       try {
         netBoost.setSceneDesc({
           scene: STREAMING_SERVICE_TYPE,
           sceneEvent: netBoost.SceneEvent.SCENE_EVENT_LEAVE
         });
+        this.sceneEntered = false;
         Logger.info('NetworkBoostService', '[NetworkBoost] setSceneDesc scene=realtimeGame event=leave');
       } catch (err) {
         Logger.warn('NetworkBoostService', `[NetworkBoost] clearDataFlowDesc 失败: ${(err as Error).message}`);
       }
     }
+  }
+
+  /** Retry stopped-session cleanup at most three times without retaining app listeners. */
+  private scheduleCleanupRetry(): void {
+    if (this.active || this.cleanupRetryTimer !== -1 || this.cleanupRetryCount >= MAX_CLEANUP_RETRIES ||
+      (this.registeredFlowFds.length === 0 && !this.sceneEntered)) {
+      return;
+    }
+    this.cleanupRetryTimer = setTimeout((): void => {
+      this.cleanupRetryTimer = -1;
+      this.cleanupRetryCount++;
+      this.clearDataFlowDesc();
+      this.scheduleCleanupRetry();
+    }, CLEANUP_RETRY_DELAY_MS);
+  }
+
+  /** A new session owns cleanup from here, so stale timers must not touch its flows. */
+  private cancelCleanupRetry(): void {
+    if (this.cleanupRetryTimer !== -1) {
+      clearTimeout(this.cleanupRetryTimer);
+      this.cleanupRetryTimer = -1;
+    }
+    this.cleanupRetryCount = 0;
   }
 
   // ───── reportQoe ─────

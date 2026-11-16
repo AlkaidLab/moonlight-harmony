@@ -586,12 +586,18 @@ export class CryptoUtil {
    * 构造 ASN.1 INTEGER
    */
   private static asn1Integer(value: Uint8Array): Uint8Array {
+    // DER 要求 INTEGER 使用最短编码：先去掉多余的先导 0（随机序列号首字节为 0 时会出现）
+    let start = 0;
+    while (start < value.length - 1 && value[start] === 0) {
+      start++;
+    }
+    let data: Uint8Array = value.subarray(start);
     // 如果最高位是 1，需要添加前导 0
-    let data = value;
-    if (value.length > 0 && (value[0] & 0x80) !== 0) {
-      data = new Uint8Array(value.length + 1);
-      data[0] = 0;
-      data.set(value, 1);
+    if (data.length > 0 && (data[0] & 0x80) !== 0) {
+      const padded = new Uint8Array(data.length + 1);
+      padded[0] = 0;
+      padded.set(data, 1);
+      data = padded;
     }
     const len = CryptoUtil.encodeAsn1Length(data.length);
     const result = new Uint8Array(1 + len.length + data.length);
@@ -599,6 +605,44 @@ export class CryptoUtil {
     result.set(len, 1);
     result.set(data, 1 + len.length);
     return result;
+  }
+
+  /**
+   * 判断证书序列号是否使用了非最短 DER INTEGER 编码。
+   *
+   * 旧版本把随机的 8 字节序列号直接写成 INTEGER：首字节为 0x00 且次字节最高位
+   * 为 0 时会出现冗余前导 0，OpenSSL（Sunshine 配对第 4 步）会拒绝解析该证书。
+   * 这里只识别这一种形态，其他异常保持原样，避免误伤已有证书。
+   */
+  static hasNonMinimalSerialNumber(certDer: Uint8Array): boolean {
+    let pos = 0;
+
+    // Certificate SEQUENCE
+    pos = CryptoUtil.skipAsn1Tag(certDer, pos, 0x30);
+    if (pos < 0) return false;
+    pos = CryptoUtil.skipAsn1Length(certDer, pos);
+    if (pos < 0) return false;
+
+    // TBSCertificate SEQUENCE
+    pos = CryptoUtil.skipAsn1Tag(certDer, pos, 0x30);
+    if (pos < 0) return false;
+    pos = CryptoUtil.skipAsn1Length(certDer, pos);
+    if (pos < 0) return false;
+
+    // version [0] EXPLICIT（可选，v3 证书存在）
+    if (pos < certDer.length && certDer[pos] === 0xA0) {
+      pos = CryptoUtil.skipAsn1Element(certDer, pos);
+      if (pos < 0) return false;
+    }
+
+    // serialNumber INTEGER
+    if (pos >= certDer.length || certDer[pos] !== 0x02) return false;
+    const serial = CryptoUtil.readAsn1Element(certDer, pos);
+    if (!serial || serial.length < 2) return false;
+    const contentPos = CryptoUtil.skipAsn1Length(certDer, pos + 1);
+    if (contentPos < 0 || contentPos + 1 >= certDer.length) return false;
+
+    return certDer[contentPos] === 0x00 && (certDer[contentPos + 1] & 0x80) === 0;
   }
 
   /**
