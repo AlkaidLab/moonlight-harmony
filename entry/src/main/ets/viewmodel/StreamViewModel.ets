@@ -118,6 +118,8 @@ export class OverlayState {
 export class StreamViewModel {
   // 连接状态
   connectionState: StreamConnectionState = StreamConnectionState.IDLE;
+  /** CONNECTED 翻转回调（首帧上屏后触发；供页面补做被弹层守卫拦下的恢复） */
+  onConnected: (() => void) | null = null;
   errorMessage: string = '';
   /**
    * 停止流程进行中：原生 teardown 的 await 期间 connectionState 仍为旧值，
@@ -411,6 +413,7 @@ export class StreamViewModel {
             this.connectionProgress = 1.0;
             this.connectionStageText = '已连接';
             this.connectionState = StreamConnectionState.CONNECTED;
+            this.onConnected?.();
             this.stopFirstFrameWatcher();
           }
         }, 50);
