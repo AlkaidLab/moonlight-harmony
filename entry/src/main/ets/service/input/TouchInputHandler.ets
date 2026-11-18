@@ -162,6 +162,10 @@ export class TouchInputHandler {
     TouchpadZoneGeometry.parseZoneRect(TouchpadZoneGeometry.DEFAULT_ZONE_RECT);
   private ds5ZoneGestureActive: boolean = false;
   private ds5ZoneGestureUsesPad: boolean = false;
+  /** 区域外手势是否允许回退为普通多点触控。 */
+  private ds5ZoneOutsideTouchEnabled: boolean = true;
+  /** 首个触点决定后，整组手势固定使用同一策略。 */
+  private ds5ZoneGestureAllowsOutsideTouch: boolean = true;
   private ds5ZoneTouchIds: Set<number> = new Set<number>();
 
   // ====== 鼠标模式状态（绝对定位 + 死区 + 长按右键，对齐 Android AbsoluteTouchContext） ======
@@ -355,6 +359,11 @@ export class TouchInputHandler {
     );
   }
 
+  /** 设置区域外手势是否回退为普通多点触控。 */
+  setDs5TouchpadOutsideTouchEnabled(enabled: boolean): void {
+    this.ds5ZoneOutsideTouchEnabled = enabled;
+  }
+
   /** 绑定当前串流会话的 DS5 触控输出。 */
   setDs5TouchpadSink(sink: Ds5TouchpadInputSink | null): void {
     this.ds5Touchpad.setSink(sink);
@@ -485,6 +494,7 @@ export class TouchInputHandler {
    */
   private handleDs5TouchpadZoneEvent(event: TouchEvent): void {
     if (event.type === TouchType.Down && !this.ds5ZoneGestureActive) {
+      this.ds5ZoneGestureAllowsOutsideTouch = this.ds5ZoneOutsideTouchEnabled;
       const areaWidth = Number(event.target.area.width);
       const areaHeight = Number(event.target.area.height);
       const firstTouch = event.changedTouches.length > 0
@@ -508,7 +518,7 @@ export class TouchInputHandler {
 
     if (this.ds5ZoneGestureUsesPad) {
       this.ds5Touchpad.handleEvent(event);
-    } else {
+    } else if (this.ds5ZoneGestureAllowsOutsideTouch) {
       // Direct mode is the same fallback used by Android vplus outside the
       // regional pad, and preserves multi-finger touch/pen behavior.
       if (event.sourceTool === SourceTool.Pen && !this.penUnsupported) {

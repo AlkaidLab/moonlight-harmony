@@ -2434,6 +2434,9 @@ struct StreamPage {
       !this.isDs5TouchMode(this.viewModel.touchMode)) {
       return;
     }
+    this.touchInputHandler.setDs5TouchpadOutsideTouchEnabled(
+      !this.viewModel.showController || this.touchPassthrough
+    );
     this.touchInputHandler.handleTouchEvent(event);
   }
 
