@@ -17,6 +17,7 @@ import nativeLib from 'libmoonlight_nativelib.so';
 import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { PointXY } from './PanZoomHandler';
 import { TrackpadGestureHandler, TrackpadInputSink, TrackpadConfig } from './TrackpadGestureHandler';
+import { TouchpadZoneGeometry, TouchpadZoneRect } from './TouchpadZoneGeometry';
 import {
   Ds5TouchpadFeedback,
   Ds5TouchpadGestureHandler,
@@ -51,7 +52,7 @@ export enum TouchInputMode {
   TRACKPAD = 'trackpad',  // 触摸板模式：相对移动
   DIRECT = 'direct',      // 直接触摸模式：绝对坐标（多点触控协议）
   MOUSE = 'mouse',        // 鼠标模式：绝对定位 + 死区 + 长按右键 + 双指滚轮
-  DS5_TOUCHPAD = 'ds5_touchpad' // 屏幕映射 DualSense 触控板
+  DS5_TOUCHPAD_ZONE = 'ds5_touchpad_zone' // 区域映射 DualSense 触控板
 }
 
 /**
@@ -156,6 +157,12 @@ export class TouchInputHandler {
   private trackpad: TrackpadGestureHandler;
   /** 屏幕映射 DualSense 触控板（与普通鼠标触控板完全独立） */
   private ds5Touchpad: Ds5TouchpadGestureHandler = new Ds5TouchpadGestureHandler();
+  /** 区域 DS5 模式的路由状态；一组手势只选择一次 owner。 */
+  private ds5TouchpadZone: TouchpadZoneRect =
+    TouchpadZoneGeometry.parseZoneRect(TouchpadZoneGeometry.DEFAULT_ZONE_RECT);
+  private ds5ZoneGestureActive: boolean = false;
+  private ds5ZoneGestureUsesPad: boolean = false;
+  private ds5ZoneTouchIds: Set<number> = new Set<number>();
 
   // ====== 鼠标模式状态（绝对定位 + 死区 + 长按右键，对齐 Android AbsoluteTouchContext） ======
   /** 主手指按下位置 */
@@ -333,11 +340,19 @@ export class TouchInputHandler {
     if (this.mode === TouchInputMode.MOUSE && mode !== TouchInputMode.MOUSE) {
       this.resetMouseState(true);
     }
-    if (this.mode === TouchInputMode.DS5_TOUCHPAD && mode !== TouchInputMode.DS5_TOUCHPAD) {
+    if (this.mode === TouchInputMode.DS5_TOUCHPAD_ZONE && mode !== TouchInputMode.DS5_TOUCHPAD_ZONE) {
       this.ds5Touchpad.cancelActiveInput();
+      this.resetDs5ZoneGesture();
     }
     this.mode = mode;
     Logger.info('TouchInputHandler', `TouchInputHandler: 模式切换为 ${mode}`);
+  }
+
+  /** 配置区域 DS5 触控板的归一化矩形。 */
+  setDs5TouchpadZone(zone: TouchpadZoneRect): void {
+    this.ds5TouchpadZone = TouchpadZoneGeometry.clampZoneRect(
+      zone.left, zone.top, zone.right, zone.bottom
+    );
   }
 
   /** 绑定当前串流会话的 DS5 触控输出。 */
@@ -365,6 +380,7 @@ export class TouchInputHandler {
     this.trackpad.dispose();
     this.resetMouseState(true);
     this.ds5Touchpad.cancelActiveInput();
+    this.resetDs5ZoneGesture();
     this.touchStates.clear();
     this.lastForce.clear();
     this.lastSize.clear();
@@ -430,9 +446,9 @@ export class TouchInputHandler {
   handleTouchEvent(event: TouchEvent): void {
     const touches = event.touches;
 
-    // DS5 触控板的 Up/Cancel 可能只携带 changedTouches，不能在这里提前返回。
-    if (this.mode === TouchInputMode.DS5_TOUCHPAD) {
-      this.ds5Touchpad.handleEvent(event);
+    // 区域 DS5 触控板的 Up/Cancel 可能只携带 changedTouches，不能在这里提前返回。
+    if (this.mode === TouchInputMode.DS5_TOUCHPAD_ZONE) {
+      this.handleDs5TouchpadZoneEvent(event);
       return;
     }
 
@@ -460,6 +476,66 @@ export class TouchInputHandler {
     
     // MOUSE 模式：绝对定位 + 死区 + 长按右键 + 双指滚轮（对齐 Android AbsoluteTouchContext）
     this.handleMouseEvent(event);
+  }
+
+  /**
+   * vplus-compatible regional routing: the first contact chooses the owner of
+   * the whole gesture. Contacts outside the pad remain ordinary multi-touch,
+   * while contacts that start inside the zone go exclusively to DS5.
+   */
+  private handleDs5TouchpadZoneEvent(event: TouchEvent): void {
+    if (event.type === TouchType.Down && !this.ds5ZoneGestureActive) {
+      const areaWidth = Number(event.target.area.width);
+      const areaHeight = Number(event.target.area.height);
+      const firstTouch = event.changedTouches.length > 0
+        ? event.changedTouches[0]
+        : (event.touches.length > 0 ? event.touches[0] : undefined);
+      if (areaWidth > 0 && areaHeight > 0 && firstTouch) {
+        const normalizedX = firstTouch.x / areaWidth;
+        const normalizedY = firstTouch.y / areaHeight;
+        this.ds5ZoneGestureUsesPad = TouchpadZoneGeometry.contains(
+          this.ds5TouchpadZone, normalizedX, normalizedY
+        );
+        this.ds5ZoneGestureActive = true;
+      }
+    }
+
+    if (event.type === TouchType.Down) {
+      for (const touch of event.changedTouches) {
+        this.ds5ZoneTouchIds.add(touch.id);
+      }
+    }
+
+    if (this.ds5ZoneGestureUsesPad) {
+      this.ds5Touchpad.handleEvent(event);
+    } else {
+      // Direct mode is the same fallback used by Android vplus outside the
+      // regional pad, and preserves multi-finger touch/pen behavior.
+      if (event.sourceTool === SourceTool.Pen && !this.penUnsupported) {
+        this.handlePenEvent(event);
+      } else {
+        this.handleMultiTouchEvent(event);
+      }
+    }
+
+    if (event.type === TouchType.Cancel) {
+      this.resetDs5ZoneGesture();
+      return;
+    }
+    if (event.type === TouchType.Up) {
+      for (const touch of event.changedTouches) {
+        this.ds5ZoneTouchIds.delete(touch.id);
+      }
+      if (this.ds5ZoneTouchIds.size === 0 || event.touches.length === 0) {
+        this.resetDs5ZoneGesture();
+      }
+    }
+  }
+
+  private resetDs5ZoneGesture(): void {
+    this.ds5ZoneGestureActive = false;
+    this.ds5ZoneGestureUsesPad = false;
+    this.ds5ZoneTouchIds.clear();
   }
   
   /**

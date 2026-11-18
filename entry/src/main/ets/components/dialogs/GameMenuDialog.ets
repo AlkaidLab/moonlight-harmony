@@ -33,6 +33,7 @@ import { SettingsKeys } from '../../service/SettingsService';
 import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceSensorService } from '../../service/input/DeviceSensorService';
 import { ToastQueue } from '../../utils/ToastQueue';
+import { TOUCH_MODE_MENU_OPTIONS } from '../TouchModeMenuOptions';
 import {
   StreamMenuColors,
   OV_FONT_XS, OV_FONT_SM, OV_FONT_MD, OV_FONT_LG,
@@ -77,13 +78,6 @@ interface MenuItem {
   bgColor: string;
   borderColor: string;
   textColor: string;
-}
-
-/** 触摸模式选项 */
-interface TouchModeOption {
-  key: string;
-  text: string;
-  subtitle: string;
 }
 
 /** 动作项配置 */
@@ -654,16 +648,10 @@ export struct GameMenuDialog {
 
   private showTouchModeDialog(): void {
     const currentMode = this.viewModel.touchMode;
-    const modes: TouchModeOption[] = [
-      { key: 'trackpad', text: '触控板', subtitle: '像笔记本触控板一样操作' },
-      { key: 'direct', text: '多点触控', subtitle: '直接点击屏幕位置' },
-      { key: 'mouse', text: '触摸鼠标', subtitle: '模拟鼠标移动和点击' },
-      { key: 'ds5_touchpad', text: 'DS5 触控板', subtitle: '屏幕映射 DualSense 触控板，支持双指' }
-    ];
 
-    const actions: ActionItem[] = modes.map((mode: TouchModeOption): ActionItem => {
+    const actions: ActionItem[] = TOUCH_MODE_MENU_OPTIONS.map((mode): ActionItem => {
       const item: ActionItem = {
-        text: mode.text,
+        text: mode.title,
         subtitle: currentMode === mode.key ? '✓ 当前模式' : mode.subtitle,
         color: currentMode === mode.key ? '#10B981' : undefined,
         backgroundColor: currentMode === mode.key ? '#D1FAE5' : undefined,

@@ -77,6 +77,8 @@ export class DeviceSensorService {
   private gyroAvailable: boolean = false;
   private accelAvailable: boolean = false;
   private availabilityChecked: boolean = false;
+  private cachedRotation: number = 0;
+  private orientationChangeCallback: ((displayId: number) => void) | null = null;
 
   private constructor() {}
 
@@ -154,11 +156,45 @@ export class DeviceSensorService {
    * @returns 旋转角度 (0, 90, 180, 270)
    */
   private getDeviceRotation(): number {
+    // 方向变化通过 display 事件更新，避免在 120–200Hz 采样热路径中
+    // 对每一条 gyro/accel 数据同步查询系统显示服务。
+    if (this.orientationChangeCallback === null) {
+      // 旧设备无法注册监听时保留原有查询，保证方向校正仍然正确。
+      this.refreshDeviceRotation();
+    }
+    return this.cachedRotation;
+  }
+
+  private refreshDeviceRotation(): void {
     try {
       const defaultDisplay = display.getDefaultDisplaySync();
-      return defaultDisplay.rotation * 90; // rotation 是 0-3, 乘90转角度
+      this.cachedRotation = defaultDisplay.rotation * 90;
     } catch {
-      return 0;
+      // 暂时查询失败时保留最后一次有效方向。
+    }
+  }
+
+  private startOrientationTracking(): void {
+    if (this.orientationChangeCallback !== null) return;
+    const callback = (_displayId: number): void => {
+      this.refreshDeviceRotation();
+    };
+    try {
+      display.on('change', callback);
+      this.orientationChangeCallback = callback;
+    } catch (err) {
+      Logger.warn('DeviceSensorService', '方向监听不可用，回退为逐次查询');
+    }
+    this.refreshDeviceRotation();
+  }
+
+  private stopOrientationTrackingIfIdle(): void {
+    if (this.isActive() || this.orientationChangeCallback === null) return;
+    try {
+      display.off('change', this.orientationChangeCallback);
+      this.orientationChangeCallback = null;
+    } catch (err) {
+      Logger.warn('DeviceSensorService', '取消方向监听失败');
     }
   }
 
@@ -246,6 +282,7 @@ export class DeviceSensorService {
       if (this.dataCallback) {
         this.dataCallback(this.controllerNumber, LI_MOTION_TYPE_GYRO, 0, 0, 0);
       }
+      this.stopOrientationTrackingIfIdle();
       return;
     }
 
@@ -283,10 +320,12 @@ export class DeviceSensorService {
       }, { interval: intervalNs });
 
       this.gyroEnabled = true;
+      this.startOrientationTracking();
       Logger.info('DeviceSensorService', `[DeviceSensor] 陀螺仪已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
     } catch (err) {
       Logger.error('DeviceSensorService', `[DeviceSensor] 启用陀螺仪失败: ${err}`);
       this.gyroAvailable = false;
+      this.stopOrientationTrackingIfIdle();
     }
   }
 
@@ -308,6 +347,7 @@ export class DeviceSensorService {
 
     if (reportRateHz === 0) {
       Logger.info('DeviceSensorService', '[DeviceSensor] 加速度计已禁用');
+      this.stopOrientationTrackingIfIdle();
       return;
     }
 
@@ -344,10 +384,12 @@ export class DeviceSensorService {
       }, { interval: intervalNs });
 
       this.accelEnabled = true;
+      this.startOrientationTracking();
       Logger.info('DeviceSensorService', `[DeviceSensor] 加速度计已启用: rate=${reportRateHz}Hz, interval=${intervalNs}ns`);
     } catch (err) {
       Logger.error('DeviceSensorService', `[DeviceSensor] 启用加速度计失败: ${err}`);
       this.accelAvailable = false;
+      this.stopOrientationTrackingIfIdle();
     }
   }
 

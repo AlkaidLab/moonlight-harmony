@@ -19,7 +19,12 @@ import { StreamingSession, StreamStats } from '../service/streaming/StreamingSes
 import { DisplayScaleOptions, DisplayScaleResult } from '../service/streaming/NvHttp';
 import { InputEvent } from '../model/InputEvent';
 import { OverlayConfig, getDefaultOverlayConfig, SnapPosition, calculateSnapPosition } from '../components/PerformanceOverlayManager';import { PreferencesUtil } from '../utils/PreferencesUtil';import { GamepadManager } from '../service/input/GamepadManager';
-import { CONTROLLER_TYPE_XBOX, CONN_STATUS_POOR, CONN_STATUS_OKAY } from '../service/streaming/MoonBridge';
+import {
+  CONTROLLER_TYPE_XBOX,
+  CONN_STATUS_POOR,
+  CONN_STATUS_OKAY,
+  Ds5HapticsIrV2Frame
+} from '../service/streaming/MoonBridge';
 import { common } from '@kit.AbilityKit';
 import { inputDevice } from '@kit.InputKit';
 import { Logger } from '../common/Logger';
@@ -42,7 +47,7 @@ export enum TouchMode {
   TRACKPAD = 'trackpad',
   DIRECT = 'direct',
   MOUSE = 'mouse',
-  DS5_TOUCHPAD = 'ds5_touchpad'
+  DS5_TOUCHPAD_ZONE = 'ds5_touchpad_zone'
 }
 
 /**
@@ -169,6 +174,7 @@ export class StreamViewModel {
   // 私有服务
   private settingsService: SettingsService = SettingsService.getInstance();
   private streamingSession: StreamingSession | null = null;
+  private ds5HapticsCallback: ((frame: Ds5HapticsIrV2Frame) => void) | null = null;
   
   // 连接终止回调（由 StreamPage 设置）
   private connectionTerminatedCallback: ((errorCode: number) => void) | null = null;
@@ -266,9 +272,20 @@ export class StreamViewModel {
     // 确定触摸模式
     // 优先使用用户在菜单中选择过的模式（持久化在 LAST_TOUCH_MODE）
     const lastTouchMode = await PreferencesUtil.get<string>(SettingsKeys.LAST_TOUCH_MODE, '');
-    if (lastTouchMode && (lastTouchMode === 'trackpad' || lastTouchMode === 'direct' ||
-      lastTouchMode === 'mouse' || lastTouchMode === 'ds5_touchpad')) {
-      this.touchMode = lastTouchMode as TouchMode;
+    if (lastTouchMode === 'trackpad') {
+      this.touchMode = TouchMode.TRACKPAD;
+    } else if (lastTouchMode === 'direct') {
+      this.touchMode = TouchMode.DIRECT;
+    } else if (lastTouchMode === 'mouse') {
+      this.touchMode = TouchMode.MOUSE;
+    } else if (lastTouchMode === 'ds5_touchpad' || lastTouchMode === 'ds5_touchpad_zone') {
+      // 兼容旧版本的全屏 DS5 触控板设置，升级后统一使用区域模式。
+      this.touchMode = TouchMode.DS5_TOUCHPAD_ZONE;
+      if (lastTouchMode === 'ds5_touchpad') {
+        PreferencesUtil.put(SettingsKeys.LAST_TOUCH_MODE, TouchMode.DS5_TOUCHPAD_ZONE).catch((err: Error) => {
+          Logger.warn('StreamViewModel', `StreamViewModel: 迁移 DS5 触摸模式失败: ${err.message}`);
+        });
+      }
     } else if (this.inputSettings.touchscreenTrackpad) {
       // 用户在设置中强制启用了触控板模式
       this.touchMode = TouchMode.TRACKPAD;
@@ -319,7 +336,14 @@ export class StreamViewModel {
       
       // 创建串流会话
       this.streamingSession = new StreamingSession();
-      this.streamingSession.setDs5TouchpadEnabled(this.touchMode === TouchMode.DS5_TOUCHPAD);
+      // In auto mode declare the DS5 capability before the connection starts.
+      // Later automatic switches then only change local routing and do not
+      // rebuild controller slot 0 while authored haptics are active.
+      this.streamingSession.setDs5TouchpadEnabled(
+        this.inputSettings?.autoDs5Touchpad === true ||
+        this.touchMode === TouchMode.DS5_TOUCHPAD_ZONE
+      );
+      this.streamingSession.setDs5HapticsCallback(this.ds5HapticsCallback);
       
       // 设置 HDR 状态回调，当 drSetup 检测到实际 HDR 状态时更新 UI
       this.streamingSession.setHdrStateCallback((isHdr: boolean) => {
@@ -615,13 +639,22 @@ export class StreamViewModel {
   /**
    * 设置触摸模式
    */
-  setTouchMode(mode: TouchMode): void {
+  setTouchMode(mode: TouchMode, persist: boolean = true): void {
     this.touchMode = mode;
-    this.streamingSession?.setDs5TouchpadEnabled(mode === TouchMode.DS5_TOUCHPAD);
+    // Automatic mode declares the DS5 capability before connect and keeps it
+    // stable for the whole session. Runtime auto switches only change the
+    // local routing, avoiding controller-slot re-announcement mid-stream.
+    if (this.inputSettings?.autoDs5Touchpad !== true) {
+      this.streamingSession?.setDs5TouchpadEnabled(
+        mode === TouchMode.DS5_TOUCHPAD_ZONE
+      );
+    }
     // 持久化用户在菜单中选择的触摸模式，断开重连后恢复
-    PreferencesUtil.put(SettingsKeys.LAST_TOUCH_MODE, mode as string).catch((err: Error) => {
-      Logger.warn('StreamViewModel', `StreamViewModel: 保存触摸模式失败: ${err.message}`);
-    });
+    if (persist) {
+      PreferencesUtil.put(SettingsKeys.LAST_TOUCH_MODE, mode as string).catch((err: Error) => {
+        Logger.warn('StreamViewModel', `StreamViewModel: 保存触摸模式失败: ${err.message}`);
+      });
+    }
     Logger.info('StreamViewModel', `StreamViewModel: 触摸模式切换为 ${mode}`);
   }
 
@@ -726,6 +759,11 @@ export class StreamViewModel {
   async setDisplayScale(scalePercent: number): Promise<DisplayScaleResult | null> {
     if (!this.streamingSession) return null;
     return await this.streamingSession.setDisplayScale(scalePercent);
+  }
+
+  setDs5HapticsCallback(callback: ((frame: Ds5HapticsIrV2Frame) => void) | null): void {
+    this.ds5HapticsCallback = callback;
+    this.streamingSession?.setDs5HapticsCallback(callback);
   }
 
   // ---------------------------------------------------------------------------

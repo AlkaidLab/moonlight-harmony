@@ -29,6 +29,8 @@ import { GameMenuDialog, GameMenuCallbacks } from '../components/dialogs/GameMen
 import { StreamMenuManager } from '../components/StreamMenuManager';
 import { StreamViewModel, TouchMode, StreamConnectionState } from '../viewmodel/StreamViewModel';
 import { TouchInputHandler, TouchInputMode } from '../service/input/TouchInputHandler';
+import { TouchModeAutoSwitch } from '../service/input/TouchModeAutoSwitch';
+import { TouchpadZoneGeometry, TouchpadZoneRect } from '../service/input/TouchpadZoneGeometry';
 import {
   DS5_TOUCH_FEEDBACK_CANCEL,
   DS5_TOUCH_FEEDBACK_CLICK_DOWN,
@@ -44,7 +46,12 @@ import { pickRandomConnectingTip } from '../components/StreamConnectingTips';
 import { ShortcutEditorDialog, ShortcutEditData } from '../components/dialogs/ShortcutEditorDialog';
 import { GamepadManager, GamepadState, MoonlightControllerType, MouseEmulationCallback } from '../service/input/GamepadManager';
 import { GyroAssistService } from '../service/input/GyroAssistService';
-import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../service/streaming/MoonBridge';
+import {
+  MoonBridge,
+  BUTTON_ACTION_PRESS,
+  BUTTON_ACTION_RELEASE,
+  Ds5HapticsIrV2Frame
+} from '../service/streaming/MoonBridge';
 import { SuperCmd, NvHttp } from '../service/streaming/NvHttp';
 import { VirtualKey, KeyAction, sendShortcutKeys } from '../service/customkey/CustomKeyTypes';
 import { pointer } from '@kit.InputKit';
@@ -227,7 +234,7 @@ struct StreamPage {
   @State videoTranslateX: number = 0;
   /** 视频垂直平移 (vp) */
   @State videoTranslateY: number = 0;
-  /** DS5 触控板本地触点回显，短暂显示且不参与命中测试。 */
+  /** 区域 DS5 触控板本地触点回显，短暂显示且不参与命中测试。 */
   @State private ds5TouchIndicators: Ds5TouchIndicator[] = [];
 
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
@@ -296,6 +303,8 @@ struct StreamPage {
   // 防止已销毁页面重新产生高刷请求
   private pageDisposed: boolean = false;
   private ds5TouchFadeTimers: Map<number, number> = new Map();
+  private autoTouchMode: TouchModeAutoSwitch = new TouchModeAutoSwitch();
+  private autoTouchReturnMode: TouchMode = TouchMode.MOUSE;
   
   // 页面参数
   private computerId: string = '';
@@ -317,6 +326,9 @@ struct StreamPage {
   private netSceneLastKey: string = '';
   
   aboutToAppear(): void {
+    this.autoTouchMode.setSwitchCallback((mode: TouchMode): void => {
+      this.applyAutomaticTouchMode(mode);
+    });
     const params = AppNav.topParams<StreamPageParams>();
     if (params) {
       this.computerId = params.computerId;
@@ -807,7 +819,7 @@ struct StreamPage {
       const displayInfo = display.getDefaultDisplaySync();
       const screenWidth = displayInfo.width / displayInfo.densityPixels;
       const screenHeight = displayInfo.height / displayInfo.densityPixels;
-      
+
       // 更新 ViewModel 显示信息
       this.viewModel.displayInfo.screenWidth = screenWidth;
       this.viewModel.displayInfo.screenHeight = screenHeight;
@@ -862,6 +874,7 @@ struct StreamPage {
     // 清理 ViewModel
     this.touchInputHandler.cancelActiveInput();
     this.clearDs5TouchIndicators();
+    this.stopAutomaticTouchMode();
     this.touchInputHandler.setDs5TouchpadSink(null);
     this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
     this.viewModel.dispose();
@@ -1708,21 +1721,27 @@ struct StreamPage {
 
     await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
 
-    // 将屏幕 DS5 触控板绑定到本次会话的 controller slot 0。
+    // 将区域 DS5 触控板绑定到本次会话的 controller slot 0。
     this.touchInputHandler.setDs5TouchpadSink(this.viewModel.getSession());
     this.touchInputHandler.setDs5TouchpadFeedbackCallback((feedback: Ds5TouchpadFeedback): void => {
       this.handleDs5TouchpadFeedback(feedback);
     });
     this.touchInputHandler.setDs5TouchpadUnsupportedCallback(() => {
-      if (this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) return;
+      if (!this.isDs5TouchMode(this.viewModel.touchMode)) return;
       setTimeout(() => {
-        if (this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) return;
-        this.setTouchMode(TouchMode.TRACKPAD);
+        if (!this.isDs5TouchMode(this.viewModel.touchMode)) return;
+        const automatic = this.viewModel.inputSettings?.autoDs5Touchpad === true;
+        if (automatic) {
+          this.autoTouchMode.disableForSession();
+          this.setTouchMode(this.autoTouchReturnMode, false);
+        } else {
+          this.setTouchMode(TouchMode.TRACKPAD);
+        }
         ToastQueue.show({ message: '主机未启用 DS5 触控板协议，已回退为普通触控板', duration: 2500 });
       }, 0);
     });
 
-    if (this.viewModel.touchMode === TouchMode.DS5_TOUCHPAD &&
+    if (this.isDs5TouchMode(this.viewModel.touchMode) &&
       !this.viewModel.isDs5TouchpadSupported()) {
       this.setTouchMode(TouchMode.TRACKPAD);
       ToastQueue.show({ message: '主机未启用 DS5 触控板协议，已回退为普通触控板', duration: 2500 });
@@ -1739,6 +1758,27 @@ struct StreamPage {
     try {
       // 加载设置
       await this.viewModel.loadSettings();
+      const inputSettings = this.viewModel.inputSettings;
+      const configuredReturnMode = this.isDs5TouchMode(this.viewModel.touchMode)
+        ? TouchMode.MOUSE : this.viewModel.touchMode;
+      this.autoTouchReturnMode = configuredReturnMode;
+      this.autoTouchMode.setReturnMode(configuredReturnMode);
+      const autoDs5Enabled = inputSettings?.autoDs5Touchpad === true;
+      // A persisted DS5 selection is a manual preference. It wins over the
+      // optional automatic policy for this session.
+      if (autoDs5Enabled && this.isDs5TouchMode(this.viewModel.touchMode)) {
+        this.autoTouchMode.disableForSession();
+      } else {
+        this.autoTouchMode.configure(autoDs5Enabled);
+      }
+      this.touchInputHandler.setDs5TouchpadZone(
+        TouchpadZoneGeometry.parseZoneRect(
+          inputSettings?.ds5TouchpadZoneRect ?? TouchpadZoneGeometry.DEFAULT_ZONE_RECT
+        )
+      );
+      this.viewModel.setDs5HapticsCallback((frame: Ds5HapticsIrV2Frame): void => {
+        this.autoTouchMode.handleFrame(frame);
+      });
       this.endStreamReportEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false);
       this.lifecycleManager.setLatencyToastEnabled(this.endStreamReportEnabled);
       this.lifecycleManager.setDisableWarnings(
@@ -1788,6 +1828,7 @@ struct StreamPage {
       // 设置连接终止回调
       this.viewModel.setConnectionTerminatedCallback((errorCode: number) => {
         this.stopClipboardSync();
+        this.stopAutomaticTouchMode();
         this.lifecycleManager.handleConnectionTerminated(errorCode);
       });
 
@@ -2252,6 +2293,7 @@ struct StreamPage {
     this.stopClipboardSync();
     this.touchInputHandler.cancelActiveInput();
     this.clearDs5TouchIndicators();
+    this.stopAutomaticTouchMode();
 
     const report = this.buildCurrentStreamReport();
     await this.saveStreamDiagnostics(report.diagnosticsText);
@@ -2302,6 +2344,7 @@ struct StreamPage {
 
     this.stopClipboardSync();
     this.touchInputHandler.cancelActiveInput();
+    this.stopAutomaticTouchMode();
 
     const report = this.buildCurrentStreamReport();
     await this.saveStreamDiagnostics(report.diagnosticsText);
@@ -2350,6 +2393,7 @@ struct StreamPage {
       // 先停止当前会话（静默，不导航不显示 toast）
       this.touchInputHandler.cancelActiveInput();
       this.clearDs5TouchIndicators();
+      this.stopAutomaticTouchMode();
       this.touchInputHandler.setDs5TouchpadSink(null);
       this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
       await this.viewModel.stopStreaming();
@@ -2423,7 +2467,7 @@ struct StreamPage {
     // 虚拟手柄显示时，默认不处理触摸输入（避免与虚拟按键手势竞争）
     // touchPassthrough 开启时允许共存
     if (this.viewModel.showController && !this.touchPassthrough &&
-      this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) {
+      !this.isDs5TouchMode(this.viewModel.touchMode)) {
       return;
     }
     this.touchInputHandler.handleTouchEvent(event);
@@ -2569,23 +2613,65 @@ struct StreamPage {
   /**
    * 设置触摸模式
    */
-  setTouchMode(mode: string): void {
+  setTouchMode(mode: string, manual: boolean = true): void {
     const nextMode = mode as TouchMode;
-    if (nextMode === TouchMode.DS5_TOUCHPAD && this.viewModel.isConnected &&
+    if (this.isDs5TouchMode(nextMode) && this.viewModel.isConnected &&
       !this.viewModel.isDs5TouchpadSupported()) {
       ToastQueue.show({ message: '主机未启用 DS5 触控板协议', duration: 2200 });
       return;
     }
 
+    if (manual) {
+      this.autoTouchMode.noteManualOverride();
+      if (this.isAutoReturnMode(nextMode)) {
+        this.autoTouchReturnMode = nextMode;
+        this.autoTouchMode.setReturnMode(nextMode);
+      }
+    }
     this.touchInputHandler.cancelActiveInput();
     this.clearDs5TouchIndicators();
-    if (nextMode === TouchMode.DS5_TOUCHPAD && this.isTouchOverrideEnabled) {
+    if (this.isDs5TouchMode(nextMode) && this.isTouchOverrideEnabled) {
       this.isTouchOverrideEnabled = false;
       this.panZoomHandler.cancelActiveGesture();
     }
-    this.viewModel.setTouchMode(nextMode);
+    this.viewModel.setTouchMode(nextMode, manual);
     this.touchInputHandler.setMode(this.toTouchInputMode(nextMode));
     Logger.info('StreamPage', `StreamPage: 触摸模式切换为 ${mode}`);
+  }
+
+  private isDs5TouchMode(mode: TouchMode): boolean {
+    return mode === TouchMode.DS5_TOUCHPAD_ZONE;
+  }
+
+  private applyAutomaticTouchMode(mode: TouchMode): void {
+    if (mode === TouchMode.DS5_TOUCHPAD_ZONE) {
+      if (!this.viewModel.isDs5TouchpadSupported()) {
+        this.autoTouchMode.disableForSession();
+        ToastQueue.show({ message: '主机未启用 DS5 触控板协议，自动切换已停用', duration: 2500 });
+        return;
+      }
+      const current = this.viewModel.touchMode;
+      if (this.isAutoReturnMode(current)) {
+        this.autoTouchReturnMode = current;
+        this.autoTouchMode.setReturnMode(current);
+      }
+      this.setTouchMode(mode, false);
+      ToastQueue.show({ message: '检测到 DS5 游戏，已启用区域触控板', duration: 1800 });
+      return;
+    }
+    if (this.isAutoReturnMode(mode)) {
+      this.setTouchMode(mode, false);
+      ToastQueue.show({ message: 'DS5 触觉流结束，已恢复原触摸模式', duration: 1800 });
+    }
+  }
+
+  private isAutoReturnMode(mode: TouchMode): boolean {
+    return mode === TouchMode.MOUSE || mode === TouchMode.TRACKPAD || mode === TouchMode.DIRECT;
+  }
+
+  private stopAutomaticTouchMode(): void {
+    this.autoTouchMode.reset();
+    this.viewModel.setDs5HapticsCallback(null);
   }
 
   private toTouchInputMode(mode: TouchMode): TouchInputMode {
@@ -2594,8 +2680,8 @@ struct StreamPage {
         return TouchInputMode.DIRECT;
       case TouchMode.MOUSE:
         return TouchInputMode.MOUSE;
-      case TouchMode.DS5_TOUCHPAD:
-        return TouchInputMode.DS5_TOUCHPAD;
+      case TouchMode.DS5_TOUCHPAD_ZONE:
+        return TouchInputMode.DS5_TOUCHPAD_ZONE;
       case TouchMode.TRACKPAD:
       default:
         return TouchInputMode.TRACKPAD;
@@ -2653,7 +2739,7 @@ struct StreamPage {
           .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
           .attributeModifier(this.aihdrModifier)
           .hitTestBehavior((this.viewModel.showController && !this.touchPassthrough &&
-            this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD)
+            !this.isDs5TouchMode(this.viewModel.touchMode))
             ? HitTestMode.None : HitTestMode.Default)
           .onTouch((event: TouchEvent) => {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
@@ -2768,8 +2854,13 @@ struct StreamPage {
         })
       }
 
-      // DS5 触控板本地回显层：只画触点，不拦截后续触摸。
-      if (this.viewModel.isConnected && this.viewModel.touchMode === TouchMode.DS5_TOUCHPAD &&
+      // DS5 区域触控板只提供轻量视觉提示，触摸仍由底层 XComponent 接收。
+      if (this.viewModel.isConnected && this.viewModel.touchMode === TouchMode.DS5_TOUCHPAD_ZONE) {
+        this.Ds5TouchpadZoneOverlay()
+      }
+
+      // 区域 DS5 触控板本地回显层：只画触点，不拦截后续触摸。
+      if (this.viewModel.isConnected && this.isDs5TouchMode(this.viewModel.touchMode) &&
         this.ds5TouchIndicators.length > 0) {
         this.Ds5TouchpadFeedbackOverlay()
       }
@@ -2893,6 +2984,39 @@ struct StreamPage {
   // ==================== UI Builders ====================
 
   @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
+  @Builder
+  Ds5TouchpadZoneOverlay() {
+    Stack() {
+      Rect()
+        .width((TouchpadZoneGeometry.width(this.getDs5TouchpadZone()) * 100) + '%')
+        .height((TouchpadZoneGeometry.height(this.getDs5TouchpadZone()) * 100) + '%')
+        .position({
+          x: (this.getDs5TouchpadZone().left * 100) + '%',
+          y: (this.getDs5TouchpadZone().top * 100) + '%'
+        })
+        .fill('#12000000')
+        .border({ width: 1, color: '#80FFFFFF' })
+        .borderRadius(8)
+    }
+      .width(this.xComponentWidth)
+      .height(this.xComponentHeight)
+      .alignContent(this.xComponentAlignment)
+      .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+      .scale({
+        x: this.videoScale,
+        y: this.videoScale,
+        centerX: 0,
+        centerY: 0
+      })
+      .hitTestBehavior(HitTestMode.None)
+  }
+
+  private getDs5TouchpadZone(): TouchpadZoneRect {
+    return TouchpadZoneGeometry.parseZoneRect(
+      this.viewModel.inputSettings?.ds5TouchpadZoneRect ?? TouchpadZoneGeometry.DEFAULT_ZONE_RECT
+    );
+  }
+
   @Builder
   Ds5TouchpadFeedbackOverlay() {
     Stack() {

@@ -20,6 +20,7 @@ import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
 import { OptionPickerDialogConfig, OptionItem } from './dialogs/OptionPickerDialog';
 import { ToastQueue } from '../utils/ToastQueue';
 import { UsbForwardingService } from '../service/usbdriver/UsbForwardingService';
+import { getTouchModeMenuTitle, TOUCH_MODE_MENU_OPTIONS } from './TouchModeMenuOptions';
 
 // VirtualKey 统一定义在 CustomKeyTypes 中，此处 re-export 保持向后兼容
 import { VirtualKey } from '../service/customkey/CustomKeyTypes';
@@ -74,18 +75,7 @@ export class StreamMenuManager {
    * 获取触摸模式的中文名称
    */
   getTouchModeName(): string {
-    switch (this.viewModel.touchMode) {
-      case 'trackpad':
-        return '触摸板模式';
-      case 'direct':
-        return '直接触摸模式';
-      case 'mouse':
-        return '触摸鼠标';
-      case 'ds5_touchpad':
-        return 'DS5 触控板模式';
-      default:
-        return this.viewModel.touchMode;
-    }
+    return getTouchModeMenuTitle(this.viewModel.touchMode);
   }
 
   /**
@@ -276,33 +266,18 @@ export class StreamMenuManager {
   getTouchModeMenuConfig(): OptionPickerDialogConfig {
     const currentMode = this.viewModel.touchMode;
 
-    const options: OptionItem[] = [
-      {
-        title: currentMode === 'trackpad' ? '✓ 触摸板模式' : '  触摸板模式',
-        subtitle: '相对移动，像使用笔记本触摸板',
-        value: 'trackpad'
-      },
-      {
-        title: currentMode === 'direct' ? '✓ 直接触摸模式' : '  直接触摸模式',
-        subtitle: '绝对坐标，点哪移哪',
-        value: 'direct'
-      },
-      {
-        title: currentMode === 'mouse' ? '✓ 触摸鼠标' : '  触摸鼠标',
-        subtitle: '相对移动 + 按住拖动',
-        value: 'mouse'
-      },
-      {
-        title: currentMode === 'ds5_touchpad' ? '✓ DS5 触控板' : '  DS5 触控板',
-        subtitle: '屏幕映射 DualSense 触控板，支持双指',
-        value: 'ds5_touchpad'
-      },
-      {
+    const options: OptionItem[] = TOUCH_MODE_MENU_OPTIONS.map((mode): OptionItem => {
+      return {
+        title: currentMode === mode.key ? '✓ ' + mode.title : '  ' + mode.title,
+        subtitle: mode.subtitle,
+        value: mode.key
+      };
+    });
+    options.push({
         title: '🖱️ 切换远程鼠标指针',
         subtitle: '发送 Ctrl+Alt+Shift+N 切换鼠标',
         value: 'toggle_remote_mouse'
-      }
-    ];
+      });
 
     return {
       title: '👆 选择触摸模式',

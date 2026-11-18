@@ -525,6 +525,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private resolutionChangedCallback: ResolutionChangedCallback | null = null;
   private stageProgressCallback: ((stage: number, stageName: string) => void) | null = null;
   private connectionStatusCallback: ((connectionStatus: number) => void) | null = null;
+  private ds5HapticsCallback: ((frame: Ds5HapticsIrV2Frame) => void) | null = null;
   /** 视频解码器启动回调（drStart）：在 LiStartConnection 内部触发，早于 start() resolve */
   private decoderStartedCallback: (() => void) | null = null;
 
@@ -650,6 +651,10 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
   setConnectionStatusCallback(callback: ((connectionStatus: number) => void) | null): void {
     this.connectionStatusCallback = callback;
+  }
+
+  setDs5HapticsCallback(callback: ((frame: Ds5HapticsIrV2Frame) => void) | null): void {
+    this.ds5HapticsCallback = callback;
   }
 
   /**
@@ -1611,6 +1616,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         // never let stale work restart a stopped session's vibration source.
         if (!this.isRunning) return;
         GamepadManager.getInstance().handleDs5HapticsIrV2(frame);
+        if (this.ds5HapticsCallback) this.ds5HapticsCallback(frame);
       },
       setAdaptiveTriggers: (frame: AdaptiveTriggersFrame): void => {
         // This callback owns a separate TSFN and may already be queued when the

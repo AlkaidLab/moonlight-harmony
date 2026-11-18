@@ -124,6 +124,8 @@ export class SettingsKeys {
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
   static readonly GAME_MOUSE_MODE: string = 'settings_game_mouse_mode';  // 游戏鼠标模式（相对模式）
   static readonly LAST_TOUCH_MODE: string = 'settings_last_touch_mode';  // 运行时触摸模式（菜单切换后持久化）
+  static readonly AUTO_DS5_TOUCHPAD: string = 'settings_auto_ds5_touchpad';
+  static readonly DS5_TOUCHPAD_ZONE_RECT: string = 'settings_ds5_touchpad_zone_rect';
 
   // 增强触控设置
   static readonly ENABLE_ENHANCED_TOUCH: string = 'settings_enable_enhanced_touch';
@@ -242,6 +244,8 @@ export interface InputSettings {
   doubleTapTimeThreshold: number;
   mouseNavButtons: boolean;
   gameMouseMode: boolean;  // 游戏鼠标模式：相对增量+光标回弹，适合 FPS/TPS
+  autoDs5Touchpad: boolean;
+  ds5TouchpadZoneRect: string;
 
   // 增强触控
   enableEnhancedTouch: boolean;
@@ -830,6 +834,10 @@ export class SettingsService {
       doubleTapTimeThreshold: await this.getNumber(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125),
       mouseNavButtons: await this.getBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false),
       gameMouseMode: await this.getBoolean(SettingsKeys.GAME_MOUSE_MODE, false),
+      autoDs5Touchpad: await this.getBoolean(SettingsKeys.AUTO_DS5_TOUCHPAD, false),
+      ds5TouchpadZoneRect: await this.getString(
+        SettingsKeys.DS5_TOUCHPAD_ZONE_RECT, '0.18,0.74,0.82,0.94'
+      ),
 
       // 增强触控
       enableEnhancedTouch: await this.getBoolean(SettingsKeys.ENABLE_ENHANCED_TOUCH, true),
