@@ -637,6 +637,8 @@ export struct VirtualControllerOverlay {
 
   /** 触摸穿透状态（双向 — 外部需读取来控制 XComponent hitTest） */
   @Link touchPassthrough: boolean;
+  /** DS5 区域模式下让未命中按钮的触点继续到下层画面。 */
+  allowUnderlyingTouch: boolean = false;
 
   /** 控制器缩放值（双向 — 外部需读取传递给 config） */
   @Link controllerScale: number;
@@ -705,7 +707,8 @@ export struct VirtualControllerOverlay {
     }
     .width('100%')
     .height('100%')
-    .hitTestBehavior(this.touchPassthrough ? HitTestMode.Transparent : HitTestMode.Default)
+    .hitTestBehavior((this.touchPassthrough || this.allowUnderlyingTouch)
+      ? HitTestMode.Transparent : HitTestMode.Default)
     .onTouch((event: TouchEvent) => {
       if (this.onSystemTouchGesture(event)) {
         event.stopPropagation();

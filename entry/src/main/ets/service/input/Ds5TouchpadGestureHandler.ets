@@ -16,6 +16,7 @@ import {
   TOUCH_EVENT_UP,
   LI_ERR_UNSUPPORTED,
 } from '../streaming/MoonBridge';
+import { TouchpadZoneGeometry, TouchpadZonePoint, TouchpadZoneRect } from './TouchpadZoneGeometry';
 
 /** DS5 touchpad output owned by the active streaming session. */
 export interface Ds5TouchpadInputSink {
@@ -94,18 +95,18 @@ export class Ds5TouchpadGestureHandler {
     if (!enabled) this.releaseClickButton();
   }
 
-  handleEvent(event: TouchEvent): void {
+  handleEvent(event: TouchEvent, zone: TouchpadZoneRect): void {
     if (!this.sink) return;
 
     switch (event.type) {
       case TouchType.Down:
-        this.handleDown(event);
+        this.handleDown(event, zone);
         break;
       case TouchType.Move:
-        this.handleMove(event);
+        this.handleMove(event, zone);
         break;
       case TouchType.Up:
-        this.handleUp(event);
+        this.handleUp(event, zone);
         break;
       case TouchType.Cancel:
         this.cancelActiveInput();
@@ -130,7 +131,7 @@ export class Ds5TouchpadGestureHandler {
     this.unsupportedReported = false;
   }
 
-  private handleDown(event: TouchEvent): void {
+  private handleDown(event: TouchEvent, zone: TouchpadZoneRect): void {
     const areaWidth = Number(event.target.area.width);
     const areaHeight = Number(event.target.area.height);
     if (areaWidth <= 0 || areaHeight <= 0) return;
@@ -146,10 +147,9 @@ export class Ds5TouchpadGestureHandler {
       const isOnlyTouch = this.touches.size === 0 && event.touches.length <= 1;
       if (!isOnlyTouch) this.markMultiTouchGesture();
 
-      const x = this.normalize(touch.x, areaWidth);
-      const y = this.normalize(touch.y, areaHeight);
+      const point = this.normalizeToZone(touch.x, touch.y, areaWidth, areaHeight, zone);
       const pressure = this.getPressure(touch, true);
-      const ret = this.sendTouch(TOUCH_EVENT_DOWN, touch.id, x, y, pressure);
+      const ret = this.sendTouch(TOUCH_EVENT_DOWN, touch.id, point.x, point.y, pressure);
       if (ret < 0) continue;
 
       const state: Ds5TouchState = {
@@ -166,7 +166,7 @@ export class Ds5TouchpadGestureHandler {
     if (this.touches.size > 1) this.markMultiTouchGesture();
   }
 
-  private handleMove(event: TouchEvent): void {
+  private handleMove(event: TouchEvent, zone: TouchpadZoneRect): void {
     const areaWidth = Number(event.target.area.width);
     const areaHeight = Number(event.target.area.height);
     if (areaWidth <= 0 || areaHeight <= 0) return;
@@ -180,17 +180,18 @@ export class Ds5TouchpadGestureHandler {
       if (this.exceedsTapMovement(touch, state)) state.tapEligible = false;
       state.lastX = touch.x;
       state.lastY = touch.y;
+      const point = this.normalizeToZone(touch.x, touch.y, areaWidth, areaHeight, zone);
       this.sendTouch(
         TOUCH_EVENT_MOVE,
         touch.id,
-        this.normalize(touch.x, areaWidth),
-        this.normalize(touch.y, areaHeight),
+        point.x,
+        point.y,
         this.getPressure(touch, true),
       );
     }
   }
 
-  private handleUp(event: TouchEvent): void {
+  private handleUp(event: TouchEvent, zone: TouchpadZoneRect): void {
     const areaWidth = Number(event.target.area.width);
     const areaHeight = Number(event.target.area.height);
     if (areaWidth <= 0 || areaHeight <= 0) {
@@ -209,8 +210,9 @@ export class Ds5TouchpadGestureHandler {
       const state = this.touches.get(touch.id);
       if (!state) continue;
 
-      const normalizedX = this.normalize(touch.x, areaWidth);
-      const normalizedY = this.normalize(touch.y, areaHeight);
+      const point = this.normalizeToZone(touch.x, touch.y, areaWidth, areaHeight, zone);
+      const normalizedX = point.x;
+      const normalizedY = point.y;
       if (this.tapToClickEnabled && this.isTap(touch, state, now)) {
         this.pressClickButton(touch.id, normalizedX, normalizedY);
       }
@@ -337,6 +339,15 @@ export class Ds5TouchpadGestureHandler {
     if (!active) return 0;
     const pressure = touch.pressure ?? 1.0;
     return Math.max(0, Math.min(1, pressure));
+  }
+
+  private normalizeToZone(touchX: number, touchY: number, areaWidth: number,
+    areaHeight: number, zone: TouchpadZoneRect): TouchpadZonePoint {
+    return TouchpadZoneGeometry.normalizeToZone(
+      this.normalize(touchX, areaWidth),
+      this.normalize(touchY, areaHeight),
+      zone
+    );
   }
 
   private normalize(value: number, extent: number): number {
