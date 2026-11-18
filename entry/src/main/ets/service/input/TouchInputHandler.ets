@@ -510,7 +510,7 @@ export class TouchInputHandler {
     }
 
     if (this.ds5ZoneGestureUsesPad) {
-      this.ds5Touchpad.handleEvent(event);
+      this.ds5Touchpad.handleEvent(event, this.ds5TouchpadZone);
     } else if (this.ds5ZoneGestureAllowsOutsideTouch) {
       // Direct mode is the same fallback used by Android vplus outside the
       // regional pad, and preserves multi-finger touch/pen behavior.

@@ -16,6 +16,11 @@ export interface TouchpadZoneRect {
   bottom: number;
 }
 
+export interface TouchpadZonePoint {
+  x: number;
+  y: number;
+}
+
 /**
  * Geometry shared by touch routing and the visual zone overlay.
  * Keeping the values normalized makes the zone stable across resolutions,
@@ -52,6 +57,19 @@ export class TouchpadZoneGeometry {
 
   static contains(zone: TouchpadZoneRect, x: number, y: number): boolean {
     return x >= zone.left && x <= zone.right && y >= zone.top && y <= zone.bottom;
+  }
+
+  /** Map a normalized screen coordinate into the normalized zone coordinate space. */
+  static normalizeToZone(x: number, y: number, zone: TouchpadZoneRect): TouchpadZonePoint {
+    const zoneWidth = TouchpadZoneGeometry.width(zone);
+    const zoneHeight = TouchpadZoneGeometry.height(zone);
+    if (zoneWidth <= 0 || zoneHeight <= 0) {
+      return { x: 0, y: 0 };
+    }
+    return {
+      x: Math.max(0, Math.min(1, (x - zone.left) / zoneWidth)),
+      y: Math.max(0, Math.min(1, (y - zone.top) / zoneHeight))
+    };
   }
 
 }
