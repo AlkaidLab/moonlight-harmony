@@ -2765,6 +2765,7 @@ struct StreamPage {
       if (this.viewModel.isConnected && this.viewModel.showController) {
         VirtualControllerOverlay({
           touchPassthrough: $touchPassthrough,
+          allowUnderlyingTouch: this.isDs5TouchMode(this.viewModel.touchMode),
           controllerScale: $controllerScaleValue,
           controllerOpacity: $controllerOpacityValue,
           onlyL3R3: this.viewModel.inputSettings?.onlyL3R3 ?? false,
@@ -2913,26 +2914,35 @@ struct StreamPage {
   @Builder
   Ds5TouchpadZoneOverlay() {
     Stack() {
-      Rect()
-        .width((TouchpadZoneGeometry.width(this.getDs5TouchpadZone()) * 100) + '%')
-        .height((TouchpadZoneGeometry.height(this.getDs5TouchpadZone()) * 100) + '%')
-        .position({
-          x: (this.getDs5TouchpadZone().left * 100) + '%',
-          y: (this.getDs5TouchpadZone().top * 100) + '%'
-        })
-        .fill('#12000000')
-        .border({ width: 1, color: '#80FFFFFF' })
-        .borderRadius(8)
+      Stack() {
+        Rect()
+          .width((TouchpadZoneGeometry.width(this.getDs5TouchpadZone()) * 100) + '%')
+          .height((TouchpadZoneGeometry.height(this.getDs5TouchpadZone()) * 100) + '%')
+          .position({
+            x: (this.getDs5TouchpadZone().left * 100) + '%',
+            y: (this.getDs5TouchpadZone().top * 100) + '%'
+          })
+          .fill('#12000000')
+          .border({ width: 1, color: '#80FFFFFF' })
+          .borderRadius(8)
+      }
+        .width(this.xComponentWidth)
+        .height(this.xComponentHeight)
+        .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
     }
-      .width(this.xComponentWidth)
-      .height(this.xComponentHeight)
+      .width('100%')
+      .height('100%')
       .alignContent(this.xComponentAlignment)
-      .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+      .clip(true)
       .scale({
         x: this.videoScale,
         y: this.videoScale,
         centerX: 0,
         centerY: 0
+      })
+      .translate({
+        x: this.videoTranslateX,
+        y: this.videoTranslateY
       })
       .hitTestBehavior(HitTestMode.None)
   }
@@ -2944,43 +2954,48 @@ struct StreamPage {
   @Builder
   Ds5TouchpadFeedbackOverlay() {
     Stack() {
-      ForEach(this.ds5TouchIndicators, (indicator: Ds5TouchIndicator) => {
-        Stack() {
-          Circle()
+      Stack() {
+        ForEach(this.ds5TouchIndicators, (indicator: Ds5TouchIndicator) => {
+          Stack() {
+            Circle()
+              .width(42)
+              .height(42)
+              .fill(indicator.clickPressed ? '#45FFD166' : '#24FFFFFF')
+              .border({
+                width: indicator.clickPressed ? 2.5 : 1.5,
+                color: indicator.clickPressed ? '#FFF4C15D' : '#CCFFFFFF'
+              })
+            Circle()
+              .width(indicator.clickPressed ? 8 : 5)
+              .height(indicator.clickPressed ? 8 : 5)
+              .fill(indicator.clickPressed ? '#FFFFD166' : '#E6FFFFFF')
+          }
             .width(42)
             .height(42)
-            .fill(indicator.clickPressed ? '#45FFD166' : '#24FFFFFF')
-            .border({
-              width: indicator.clickPressed ? 2.5 : 1.5,
-              color: indicator.clickPressed ? '#FFF4C15D' : '#CCFFFFFF'
+            .position({
+              x: (indicator.x * 100) + '%',
+              y: (indicator.y * 100) + '%'
             })
-          Circle()
-            .width(indicator.clickPressed ? 8 : 5)
-            .height(indicator.clickPressed ? 8 : 5)
-            .fill(indicator.clickPressed ? '#FFFFD166' : '#E6FFFFFF')
-        }
-          .width(42)
-          .height(42)
-          .position({
-            x: (indicator.x * 100) + '%',
-            y: (indicator.y * 100) + '%'
-          })
-          .translate({
-            x: -21,
-            y: -21
-          })
-          .opacity(indicator.opacity)
-          .scale({
-            x: indicator.scale,
-            y: indicator.scale
-          })
-          .hitTestBehavior(HitTestMode.None)
-      }, (indicator: Ds5TouchIndicator): string => String(indicator.pointerId))
+            .translate({
+              x: -21,
+              y: -21
+            })
+            .opacity(indicator.opacity)
+            .scale({
+              x: indicator.scale,
+              y: indicator.scale
+            })
+            .hitTestBehavior(HitTestMode.None)
+        }, (indicator: Ds5TouchIndicator): string => String(indicator.pointerId))
+      }
+        .width(this.xComponentWidth)
+        .height(this.xComponentHeight)
+        .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
     }
-      .width(this.xComponentWidth)
-      .height(this.xComponentHeight)
+      .width('100%')
+      .height('100%')
       .alignContent(this.xComponentAlignment)
-      .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+      .clip(true)
       .scale({
         x: this.videoScale,
         y: this.videoScale,
@@ -2991,7 +3006,6 @@ struct StreamPage {
         x: this.videoTranslateX,
         y: this.videoTranslateY
       })
-      .clip(true)
       .hitTestBehavior(HitTestMode.None)
   }
 
