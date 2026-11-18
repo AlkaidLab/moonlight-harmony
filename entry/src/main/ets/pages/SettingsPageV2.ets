@@ -234,7 +234,6 @@ struct SettingsPageV2 {
   @State doubleTapTimeThreshold: number = 125;
   @State mouseNavButtons: boolean = false;
   @State gameMouseMode: boolean = false;   // 游戏鼠标模式（相对模式+光标回弹）
-  @State autoDs5Touchpad: boolean = false;
   
   // 体感助手设置
   @State gyroAssistEnabled: boolean = false;
@@ -592,7 +591,6 @@ struct SettingsPageV2 {
       this.doubleTapTimeThreshold = await PreferencesUtil.get<number>(SettingsKeys.DOUBLE_TAP_TIME_THRESHOLD, 125);
       this.mouseNavButtons = await this.loadBoolean(SettingsKeys.MOUSE_NAV_BUTTONS, false);
       this.gameMouseMode = await this.loadBoolean(SettingsKeys.GAME_MOUSE_MODE, false);
-      this.autoDs5Touchpad = await this.loadBoolean(SettingsKeys.AUTO_DS5_TOUCHPAD, false);
       
       // 体感助手设置
       this.gyroAssistEnabled = await this.loadBoolean(SettingsKeys.GYRO_ASSIST_ENABLED, false);
@@ -1904,16 +1902,6 @@ struct SettingsPageV2 {
                   this.saveSetting(SettingsKeys.TOUCHSCREEN_TRACKPAD, this.touchscreenTrackpad);
                   // 清除菜单中选择的触摸模式，使设置页的选项在下次串流时生效
                   this.saveSetting(SettingsKeys.LAST_TOUCH_MODE, '');
-                }
-              },
-              {
-                title: '按 DS5 游戏自动切换区域触控板',
-                subtitle: '检测到 DS5 authored haptics 后切到屏幕底部区域，结束后恢复触摸鼠标；手动切换优先',
-                type: 'toggle',
-                value: this.autoDs5Touchpad,
-                action: () => {
-                  this.autoDs5Touchpad = !this.autoDs5Touchpad;
-                  this.saveSetting(SettingsKeys.AUTO_DS5_TOUCHPAD, this.autoDs5Touchpad);
                 }
               },
               {

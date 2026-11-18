@@ -216,13 +216,6 @@ export interface Ds5HapticsIrV2Frame {
   laneCorrelation: number;
 }
 
-// Device-independent DualSense IR v2 lifecycle flags. Keep these aligned with
-// LI_DS5_HAPTICS_IR_FLAG_* in moonlight-common-c.
-export const DS5_HAPTICS_IR_FLAG_DISCONTINUITY: number = 0x01;
-export const DS5_HAPTICS_IR_FLAG_PARTIAL: number = 0x02;
-export const DS5_HAPTICS_IR_FLAG_STREAM_END: number = 0x04;
-export const DS5_HAPTICS_IR_FLAG_SILENT: number = 0x08;
-
 /** Raw DualSense adaptive trigger state forwarded by Sunshine. */
 export interface AdaptiveTriggersFrame {
   controllerNumber: number;

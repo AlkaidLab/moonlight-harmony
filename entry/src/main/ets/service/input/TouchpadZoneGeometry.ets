@@ -50,12 +50,6 @@ export class TouchpadZoneGeometry {
     return { left, top, right, bottom };
   }
 
-  static formatZoneRect(zone: TouchpadZoneRect): string {
-    return [zone.left, zone.top, zone.right, zone.bottom]
-      .map((value: number): string => value.toFixed(4))
-      .join(',');
-  }
-
   static contains(zone: TouchpadZoneRect, x: number, y: number): boolean {
     return x >= zone.left && x <= zone.right && y >= zone.top && y <= zone.bottom;
   }
