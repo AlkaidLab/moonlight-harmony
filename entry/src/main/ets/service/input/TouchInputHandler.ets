@@ -352,13 +352,6 @@ export class TouchInputHandler {
     Logger.info('TouchInputHandler', `TouchInputHandler: 模式切换为 ${mode}`);
   }
 
-  /** 配置区域 DS5 触控板的归一化矩形。 */
-  setDs5TouchpadZone(zone: TouchpadZoneRect): void {
-    this.ds5TouchpadZone = TouchpadZoneGeometry.clampZoneRect(
-      zone.left, zone.top, zone.right, zone.bottom
-    );
-  }
-
   /** 设置区域外手势是否回退为普通多点触控。 */
   setDs5TouchpadOutsideTouchEnabled(enabled: boolean): void {
     this.ds5ZoneOutsideTouchEnabled = enabled;
@@ -641,6 +634,9 @@ export class TouchInputHandler {
         // 处理抬起的触摸点
         for (let i = 0; i < changedTouches.length; i++) {
           const touch = changedTouches[i];
+          if (!this.touchStates.has(touch.id)) {
+            continue;
+          }
           this.sendNormalizedTouch(TOUCH_EVENT_UP, touch, event);
           this.touchStates.delete(touch.id);
           this.lastForce.delete(touch.id);

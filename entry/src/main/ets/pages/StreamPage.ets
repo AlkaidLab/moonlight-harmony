@@ -1744,9 +1744,6 @@ struct StreamPage {
     try {
       // 加载设置
       await this.viewModel.loadSettings();
-      this.touchInputHandler.setDs5TouchpadZone(
-        TouchpadZoneGeometry.parseZoneRect(TouchpadZoneGeometry.DEFAULT_ZONE_RECT)
-      );
       this.endStreamReportEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false);
       this.lifecycleManager.setLatencyToastEnabled(this.endStreamReportEnabled);
       this.lifecycleManager.setDisableWarnings(

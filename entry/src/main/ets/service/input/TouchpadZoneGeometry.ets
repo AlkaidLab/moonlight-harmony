@@ -54,25 +54,4 @@ export class TouchpadZoneGeometry {
     return x >= zone.left && x <= zone.right && y >= zone.top && y <= zone.bottom;
   }
 
-  static clampZoneRect(left: number, top: number, right: number, bottom: number): TouchpadZoneRect {
-    let nextLeft = Math.max(0, Math.min(1, left));
-    let nextTop = Math.max(0, Math.min(1, top));
-    let nextRight = Math.max(0, Math.min(1, right));
-    let nextBottom = Math.max(0, Math.min(1, bottom));
-    if (nextRight - nextLeft < TouchpadZoneGeometry.MIN_ZONE_WIDTH) {
-      if (nextLeft + TouchpadZoneGeometry.MIN_ZONE_WIDTH <= 1) {
-        nextRight = nextLeft + TouchpadZoneGeometry.MIN_ZONE_WIDTH;
-      } else {
-        nextLeft = nextRight - TouchpadZoneGeometry.MIN_ZONE_WIDTH;
-      }
-    }
-    if (nextBottom - nextTop < TouchpadZoneGeometry.MIN_ZONE_HEIGHT) {
-      if (nextTop + TouchpadZoneGeometry.MIN_ZONE_HEIGHT <= 1) {
-        nextBottom = nextTop + TouchpadZoneGeometry.MIN_ZONE_HEIGHT;
-      } else {
-        nextTop = nextBottom - TouchpadZoneGeometry.MIN_ZONE_HEIGHT;
-      }
-    }
-    return { left: nextLeft, top: nextTop, right: nextRight, bottom: nextBottom };
-  }
 }

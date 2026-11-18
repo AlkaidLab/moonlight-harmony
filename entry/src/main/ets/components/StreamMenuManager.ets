@@ -16,7 +16,7 @@
  */
 import { promptAction } from '@kit.ArkUI';
 import { StreamingSession } from '../service/streaming/StreamingSession';
-import { StreamViewModel, TouchMode } from '../viewmodel/StreamViewModel';
+import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { OptionPickerDialogConfig, OptionItem } from './dialogs/OptionPickerDialog';
 import { ToastQueue } from '../utils/ToastQueue';
 import { UsbForwardingService } from '../service/usbdriver/UsbForwardingService';
