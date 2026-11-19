@@ -234,6 +234,12 @@ struct StreamPage {
   @State videoTranslateY: number = 0;
   /** 区域 DS5 触控板本地触点回显，短暂显示且不参与命中测试。 */
   @State private ds5TouchIndicators: Ds5TouchIndicator[] = [];
+  /** 对齐 Android：启用/串流开始后短暂显示区域轮廓。 */
+  @State private ds5TouchpadZoneRevealVisible: boolean = false;
+  /** 屏幕有触摸时保持区域轮廓可见，抬起后短暂淡出。 */
+  @State private ds5TouchpadZoneTouchVisible: boolean = false;
+  private ds5TouchpadZoneRevealTimer: number = -1;
+  private ds5TouchpadZoneTouchFadeTimer: number = -1;
 
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
@@ -464,6 +470,9 @@ struct StreamPage {
     });
     // 帮助浮层跨重连留存且关闭时新会话未就绪：CONNECTED 翻转（首帧上屏）后补做恢复
     this.viewModel.onConnected = (): void => {
+      if (this.isDs5TouchMode(this.viewModel.touchMode)) {
+        this.showDs5TouchpadZoneReveal();
+      }
       if (!this.pendingHotkeyDialogRecovery) return;
       this.pendingHotkeyDialogRecovery = false;
       if (this.pageDisposed || this.viewModel.isStopping || this.streamExiting) return;
@@ -869,6 +878,7 @@ struct StreamPage {
     this.clearDs5TouchIndicators();
     this.touchInputHandler.setDs5TouchpadSink(null);
     this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
+    this.clearDs5TouchpadZoneVisualState();
     this.viewModel.dispose();
     
     // 清理触摸处理器
@@ -2431,6 +2441,9 @@ struct StreamPage {
       !this.isDs5TouchMode(this.viewModel.touchMode)) {
       return;
     }
+    if (this.isDs5TouchMode(this.viewModel.touchMode)) {
+      this.updateDs5TouchpadZoneTouchVisibility(event);
+    }
     this.touchInputHandler.setDs5TouchpadOutsideTouchEnabled(
       !this.viewModel.showController || this.touchPassthrough
     );
@@ -2545,6 +2558,65 @@ struct StreamPage {
     this.ds5TouchIndicators = [];
   }
 
+  /** 显示 DS5 区域轮廓，行为与 Android 的 showZoneReveal() 一致。 */
+  private showDs5TouchpadZoneReveal(): void {
+    if (!this.isDs5TouchMode(this.viewModel.touchMode)) return;
+    if (this.ds5TouchpadZoneRevealTimer !== -1) {
+      clearTimeout(this.ds5TouchpadZoneRevealTimer);
+    }
+    this.ds5TouchpadZoneRevealVisible = true;
+    this.ds5TouchpadZoneRevealTimer = setTimeout(() => {
+      this.ds5TouchpadZoneRevealTimer = -1;
+      this.ds5TouchpadZoneRevealVisible = false;
+    }, 5000);
+  }
+
+  /**
+   * 对齐 Android TouchpadZoneOverlayView：任意屏幕触摸期间显示区域，
+   * 抬起后保留一个很短的尾迹，避免轮廓在 UP 时瞬间跳变。
+   */
+  private updateDs5TouchpadZoneTouchVisibility(event: TouchEvent): void {
+    if (event.type === TouchType.Down ||
+      (event.type === TouchType.Move && event.touches.length > 0)) {
+      if (this.ds5TouchpadZoneTouchFadeTimer !== -1) {
+        clearTimeout(this.ds5TouchpadZoneTouchFadeTimer);
+        this.ds5TouchpadZoneTouchFadeTimer = -1;
+      }
+      this.ds5TouchpadZoneTouchVisible = true;
+      return;
+    }
+
+    if (event.type === TouchType.Cancel ||
+      (event.type === TouchType.Up && event.touches.length === 0)) {
+      if (this.ds5TouchpadZoneTouchFadeTimer !== -1) {
+        clearTimeout(this.ds5TouchpadZoneTouchFadeTimer);
+      }
+      this.ds5TouchpadZoneTouchFadeTimer = setTimeout(() => {
+        this.ds5TouchpadZoneTouchFadeTimer = -1;
+        this.ds5TouchpadZoneTouchVisible = false;
+      }, 250);
+    }
+  }
+
+  private clearDs5TouchpadZoneVisualState(): void {
+    if (this.ds5TouchpadZoneRevealTimer !== -1) {
+      clearTimeout(this.ds5TouchpadZoneRevealTimer);
+      this.ds5TouchpadZoneRevealTimer = -1;
+    }
+    if (this.ds5TouchpadZoneTouchFadeTimer !== -1) {
+      clearTimeout(this.ds5TouchpadZoneTouchFadeTimer);
+      this.ds5TouchpadZoneTouchFadeTimer = -1;
+    }
+    this.ds5TouchpadZoneRevealVisible = false;
+    this.ds5TouchpadZoneTouchVisible = false;
+  }
+
+  private shouldShowDs5TouchpadZone(): boolean {
+    return this.ds5TouchpadZoneRevealVisible ||
+      this.ds5TouchpadZoneTouchVisible ||
+      this.ds5TouchIndicators.length > 0;
+  }
+
   /**
    * 处理本地系统触摸手势。
    *
@@ -2593,6 +2665,13 @@ struct StreamPage {
     }
     this.viewModel.setTouchMode(nextMode);
     this.touchInputHandler.setMode(this.toTouchInputMode(nextMode));
+    if (this.isDs5TouchMode(nextMode)) {
+      // The menu can cover the stream surface while this callback runs. Keep
+      // the reveal alive so it remains visible after the menu disappears.
+      this.showDs5TouchpadZoneReveal();
+    } else {
+      this.clearDs5TouchpadZoneVisualState();
+    }
     Logger.info('StreamPage', `StreamPage: 触摸模式切换为 ${mode}`);
   }
 
@@ -2913,38 +2992,41 @@ struct StreamPage {
   @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   Ds5TouchpadZoneOverlay() {
-    Stack() {
+    if (this.shouldShowDs5TouchpadZone()) {
       Stack() {
-        Rect()
-          .width((TouchpadZoneGeometry.width(this.getDs5TouchpadZone()) * 100) + '%')
-          .height((TouchpadZoneGeometry.height(this.getDs5TouchpadZone()) * 100) + '%')
-          .position({
-            x: (this.getDs5TouchpadZone().left * 100) + '%',
-            y: (this.getDs5TouchpadZone().top * 100) + '%'
-          })
-          .fill('#12000000')
-          .border({ width: 1, color: '#80FFFFFF' })
-          .borderRadius(8)
+        Stack() {
+          Column()
+            .width((TouchpadZoneGeometry.width(this.getDs5TouchpadZone()) * 100) + '%')
+            .height((TouchpadZoneGeometry.height(this.getDs5TouchpadZone()) * 100) + '%')
+            .position({
+              x: (this.getDs5TouchpadZone().left * 100) + '%',
+              y: (this.getDs5TouchpadZone().top * 100) + '%'
+            })
+            .backgroundColor('#24FFFFFF')
+            .border({ width: 2, color: '#D9FFFFFF' })
+            .borderRadius(8)
+            .hitTestBehavior(HitTestMode.None)
+        }
+          .width(this.xComponentWidth)
+          .height(this.xComponentHeight)
+          .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
       }
-        .width(this.xComponentWidth)
-        .height(this.xComponentHeight)
-        .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+        .width('100%')
+        .height('100%')
+        .alignContent(this.xComponentAlignment)
+        .clip(true)
+        .scale({
+          x: this.videoScale,
+          y: this.videoScale,
+          centerX: 0,
+          centerY: 0
+        })
+        .translate({
+          x: this.videoTranslateX,
+          y: this.videoTranslateY
+        })
+        .hitTestBehavior(HitTestMode.None)
     }
-      .width('100%')
-      .height('100%')
-      .alignContent(this.xComponentAlignment)
-      .clip(true)
-      .scale({
-        x: this.videoScale,
-        y: this.videoScale,
-        centerX: 0,
-        centerY: 0
-      })
-      .translate({
-        x: this.videoTranslateX,
-        y: this.videoTranslateY
-      })
-      .hitTestBehavior(HitTestMode.None)
   }
 
   private getDs5TouchpadZone(): TouchpadZoneRect {
