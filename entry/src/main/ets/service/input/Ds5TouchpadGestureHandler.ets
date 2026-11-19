@@ -16,6 +16,7 @@ import {
   TOUCH_EVENT_UP,
   LI_ERR_UNSUPPORTED,
 } from '../streaming/MoonBridge';
+import { PointXY } from './PanZoomHandler';
 import { TouchpadZoneGeometry, TouchpadZonePoint, TouchpadZoneRect } from './TouchpadZoneGeometry';
 
 /** DS5 touchpad output owned by the active streaming session. */
@@ -44,8 +45,7 @@ export interface Ds5TouchpadFeedback {
 export interface TouchEventCoordinateSpace {
   width: number;
   height: number;
-  offsetX: number;
-  offsetY: number;
+  toSurfacePoint: (x: number, y: number) => PointXY;
 }
 
 interface Ds5TouchState {
@@ -377,16 +377,14 @@ export class Ds5TouchpadGestureHandler {
     return {
       width: Number(event.target.area.width),
       height: Number(event.target.area.height),
-      offsetX: 0,
-      offsetY: 0
+      toSurfacePoint: (x: number, y: number): PointXY => {
+        return { x: x, y: y };
+      }
     };
   }
 
   private toSurfacePoint(touch: TouchObject,
     coordinateSpace: TouchEventCoordinateSpace): TouchpadZonePoint {
-    return {
-      x: touch.x - coordinateSpace.offsetX,
-      y: touch.y - coordinateSpace.offsetY
-    };
+    return coordinateSpace.toSurfacePoint(touch.x, touch.y);
   }
 }

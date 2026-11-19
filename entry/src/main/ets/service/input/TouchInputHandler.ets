@@ -461,13 +461,13 @@ export class TouchInputHandler {
     // 仅在 DIRECT 模式下发送 Pen 协议事件（带压感/倾斜），
     // TRACKPAD/MOUSE 模式下手写笔当作手指处理（控制光标）
     if (event.sourceTool === SourceTool.Pen && this.mode === TouchInputMode.DIRECT && !this.penUnsupported) {
-      this.handlePenEvent(event);
+      this.handlePenEvent(event, coordinateSpace);
       return;
     }
     
     // DIRECT 模式支持多点触控，需要处理所有触摸点
     if (this.mode === TouchInputMode.DIRECT) {
-      this.handleMultiTouchEvent(event);
+      this.handleMultiTouchEvent(event, coordinateSpace);
       return;
     }
     
@@ -496,12 +496,9 @@ export class TouchInputHandler {
         ? event.changedTouches[0]
         : (event.touches.length > 0 ? event.touches[0] : undefined);
       if (areaWidth > 0 && areaHeight > 0 && firstTouch) {
-        const touchX = coordinateSpace
-          ? firstTouch.x - coordinateSpace.offsetX : firstTouch.x;
-        const touchY = coordinateSpace
-          ? firstTouch.y - coordinateSpace.offsetY : firstTouch.y;
-        const normalizedX = touchX / areaWidth;
-        const normalizedY = touchY / areaHeight;
+        const point = this.toSurfacePoint(firstTouch.x, firstTouch.y, coordinateSpace);
+        const normalizedX = point.x / areaWidth;
+        const normalizedY = point.y / areaHeight;
         this.ds5ZoneGestureUsesPad = TouchpadZoneGeometry.contains(
           this.ds5TouchpadZone, normalizedX, normalizedY
         );
@@ -521,9 +518,9 @@ export class TouchInputHandler {
       // Direct mode is the same fallback used by Android vplus outside the
       // regional pad, and preserves multi-finger touch/pen behavior.
       if (event.sourceTool === SourceTool.Pen && !this.penUnsupported) {
-        this.handlePenEvent(event);
+        this.handlePenEvent(event, coordinateSpace);
       } else {
-        this.handleMultiTouchEvent(event);
+        this.handleMultiTouchEvent(event, coordinateSpace);
       }
     }
 
@@ -552,28 +549,30 @@ export class TouchInputHandler {
    * 支持高采样率：处理历史触摸点 + 当前触摸点
    */
   @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
-  private handleMultiTouchEvent(event: TouchEvent): void {
+  private handleMultiTouchEvent(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
     const touches = event.touches;
     const changedTouches = event.changedTouches;
-    const areaWidth = event.target.area.width as number;
-    const areaHeight = event.target.area.height as number;
+    const areaWidth = coordinateSpace?.width ?? Number(event.target.area.width);
+    const areaHeight = coordinateSpace?.height ?? Number(event.target.area.height);
     
     switch (event.type) {
       case TouchType.Down:
         // 处理新按下的触摸点
         for (let i = 0; i < changedTouches.length; i++) {
           const touch = changedTouches[i];
+          const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
           this.touchStates.set(touch.id, {
-            startX: touch.x,
-            startY: touch.y,
-            lastX: touch.x,
-            lastY: touch.y,
+            startX: point.x,
+            startY: point.y,
+            lastX: point.x,
+            lastY: point.y,
             startTime: Date.now()
           });
           // DOWN 时尚无历史压力数据，使用默认值 1.0
           this.lastForce.set(touch.id, 1.0);
           this.lastSize.set(touch.id, 0.05);
-          this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event);
+          this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event, coordinateSpace);
         }
         break;
         
@@ -614,7 +613,8 @@ export class TouchInputHandler {
                   areaWidth,
                   areaHeight,
                   normalizedForce,
-                  contactSize
+                  contactSize,
+                  coordinateSpace
                 );
               }
             }
@@ -630,7 +630,7 @@ export class TouchInputHandler {
           if (state) {
             state.lastX = touch.x;
             state.lastY = touch.y;
-            this.sendNormalizedTouch(TOUCH_EVENT_MOVE, touch, event);
+            this.sendNormalizedTouch(TOUCH_EVENT_MOVE, touch, event, coordinateSpace);
           }
         }
         break;
@@ -643,7 +643,7 @@ export class TouchInputHandler {
           if (!this.touchStates.has(touch.id)) {
             continue;
           }
-          this.sendNormalizedTouch(TOUCH_EVENT_UP, touch, event);
+          this.sendNormalizedTouch(TOUCH_EVENT_UP, touch, event, coordinateSpace);
           this.touchStates.delete(touch.id);
           this.lastForce.delete(touch.id);
           this.lastSize.delete(touch.id);
@@ -913,18 +913,15 @@ export class TouchInputHandler {
    * 发送归一化的触摸事件
    * 支持压感：使用历史点追踪的压力值，或 touch.force（如果可用）
    */
-  private sendNormalizedTouch(eventType: number, touch: TouchObject, event: TouchEvent): void {
-    const areaWidth = event.target.area.width as number;
-    const areaHeight = event.target.area.height as number;
+  private sendNormalizedTouch(eventType: number, touch: TouchObject, event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
+    const areaWidth = coordinateSpace?.width ?? Number(event.target.area.width);
+    const areaHeight = coordinateSpace?.height ?? Number(event.target.area.height);
     
     // 坐标变换（画面缩放/平移状态下修正触摸坐标）
-    let touchX = touch.x;
-    let touchY = touch.y;
-    if (this.coordinateTransform) {
-      const transformed = this.coordinateTransform(touchX, touchY);
-      touchX = transformed.x;
-      touchY = transformed.y;
-    }
+    const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
+    const touchX = point.x;
+    const touchY = point.y;
     
     // 归一化到 0.0-1.0 范围
     const normalizedX = Math.max(0, Math.min(1, touchX / areaWidth));
@@ -968,16 +965,13 @@ export class TouchInputHandler {
     areaWidth: number,
     areaHeight: number,
     pressure: number,
-    size: number
+    size: number,
+    coordinateSpace?: TouchEventCoordinateSpace
   ): void {
     // 坐标变换（画面缩放/平移状态下修正触摸坐标）
-    let touchX = x;
-    let touchY = y;
-    if (this.coordinateTransform) {
-      const transformed = this.coordinateTransform(touchX, touchY);
-      touchX = transformed.x;
-      touchY = transformed.y;
-    }
+    const point = this.toSurfacePoint(x, y, coordinateSpace);
+    const touchX = point.x;
+    const touchY = point.y;
     
     const normalizedX = Math.max(0, Math.min(1, touchX / areaWidth));
     const normalizedY = Math.max(0, Math.min(1, touchY / areaHeight));
@@ -1051,11 +1045,12 @@ export class TouchInputHandler {
    * 将手写笔触摸事件转化为 Moonlight 的 PenEvent
    */
   @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP, SuppressWarningsType.COMPATIBILITY] })
-  private handlePenEvent(event: TouchEvent): void {
+  private handlePenEvent(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
     const touches = event.touches;
     const changedTouches = event.changedTouches;
-    const areaWidth = event.target.area.width as number;
-    const areaHeight = event.target.area.height as number;
+    const areaWidth = coordinateSpace?.width ?? Number(event.target.area.width);
+    const areaHeight = coordinateSpace?.height ?? Number(event.target.area.height);
 
     // 从 BaseEvent 获取笔的压感和倾斜信息
     const eventPressure = event.pressure ?? 0;
@@ -1077,14 +1072,15 @@ export class TouchInputHandler {
       case TouchType.Down:
         for (let i = 0; i < changedTouches.length; i++) {
           const touch = changedTouches[i];
+          const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
           this.touchStates.set(touch.id, {
-            startX: touch.x, startY: touch.y,
-            lastX: touch.x, lastY: touch.y,
+            startX: point.x, startY: point.y,
+            lastX: point.x, lastY: point.y,
             startTime: Date.now()
           });
 
-          const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
-          const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+          const normalizedX = Math.max(0, Math.min(1, point.x / areaWidth));
+          const normalizedY = Math.max(0, Math.min(1, point.y / areaHeight));
           // 手写笔通常只有一个触点，使用 BaseEvent 上的压感
           const pressure = eventPressure;
           // 尝试获取 per-touch 接触面积（API 15+）
@@ -1104,7 +1100,7 @@ export class TouchInputHandler {
             Logger.warn('TouchInputHandler', '手写笔: 主机不支持 Pen 事件，回退到 Touch 事件');
             this.penUnsupported = true;
             // 回退：用 touch 事件重新发送
-            this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event);
+            this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event, coordinateSpace);
             return;
           }
         }
@@ -1124,8 +1120,9 @@ export class TouchInputHandler {
               const histTouch = histPoint.touchObject;
               const state = this.touchStates.get(histTouch.id);
               if (state) {
-                const normalizedX = Math.max(0, Math.min(1, histTouch.x / areaWidth));
-                const normalizedY = Math.max(0, Math.min(1, histTouch.y / areaHeight));
+                const point = this.toSurfacePoint(histTouch.x, histTouch.y, coordinateSpace);
+                const normalizedX = Math.max(0, Math.min(1, point.x / areaWidth));
+                const normalizedY = Math.max(0, Math.min(1, point.y / areaHeight));
                 // 历史点的压力
                 const histPressure = histPoint.force > 0
                   ? this.normalizeForce(histPoint.force) : eventPressure;
@@ -1148,11 +1145,12 @@ export class TouchInputHandler {
           const touch = touches[i];
           const state = this.touchStates.get(touch.id);
           if (state) {
-            state.lastX = touch.x;
-            state.lastY = touch.y;
+            const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
+            state.lastX = point.x;
+            state.lastY = point.y;
 
-            const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
-            const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+            const normalizedX = Math.max(0, Math.min(1, point.x / areaWidth));
+            const normalizedY = Math.max(0, Math.min(1, point.y / areaHeight));
             const pressure = touch.pressure ?? eventPressure;
             const contactW = touch.width ?? 0;
             const contactH = touch.height ?? 0;
@@ -1172,8 +1170,9 @@ export class TouchInputHandler {
       case TouchType.Cancel:
         for (let i = 0; i < changedTouches.length; i++) {
           const touch = changedTouches[i];
-          const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
-          const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+          const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
+          const normalizedX = Math.max(0, Math.min(1, point.x / areaWidth));
+          const normalizedY = Math.max(0, Math.min(1, point.y / areaHeight));
 
           const upEventType = event.type === TouchType.Cancel ? TOUCH_EVENT_CANCEL : TOUCH_EVENT_UP;
 
@@ -1186,6 +1185,19 @@ export class TouchInputHandler {
         }
         break;
     }
+  }
+
+  /** Map an event point into the untransformed video surface coordinate space. */
+  private toSurfacePoint(x: number, y: number,
+    coordinateSpace?: TouchEventCoordinateSpace): PointXY {
+    if (coordinateSpace) {
+      const point = coordinateSpace.toSurfacePoint(x, y);
+      return { x: point.x, y: point.y };
+    }
+    if (this.coordinateTransform) {
+      return this.coordinateTransform(x, y);
+    }
+    return { x: x, y: y };
   }
   
   /**

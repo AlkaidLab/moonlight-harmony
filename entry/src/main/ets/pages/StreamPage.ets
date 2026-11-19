@@ -2476,11 +2476,18 @@ struct StreamPage {
     const width = this.getXComponentWidthVp();
     const height = this.getXComponentHeightVp();
     if (width <= 0 || height <= 0) return undefined;
+    const surfaceLeft = this.xComponentGlobalLeftVp - this.containerGlobalLeftVp;
+    const surfaceTop = this.xComponentGlobalTopVp - this.containerGlobalTopVp;
+    const scale = this.videoScale > 0 ? this.videoScale : 1;
     return {
       width: width,
       height: height,
-      offsetX: this.xComponentGlobalLeftVp - this.containerGlobalLeftVp,
-      offsetY: this.xComponentGlobalTopVp - this.containerGlobalTopVp
+      toSurfacePoint: (x: number, y: number): PointXY => {
+        return {
+          x: (x - surfaceLeft - this.videoTranslateX) / scale,
+          y: (y - surfaceTop - this.videoTranslateY) / scale
+        };
+      }
     };
   }
 
