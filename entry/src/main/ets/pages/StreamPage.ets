@@ -3059,6 +3059,18 @@ struct StreamPage {
 
   // ==================== UI Builders ====================
 
+  private getDs5TouchIndicatorX(indicator: Ds5TouchIndicator): string {
+    const zone = this.getDs5TouchpadZone();
+    const x = zone.left + indicator.x * TouchpadZoneGeometry.width(zone);
+    return (x * 100) + '%';
+  }
+
+  private getDs5TouchIndicatorY(indicator: Ds5TouchIndicator): string {
+    const zone = this.getDs5TouchpadZone();
+    const y = zone.top + indicator.y * TouchpadZoneGeometry.height(zone);
+    return (y * 100) + '%';
+  }
+
   @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   Ds5TouchpadZoneOverlay() {
@@ -3125,8 +3137,8 @@ struct StreamPage {
             .width(42)
             .height(42)
             .position({
-              x: (indicator.x * 100) + '%',
-              y: (indicator.y * 100) + '%'
+              x: this.getDs5TouchIndicatorX(indicator),
+              y: this.getDs5TouchIndicatorY(indicator)
             })
             .translate({
               x: -21,
