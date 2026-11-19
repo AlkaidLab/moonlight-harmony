@@ -124,6 +124,7 @@ export class SettingsKeys {
   static readonly MOUSE_NAV_BUTTONS: string = 'settings_mouse_nav_buttons';
   static readonly GAME_MOUSE_MODE: string = 'settings_game_mouse_mode';  // 游戏鼠标模式（相对模式）
   static readonly LAST_TOUCH_MODE: string = 'settings_last_touch_mode';  // 运行时触摸模式（菜单切换后持久化）
+  static readonly DS5_TOUCHPAD_ZONE_RECT: string = 'settings_ds5_touchpad_zone_rect';
 
   // 增强触控设置
   static readonly ENABLE_ENHANCED_TOUCH: string = 'settings_enable_enhanced_touch';

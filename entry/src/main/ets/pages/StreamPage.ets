@@ -235,6 +235,10 @@ struct StreamPage {
   @State videoTranslateY: number = 0;
   /** 区域 DS5 触控板本地触点回显，短暂显示且不参与命中测试。 */
   @State private ds5TouchIndicators: Ds5TouchIndicator[] = [];
+  /** DS5 区域在视频归一化坐标中的持久化矩形。 */
+  @State private ds5TouchpadZoneRect: string = TouchpadZoneGeometry.DEFAULT_ZONE_RECT;
+  /** 边缘调整期间强调边框，松手后回到普通轮廓。 */
+  @State private ds5TouchpadZoneResizing: boolean = false;
   /** 对齐 Android：启用/串流开始后短暂显示区域轮廓。 */
   @State private ds5TouchpadZoneRevealVisible: boolean = false;
   /** 屏幕有触摸时保持区域轮廓可见，抬起后短暂淡出。 */
@@ -470,6 +474,15 @@ struct StreamPage {
     
     // 初始化输入处理器
     this.inputHandler.initialize(this.viewModel, this.gamepadManager);
+    this.touchInputHandler.setDs5TouchpadZonePreviewCallback((zone: TouchpadZoneRect): void => {
+      this.ds5TouchpadZoneRect = TouchpadZoneGeometry.formatZoneRect(zone);
+    });
+    this.touchInputHandler.setDs5TouchpadZoneChangedCallback((zone: TouchpadZoneRect): void => {
+      this.persistDs5TouchpadZone(zone);
+    });
+    this.touchInputHandler.setDs5TouchpadZoneResizingCallback((resizing: boolean): void => {
+      this.ds5TouchpadZoneResizing = resizing;
+    });
     this.inputHandler.setOnShowStreamMenu(() => this.showStreamMenu());
     // 三修饰键本地热键（Ctrl+Alt+Shift+{Q,S,X}，对齐 Android 原版）
     this.inputHandler.setOnHotkeyAction((action: StreamHotkeyAction): void => {
@@ -885,6 +898,9 @@ struct StreamPage {
     this.clearDs5TouchIndicators();
     this.touchInputHandler.setDs5TouchpadSink(null);
     this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
+    this.touchInputHandler.setDs5TouchpadZonePreviewCallback(null);
+    this.touchInputHandler.setDs5TouchpadZoneChangedCallback(null);
+    this.touchInputHandler.setDs5TouchpadZoneResizingCallback(null);
     this.clearDs5TouchpadZoneVisualState();
     this.viewModel.dispose();
     
@@ -1761,6 +1777,13 @@ struct StreamPage {
     try {
       // 加载设置
       await this.viewModel.loadSettings();
+      const savedDs5Zone = await PreferencesUtil.get<string>(
+        SettingsKeys.DS5_TOUCHPAD_ZONE_RECT,
+        TouchpadZoneGeometry.DEFAULT_ZONE_RECT
+      );
+      const parsedDs5Zone = TouchpadZoneGeometry.parseZoneRect(savedDs5Zone);
+      this.ds5TouchpadZoneRect = TouchpadZoneGeometry.formatZoneRect(parsedDs5Zone);
+      this.touchInputHandler.setDs5TouchpadZone(parsedDs5Zone);
       this.endStreamReportEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false);
       this.lifecycleManager.setLatencyToastEnabled(this.endStreamReportEnabled);
       this.lifecycleManager.setDisableWarnings(
@@ -2484,8 +2507,8 @@ struct StreamPage {
       height: height,
       toSurfacePoint: (x: number, y: number): PointXY => {
         return {
-          x: (x - surfaceLeft - this.videoTranslateX) / scale,
-          y: (y - surfaceTop - this.videoTranslateY) / scale
+          x: (x - this.videoTranslateX) / scale - surfaceLeft,
+          y: (y - this.videoTranslateY) / scale - surfaceTop
         };
       }
     };
@@ -2494,9 +2517,19 @@ struct StreamPage {
   private handleVirtualControllerSystemTouchGesture(event: TouchEvent): boolean {
     if (event.source === SourceType.Mouse) return false;
     if (this.viewModel.isConnected && this.isDs5TouchMode(this.viewModel.touchMode)) {
+      this.prepareDs5TouchpadZoneTouch();
       this.updateDs5TouchpadZoneTouchVisibility(event);
     }
     return this.handleSystemTouchGesture(event);
+  }
+
+  /**
+   * Match Android's resize ownership: a DOWN can resize only when the outline
+   * was already visible before that touch. The touch itself may reveal the zone,
+   * but it cannot retroactively turn the same DOWN into an edit gesture.
+   */
+  private prepareDs5TouchpadZoneTouch(): void {
+    this.touchInputHandler.setDs5TouchpadZoneResizeEnabled(this.shouldShowDs5TouchpadZone());
   }
 
   private handleDs5TouchpadFeedback(feedback: Ds5TouchpadFeedback): void {
@@ -2701,6 +2734,8 @@ struct StreamPage {
     }
     this.ds5TouchpadZoneRevealVisible = false;
     this.ds5TouchpadZoneTouchVisible = false;
+    this.ds5TouchpadZoneResizing = false;
+    this.touchInputHandler.setDs5TouchpadZoneResizeEnabled(false);
     this.ds5TouchActiveIds.clear();
   }
 
@@ -2846,6 +2881,7 @@ struct StreamPage {
             // 系统手势和双指缩放可能消费后续事件，先更新 DS5 区域的视觉状态，
             // 确保它们结束时也能正确收起轮廓。
             if (this.viewModel.isConnected && this.isDs5TouchMode(this.viewModel.touchMode)) {
+              this.prepareDs5TouchpadZoneTouch();
               this.updateDs5TouchpadZoneTouchVisibility(event);
             }
             if (this.handleSystemTouchGesture(event)) return;
@@ -3103,6 +3139,17 @@ struct StreamPage {
     return (y * 100) + '%';
   }
 
+  private persistDs5TouchpadZone(zone: TouchpadZoneRect): void {
+    const normalized = TouchpadZoneGeometry.clampZoneRect(
+      zone.left, zone.top, zone.right, zone.bottom);
+    const raw = TouchpadZoneGeometry.formatZoneRect(normalized);
+    this.ds5TouchpadZoneRect = raw;
+    this.touchInputHandler.setDs5TouchpadZone(normalized);
+    PreferencesUtil.put(SettingsKeys.DS5_TOUCHPAD_ZONE_RECT, raw).catch((error: Error): void => {
+      Logger.warn('StreamPage', `保存 DS5 触控板区域失败: ${error.message}`);
+    });
+  }
+
   @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
   @Builder
   Ds5TouchpadZoneOverlay() {
@@ -3117,7 +3164,10 @@ struct StreamPage {
               y: (this.getDs5TouchpadZone().top * 100) + '%'
             })
             .backgroundColor('#24FFFFFF')
-            .border({ width: 2, color: '#D9FFFFFF' })
+            .border({
+              width: this.ds5TouchpadZoneResizing ? 3 : 2,
+              color: this.ds5TouchpadZoneResizing ? '#FF5DADE2' : '#D9FFFFFF'
+            })
             .borderRadius(8)
             .hitTestBehavior(HitTestMode.None)
         }
@@ -3144,7 +3194,7 @@ struct StreamPage {
   }
 
   private getDs5TouchpadZone(): TouchpadZoneRect {
-    return TouchpadZoneGeometry.parseZoneRect(TouchpadZoneGeometry.DEFAULT_ZONE_RECT);
+    return TouchpadZoneGeometry.parseZoneRect(this.ds5TouchpadZoneRect);
   }
 
   @Builder

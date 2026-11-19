@@ -17,7 +17,11 @@ import nativeLib from 'libmoonlight_nativelib.so';
 import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { PointXY } from './PanZoomHandler';
 import { TrackpadGestureHandler, TrackpadInputSink, TrackpadConfig } from './TrackpadGestureHandler';
-import { TouchpadZoneGeometry, TouchpadZoneRect } from './TouchpadZoneGeometry';
+import {
+  TouchpadZoneGeometry,
+  TouchpadZoneEdges,
+  TouchpadZoneRect
+} from './TouchpadZoneGeometry';
 import {
   Ds5TouchpadFeedback,
   Ds5TouchpadGestureHandler,
@@ -54,6 +58,13 @@ export enum TouchInputMode {
   DIRECT = 'direct',      // 直接触摸模式：绝对坐标（多点触控协议）
   MOUSE = 'mouse',        // 鼠标模式：绝对定位 + 死区 + 长按右键 + 双指滚轮
   DS5_TOUCHPAD_ZONE = 'ds5_touchpad_zone' // 区域映射 DualSense 触控板
+}
+
+enum Ds5ZoneGestureRoute {
+  NONE,
+  PAD,
+  OUTSIDE,
+  RESIZE
 }
 
 /**
@@ -161,13 +172,21 @@ export class TouchInputHandler {
   /** 区域 DS5 模式的路由状态；一组手势只选择一次 owner。 */
   private ds5TouchpadZone: TouchpadZoneRect =
     TouchpadZoneGeometry.parseZoneRect(TouchpadZoneGeometry.DEFAULT_ZONE_RECT);
-  private ds5ZoneGestureActive: boolean = false;
-  private ds5ZoneGestureUsesPad: boolean = false;
+  private ds5ZoneGestureRoute: Ds5ZoneGestureRoute = Ds5ZoneGestureRoute.NONE;
   /** 区域外手势是否允许回退为普通多点触控。 */
   private ds5ZoneOutsideTouchEnabled: boolean = true;
   /** 首个触点决定后，整组手势固定使用同一策略。 */
   private ds5ZoneGestureAllowsOutsideTouch: boolean = true;
   private ds5ZoneTouchIds: Set<number> = new Set<number>();
+  /** 仅在区域轮廓已经可见时允许边缘调整，避免普通游玩误触。 */
+  private ds5ZoneResizeEnabled: boolean = false;
+  private ds5ZoneResizeEdges: TouchpadZoneEdges | null = null;
+  private ds5ZoneResizePointerId: number = -1;
+  private ds5ZoneResizeWorkingRect: TouchpadZoneRect | null = null;
+  private ds5ZonePreviewCallback: ((zone: TouchpadZoneRect) => void) | null = null;
+  private ds5ZoneChangedCallback: ((zone: TouchpadZoneRect) => void) | null = null;
+  private ds5ZoneResizingCallback: ((resizing: boolean) => void) | null = null;
+  private static readonly DS5_RESIZE_BAND_VP: number = 24;
 
   // ====== 鼠标模式状态（绝对定位 + 死区 + 长按右键，对齐 Android AbsoluteTouchContext） ======
   /** 主手指按下位置 */
@@ -347,7 +366,7 @@ export class TouchInputHandler {
     }
     if (this.mode === TouchInputMode.DS5_TOUCHPAD_ZONE && mode !== TouchInputMode.DS5_TOUCHPAD_ZONE) {
       this.ds5Touchpad.cancelActiveInput();
-      this.resetDs5ZoneGesture();
+      this.cancelDs5ZoneGesture();
     }
     this.mode = mode;
     Logger.info('TouchInputHandler', `TouchInputHandler: 模式切换为 ${mode}`);
@@ -356,6 +375,26 @@ export class TouchInputHandler {
   /** 设置区域外手势是否回退为普通多点触控。 */
   setDs5TouchpadOutsideTouchEnabled(enabled: boolean): void {
     this.ds5ZoneOutsideTouchEnabled = enabled;
+  }
+
+  setDs5TouchpadZone(zone: TouchpadZoneRect): void {
+    this.ds5TouchpadZone = zone;
+  }
+
+  setDs5TouchpadZoneResizeEnabled(enabled: boolean): void {
+    this.ds5ZoneResizeEnabled = enabled;
+  }
+
+  setDs5TouchpadZonePreviewCallback(callback: ((zone: TouchpadZoneRect) => void) | null): void {
+    this.ds5ZonePreviewCallback = callback;
+  }
+
+  setDs5TouchpadZoneChangedCallback(callback: ((zone: TouchpadZoneRect) => void) | null): void {
+    this.ds5ZoneChangedCallback = callback;
+  }
+
+  setDs5TouchpadZoneResizingCallback(callback: ((resizing: boolean) => void) | null): void {
+    this.ds5ZoneResizingCallback = callback;
   }
 
   /** 绑定当前串流会话的 DS5 触控输出。 */
@@ -383,7 +422,7 @@ export class TouchInputHandler {
     this.trackpad.dispose();
     this.resetMouseState(true);
     this.ds5Touchpad.cancelActiveInput();
-    this.resetDs5ZoneGesture();
+    this.cancelDs5ZoneGesture();
     this.touchStates.clear();
     this.lastForce.clear();
     this.lastSize.clear();
@@ -488,21 +527,43 @@ export class TouchInputHandler {
    */
   private handleDs5TouchpadZoneEvent(event: TouchEvent,
     coordinateSpace?: TouchEventCoordinateSpace): void {
-    if (event.type === TouchType.Down && !this.ds5ZoneGestureActive) {
+    const ds5CoordinateSpace = this.getDs5CoordinateSpace(event, coordinateSpace);
+    const areaWidth = ds5CoordinateSpace.width;
+    const areaHeight = ds5CoordinateSpace.height;
+
+    if (event.type === TouchType.Down && this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.NONE) {
       this.ds5ZoneGestureAllowsOutsideTouch = this.ds5ZoneOutsideTouchEnabled;
-      const areaWidth = coordinateSpace?.width ?? Number(event.target.area.width);
-      const areaHeight = coordinateSpace?.height ?? Number(event.target.area.height);
       const firstTouch = event.changedTouches.length > 0
         ? event.changedTouches[0]
         : (event.touches.length > 0 ? event.touches[0] : undefined);
       if (areaWidth > 0 && areaHeight > 0 && firstTouch) {
-        const point = this.toSurfacePoint(firstTouch.x, firstTouch.y, coordinateSpace);
+        const point = this.toSurfacePoint(firstTouch.x, firstTouch.y, ds5CoordinateSpace);
         const normalizedX = point.x / areaWidth;
         const normalizedY = point.y / areaHeight;
-        this.ds5ZoneGestureUsesPad = TouchpadZoneGeometry.contains(
-          this.ds5TouchpadZone, normalizedX, normalizedY
+        const bandX = Math.min(
+          TouchInputHandler.DS5_RESIZE_BAND_VP / areaWidth,
+          TouchpadZoneGeometry.width(this.ds5TouchpadZone) * 0.25
         );
-        this.ds5ZoneGestureActive = true;
+        const bandY = Math.min(
+          TouchInputHandler.DS5_RESIZE_BAND_VP / areaHeight,
+          TouchpadZoneGeometry.height(this.ds5TouchpadZone) * 0.25
+        );
+        const edges = this.ds5ZoneResizeEnabled
+          ? TouchpadZoneGeometry.edgeHitTest(
+            this.ds5TouchpadZone, normalizedX, normalizedY, bandX, bandY)
+          : null;
+        if (edges !== null) {
+          this.ds5ZoneGestureRoute = Ds5ZoneGestureRoute.RESIZE;
+          this.ds5ZoneResizeEdges = edges;
+          this.ds5ZoneResizePointerId = firstTouch.id;
+          this.ds5ZoneResizeWorkingRect = this.ds5TouchpadZone;
+          this.ds5ZoneResizingCallback?.(true);
+        } else if (TouchpadZoneGeometry.contains(
+          this.ds5TouchpadZone, normalizedX, normalizedY)) {
+          this.ds5ZoneGestureRoute = Ds5ZoneGestureRoute.PAD;
+        } else {
+          this.ds5ZoneGestureRoute = Ds5ZoneGestureRoute.OUTSIDE;
+        }
       }
     }
 
@@ -512,36 +573,138 @@ export class TouchInputHandler {
       }
     }
 
-    if (this.ds5ZoneGestureUsesPad) {
-      this.ds5Touchpad.handleEvent(event, this.ds5TouchpadZone, coordinateSpace);
-    } else if (this.ds5ZoneGestureAllowsOutsideTouch) {
+    if (this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.RESIZE) {
+      this.handleDs5ZoneResize(event, ds5CoordinateSpace, areaWidth, areaHeight);
+    } else if (this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.PAD) {
+      this.ds5Touchpad.handleEvent(event, this.ds5TouchpadZone, ds5CoordinateSpace);
+    } else if (this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.OUTSIDE &&
+      this.ds5ZoneGestureAllowsOutsideTouch) {
       // Direct mode is the same fallback used by Android vplus outside the
       // regional pad, and preserves multi-finger touch/pen behavior.
       if (event.sourceTool === SourceTool.Pen && !this.penUnsupported) {
-        this.handlePenEvent(event, coordinateSpace);
+        this.handlePenEvent(event, ds5CoordinateSpace);
       } else {
-        this.handleMultiTouchEvent(event, coordinateSpace);
+        this.handleMultiTouchEvent(event, ds5CoordinateSpace);
       }
     }
 
     if (event.type === TouchType.Cancel) {
-      this.resetDs5ZoneGesture();
+      this.cancelDs5ZoneGesture();
       return;
     }
     if (event.type === TouchType.Up) {
       for (const touch of event.changedTouches) {
         this.ds5ZoneTouchIds.delete(touch.id);
       }
-      if (this.ds5ZoneTouchIds.size === 0 || event.touches.length === 0) {
+      if (event.touches.length === 0) this.ds5ZoneTouchIds.clear();
+      if (this.ds5ZoneTouchIds.size === 0) {
         this.resetDs5ZoneGesture();
       }
     }
   }
 
+  private handleDs5ZoneResize(event: TouchEvent,
+    coordinateSpace: TouchEventCoordinateSpace,
+    areaWidth: number, areaHeight: number): void {
+    if (event.type === TouchType.Move) {
+      const edges = this.ds5ZoneResizeEdges;
+      const working = this.ds5ZoneResizeWorkingRect;
+      if (edges === null || working === null || this.ds5ZoneResizePointerId < 0) return;
+      let resizeTouch: TouchObject | undefined;
+      for (const touch of event.touches) {
+        if (touch.id === this.ds5ZoneResizePointerId) {
+          resizeTouch = touch;
+          break;
+        }
+      }
+      if (!resizeTouch) {
+        for (const touch of event.changedTouches) {
+          if (touch.id === this.ds5ZoneResizePointerId) {
+            resizeTouch = touch;
+            break;
+          }
+        }
+      }
+      if (!resizeTouch || areaWidth <= 0 || areaHeight <= 0) return;
+      const point = this.toSurfacePoint(resizeTouch.x, resizeTouch.y, coordinateSpace);
+      const next = TouchpadZoneGeometry.resizeEdges(
+        working, edges, point.x / areaWidth, point.y / areaHeight);
+      if (next.left !== working.left || next.top !== working.top ||
+        next.right !== working.right || next.bottom !== working.bottom) {
+        this.ds5ZoneResizeWorkingRect = next;
+        this.ds5ZonePreviewCallback?.(next);
+      }
+      return;
+    }
+
+    if (event.type === TouchType.Up) {
+      let pointerReleased = event.touches.length === 0;
+      for (const touch of event.changedTouches) {
+        if (touch.id === this.ds5ZoneResizePointerId) {
+          pointerReleased = true;
+          break;
+        }
+      }
+      if (pointerReleased) {
+        this.finishDs5ZoneResize(true);
+        this.ds5ZoneResizePointerId = -1;
+      }
+      return;
+    }
+
+    if (event.type === TouchType.Cancel) {
+      this.finishDs5ZoneResize(false);
+    }
+  }
+
+  private finishDs5ZoneResize(persist: boolean): void {
+    const working = this.ds5ZoneResizeWorkingRect;
+    if (working !== null && persist) {
+      this.ds5TouchpadZone = working;
+      this.ds5ZoneChangedCallback?.(working);
+    }
+    this.ds5ZonePreviewCallback?.(this.ds5TouchpadZone);
+    this.ds5ZoneResizingCallback?.(false);
+    this.ds5ZoneResizeEdges = null;
+    this.ds5ZoneResizePointerId = -1;
+    this.ds5ZoneResizeWorkingRect = null;
+  }
+
+  private cancelDs5ZoneGesture(): void {
+    if (this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.RESIZE) {
+      this.finishDs5ZoneResize(false);
+    }
+    this.resetDs5ZoneGesture();
+  }
+
   private resetDs5ZoneGesture(): void {
-    this.ds5ZoneGestureActive = false;
-    this.ds5ZoneGestureUsesPad = false;
+    this.ds5ZoneGestureRoute = Ds5ZoneGestureRoute.NONE;
+    this.ds5ZoneGestureAllowsOutsideTouch = true;
     this.ds5ZoneTouchIds.clear();
+    this.ds5ZoneResizeEdges = null;
+    this.ds5ZoneResizePointerId = -1;
+    this.ds5ZoneResizeWorkingRect = null;
+  }
+
+  /**
+   * Give DS5 hit-testing and output one coordinate space for every entry path.
+   * XComponent events are local already, but must still use the active inverse
+   * zoom transform when a previous pan/zoom gesture left the video transformed.
+   */
+  private getDs5CoordinateSpace(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): TouchEventCoordinateSpace {
+    if (coordinateSpace) return coordinateSpace;
+    const width = Number(event.target.area.width);
+    const height = Number(event.target.area.height);
+    const transform = this.coordinateTransform;
+    return {
+      width: width,
+      height: height,
+      toSurfacePoint: (x: number, y: number): PointXY => {
+        if (transform) return transform(x, y);
+        return { x: x, y: y };
+      }
+    };
   }
   
   /**
