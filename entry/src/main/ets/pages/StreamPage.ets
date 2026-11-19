@@ -2370,6 +2370,8 @@ struct StreamPage {
       this.touchInputHandler.setDs5TouchpadSink(null);
       this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
       await this.viewModel.stopStreaming();
+      // stopStreaming() 等待期间可能重新收到触摸事件，启动新会话前再次清理。
+      this.clearDs5TouchpadZoneVisualState();
       Logger.info('StreamPage', '[StreamPage] 旧会话已停止，开始重新连接...');
 
       // 重新配置窗口和尺寸（与初次连接共用同一流程，避免画面缩小/黑边）
