@@ -2446,9 +2446,31 @@ struct StreamPage {
       return;
     }
     this.touchInputHandler.setDs5TouchpadOutsideTouchEnabled(
+      this.isDs5TouchMode(this.viewModel.touchMode) ||
       !this.viewModel.showController || this.touchPassthrough
     );
     this.touchInputHandler.handleTouchEvent(event);
+  }
+
+  /**
+   * 虚拟手柄覆盖层已经处理过系统手势后的底层触摸分发。
+   * DS5 模式下空白触点由覆盖层显式转发到这里，避免依赖兄弟节点穿透。
+   */
+  private handleTouchAfterSystemGesture(event: TouchEvent): void {
+    if (event.source === SourceType.Mouse) return;
+    if (this.isTouchOverrideEnabled) {
+      this.panZoomHandler.handleTouchEvent(event);
+      return;
+    }
+    this.handleTouch(event);
+  }
+
+  private handleVirtualControllerSystemTouchGesture(event: TouchEvent): boolean {
+    if (event.source === SourceType.Mouse) return false;
+    if (this.viewModel.isConnected && this.isDs5TouchMode(this.viewModel.touchMode)) {
+      this.updateDs5TouchpadZoneTouchVisibility(event);
+    }
+    return this.handleSystemTouchGesture(event);
   }
 
   private handleDs5TouchpadFeedback(feedback: Ds5TouchpadFeedback): void {
@@ -2788,8 +2810,8 @@ struct StreamPage {
           .height(this.xComponentHeight)
           .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
           .attributeModifier(this.aihdrModifier)
-          .hitTestBehavior((this.viewModel.showController && !this.touchPassthrough &&
-            !this.isDs5TouchMode(this.viewModel.touchMode))
+          .hitTestBehavior(this.viewModel.showController &&
+            (!this.touchPassthrough || this.isDs5TouchMode(this.viewModel.touchMode))
             ? HitTestMode.None : HitTestMode.Default)
           .onTouch((event: TouchEvent) => {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
@@ -2801,12 +2823,7 @@ struct StreamPage {
               this.updateDs5TouchpadZoneTouchVisibility(event);
             }
             if (this.handleSystemTouchGesture(event)) return;
-            // 双指缩放模式：触摸事件完全由 PanZoomHandler 消费
-            if (this.isTouchOverrideEnabled) {
-              this.panZoomHandler.handleTouchEvent(event);
-              return;
-            }
-            this.handleTouch(event);
+            this.handleTouchAfterSystemGesture(event);
           })
           .onMouse((event: MouseEvent) => {
             // 物理鼠标事件处理 → 委托给输入处理器
@@ -2905,7 +2922,10 @@ struct StreamPage {
             this.viewModel.sendInput(input);
           },
           onSystemTouchGesture: (event: TouchEvent): boolean => {
-            return this.handleSystemTouchGesture(event);
+            return this.handleVirtualControllerSystemTouchGesture(event);
+          },
+          onUnderlyingTouch: (event: TouchEvent): void => {
+            this.handleTouchAfterSystemGesture(event);
           }
         })
       }
