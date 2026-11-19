@@ -240,6 +240,7 @@ struct StreamPage {
   @State private ds5TouchpadZoneTouchVisible: boolean = false;
   private ds5TouchpadZoneRevealTimer: number = -1;
   private ds5TouchpadZoneTouchFadeTimer: number = -1;
+  private ds5TouchActiveIds: Set<number> = new Set<number>();
 
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
@@ -2365,6 +2366,7 @@ struct StreamPage {
       // 先停止当前会话（静默，不导航不显示 toast）
       this.touchInputHandler.cancelActiveInput();
       this.clearDs5TouchIndicators();
+      this.clearDs5TouchpadZoneVisualState();
       this.touchInputHandler.setDs5TouchpadSink(null);
       this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
       await this.viewModel.stopStreaming();
@@ -2440,9 +2442,6 @@ struct StreamPage {
     if (this.viewModel.showController && !this.touchPassthrough &&
       !this.isDs5TouchMode(this.viewModel.touchMode)) {
       return;
-    }
-    if (this.isDs5TouchMode(this.viewModel.touchMode)) {
-      this.updateDs5TouchpadZoneTouchVisibility(event);
     }
     this.touchInputHandler.setDs5TouchpadOutsideTouchEnabled(
       !this.viewModel.showController || this.touchPassthrough
@@ -2576,8 +2575,8 @@ struct StreamPage {
    * 抬起后保留一个很短的尾迹，避免轮廓在 UP 时瞬间跳变。
    */
   private updateDs5TouchpadZoneTouchVisibility(event: TouchEvent): void {
-    if (event.type === TouchType.Down ||
-      (event.type === TouchType.Move && event.touches.length > 0)) {
+    this.updateDs5TouchActiveIds(event);
+    if (this.ds5TouchActiveIds.size > 0) {
       if (this.ds5TouchpadZoneTouchFadeTimer !== -1) {
         clearTimeout(this.ds5TouchpadZoneTouchFadeTimer);
         this.ds5TouchpadZoneTouchFadeTimer = -1;
@@ -2586,8 +2585,7 @@ struct StreamPage {
       return;
     }
 
-    if (event.type === TouchType.Cancel ||
-      (event.type === TouchType.Up && event.touches.length === 0)) {
+    if (event.type === TouchType.Cancel || event.type === TouchType.Up) {
       if (this.ds5TouchpadZoneTouchFadeTimer !== -1) {
         clearTimeout(this.ds5TouchpadZoneTouchFadeTimer);
       }
@@ -2595,6 +2593,50 @@ struct StreamPage {
         this.ds5TouchpadZoneTouchFadeTimer = -1;
         this.ds5TouchpadZoneTouchVisible = false;
       }, 250);
+    }
+  }
+
+  /**
+   * ArkUI 在部分设备上会在 UP 事件中继续携带已抬起的触点，
+   * 因此不能只依赖 event.touches.length 判断是否还有活动触点。
+   */
+  private updateDs5TouchActiveIds(event: TouchEvent): void {
+    if (event.type === TouchType.Cancel) {
+      this.ds5TouchActiveIds.clear();
+      return;
+    }
+
+    if (event.type === TouchType.Down || event.type === TouchType.Move) {
+      for (let i = 0; i < event.touches.length; i++) {
+        this.ds5TouchActiveIds.add(event.touches[i].id);
+      }
+      for (let i = 0; i < event.changedTouches.length; i++) {
+        this.ds5TouchActiveIds.add(event.changedTouches[i].id);
+      }
+      return;
+    }
+
+    if (event.type !== TouchType.Up) return;
+
+    for (let i = 0; i < event.changedTouches.length; i++) {
+      this.ds5TouchActiveIds.delete(event.changedTouches[i].id);
+    }
+    if (event.touches.length === 0) {
+      this.ds5TouchActiveIds.clear();
+      return;
+    }
+
+    // 保留仍在屏幕上的触点，同时排除平台在 UP 中重复报告的已抬起触点。
+    for (let i = 0; i < event.touches.length; i++) {
+      const touch = event.touches[i];
+      let isChangedTouch = false;
+      for (let j = 0; j < event.changedTouches.length; j++) {
+        if (event.changedTouches[j].id === touch.id) {
+          isChangedTouch = true;
+          break;
+        }
+      }
+      if (!isChangedTouch) this.ds5TouchActiveIds.add(touch.id);
     }
   }
 
@@ -2609,6 +2651,7 @@ struct StreamPage {
     }
     this.ds5TouchpadZoneRevealVisible = false;
     this.ds5TouchpadZoneTouchVisible = false;
+    this.ds5TouchActiveIds.clear();
   }
 
   private shouldShowDs5TouchpadZone(): boolean {
@@ -2750,6 +2793,11 @@ struct StreamPage {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
             // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
             if (event.source === SourceType.Mouse) return;
+            // 系统手势和双指缩放可能消费后续事件，先更新 DS5 区域的视觉状态，
+            // 确保它们结束时也能正确收起轮廓。
+            if (this.viewModel.isConnected && this.isDs5TouchMode(this.viewModel.touchMode)) {
+              this.updateDs5TouchpadZoneTouchVisibility(event);
+            }
             if (this.handleSystemTouchGesture(event)) return;
             // 双指缩放模式：触摸事件完全由 PanZoomHandler 消费
             if (this.isTouchOverrideEnabled) {
