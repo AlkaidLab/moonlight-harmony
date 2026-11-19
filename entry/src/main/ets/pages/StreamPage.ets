@@ -3145,6 +3145,7 @@ struct StreamPage {
     const raw = TouchpadZoneGeometry.formatZoneRect(normalized);
     this.ds5TouchpadZoneRect = raw;
     this.touchInputHandler.setDs5TouchpadZone(normalized);
+    this.showDs5TouchpadZoneReveal();
     PreferencesUtil.put(SettingsKeys.DS5_TOUCHPAD_ZONE_RECT, raw).catch((error: Error): void => {
       Logger.warn('StreamPage', `保存 DS5 触控板区域失败: ${error.message}`);
     });
