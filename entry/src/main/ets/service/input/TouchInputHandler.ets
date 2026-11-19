@@ -21,7 +21,8 @@ import { TouchpadZoneGeometry, TouchpadZoneRect } from './TouchpadZoneGeometry';
 import {
   Ds5TouchpadFeedback,
   Ds5TouchpadGestureHandler,
-  Ds5TouchpadInputSink
+  Ds5TouchpadInputSink,
+  TouchEventCoordinateSpace
 } from './Ds5TouchpadGestureHandler';
 import {
   BUTTON_ACTION_PRESS,
@@ -445,12 +446,12 @@ export class TouchInputHandler {
   /**
    * 处理触摸事件
    */
-  handleTouchEvent(event: TouchEvent): void {
+  handleTouchEvent(event: TouchEvent, coordinateSpace?: TouchEventCoordinateSpace): void {
     const touches = event.touches;
 
     // 区域 DS5 触控板的 Up/Cancel 可能只携带 changedTouches，不能在这里提前返回。
     if (this.mode === TouchInputMode.DS5_TOUCHPAD_ZONE) {
-      this.handleDs5TouchpadZoneEvent(event);
+      this.handleDs5TouchpadZoneEvent(event, coordinateSpace);
       return;
     }
 
@@ -485,17 +486,22 @@ export class TouchInputHandler {
    * the whole gesture. Contacts outside the pad remain ordinary multi-touch,
    * while contacts that start inside the zone go exclusively to DS5.
    */
-  private handleDs5TouchpadZoneEvent(event: TouchEvent): void {
+  private handleDs5TouchpadZoneEvent(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
     if (event.type === TouchType.Down && !this.ds5ZoneGestureActive) {
       this.ds5ZoneGestureAllowsOutsideTouch = this.ds5ZoneOutsideTouchEnabled;
-      const areaWidth = Number(event.target.area.width);
-      const areaHeight = Number(event.target.area.height);
+      const areaWidth = coordinateSpace?.width ?? Number(event.target.area.width);
+      const areaHeight = coordinateSpace?.height ?? Number(event.target.area.height);
       const firstTouch = event.changedTouches.length > 0
         ? event.changedTouches[0]
         : (event.touches.length > 0 ? event.touches[0] : undefined);
       if (areaWidth > 0 && areaHeight > 0 && firstTouch) {
-        const normalizedX = firstTouch.x / areaWidth;
-        const normalizedY = firstTouch.y / areaHeight;
+        const touchX = coordinateSpace
+          ? firstTouch.x - coordinateSpace.offsetX : firstTouch.x;
+        const touchY = coordinateSpace
+          ? firstTouch.y - coordinateSpace.offsetY : firstTouch.y;
+        const normalizedX = touchX / areaWidth;
+        const normalizedY = touchY / areaHeight;
         this.ds5ZoneGestureUsesPad = TouchpadZoneGeometry.contains(
           this.ds5TouchpadZone, normalizedX, normalizedY
         );
@@ -510,7 +516,7 @@ export class TouchInputHandler {
     }
 
     if (this.ds5ZoneGestureUsesPad) {
-      this.ds5Touchpad.handleEvent(event, this.ds5TouchpadZone);
+      this.ds5Touchpad.handleEvent(event, this.ds5TouchpadZone, coordinateSpace);
     } else if (this.ds5ZoneGestureAllowsOutsideTouch) {
       // Direct mode is the same fallback used by Android vplus outside the
       // regional pad, and preserves multi-finger touch/pen behavior.

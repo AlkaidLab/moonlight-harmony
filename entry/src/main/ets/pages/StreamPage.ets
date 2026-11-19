@@ -37,7 +37,8 @@ import {
   DS5_TOUCH_FEEDBACK_DOWN,
   DS5_TOUCH_FEEDBACK_MOVE,
   DS5_TOUCH_FEEDBACK_UP,
-  Ds5TouchpadFeedback
+  Ds5TouchpadFeedback,
+  TouchEventCoordinateSpace
 } from '../service/input/Ds5TouchpadGestureHandler';
 import { StreamWindowManager, DisplaySize } from '../service/streaming/StreamWindowManager';
 import { ShortcutManager, Shortcut } from '../components/ShortcutManager';
@@ -284,6 +285,11 @@ struct StreamPage {
   private xComponentActualHeightVp: number = 0;
   private videoViewportWidthVp: number = 0;
   private videoViewportHeightVp: number = 0;
+  /** 用于把虚拟手柄覆盖层触点换算回视频坐标。 */
+  private xComponentGlobalLeftVp: number = 0;
+  private xComponentGlobalTopVp: number = 0;
+  private containerGlobalLeftVp: number = 0;
+  private containerGlobalTopVp: number = 0;
 
   // 组件控制器和服务
   private xComponentController: XComponentController = new XComponentController();
@@ -2435,7 +2441,7 @@ struct StreamPage {
   /**
    * 处理触摸事件
    */
-  handleTouch(event: TouchEvent): void {
+  handleTouch(event: TouchEvent, coordinateSpace?: TouchEventCoordinateSpace): void {
     if (!this.viewModel.isConnected) {
       return;
     }
@@ -2449,20 +2455,33 @@ struct StreamPage {
       this.isDs5TouchMode(this.viewModel.touchMode) ||
       !this.viewModel.showController || this.touchPassthrough
     );
-    this.touchInputHandler.handleTouchEvent(event);
+    this.touchInputHandler.handleTouchEvent(event, coordinateSpace);
   }
 
   /**
    * 虚拟手柄覆盖层已经处理过系统手势后的底层触摸分发。
    * DS5 模式下空白触点由覆盖层显式转发到这里，避免依赖兄弟节点穿透。
    */
-  private handleTouchAfterSystemGesture(event: TouchEvent): void {
+  private handleTouchAfterSystemGesture(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
     if (event.source === SourceType.Mouse) return;
     if (this.isTouchOverrideEnabled) {
       this.panZoomHandler.handleTouchEvent(event);
       return;
     }
-    this.handleTouch(event);
+    this.handleTouch(event, coordinateSpace);
+  }
+
+  private getDs5TouchCoordinateSpace(): TouchEventCoordinateSpace | undefined {
+    const width = this.getXComponentWidthVp();
+    const height = this.getXComponentHeightVp();
+    if (width <= 0 || height <= 0) return undefined;
+    return {
+      width: width,
+      height: height,
+      offsetX: this.xComponentGlobalLeftVp - this.containerGlobalLeftVp,
+      offsetY: this.xComponentGlobalTopVp - this.containerGlobalTopVp
+    };
   }
 
   private handleVirtualControllerSystemTouchGesture(event: TouchEvent): boolean {
@@ -2811,7 +2830,7 @@ struct StreamPage {
           .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
           .attributeModifier(this.aihdrModifier)
           .hitTestBehavior(this.viewModel.showController &&
-            (!this.touchPassthrough || this.isDs5TouchMode(this.viewModel.touchMode))
+            (!this.touchPassthrough && !this.isDs5TouchMode(this.viewModel.touchMode))
             ? HitTestMode.None : HitTestMode.Default)
           .onTouch((event: TouchEvent) => {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
@@ -2847,6 +2866,8 @@ struct StreamPage {
             if (globalPos) {
               const screenX = globalPos.x as number;
               const screenY = globalPos.y as number;
+              this.xComponentGlobalLeftVp = screenX;
+              this.xComponentGlobalTopVp = screenY;
               this.inputHandler.updateXComponentScreenPosition(screenX, screenY);
             }
           })
@@ -2925,7 +2946,7 @@ struct StreamPage {
             return this.handleVirtualControllerSystemTouchGesture(event);
           },
           onUnderlyingTouch: (event: TouchEvent): void => {
-            this.handleTouchAfterSystemGesture(event);
+            this.handleTouchAfterSystemGesture(event, this.getDs5TouchCoordinateSpace());
           }
         })
       }
@@ -3037,7 +3058,11 @@ struct StreamPage {
       // 记录容器全局原点，供画面之外的鼠标坐标换算使用（#152）
       const globalPos = newArea.globalPosition;
       if (globalPos) {
-        this.inputHandler.updateContainerOrigin(globalPos.x as number, globalPos.y as number);
+        const screenX = globalPos.x as number;
+        const screenY = globalPos.y as number;
+        this.containerGlobalLeftVp = screenX;
+        this.containerGlobalTopVp = screenY;
+        this.inputHandler.updateContainerOrigin(screenX, screenY);
       }
     })
     .onMouse((event: MouseEvent) => {
