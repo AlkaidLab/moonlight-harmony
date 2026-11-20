@@ -53,6 +53,9 @@ jobs:
     - name: Run repository checks
       run: npm run check
 
+    - name: Test SDK patch
+      run: bash ci/test-patch-sdk.sh
+
     - name: Checkout audio haptics SDK
       uses: actions/checkout@v4
       with:

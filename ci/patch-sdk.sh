@@ -309,10 +309,9 @@ fi
 
 # ─── @kit.RemoteCommunicationKit ───
 if ! kit_decl_exists "@kit.RemoteCommunicationKit"; then
-  [ ! -f "$HMS_KIT_CONFIGS/@kit.RemoteCommunicationKit.json" ] && \
-    cp "$STUBS_DIR/kit.RemoteCommunicationKit.json" "$HMS_KIT_CONFIGS/@kit.RemoteCommunicationKit.json"
-  [ ! -f "$HMS_ETS_API/@ohos.net.rcp.d.ts" ] && \
-    cp "$STUBS_DIR/ohos.net.rcp.d.ts" "$HMS_ETS_API/@ohos.net.rcp.d.ts"
+  cp "$STUBS_DIR/kit.RemoteCommunicationKit.json" "$HMS_KIT_CONFIGS/@kit.RemoteCommunicationKit.json"
+  [ ! -f "$HMS_ETS_API/@hms.collaboration.rcp.d.ts" ] && \
+    cp "$STUBS_DIR/hms.collaboration.rcp.d.ts" "$HMS_ETS_API/@hms.collaboration.rcp.d.ts"
   cp "$STUBS_DIR/kit.RemoteCommunicationKit.d.ts" "$HMS_ETS_API/@kit.RemoteCommunicationKit.d.ts"
   echo "  Applied RemoteCommunicationKit stubs"
 else
