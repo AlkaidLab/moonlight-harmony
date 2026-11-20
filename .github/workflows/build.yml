@@ -374,6 +374,18 @@ jobs:
           --stacktrace \
           2>&1 | tee build-hap.log
 
+    - name: Verify RCP runtime module in HAP
+      run: |
+        shopt -s globstar nullglob
+        haps=(entry/build/default/outputs/**/*.hap)
+        if (( ${#haps[@]} == 0 )); then
+          echo 'No HAP produced' >&2
+          exit 1
+        fi
+        for hap in "${haps[@]}"; do
+          python3 ci/check-rcp-module.py "$hap"
+        done
+
     # ── 清理 & 上传 ──
     - name: Cleanup signing files
       if: always()
