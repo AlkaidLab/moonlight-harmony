@@ -17,11 +17,16 @@ import nativeLib from 'libmoonlight_nativelib.so';
 import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
 import { PointXY } from './PanZoomHandler';
 import { TrackpadGestureHandler, TrackpadInputSink, TrackpadConfig } from './TrackpadGestureHandler';
-import { TouchpadZoneGeometry, TouchpadZoneRect } from './TouchpadZoneGeometry';
+import {
+  TouchpadZoneGeometry,
+  TouchpadZoneEdges,
+  TouchpadZoneRect
+} from './TouchpadZoneGeometry';
 import {
   Ds5TouchpadFeedback,
   Ds5TouchpadGestureHandler,
-  Ds5TouchpadInputSink
+  Ds5TouchpadInputSink,
+  TouchEventCoordinateSpace
 } from './Ds5TouchpadGestureHandler';
 import {
   BUTTON_ACTION_PRESS,
@@ -53,6 +58,13 @@ export enum TouchInputMode {
   DIRECT = 'direct',      // 直接触摸模式：绝对坐标（多点触控协议）
   MOUSE = 'mouse',        // 鼠标模式：绝对定位 + 死区 + 长按右键 + 双指滚轮
   DS5_TOUCHPAD_ZONE = 'ds5_touchpad_zone' // 区域映射 DualSense 触控板
+}
+
+enum Ds5ZoneGestureRoute {
+  NONE,
+  PAD,
+  OUTSIDE,
+  RESIZE
 }
 
 /**
@@ -160,13 +172,21 @@ export class TouchInputHandler {
   /** 区域 DS5 模式的路由状态；一组手势只选择一次 owner。 */
   private ds5TouchpadZone: TouchpadZoneRect =
     TouchpadZoneGeometry.parseZoneRect(TouchpadZoneGeometry.DEFAULT_ZONE_RECT);
-  private ds5ZoneGestureActive: boolean = false;
-  private ds5ZoneGestureUsesPad: boolean = false;
+  private ds5ZoneGestureRoute: Ds5ZoneGestureRoute = Ds5ZoneGestureRoute.NONE;
   /** 区域外手势是否允许回退为普通多点触控。 */
   private ds5ZoneOutsideTouchEnabled: boolean = true;
   /** 首个触点决定后，整组手势固定使用同一策略。 */
   private ds5ZoneGestureAllowsOutsideTouch: boolean = true;
   private ds5ZoneTouchIds: Set<number> = new Set<number>();
+  /** 仅在区域轮廓已经可见时允许边缘调整，避免普通游玩误触。 */
+  private ds5ZoneResizeEnabled: boolean = false;
+  private ds5ZoneResizeEdges: TouchpadZoneEdges | null = null;
+  private ds5ZoneResizePointerId: number = -1;
+  private ds5ZoneResizeWorkingRect: TouchpadZoneRect | null = null;
+  private ds5ZonePreviewCallback: ((zone: TouchpadZoneRect) => void) | null = null;
+  private ds5ZoneChangedCallback: ((zone: TouchpadZoneRect) => void) | null = null;
+  private ds5ZoneResizingCallback: ((resizing: boolean) => void) | null = null;
+  private static readonly DS5_RESIZE_BAND_VP: number = 24;
 
   // ====== 鼠标模式状态（绝对定位 + 死区 + 长按右键，对齐 Android AbsoluteTouchContext） ======
   /** 主手指按下位置 */
@@ -346,7 +366,7 @@ export class TouchInputHandler {
     }
     if (this.mode === TouchInputMode.DS5_TOUCHPAD_ZONE && mode !== TouchInputMode.DS5_TOUCHPAD_ZONE) {
       this.ds5Touchpad.cancelActiveInput();
-      this.resetDs5ZoneGesture();
+      this.cancelDs5ZoneGesture();
     }
     this.mode = mode;
     Logger.info('TouchInputHandler', `TouchInputHandler: 模式切换为 ${mode}`);
@@ -355,6 +375,26 @@ export class TouchInputHandler {
   /** 设置区域外手势是否回退为普通多点触控。 */
   setDs5TouchpadOutsideTouchEnabled(enabled: boolean): void {
     this.ds5ZoneOutsideTouchEnabled = enabled;
+  }
+
+  setDs5TouchpadZone(zone: TouchpadZoneRect): void {
+    this.ds5TouchpadZone = zone;
+  }
+
+  setDs5TouchpadZoneResizeEnabled(enabled: boolean): void {
+    this.ds5ZoneResizeEnabled = enabled;
+  }
+
+  setDs5TouchpadZonePreviewCallback(callback: ((zone: TouchpadZoneRect) => void) | null): void {
+    this.ds5ZonePreviewCallback = callback;
+  }
+
+  setDs5TouchpadZoneChangedCallback(callback: ((zone: TouchpadZoneRect) => void) | null): void {
+    this.ds5ZoneChangedCallback = callback;
+  }
+
+  setDs5TouchpadZoneResizingCallback(callback: ((resizing: boolean) => void) | null): void {
+    this.ds5ZoneResizingCallback = callback;
   }
 
   /** 绑定当前串流会话的 DS5 触控输出。 */
@@ -382,7 +422,7 @@ export class TouchInputHandler {
     this.trackpad.dispose();
     this.resetMouseState(true);
     this.ds5Touchpad.cancelActiveInput();
-    this.resetDs5ZoneGesture();
+    this.cancelDs5ZoneGesture();
     this.touchStates.clear();
     this.lastForce.clear();
     this.lastSize.clear();
@@ -445,12 +485,12 @@ export class TouchInputHandler {
   /**
    * 处理触摸事件
    */
-  handleTouchEvent(event: TouchEvent): void {
+  handleTouchEvent(event: TouchEvent, coordinateSpace?: TouchEventCoordinateSpace): void {
     const touches = event.touches;
 
     // 区域 DS5 触控板的 Up/Cancel 可能只携带 changedTouches，不能在这里提前返回。
     if (this.mode === TouchInputMode.DS5_TOUCHPAD_ZONE) {
-      this.handleDs5TouchpadZoneEvent(event);
+      this.handleDs5TouchpadZoneEvent(event, coordinateSpace);
       return;
     }
 
@@ -460,13 +500,13 @@ export class TouchInputHandler {
     // 仅在 DIRECT 模式下发送 Pen 协议事件（带压感/倾斜），
     // TRACKPAD/MOUSE 模式下手写笔当作手指处理（控制光标）
     if (event.sourceTool === SourceTool.Pen && this.mode === TouchInputMode.DIRECT && !this.penUnsupported) {
-      this.handlePenEvent(event);
+      this.handlePenEvent(event, coordinateSpace);
       return;
     }
     
     // DIRECT 模式支持多点触控，需要处理所有触摸点
     if (this.mode === TouchInputMode.DIRECT) {
-      this.handleMultiTouchEvent(event);
+      this.handleMultiTouchEvent(event, coordinateSpace);
       return;
     }
     
@@ -485,21 +525,45 @@ export class TouchInputHandler {
    * the whole gesture. Contacts outside the pad remain ordinary multi-touch,
    * while contacts that start inside the zone go exclusively to DS5.
    */
-  private handleDs5TouchpadZoneEvent(event: TouchEvent): void {
-    if (event.type === TouchType.Down && !this.ds5ZoneGestureActive) {
+  private handleDs5TouchpadZoneEvent(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
+    const ds5CoordinateSpace = this.getDs5CoordinateSpace(event, coordinateSpace);
+    const areaWidth = ds5CoordinateSpace.width;
+    const areaHeight = ds5CoordinateSpace.height;
+
+    if (event.type === TouchType.Down && this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.NONE) {
       this.ds5ZoneGestureAllowsOutsideTouch = this.ds5ZoneOutsideTouchEnabled;
-      const areaWidth = Number(event.target.area.width);
-      const areaHeight = Number(event.target.area.height);
       const firstTouch = event.changedTouches.length > 0
         ? event.changedTouches[0]
         : (event.touches.length > 0 ? event.touches[0] : undefined);
       if (areaWidth > 0 && areaHeight > 0 && firstTouch) {
-        const normalizedX = firstTouch.x / areaWidth;
-        const normalizedY = firstTouch.y / areaHeight;
-        this.ds5ZoneGestureUsesPad = TouchpadZoneGeometry.contains(
-          this.ds5TouchpadZone, normalizedX, normalizedY
+        const point = this.toSurfacePoint(firstTouch.x, firstTouch.y, ds5CoordinateSpace);
+        const normalizedX = point.x / areaWidth;
+        const normalizedY = point.y / areaHeight;
+        const bandX = Math.min(
+          TouchInputHandler.DS5_RESIZE_BAND_VP / areaWidth,
+          TouchpadZoneGeometry.width(this.ds5TouchpadZone) * 0.25
         );
-        this.ds5ZoneGestureActive = true;
+        const bandY = Math.min(
+          TouchInputHandler.DS5_RESIZE_BAND_VP / areaHeight,
+          TouchpadZoneGeometry.height(this.ds5TouchpadZone) * 0.25
+        );
+        const edges = this.ds5ZoneResizeEnabled
+          ? TouchpadZoneGeometry.edgeHitTest(
+            this.ds5TouchpadZone, normalizedX, normalizedY, bandX, bandY)
+          : null;
+        if (edges !== null) {
+          this.ds5ZoneGestureRoute = Ds5ZoneGestureRoute.RESIZE;
+          this.ds5ZoneResizeEdges = edges;
+          this.ds5ZoneResizePointerId = firstTouch.id;
+          this.ds5ZoneResizeWorkingRect = this.ds5TouchpadZone;
+          this.ds5ZoneResizingCallback?.(true);
+        } else if (TouchpadZoneGeometry.contains(
+          this.ds5TouchpadZone, normalizedX, normalizedY)) {
+          this.ds5ZoneGestureRoute = Ds5ZoneGestureRoute.PAD;
+        } else {
+          this.ds5ZoneGestureRoute = Ds5ZoneGestureRoute.OUTSIDE;
+        }
       }
     }
 
@@ -509,36 +573,138 @@ export class TouchInputHandler {
       }
     }
 
-    if (this.ds5ZoneGestureUsesPad) {
-      this.ds5Touchpad.handleEvent(event, this.ds5TouchpadZone);
-    } else if (this.ds5ZoneGestureAllowsOutsideTouch) {
+    if (this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.RESIZE) {
+      this.handleDs5ZoneResize(event, ds5CoordinateSpace, areaWidth, areaHeight);
+    } else if (this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.PAD) {
+      this.ds5Touchpad.handleEvent(event, this.ds5TouchpadZone, ds5CoordinateSpace);
+    } else if (this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.OUTSIDE &&
+      this.ds5ZoneGestureAllowsOutsideTouch) {
       // Direct mode is the same fallback used by Android vplus outside the
       // regional pad, and preserves multi-finger touch/pen behavior.
       if (event.sourceTool === SourceTool.Pen && !this.penUnsupported) {
-        this.handlePenEvent(event);
+        this.handlePenEvent(event, ds5CoordinateSpace);
       } else {
-        this.handleMultiTouchEvent(event);
+        this.handleMultiTouchEvent(event, ds5CoordinateSpace);
       }
     }
 
     if (event.type === TouchType.Cancel) {
-      this.resetDs5ZoneGesture();
+      this.cancelDs5ZoneGesture();
       return;
     }
     if (event.type === TouchType.Up) {
       for (const touch of event.changedTouches) {
         this.ds5ZoneTouchIds.delete(touch.id);
       }
-      if (this.ds5ZoneTouchIds.size === 0 || event.touches.length === 0) {
+      if (event.touches.length === 0) this.ds5ZoneTouchIds.clear();
+      if (this.ds5ZoneTouchIds.size === 0) {
         this.resetDs5ZoneGesture();
       }
     }
   }
 
+  private handleDs5ZoneResize(event: TouchEvent,
+    coordinateSpace: TouchEventCoordinateSpace,
+    areaWidth: number, areaHeight: number): void {
+    if (event.type === TouchType.Move) {
+      const edges = this.ds5ZoneResizeEdges;
+      const working = this.ds5ZoneResizeWorkingRect;
+      if (edges === null || working === null || this.ds5ZoneResizePointerId < 0) return;
+      let resizeTouch: TouchObject | undefined;
+      for (const touch of event.touches) {
+        if (touch.id === this.ds5ZoneResizePointerId) {
+          resizeTouch = touch;
+          break;
+        }
+      }
+      if (!resizeTouch) {
+        for (const touch of event.changedTouches) {
+          if (touch.id === this.ds5ZoneResizePointerId) {
+            resizeTouch = touch;
+            break;
+          }
+        }
+      }
+      if (!resizeTouch || areaWidth <= 0 || areaHeight <= 0) return;
+      const point = this.toSurfacePoint(resizeTouch.x, resizeTouch.y, coordinateSpace);
+      const next = TouchpadZoneGeometry.resizeEdges(
+        working, edges, point.x / areaWidth, point.y / areaHeight);
+      if (next.left !== working.left || next.top !== working.top ||
+        next.right !== working.right || next.bottom !== working.bottom) {
+        this.ds5ZoneResizeWorkingRect = next;
+        this.ds5ZonePreviewCallback?.(next);
+      }
+      return;
+    }
+
+    if (event.type === TouchType.Up) {
+      let pointerReleased = event.touches.length === 0;
+      for (const touch of event.changedTouches) {
+        if (touch.id === this.ds5ZoneResizePointerId) {
+          pointerReleased = true;
+          break;
+        }
+      }
+      if (pointerReleased) {
+        this.finishDs5ZoneResize(true);
+        this.ds5ZoneResizePointerId = -1;
+      }
+      return;
+    }
+
+    if (event.type === TouchType.Cancel) {
+      this.finishDs5ZoneResize(false);
+    }
+  }
+
+  private finishDs5ZoneResize(persist: boolean): void {
+    const working = this.ds5ZoneResizeWorkingRect;
+    if (working !== null && persist) {
+      this.ds5TouchpadZone = working;
+      this.ds5ZoneChangedCallback?.(working);
+    }
+    this.ds5ZonePreviewCallback?.(this.ds5TouchpadZone);
+    this.ds5ZoneResizingCallback?.(false);
+    this.ds5ZoneResizeEdges = null;
+    this.ds5ZoneResizePointerId = -1;
+    this.ds5ZoneResizeWorkingRect = null;
+  }
+
+  private cancelDs5ZoneGesture(): void {
+    if (this.ds5ZoneGestureRoute === Ds5ZoneGestureRoute.RESIZE) {
+      this.finishDs5ZoneResize(false);
+    }
+    this.resetDs5ZoneGesture();
+  }
+
   private resetDs5ZoneGesture(): void {
-    this.ds5ZoneGestureActive = false;
-    this.ds5ZoneGestureUsesPad = false;
+    this.ds5ZoneGestureRoute = Ds5ZoneGestureRoute.NONE;
+    this.ds5ZoneGestureAllowsOutsideTouch = true;
     this.ds5ZoneTouchIds.clear();
+    this.ds5ZoneResizeEdges = null;
+    this.ds5ZoneResizePointerId = -1;
+    this.ds5ZoneResizeWorkingRect = null;
+  }
+
+  /**
+   * Give DS5 hit-testing and output one coordinate space for every entry path.
+   * XComponent events are local already, but must still use the active inverse
+   * zoom transform when a previous pan/zoom gesture left the video transformed.
+   */
+  private getDs5CoordinateSpace(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): TouchEventCoordinateSpace {
+    if (coordinateSpace) return coordinateSpace;
+    const width = Number(event.target.area.width);
+    const height = Number(event.target.area.height);
+    const transform = this.coordinateTransform;
+    return {
+      width: width,
+      height: height,
+      toSurfacePoint: (x: number, y: number): PointXY => {
+        if (transform) return transform(x, y);
+        return { x: x, y: y };
+      }
+    };
   }
   
   /**
@@ -546,28 +712,30 @@ export class TouchInputHandler {
    * 支持高采样率：处理历史触摸点 + 当前触摸点
    */
   @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP] })
-  private handleMultiTouchEvent(event: TouchEvent): void {
+  private handleMultiTouchEvent(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
     const touches = event.touches;
     const changedTouches = event.changedTouches;
-    const areaWidth = event.target.area.width as number;
-    const areaHeight = event.target.area.height as number;
+    const areaWidth = coordinateSpace?.width ?? Number(event.target.area.width);
+    const areaHeight = coordinateSpace?.height ?? Number(event.target.area.height);
     
     switch (event.type) {
       case TouchType.Down:
         // 处理新按下的触摸点
         for (let i = 0; i < changedTouches.length; i++) {
           const touch = changedTouches[i];
+          const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
           this.touchStates.set(touch.id, {
-            startX: touch.x,
-            startY: touch.y,
-            lastX: touch.x,
-            lastY: touch.y,
+            startX: point.x,
+            startY: point.y,
+            lastX: point.x,
+            lastY: point.y,
             startTime: Date.now()
           });
           // DOWN 时尚无历史压力数据，使用默认值 1.0
           this.lastForce.set(touch.id, 1.0);
           this.lastSize.set(touch.id, 0.05);
-          this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event);
+          this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event, coordinateSpace);
         }
         break;
         
@@ -608,7 +776,8 @@ export class TouchInputHandler {
                   areaWidth,
                   areaHeight,
                   normalizedForce,
-                  contactSize
+                  contactSize,
+                  coordinateSpace
                 );
               }
             }
@@ -624,7 +793,7 @@ export class TouchInputHandler {
           if (state) {
             state.lastX = touch.x;
             state.lastY = touch.y;
-            this.sendNormalizedTouch(TOUCH_EVENT_MOVE, touch, event);
+            this.sendNormalizedTouch(TOUCH_EVENT_MOVE, touch, event, coordinateSpace);
           }
         }
         break;
@@ -637,7 +806,7 @@ export class TouchInputHandler {
           if (!this.touchStates.has(touch.id)) {
             continue;
           }
-          this.sendNormalizedTouch(TOUCH_EVENT_UP, touch, event);
+          this.sendNormalizedTouch(TOUCH_EVENT_UP, touch, event, coordinateSpace);
           this.touchStates.delete(touch.id);
           this.lastForce.delete(touch.id);
           this.lastSize.delete(touch.id);
@@ -907,18 +1076,15 @@ export class TouchInputHandler {
    * 发送归一化的触摸事件
    * 支持压感：使用历史点追踪的压力值，或 touch.force（如果可用）
    */
-  private sendNormalizedTouch(eventType: number, touch: TouchObject, event: TouchEvent): void {
-    const areaWidth = event.target.area.width as number;
-    const areaHeight = event.target.area.height as number;
+  private sendNormalizedTouch(eventType: number, touch: TouchObject, event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
+    const areaWidth = coordinateSpace?.width ?? Number(event.target.area.width);
+    const areaHeight = coordinateSpace?.height ?? Number(event.target.area.height);
     
     // 坐标变换（画面缩放/平移状态下修正触摸坐标）
-    let touchX = touch.x;
-    let touchY = touch.y;
-    if (this.coordinateTransform) {
-      const transformed = this.coordinateTransform(touchX, touchY);
-      touchX = transformed.x;
-      touchY = transformed.y;
-    }
+    const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
+    const touchX = point.x;
+    const touchY = point.y;
     
     // 归一化到 0.0-1.0 范围
     const normalizedX = Math.max(0, Math.min(1, touchX / areaWidth));
@@ -962,16 +1128,13 @@ export class TouchInputHandler {
     areaWidth: number,
     areaHeight: number,
     pressure: number,
-    size: number
+    size: number,
+    coordinateSpace?: TouchEventCoordinateSpace
   ): void {
     // 坐标变换（画面缩放/平移状态下修正触摸坐标）
-    let touchX = x;
-    let touchY = y;
-    if (this.coordinateTransform) {
-      const transformed = this.coordinateTransform(touchX, touchY);
-      touchX = transformed.x;
-      touchY = transformed.y;
-    }
+    const point = this.toSurfacePoint(x, y, coordinateSpace);
+    const touchX = point.x;
+    const touchY = point.y;
     
     const normalizedX = Math.max(0, Math.min(1, touchX / areaWidth));
     const normalizedY = Math.max(0, Math.min(1, touchY / areaHeight));
@@ -1045,11 +1208,12 @@ export class TouchInputHandler {
    * 将手写笔触摸事件转化为 Moonlight 的 PenEvent
    */
   @SuppressWarnings({ rules: [SuppressWarningsType.SYSCAP, SuppressWarningsType.COMPATIBILITY] })
-  private handlePenEvent(event: TouchEvent): void {
+  private handlePenEvent(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
     const touches = event.touches;
     const changedTouches = event.changedTouches;
-    const areaWidth = event.target.area.width as number;
-    const areaHeight = event.target.area.height as number;
+    const areaWidth = coordinateSpace?.width ?? Number(event.target.area.width);
+    const areaHeight = coordinateSpace?.height ?? Number(event.target.area.height);
 
     // 从 BaseEvent 获取笔的压感和倾斜信息
     const eventPressure = event.pressure ?? 0;
@@ -1071,14 +1235,15 @@ export class TouchInputHandler {
       case TouchType.Down:
         for (let i = 0; i < changedTouches.length; i++) {
           const touch = changedTouches[i];
+          const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
           this.touchStates.set(touch.id, {
-            startX: touch.x, startY: touch.y,
-            lastX: touch.x, lastY: touch.y,
+            startX: point.x, startY: point.y,
+            lastX: point.x, lastY: point.y,
             startTime: Date.now()
           });
 
-          const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
-          const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+          const normalizedX = Math.max(0, Math.min(1, point.x / areaWidth));
+          const normalizedY = Math.max(0, Math.min(1, point.y / areaHeight));
           // 手写笔通常只有一个触点，使用 BaseEvent 上的压感
           const pressure = eventPressure;
           // 尝试获取 per-touch 接触面积（API 15+）
@@ -1098,7 +1263,7 @@ export class TouchInputHandler {
             Logger.warn('TouchInputHandler', '手写笔: 主机不支持 Pen 事件，回退到 Touch 事件');
             this.penUnsupported = true;
             // 回退：用 touch 事件重新发送
-            this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event);
+            this.sendNormalizedTouch(TOUCH_EVENT_DOWN, touch, event, coordinateSpace);
             return;
           }
         }
@@ -1118,8 +1283,9 @@ export class TouchInputHandler {
               const histTouch = histPoint.touchObject;
               const state = this.touchStates.get(histTouch.id);
               if (state) {
-                const normalizedX = Math.max(0, Math.min(1, histTouch.x / areaWidth));
-                const normalizedY = Math.max(0, Math.min(1, histTouch.y / areaHeight));
+                const point = this.toSurfacePoint(histTouch.x, histTouch.y, coordinateSpace);
+                const normalizedX = Math.max(0, Math.min(1, point.x / areaWidth));
+                const normalizedY = Math.max(0, Math.min(1, point.y / areaHeight));
                 // 历史点的压力
                 const histPressure = histPoint.force > 0
                   ? this.normalizeForce(histPoint.force) : eventPressure;
@@ -1142,11 +1308,12 @@ export class TouchInputHandler {
           const touch = touches[i];
           const state = this.touchStates.get(touch.id);
           if (state) {
-            state.lastX = touch.x;
-            state.lastY = touch.y;
+            const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
+            state.lastX = point.x;
+            state.lastY = point.y;
 
-            const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
-            const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+            const normalizedX = Math.max(0, Math.min(1, point.x / areaWidth));
+            const normalizedY = Math.max(0, Math.min(1, point.y / areaHeight));
             const pressure = touch.pressure ?? eventPressure;
             const contactW = touch.width ?? 0;
             const contactH = touch.height ?? 0;
@@ -1166,8 +1333,9 @@ export class TouchInputHandler {
       case TouchType.Cancel:
         for (let i = 0; i < changedTouches.length; i++) {
           const touch = changedTouches[i];
-          const normalizedX = Math.max(0, Math.min(1, touch.x / areaWidth));
-          const normalizedY = Math.max(0, Math.min(1, touch.y / areaHeight));
+          const point = this.toSurfacePoint(touch.x, touch.y, coordinateSpace);
+          const normalizedX = Math.max(0, Math.min(1, point.x / areaWidth));
+          const normalizedY = Math.max(0, Math.min(1, point.y / areaHeight));
 
           const upEventType = event.type === TouchType.Cancel ? TOUCH_EVENT_CANCEL : TOUCH_EVENT_UP;
 
@@ -1180,6 +1348,19 @@ export class TouchInputHandler {
         }
         break;
     }
+  }
+
+  /** Map an event point into the untransformed video surface coordinate space. */
+  private toSurfacePoint(x: number, y: number,
+    coordinateSpace?: TouchEventCoordinateSpace): PointXY {
+    if (coordinateSpace) {
+      const point = coordinateSpace.toSurfacePoint(x, y);
+      return { x: point.x, y: point.y };
+    }
+    if (this.coordinateTransform) {
+      return this.coordinateTransform(x, y);
+    }
+    return { x: x, y: y };
   }
   
   /**
