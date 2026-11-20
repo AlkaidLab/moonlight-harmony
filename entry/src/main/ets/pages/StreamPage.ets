@@ -3175,6 +3175,7 @@ struct StreamPage {
           .width(this.xComponentWidth)
           .height(this.xComponentHeight)
           .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+          .hitTestBehavior(HitTestMode.None)
       }
         .width('100%')
         .height('100%')
@@ -3238,6 +3239,7 @@ struct StreamPage {
         .width(this.xComponentWidth)
         .height(this.xComponentHeight)
         .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+        .hitTestBehavior(HitTestMode.None)
     }
       .width('100%')
       .height('100%')
