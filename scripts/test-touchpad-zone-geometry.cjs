@@ -16,3 +16,12 @@ test('undersized stored zones fall back to the default', () => {
       .split(',').map(Number).map(value => value.toFixed(4)).join(','));
   }
 });
+
+test('surface coordinates undo layout, drawing offsets, scale and translation', () => {
+  const p = geometry.toSurfacePoint(840, 760, 100, 200, 50, -20, 1.2, 60, -140);
+  assert.ok(Math.abs(p.x - 500) < 1e-9);
+  assert.ok(Math.abs(p.y - 570) < 1e-9);
+  const q = geometry.toSurfacePoint(300, 400, 0, 0, 0, 0, 1, 0, 0);
+  assert.equal(q.x, 300);
+  assert.equal(q.y, 400);
+});

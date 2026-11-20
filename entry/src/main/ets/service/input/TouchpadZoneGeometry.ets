@@ -48,6 +48,15 @@ export class TouchpadZoneGeometry {
     return zone.bottom - zone.top;
   }
 
+  /** Invert the viewport transform and the surface's current drawing offset. */
+  static toSurfacePoint(x: number, y: number, layoutLeft: number, layoutTop: number,
+    offsetX: number, offsetY: number, scale: number, translateX: number, translateY: number): TouchpadZonePoint {
+    return {
+      x: (x - translateX) / scale - layoutLeft - offsetX,
+      y: (y - translateY) / scale - layoutTop - offsetY
+    };
+  }
+
   static formatZoneRect(zone: TouchpadZoneRect): string {
     return zone.left.toFixed(4) + ',' + zone.top.toFixed(4) + ',' +
       zone.right.toFixed(4) + ',' + zone.bottom.toFixed(4);

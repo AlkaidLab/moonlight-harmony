@@ -2506,10 +2506,8 @@ struct StreamPage {
       width: width,
       height: height,
       toSurfacePoint: (x: number, y: number): PointXY => {
-        return {
-          x: (x - this.videoTranslateX) / scale - surfaceLeft,
-          y: (y - this.videoTranslateY) / scale - surfaceTop
-        };
+        return TouchpadZoneGeometry.toSurfacePoint(x, y, surfaceLeft, surfaceTop,
+          this.xComponentOffsetX, this.xComponentOffsetY, scale, this.videoTranslateX, this.videoTranslateY);
       }
     };
   }
