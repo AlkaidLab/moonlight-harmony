@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "$TEST_ROOT"' EXIT
 mkdir -p "$TEST_ROOT/home"
+unset CMDLINE_TOOLS_HOME COMMANDLINE_TOOLS_HOME
 mkdir -p "$TEST_ROOT/entry/src/main/ets/config"
 touch "$TEST_ROOT/entry/src/main/ets/config/DevKeySecret.ets" \
   "$TEST_ROOT/entry/src/main/ets/config/GitHubOAuthConfig.ets"
