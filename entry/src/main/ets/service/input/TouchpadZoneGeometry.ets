@@ -38,6 +38,7 @@ export class TouchpadZoneGeometry {
   static readonly DEFAULT_ZONE_RECT: string = '0.18,0.74,0.82,0.94';
   static readonly MIN_ZONE_WIDTH: number = 0.12;
   static readonly MIN_ZONE_HEIGHT: number = 0.06;
+  private static readonly DIMENSION_EPSILON: number = 1e-9;
 
   static width(zone: TouchpadZoneRect): number {
     return zone.right - zone.left;
@@ -61,8 +62,8 @@ export class TouchpadZoneGeometry {
     const top = Math.max(0, Math.min(1, values[1]));
     const right = Math.max(0, Math.min(1, values[2]));
     const bottom = Math.max(0, Math.min(1, values[3]));
-    if (right - left < TouchpadZoneGeometry.MIN_ZONE_WIDTH ||
-      bottom - top < TouchpadZoneGeometry.MIN_ZONE_HEIGHT) {
+    if (right - left + TouchpadZoneGeometry.DIMENSION_EPSILON < TouchpadZoneGeometry.MIN_ZONE_WIDTH ||
+      bottom - top + TouchpadZoneGeometry.DIMENSION_EPSILON < TouchpadZoneGeometry.MIN_ZONE_HEIGHT) {
       return TouchpadZoneGeometry.parseZoneRect(TouchpadZoneGeometry.DEFAULT_ZONE_RECT);
     }
     return { left, top, right, bottom };
