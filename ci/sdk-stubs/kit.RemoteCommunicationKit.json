@@ -1,7 +1,7 @@
 {
   "symbols": {
     "rcp": {
-      "source": "@ohos.net.rcp.d.ts",
+      "source": "@hms.collaboration.rcp.d.ts",
       "bindings": "default"
     }
   }
