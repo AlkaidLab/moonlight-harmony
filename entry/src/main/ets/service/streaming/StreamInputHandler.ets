@@ -663,7 +663,7 @@ export class StreamInputHandler {
    * 当鼠标拦截器启用时，鼠标事件由 C++ 层直接处理，此方法不再执行。
    */
   @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
-  handleMouseEvent(event: MouseEvent, pixelsPerVp: number): void {
+  handleMouseEvent(event: MouseEvent, pixelsPerVp: number, surfaceX?: number, surfaceY?: number): void {
     if (!this.viewModel?.isConnected) return;
 
     // 阻止事件继续传递，避免触发系统默认行为（无论 Monitor 是否启用都要调用）
@@ -685,7 +685,7 @@ export class StreamInputHandler {
         // 绝对模式：发送坐标位置
         // event.x/y 为相对于 XComponent 的 vp 坐标，用 XComponent 尺寸作为参考域
         MoonBridge.sendMousePosition(
-          Math.round(event.x), Math.round(event.y),
+          Math.round(surfaceX ?? event.x), Math.round(surfaceY ?? event.y),
           this.viewWidthVp, this.viewHeightVp
         );
       }

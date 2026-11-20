@@ -636,6 +636,8 @@ export struct VirtualControllerOverlay {
   onSystemTouchGesture: (event: TouchEvent) => boolean = () => false;
   /** DS5 区域模式下，虚拟按键以外的触摸转发给串流画面。 */
   onUnderlyingTouch: (event: TouchEvent) => void = () => {};
+  onUnderlyingMouse: (event: MouseEvent) => void = () => {};
+  onUnderlyingAxis: (event: AxisEvent) => void = () => {};
 
   /** 触摸穿透状态（双向 — 外部需读取来控制 XComponent hitTest） */
   @Link touchPassthrough: boolean;
@@ -721,6 +723,12 @@ export struct VirtualControllerOverlay {
         this.onUnderlyingTouch(event);
         event.stopPropagation();
       }
+    })
+    .onMouse((event: MouseEvent) => {
+      if (this.allowUnderlyingTouch) this.onUnderlyingMouse(event);
+    })
+    .onAxisEvent((event: AxisEvent) => {
+      if (this.allowUnderlyingTouch) this.onUnderlyingAxis(event);
     })
     // hitTestReady: 父层重渲染触发 ArkUI 重算命中测试区域（opacity 微变不可见）
     .opacity(this.hitTestReady > 0 ? 1 : 0.99)

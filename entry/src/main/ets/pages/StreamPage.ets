@@ -2988,6 +2988,13 @@ struct StreamPage {
           },
           onUnderlyingTouch: (event: TouchEvent): void => {
             this.handleTouchAfterSystemGesture(event, this.getDs5TouchCoordinateSpace());
+          },
+          onUnderlyingMouse: (event: MouseEvent): void => {
+            const point = this.getDs5TouchCoordinateSpace()?.toSurfacePoint(event.x, event.y);
+            this.inputHandler.handleMouseEvent(event, this.getUIContext().vp2px(1), point?.x, point?.y);
+          },
+          onUnderlyingAxis: (event: AxisEvent): void => {
+            this.inputHandler.handleAxisEvent(event);
           }
         })
       }
