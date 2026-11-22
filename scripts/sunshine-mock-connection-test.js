@@ -1549,6 +1549,17 @@ async function testLaunchResumeQuitModel() {
     assert.strictEqual(resumeUrl, 'rtsp://127.0.0.1:48010');
     assert.strictEqual(mock.requests.some((r) => r.path === '/resume' && r.isHttps), true);
 
+    // Display mode values are wire values, not the order shown in the picker.
+    for (const mode of [-1, 0, 1, 2, 4, 3]) {
+      const modeConfig = { ...config, screenCombinationMode: mode };
+      await client.launchApp(1, modeConfig);
+      await client.resumeApp(modeConfig);
+      for (const verb of ['/launch', '/resume']) {
+        const request = mock.requests.filter((r) => r.path === verb).at(-1);
+        assert.strictEqual(request.query.customScreenMode, mode === -1 ? undefined : String(mode));
+      }
+    }
+
     const quit = await client.quitApp();
     assert.strictEqual(quit, true);
     assert.strictEqual(mock.requests.some((r) => r.path === '/cancel' && r.isHttps), true);

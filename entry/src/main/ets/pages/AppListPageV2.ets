@@ -8,6 +8,7 @@
  * (at your option) any later version.
  */
 
+import { ScreenCombinationMode } from '../model/StreamConfig';
 import { AppNav } from '../common/AppNav';
 import { AppListPageParams, StreamPageParams } from '../common/PageParams';
 import { display } from '@kit.ArkUI';
@@ -56,6 +57,8 @@ struct AppListPageV2 {
   @State availableDisplays: DisplayInfo[] = [];
   @State selectedDisplayIndex: number = -1; // -1 表示使用默认显示器
   @State useVirtualDisplay: boolean = false; // 是否使用虚拟显示器
+  @State screenCombinationMode: ScreenCombinationMode | undefined = undefined;
+  @State screenCombinationLabel: string = '使用全局设置';
   @State supportsDisplayApi: boolean = false; // 服务器是否支持 displays API
   @StorageLink('smallIconMode') smallIconMode: boolean = false; // UI偏好：小图标/列表模式
   // 加载失败 - 错误态
@@ -628,6 +631,7 @@ struct AppListPageV2 {
         if (this.supportsDisplayApi) {
           this.DisplaySelector()
         }
+        this.ScreenCombinationSelector()
       }
       .width('100%')
       .height('100%')
@@ -902,6 +906,53 @@ struct AppListPageV2 {
     .alignItems(HorizontalAlign.Start)
     .padding({ left: AppSpacing.Large, right: AppSpacing.Large })
     .margin({ top: AppSpacing.Small, bottom: AppSpacing.Small })
+  }
+
+  @Builder
+  ScreenCombinationSelector() {
+    Row({ space: AppSpacing.Small }) {
+      Text('本次串流方式')
+        .fontSize(13)
+        .fontColor(AppColors.TextSecondary)
+      Button(this.screenCombinationLabel, { type: ButtonType.Normal })
+        .fontSize(12)
+        .fontColor(AppColors.Primary)
+        .backgroundColor(AppColors.Surface)
+        .borderRadius(16)
+        .onClick(() => this.showScreenCombinationPicker())
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.Large, right: AppSpacing.Large })
+    .margin({ bottom: AppSpacing.Small })
+  }
+
+  private showScreenCombinationPicker(): void {
+    const options: OptionItem[] = [
+      { title: '使用全局设置', subtitle: '沿用设置页中的屏幕组合模式', value: 'global' },
+      { title: '跟随主机', subtitle: '使用 Sunshine 服务端配置', value: ScreenCombinationMode.HOST_DEFAULT },
+      { title: '无操作模式', subtitle: '保持当前屏幕布局', value: ScreenCombinationMode.NO_OPERATION },
+      { title: '激活模式', subtitle: '开启选定的串流屏幕', value: ScreenCombinationMode.ENSURE_ACTIVE },
+      { title: '主屏串流模式', subtitle: '将串流屏幕设为主显示器', value: ScreenCombinationMode.ENSURE_PRIMARY },
+      { title: '副屏串流模式', subtitle: '保留主屏幕，使用串流屏幕作为副屏', value: ScreenCombinationMode.ENSURE_SECONDARY },
+      { title: '仅启用指定显示器模式', subtitle: '仅使用串流屏幕，关闭其他显示器', value: ScreenCombinationMode.ENSURE_ONLY_DISPLAY }
+    ];
+    this.optionPickerDialogConfig = {
+      title: '本次串流方式',
+      subtitle: '用于接下来启动或恢复的串流，不修改全局设置',
+      selectedValue: this.screenCombinationMode === undefined ? 'global' : this.screenCombinationMode,
+      options: options,
+      onSelect: (option: OptionItem) => {
+        this.screenCombinationMode = option.value === 'global' ? undefined : option.value as ScreenCombinationMode;
+        this.screenCombinationLabel = option.title;
+      }
+    };
+    this.optionPickerDialogController = new CustomDialogController({
+      builder: OptionPickerDialog({ config: this.optionPickerDialogConfig }),
+      alignment: DialogAlignment.Bottom,
+      customStyle: true,
+      backgroundColor: Color.Transparent
+    });
+    this.optionPickerDialogController.open();
   }
 
   @Builder
@@ -1224,6 +1275,7 @@ struct AppListPageV2 {
       resume: app.isRunning,
       displayGuid: displayGuid,
       useVdd: this.useVirtualDisplay,
+      screenCombinationMode: this.screenCombinationMode,
       posterPath: posterPath
     } as StreamPageParams);
   }

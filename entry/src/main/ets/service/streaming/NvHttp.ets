@@ -1855,7 +1855,7 @@ export interface LaunchConfig {
   maxBrightness?: number;       // 客户端屏幕最大亮度 (nits)
   maxAverageBrightness?: number; // 客户端屏幕最大平均亮度 (nits)
   sdrBrightness?: number;       // 客户端 SDR 参考白 (nits),仅实测有效时携带
-  screenCombinationMode?: number; // 屏幕组合模式 (-1=主机默认, 0=不修改, 1=确保开启, 2=主屏, 3=仅此屏)
+  screenCombinationMode?: number; // 屏幕组合模式 (-1=主机默认, 0=不修改, 1=确保开启, 2=主屏, 3=仅此屏, 4=副屏)
 }
 
 /** OpenAI 兼容消息格式 */

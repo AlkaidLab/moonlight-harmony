@@ -1990,15 +1990,12 @@ struct SettingsPageV2 {
               },
               {
                 title: '屏幕组合模式',
-                tooltip: '· 主机默认：使用 Sunshine 服务端配置\n· 不修改：保持当前屏幕布局不变\n· 确保开启：确保串流屏幕已点亮\n· 设为主屏：将串流屏幕设为主显示器\n· 仅此屏幕：仅使用串流屏幕，关闭其他显示器',
-                type: 'segment',
+                tooltip: '· 主机默认：使用 Sunshine 服务端配置\n· 不修改：保持当前屏幕布局不变\n· 确保开启：确保串流屏幕已点亮\n· 设为主屏：将串流屏幕设为主显示器\n· 设为副屏：保留主屏幕，使用串流屏幕作为副屏\n· 仅此屏幕：仅使用串流屏幕，关闭其他显示器',
+                // 六种模式超过 InlineSegmentPicker 的五项上限，使用完整列表弹窗。
+                type: 'select',
+                subtitle: this.screenCombinationMode,
                 value: this.screenCombinationMode,
-                segmentLabels: ['默认', '不修改', '确保开启', '主屏', '仅此屏'],
-                segmentValues: ['主机默认', '不修改', '确保开启', '设为主屏', '仅此屏幕'],
-                onSegmentChange: (value: string) => {
-                  this.screenCombinationMode = value;
-                  this.saveSetting(SettingsKeys.SCREEN_COMBINATION_MODE, value);
-                }
+                action: () => this.showScreenCombinationModePicker()
               },
               {
                 title: '断开后锁定屏幕',
@@ -3781,6 +3778,7 @@ struct SettingsPageV2 {
       { title: '不修改', subtitle: '保持当前屏幕布局不变', value: '不修改' } as PickerOption,
       { title: '确保开启', subtitle: '确保串流屏幕已点亮', value: '确保开启' } as PickerOption,
       { title: '设为主屏', subtitle: '将串流屏幕设为主显示器', value: '设为主屏' } as PickerOption,
+      { title: '设为副屏', subtitle: '保留主屏幕，使用串流屏幕作为副屏', value: '设为副屏' } as PickerOption,
       { title: '仅此屏幕', subtitle: '仅使用串流屏幕，关闭其他显示器', value: '仅此屏幕' } as PickerOption
     ];
     const config: PickerConfig = {
