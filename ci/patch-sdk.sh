@@ -309,11 +309,34 @@ fi
 
 # ─── @kit.RemoteCommunicationKit ───
 if ! kit_decl_exists "@kit.RemoteCommunicationKit"; then
-  [ ! -f "$HMS_KIT_CONFIGS/@kit.RemoteCommunicationKit.json" ] && \
-    cp "$STUBS_DIR/kit.RemoteCommunicationKit.json" "$HMS_KIT_CONFIGS/@kit.RemoteCommunicationKit.json"
-  [ ! -f "$HMS_ETS_API/@ohos.net.rcp.d.ts" ] && \
-    cp "$STUBS_DIR/ohos.net.rcp.d.ts" "$HMS_ETS_API/@ohos.net.rcp.d.ts"
+  cp "$STUBS_DIR/kit.RemoteCommunicationKit.json" "$HMS_KIT_CONFIGS/@kit.RemoteCommunicationKit.json"
+  [ ! -f "$HMS_ETS_API/@hms.collaboration.rcp.d.ts" ] && \
+    cp "$STUBS_DIR/hms.collaboration.rcp.d.ts" "$HMS_ETS_API/@hms.collaboration.rcp.d.ts"
   cp "$STUBS_DIR/kit.RemoteCommunicationKit.d.ts" "$HMS_ETS_API/@kit.RemoteCommunicationKit.d.ts"
+  if [ "$DEVECO_LAYOUT" -eq 0 ]; then
+    # The public SDK lacks the HMS external SDK metadata. Register its prefix
+    # so the compiler emits @hms:collaboration.rcp, as the official SDK does.
+    ETS_LOADER_MAIN="$OH_ETS_LOADER/main.js" python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ['ETS_LOADER_MAIN'])
+source = path.read_text(encoding='utf-8')
+marker = '// CI HMS module prefix registration'
+anchor = '  sdkConfigs = [...defaultSdkConfigs, ...extendSdkConfigs];'
+if marker not in source:
+    if source.count(anchor) != 1:
+        raise SystemExit(f'Cannot register HMS module prefix in {path}')
+    patch = '''  // CI HMS module prefix registration
+  if (!extendSdkConfigs.some(config => config.prefix === '@hms')) {
+    sdkConfigPrefix += '|hms';
+    extendSdkConfigs.push({ prefix: '@hms', apiPath: [] });
+  }
+'''
+    path.write_text(source.replace(anchor, patch + anchor), encoding='utf-8')
+    print('  Registered HMS module prefix in ets-loader')
+PY
+  fi
   echo "  Applied RemoteCommunicationKit stubs"
 else
   echo "  Using SDK RemoteCommunicationKit declarations"

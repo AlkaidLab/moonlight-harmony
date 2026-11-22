@@ -29,6 +29,7 @@ import { GameMenuDialog, GameMenuCallbacks } from '../components/dialogs/GameMen
 import { StreamMenuManager } from '../components/StreamMenuManager';
 import { StreamViewModel, TouchMode, StreamConnectionState } from '../viewmodel/StreamViewModel';
 import { TouchInputHandler, TouchInputMode } from '../service/input/TouchInputHandler';
+import { TouchpadZoneGeometry, TouchpadZoneRect } from '../service/input/TouchpadZoneGeometry';
 import {
   DS5_TOUCH_FEEDBACK_CANCEL,
   DS5_TOUCH_FEEDBACK_CLICK_DOWN,
@@ -36,7 +37,8 @@ import {
   DS5_TOUCH_FEEDBACK_DOWN,
   DS5_TOUCH_FEEDBACK_MOVE,
   DS5_TOUCH_FEEDBACK_UP,
-  Ds5TouchpadFeedback
+  Ds5TouchpadFeedback,
+  TouchEventCoordinateSpace
 } from '../service/input/Ds5TouchpadGestureHandler';
 import { StreamWindowManager, DisplaySize } from '../service/streaming/StreamWindowManager';
 import { ShortcutManager, Shortcut } from '../components/ShortcutManager';
@@ -44,7 +46,11 @@ import { pickRandomConnectingTip } from '../components/StreamConnectingTips';
 import { ShortcutEditorDialog, ShortcutEditData } from '../components/dialogs/ShortcutEditorDialog';
 import { GamepadManager, GamepadState, MoonlightControllerType, MouseEmulationCallback } from '../service/input/GamepadManager';
 import { GyroAssistService } from '../service/input/GyroAssistService';
-import { MoonBridge, BUTTON_ACTION_PRESS, BUTTON_ACTION_RELEASE } from '../service/streaming/MoonBridge';
+import {
+  MoonBridge,
+  BUTTON_ACTION_PRESS,
+  BUTTON_ACTION_RELEASE
+} from '../service/streaming/MoonBridge';
 import { SuperCmd, NvHttp } from '../service/streaming/NvHttp';
 import { VirtualKey, KeyAction, sendShortcutKeys } from '../service/customkey/CustomKeyTypes';
 import { pointer } from '@kit.InputKit';
@@ -52,7 +58,8 @@ import { InputInterceptorService } from '../service/input/InputInterceptorServic
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { SettingsKeys } from '../service/SettingsService';
 import { AihdrModifier, isAihdrSupported } from '../components/AihdrModifier';
-import { StreamInputHandler } from '../service/streaming/StreamInputHandler';
+import { StreamInputHandler, StreamHotkeyAction } from '../service/streaming/StreamInputHandler';
+import { StreamingSession } from '../service/streaming/StreamingSession';
 import { StreamLifecycleManager } from '../service/streaming/StreamLifecycleManager';
 import { StreamIMEManager } from '../service/streaming/StreamIMEManager';
 import { VirtualKeyboard } from '../components/virtual/VirtualKeyboard';
@@ -226,8 +233,19 @@ struct StreamPage {
   @State videoTranslateX: number = 0;
   /** 视频垂直平移 (vp) */
   @State videoTranslateY: number = 0;
-  /** DS5 触控板本地触点回显，短暂显示且不参与命中测试。 */
+  /** 区域 DS5 触控板本地触点回显，短暂显示且不参与命中测试。 */
   @State private ds5TouchIndicators: Ds5TouchIndicator[] = [];
+  /** DS5 区域在视频归一化坐标中的持久化矩形。 */
+  @State private ds5TouchpadZoneRect: string = TouchpadZoneGeometry.DEFAULT_ZONE_RECT;
+  /** 边缘调整期间强调边框，松手后回到普通轮廓。 */
+  @State private ds5TouchpadZoneResizing: boolean = false;
+  /** 对齐 Android：启用/串流开始后短暂显示区域轮廓。 */
+  @State private ds5TouchpadZoneRevealVisible: boolean = false;
+  /** 屏幕有触摸时保持区域轮廓可见，抬起后短暂淡出。 */
+  @State private ds5TouchpadZoneTouchVisible: boolean = false;
+  private ds5TouchpadZoneRevealTimer: number = -1;
+  private ds5TouchpadZoneTouchFadeTimer: number = -1;
+  private ds5TouchActiveIds: Set<number> = new Set<number>();
 
   // 鼠标高帧率保持（C++ Monitor 不可用时的 fallback）
   // 使用 DisplaySync 直接向系统合成器请求高刷新率，
@@ -237,7 +255,15 @@ struct StreamPage {
   private streamFrameDiagnosticTimer: number | null = null;
   private streamDisplayCallbacks: number = 0;
   private xComponentFrameRequestActive: boolean = false;
-  @State private mouseInputSuspended: boolean = false;
+  /** 游戏菜单的鼠标挂起所有权（帮助浮层侧由 hotkeyHelpVisible 表达，两者取或） */
+  @State private menuMouseSuspended: boolean = false;
+  @State private hotkeyHelpVisible: boolean = false; // 快捷键帮助浮层（交互弹层，参与复焦守卫+鼠标挂起）
+  /** 帮助浮层跨重连留存且关闭时新会话尚未就绪（CONNECTING）：CONNECTED 后补做恢复 */
+  private pendingHotkeyDialogRecovery: boolean = false;
+  /** 帮助浮层显示期间被跳过的拦截器启动：浮层关闭后按当前设置补启动 */
+  private pendingHotkeyInterceptorStart: boolean = false;
+  /** 退出串流流程开始（stopStreaming / quitGameAndReturn）：浮层关闭不再恢复输入 */
+  private streamExiting: boolean = false;
   @State private streamWindowFocused: boolean = true;
   
   // ── 解耦的处理器/管理器 ──
@@ -263,6 +289,11 @@ struct StreamPage {
   private xComponentActualHeightVp: number = 0;
   private videoViewportWidthVp: number = 0;
   private videoViewportHeightVp: number = 0;
+  /** 用于把虚拟手柄覆盖层触点换算回视频坐标。 */
+  private xComponentGlobalLeftVp: number = 0;
+  private xComponentGlobalTopVp: number = 0;
+  private containerGlobalLeftVp: number = 0;
+  private containerGlobalTopVp: number = 0;
 
   // 组件控制器和服务
   private xComponentController: XComponentController = new XComponentController();
@@ -374,7 +405,7 @@ struct StreamPage {
         // 焦点可能已被系统弹窗/切走时重置，重新拉回本页以保证键盘可达
         this.requestStreamFocus();
         this.inputHandler.reconcileKeyState();
-        if (!this.mouseInputSuspended) {
+        if (!this.menuMouseSuspended && !this.hotkeyHelpVisible) {
           this.resumeMouseInterceptor();
         }
       }
@@ -443,7 +474,30 @@ struct StreamPage {
     
     // 初始化输入处理器
     this.inputHandler.initialize(this.viewModel, this.gamepadManager);
+    this.touchInputHandler.setDs5TouchpadZonePreviewCallback((zone: TouchpadZoneRect): void => {
+      this.ds5TouchpadZoneRect = TouchpadZoneGeometry.formatZoneRect(zone);
+    });
+    this.touchInputHandler.setDs5TouchpadZoneChangedCallback((zone: TouchpadZoneRect): void => {
+      this.persistDs5TouchpadZone(zone);
+    });
+    this.touchInputHandler.setDs5TouchpadZoneResizingCallback((resizing: boolean): void => {
+      this.ds5TouchpadZoneResizing = resizing;
+    });
     this.inputHandler.setOnShowStreamMenu(() => this.showStreamMenu());
+    // 三修饰键本地热键（Ctrl+Alt+Shift+{Q,S,X}，对齐 Android 原版）
+    this.inputHandler.setOnHotkeyAction((action: StreamHotkeyAction): void => {
+      this.handleStreamHotkey(action);
+    });
+    // 帮助浮层跨重连留存且关闭时新会话未就绪：CONNECTED 翻转（首帧上屏）后补做恢复
+    this.viewModel.onConnected = (): void => {
+      if (this.isDs5TouchMode(this.viewModel.touchMode)) {
+        this.showDs5TouchpadZoneReveal();
+      }
+      if (!this.pendingHotkeyDialogRecovery) return;
+      this.pendingHotkeyDialogRecovery = false;
+      if (this.pageDisposed || this.viewModel.isStopping || this.streamExiting) return;
+      this.finishHotkeyDialogRecovery(false);
+    };
 
     // 初始化双指缩放处理器
     this.panZoomHandler.setOnStateChanged((state: PanZoomState) => {
@@ -787,7 +841,7 @@ struct StreamPage {
       const displayInfo = display.getDefaultDisplaySync();
       const screenWidth = displayInfo.width / displayInfo.densityPixels;
       const screenHeight = displayInfo.height / displayInfo.densityPixels;
-      
+
       // 更新 ViewModel 显示信息
       this.viewModel.displayInfo.screenWidth = screenWidth;
       this.viewModel.displayInfo.screenHeight = screenHeight;
@@ -807,6 +861,7 @@ struct StreamPage {
 
     // 标记销毁：阻止异步启动链路在销毁后重新启用帧率保活
     this.pageDisposed = true;
+    this.viewModel.onConnected = null;
     // 兜底复位帧率请求（含注销 XComponent 每帧回调），防高刷请求残留
     this.resetStreamFrameHints();
 
@@ -843,6 +898,10 @@ struct StreamPage {
     this.clearDs5TouchIndicators();
     this.touchInputHandler.setDs5TouchpadSink(null);
     this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
+    this.touchInputHandler.setDs5TouchpadZonePreviewCallback(null);
+    this.touchInputHandler.setDs5TouchpadZoneChangedCallback(null);
+    this.touchInputHandler.setDs5TouchpadZoneResizingCallback(null);
+    this.clearDs5TouchpadZoneVisualState();
     this.viewModel.dispose();
     
     // 清理触摸处理器
@@ -1090,11 +1149,134 @@ struct StreamPage {
     // 键鼠状态在此恢复；焦点恢复不在此做——onWillDismiss/onDismiss 时
     // CustomDialog 尚在移除中，过早抢焦会覆盖弹层，改由控制器
     // onDidDisappear（弹窗真正移除后）触发 requestStreamFocus
-    if (!this.mouseInputSuspended) return;
-    this.mouseInputSuspended = false;
+    if (!this.menuMouseSuspended) return;
+    this.menuMouseSuspended = false;
     // 菜单打开期间按键被强制释放过，恢复前对账仍按下的键
     this.inputHandler.reconcileKeyState();
     this.resumeMouseInterceptor();
+  }
+
+  /**
+   * 三修饰键本地热键处理（Ctrl+Alt+Shift+{Q,S,X}，对齐 Android Game.java handleSpecialKeys）
+   */
+  private handleStreamHotkey(action: StreamHotkeyAction): void {
+    switch (action) {
+      case StreamHotkeyAction.QUIT:
+        // 与菜单「断开连接」一致：结束串流，远端游戏继续运行
+        this.stopStreaming();
+        break;
+      case StreamHotkeyAction.TOGGLE_OVERLAY:
+        this.viewModel.toggleOverlay();
+        break;
+      case StreamHotkeyAction.HELP:
+        this.showHotkeyHelpDialog();
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * 快捷键帮助对话框（对齐 Android 原版 Ctrl+Alt+Shift+X 帮助浮层）
+   *
+   * 与串流菜单同一套保护：打开前暂停鼠标输入、暂停反劫持拦截器
+   * （两者都不感知应用弹窗——C++ Monitor 与拦截器回调会把鼠标/按键
+   * 继续送进游戏，对话框也收不到 Enter/Esc），并释放全部按键防主机卡键；
+   * 关闭（含异常路径）后 closeHotkeyHelpDialog 统一恢复。
+   */
+  private showHotkeyHelpDialog(): void {
+    const interceptorWasActive = InputInterceptorService.getInstance().isActive();
+    if (interceptorWasActive && !this.inputHandler.stopKeyInterceptor()) {
+      // 原生移除失败 = 拦截器仍在消费按键，对话框收不到键盘输入，放弃打开
+      Logger.warn('StreamPage', '快捷键帮助：反劫持拦截器停止失败，取消打开帮助');
+      ToastQueue.show({ message: '反劫持停止失败，暂无法打开快捷键帮助', duration: 2500 });
+      return;
+    }
+    this.hotkeyHelpVisible = true;
+    this.inputHandler.stopMouseInterceptor();
+    this.stopMouseKeepAlive();
+    // 热键自身触发的释放：目标键（X）可能仍被按住，保留认领以消费
+    // 弹窗期间的重复 KEY_DOWN，关闭时经 reconcileHotkeyClaims 对账
+    this.inputHandler.releaseAllKeys(true);
+    const sessionAtOpen = this.viewModel.getSession();
+    this.getUIContext().getPromptAction().showDialog({
+      title: '⌨️ 串流快捷键',
+      message: '双击菜单键（默认 ESC）：打开串流菜单\n'
+        + 'Ctrl+Alt+Shift+Q：断开连接\n'
+        + 'Ctrl+Alt+Shift+S：切换性能监控\n'
+        + 'Ctrl+Alt+Shift+X：显示本帮助',
+      buttons: [{ text: '知道了', color: '#1F8AFF' }]
+    }).then((): void => {
+      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen);
+    }).catch((err: Error): void => {
+      Logger.warn('StreamPage', '快捷键帮助对话框关闭异常:', err);
+      this.closeHotkeyHelpDialog(interceptorWasActive, sessionAtOpen);
+    });
+  }
+
+  /**
+   * 帮助对话框关闭后的统一恢复（成功与异常路径共用，对齐 handleGameMenuDismissed）
+   */
+  private closeHotkeyHelpDialog(interceptorWasActive: boolean, sessionAtOpen: StreamingSession | null): void {
+    this.hotkeyHelpVisible = false;
+    if (this.pageDisposed || this.streamExiting) {
+      // 页面已销毁 / 退出串流流程已开始：不再恢复任何输入——战报页/列表页
+      // 需要物理按键，teardown 期间的恢复无意义（含跨会话分支）
+      return;
+    }
+    if (this.viewModel.getSession() !== sessionAtOpen) {
+      // 浮层跨重连留存：按键拦截器不按旧会话状态重启（新会话启动流程已接管）
+      if (this.viewModel.isStopping) {
+        // 连续重连的 teardown 期间关闭：挂起待恢复标记，本次重连 CONNECTED
+        // 时由 onConnected 补做；退出串流场景由后台 teardown 回调完成时丢弃
+        this.pendingHotkeyDialogRecovery = true;
+        return;
+      }
+      if (this.viewModel.isConnected) {
+        // 已连接：立即补做被弹窗守卫拦下的恢复
+        this.finishHotkeyDialogRecovery(interceptorWasActive);
+      } else {
+        // CONNECTING（CONNECTED 等首帧翻转）：挂起待恢复标记，onConnected 处补做
+        this.pendingHotkeyDialogRecovery = true;
+      }
+      return;
+    }
+    if (this.viewModel.isStopping || !this.viewModel.isConnected) {
+      // 停止流程进行中（重连的静默停止 teardown）或已断开（非正常断开保留
+      // 会话、显示错误对话框）：挂起待恢复标记，CONNECTED 翻转时由
+      // onConnected 补做对账/鼠标/复焦；退出串流的 teardown 完成后由后台
+      // 停止回调丢弃标记
+      this.pendingHotkeyDialogRecovery = true;
+      return;
+    }
+    this.finishHotkeyDialogRecovery(interceptorWasActive);
+  }
+
+  /**
+   * 帮助浮层关闭后的输入恢复（同会话关闭与跨重连留存共用）
+   *
+   * 对账热键认领与按键状态；拦截器优先补启动被浮层搁置的重连启动
+   * （按当前设置），否则按浮层前的运行状态恢复；最后恢复鼠标与焦点。
+   * 鼠标挂起由 menuMouseSuspended / hotkeyHelpVisible 共同表达，
+   * 清 hotkeyHelpVisible 后 resumeMouseInterceptor 自带守卫判定。
+   */
+  private finishHotkeyDialogRecovery(interceptorWasActive: boolean): void {
+    // 浮层显示期间页面收不到按键，先对账热键认领（目标键可能在弹窗期间已松开）
+    this.inputHandler.reconcileHotkeyClaims();
+    // 浮层显示期间按键被强制释放过，恢复前对账仍被物理按住的键
+    this.inputHandler.reconcileKeyState();
+    if (this.pendingHotkeyInterceptorStart) {
+      // 重连曾因浮层显示跳过启动：按当前设置补启动
+      this.pendingHotkeyInterceptorStart = false;
+      this.inputHandler.startKeyInterceptor();
+      this.inputHandler.startModifierWatchdog();
+    } else if (interceptorWasActive) {
+      // 非强制启动：帮助显示期间用户可能在菜单里显式关闭过反劫持，
+      // 恢复与否由当前设置决定（设置关闭时本调用直接返回）
+      this.inputHandler.startKeyInterceptor();
+    }
+    this.resumeMouseInterceptor();
+    this.requestStreamFocus();
   }
 
   /**
@@ -1104,7 +1286,7 @@ struct StreamPage {
     if (!this.menuManager) return;
 
     // 暂停鼠标全速轮询（Monitor 暂停 + DisplaySync 停止）
-    this.mouseInputSuspended = true;
+    this.menuMouseSuspended = true;
     this.inputHandler.stopMouseInterceptor();
     this.stopMouseKeepAlive();
     
@@ -1263,7 +1445,7 @@ struct StreamPage {
    * 恢复鼠标全速轮询（对话框关闭后调用）
    */
   private resumeMouseInterceptor(): void {
-    if (!this.viewModel.isConnected || this.mouseInputSuspended) return;
+    if (!this.viewModel.isConnected || this.menuMouseSuspended || this.hotkeyHelpVisible) return;
     this.stopMouseKeepAlive();
     const monitorOk = this.inputHandler.startMouseInterceptor(
       this.getXComponentWidthVp(),
@@ -1495,7 +1677,7 @@ struct StreamPage {
    */
   private hasInteractiveOverlay(): boolean {
     return this.showVirtualKeyboard || this.showKeyboardPanel || this.customKeyEditMode ||
-      this.gameMenuDialogController !== null || this.showStreamReport;
+      this.gameMenuDialogController !== null || this.showStreamReport || this.hotkeyHelpVisible;
   }
 
   /**
@@ -1556,21 +1738,21 @@ struct StreamPage {
       await this.configureStreamWindow();
     }
 
-    // 将屏幕 DS5 触控板绑定到本次会话的 controller slot 0。
+    // 将区域 DS5 触控板绑定到本次会话的 controller slot 0。
     this.touchInputHandler.setDs5TouchpadSink(this.viewModel.getSession());
     this.touchInputHandler.setDs5TouchpadFeedbackCallback((feedback: Ds5TouchpadFeedback): void => {
       this.handleDs5TouchpadFeedback(feedback);
     });
     this.touchInputHandler.setDs5TouchpadUnsupportedCallback(() => {
-      if (this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) return;
+      if (this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD_ZONE) return;
       setTimeout(() => {
-        if (this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) return;
+        if (this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD_ZONE) return;
         this.setTouchMode(TouchMode.TRACKPAD);
         ToastQueue.show({ message: '主机未启用 DS5 触控板协议，已回退为普通触控板', duration: 2500 });
       }, 0);
     });
 
-    if (this.viewModel.touchMode === TouchMode.DS5_TOUCHPAD &&
+    if (this.viewModel.touchMode === TouchMode.DS5_TOUCHPAD_ZONE &&
       !this.viewModel.isDs5TouchpadSupported()) {
       this.setTouchMode(TouchMode.TRACKPAD);
       ToastQueue.show({ message: '主机未启用 DS5 触控板协议，已回退为普通触控板', duration: 2500 });
@@ -1609,6 +1791,13 @@ struct StreamPage {
     try {
       // 加载设置
       await this.viewModel.loadSettings();
+      const savedDs5Zone = await PreferencesUtil.get<string>(
+        SettingsKeys.DS5_TOUCHPAD_ZONE_RECT,
+        TouchpadZoneGeometry.DEFAULT_ZONE_RECT
+      );
+      const parsedDs5Zone = TouchpadZoneGeometry.parseZoneRect(savedDs5Zone);
+      this.ds5TouchpadZoneRect = TouchpadZoneGeometry.formatZoneRect(parsedDs5Zone);
+      this.touchInputHandler.setDs5TouchpadZone(parsedDs5Zone);
       this.endStreamReportEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.LATENCY_TOAST, false);
       this.lifecycleManager.setLatencyToastEnabled(this.endStreamReportEnabled);
       this.lifecycleManager.setDisableWarnings(
@@ -1685,24 +1874,37 @@ struct StreamPage {
 
       // 启动按键拦截器与修饰键自愈看门狗（开关与注入 API 检查在
       // startKeyInterceptor 内部）。不能用 isConnected 复核：CONNECTED 等首帧
-      // 才翻转，此处是 CONNECTING。需排除两类过期链路：连接已终止
+      // 才翻转，此处是 CONNECTING。需排除三类过期链路：连接已终止
       // （DISCONNECTED）；停止流程在原生 teardown 中尚未翻转状态（isStopping，
-      // 此时停止入口的 resetState 清理已先行执行，重启将无人回收）
-      if (!this.pageDisposed && !this.viewModel.isStopping &&
+      // 此时停止入口的 resetState 清理已先行执行，重启将无人回收）；退出串流
+      // （streamExiting：quit 清理已先行执行，重启会占用战报页的物理按键）
+      if (!this.pageDisposed && !this.viewModel.isStopping && !this.streamExiting &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
-        this.inputHandler.startKeyInterceptor();
-        this.inputHandler.startModifierWatchdog();
+        if (this.hotkeyHelpVisible) {
+          // 帮助浮层显示期间不启动拦截器（浮层需接收物理按键且暂停转发主机），
+          // 记入待恢复，浮层关闭后按当前设置补启动
+          this.pendingHotkeyInterceptorStart = true;
+        } else {
+          this.inputHandler.startKeyInterceptor();
+          this.inputHandler.startModifierWatchdog();
+        }
       }
 
-      // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底
-      const monitorOk = this.inputHandler.startMouseInterceptor(
-        this.getXComponentWidthVp(),
-        this.getXComponentHeightVp(),
-        this.windowManager?.windowId ?? -1,
-        this.windowManager?.isFullscreen ?? false
-      );
-      if (!monitorOk) {
-        this.startMouseKeepAlive();
+      // 启动鼠标全速轮询：优先 C++ Monitor，不可用时 DisplaySync 兜底。
+      // 帮助浮层显示期间（启动异步链路执行中可能已由 Ctrl+Alt+Shift+X 打开）
+      // 跳过，浮层关闭时经 finishHotkeyDialogRecovery → resumeMouseInterceptor
+      // 补启动，避免弹窗期间的鼠标输入被送往主机；退出串流（streamExiting）
+      // 同样跳过——quit 的清理已先行执行，启动会占用战报页的物理按键与鼠标
+      if (!this.streamExiting && !this.menuMouseSuspended && !this.hotkeyHelpVisible) {
+        const monitorOk = this.inputHandler.startMouseInterceptor(
+          this.getXComponentWidthVp(),
+          this.getXComponentHeightVp(),
+          this.windowManager?.windowId ?? -1,
+          this.windowManager?.isFullscreen ?? false
+        );
+        if (!monitorOk) {
+          this.startMouseKeepAlive();
+        }
       }
 
       // 初始化体感助手
@@ -2099,6 +2301,13 @@ struct StreamPage {
       return;
     }
 
+    // 丢弃帮助浮层相关的跨会话待恢复标记
+    this.pendingHotkeyDialogRecovery = false;
+    this.pendingHotkeyInterceptorStart = false;
+    // 退出串流开始：浮层此后关闭不再恢复任何输入（战报页需要物理按键，
+    // teardown 期间的恢复也无意义；页面销毁时随页面终结）
+    this.streamExiting = true;
+
     this.stopClipboardSync();
     this.touchInputHandler.cancelActiveInput();
     this.clearDs5TouchIndicators();
@@ -2109,7 +2318,12 @@ struct StreamPage {
     if (!this.endStreamReportEnabled) {
       await this.prepareStreamEndUi();
       await this.exitStreamAndReturn();
-      this.runDetachedAsyncTask('后台停止串流', (): Promise<void> => this.viewModel.stopStreaming());
+      this.runDetachedAsyncTask('后台停止串流', async (): Promise<void> => {
+        await this.viewModel.stopStreaming();
+        // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+        this.pendingHotkeyDialogRecovery = false;
+        this.pendingHotkeyInterceptorStart = false;
+      });
       return;
     }
 
@@ -2123,6 +2337,9 @@ struct StreamPage {
         this.lifecycleManager.stopBackgroundTask(),
         this.viewModel.stopStreaming()
       ]);
+      // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+      this.pendingHotkeyDialogRecovery = false;
+      this.pendingHotkeyInterceptorStart = false;
     });
   }
 
@@ -2135,6 +2352,13 @@ struct StreamPage {
       return;
     }
 
+    // 丢弃帮助浮层相关的跨会话待恢复标记
+    this.pendingHotkeyDialogRecovery = false;
+    this.pendingHotkeyInterceptorStart = false;
+    // 退出串流开始：浮层此后关闭不再恢复任何输入（战报页需要物理按键，
+    // teardown 期间的恢复也无意义；页面销毁时随页面终结）
+    this.streamExiting = true;
+
     this.stopClipboardSync();
     this.touchInputHandler.cancelActiveInput();
 
@@ -2146,7 +2370,12 @@ struct StreamPage {
       await this.lifecycleManager.stopBackgroundTask();
       await this.sendLockScreenShortcutBeforeDisconnect();
       await this.exitStreamAndReturn();
-      this.runDetachedAsyncTask('后台退出游戏', (): Promise<void> => this.viewModel.quitGame());
+      this.runDetachedAsyncTask('后台退出游戏', async (): Promise<void> => {
+        await this.viewModel.quitGame();
+        // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+        this.pendingHotkeyDialogRecovery = false;
+        this.pendingHotkeyInterceptorStart = false;
+      });
       return;
     }
 
@@ -2162,6 +2391,9 @@ struct StreamPage {
         stopBackgroundTaskPromise,
         this.viewModel.quitGame()
       ]);
+      // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
+      this.pendingHotkeyDialogRecovery = false;
+      this.pendingHotkeyInterceptorStart = false;
     });
   }
 
@@ -2177,9 +2409,12 @@ struct StreamPage {
       // 先停止当前会话（静默，不导航不显示 toast）
       this.touchInputHandler.cancelActiveInput();
       this.clearDs5TouchIndicators();
+      this.clearDs5TouchpadZoneVisualState();
       this.touchInputHandler.setDs5TouchpadSink(null);
       this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
       await this.viewModel.stopStreaming();
+      // stopStreaming() 等待期间可能重新收到触摸事件，启动新会话前再次清理。
+      this.clearDs5TouchpadZoneVisualState();
       Logger.info('StreamPage', '[StreamPage] 旧会话已停止，开始重新连接...');
 
       // 重新配置窗口和尺寸（与初次连接共用同一流程，避免画面缩小/黑边）
@@ -2192,10 +2427,16 @@ struct StreamPage {
       // 连接终止时已停用键盘转发，重连成功后恢复（条件判断在 startKeyInterceptor
       // 内部；复核逻辑同 startStreaming：不能用等首帧才翻转的 isConnected，
       // 并经 isStopping 排除与停止流程的交叠）
-      if (!this.pageDisposed && !this.viewModel.isStopping &&
+      if (!this.pageDisposed && !this.viewModel.isStopping && !this.streamExiting &&
           this.viewModel.connectionState !== StreamConnectionState.DISCONNECTED) {
-        this.inputHandler.startKeyInterceptor();
-        this.inputHandler.startModifierWatchdog();
+        if (this.hotkeyHelpVisible) {
+          // 帮助浮层显示期间不启动拦截器（浮层需接收物理按键且暂停转发主机），
+          // 记入待恢复，浮层关闭后按当前设置补启动
+          this.pendingHotkeyInterceptorStart = true;
+        } else {
+          this.inputHandler.startKeyInterceptor();
+          this.inputHandler.startModifierWatchdog();
+        }
       }
 
       await this.startClipboardSync();
@@ -2237,17 +2478,70 @@ struct StreamPage {
   /**
    * 处理触摸事件
    */
-  handleTouch(event: TouchEvent): void {
+  handleTouch(event: TouchEvent, coordinateSpace?: TouchEventCoordinateSpace): void {
     if (!this.viewModel.isConnected) {
       return;
     }
     // 虚拟手柄显示时，默认不处理触摸输入（避免与虚拟按键手势竞争）
     // touchPassthrough 开启时允许共存
     if (this.viewModel.showController && !this.touchPassthrough &&
-      this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD) {
+      !this.isDs5TouchMode(this.viewModel.touchMode)) {
       return;
     }
-    this.touchInputHandler.handleTouchEvent(event);
+    this.touchInputHandler.setDs5TouchpadOutsideTouchEnabled(
+      this.isDs5TouchMode(this.viewModel.touchMode) ||
+      !this.viewModel.showController || this.touchPassthrough
+    );
+    this.touchInputHandler.handleTouchEvent(event, coordinateSpace);
+  }
+
+  /**
+   * 虚拟手柄覆盖层已经处理过系统手势后的底层触摸分发。
+   * DS5 模式下空白触点由覆盖层显式转发到这里，避免依赖兄弟节点穿透。
+   */
+  private handleTouchAfterSystemGesture(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
+    if (event.source === SourceType.Mouse) return;
+    if (this.isTouchOverrideEnabled) {
+      this.panZoomHandler.handleTouchEvent(event);
+      return;
+    }
+    this.handleTouch(event, coordinateSpace);
+  }
+
+  private getDs5TouchCoordinateSpace(): TouchEventCoordinateSpace | undefined {
+    const width = this.getXComponentWidthVp();
+    const height = this.getXComponentHeightVp();
+    if (width <= 0 || height <= 0) return undefined;
+    const surfaceLeft = this.xComponentGlobalLeftVp - this.containerGlobalLeftVp;
+    const surfaceTop = this.xComponentGlobalTopVp - this.containerGlobalTopVp;
+    const scale = this.videoScale > 0 ? this.videoScale : 1;
+    return {
+      width: width,
+      height: height,
+      toSurfacePoint: (x: number, y: number): PointXY => {
+        return TouchpadZoneGeometry.toSurfacePoint(x, y, surfaceLeft, surfaceTop,
+          this.xComponentOffsetX, this.xComponentOffsetY, scale, this.videoTranslateX, this.videoTranslateY);
+      }
+    };
+  }
+
+  private handleVirtualControllerSystemTouchGesture(event: TouchEvent): boolean {
+    if (event.source === SourceType.Mouse) return false;
+    if (this.viewModel.isConnected && this.isDs5TouchMode(this.viewModel.touchMode)) {
+      this.prepareDs5TouchpadZoneTouch();
+      this.updateDs5TouchpadZoneTouchVisibility(event);
+    }
+    return this.handleSystemTouchGesture(event);
+  }
+
+  /**
+   * Match Android's resize ownership: a DOWN can resize only when the outline
+   * was already visible before that touch. The touch itself may reveal the zone,
+   * but it cannot retroactively turn the same DOWN into an edit gesture.
+   */
+  private prepareDs5TouchpadZoneTouch(): void {
+    this.touchInputHandler.setDs5TouchpadZoneResizeEnabled(this.shouldShowDs5TouchpadZone());
   }
 
   private handleDs5TouchpadFeedback(feedback: Ds5TouchpadFeedback): void {
@@ -2358,6 +2652,111 @@ struct StreamPage {
     this.ds5TouchIndicators = [];
   }
 
+  /** 显示 DS5 区域轮廓，行为与 Android 的 showZoneReveal() 一致。 */
+  private showDs5TouchpadZoneReveal(): void {
+    if (!this.isDs5TouchMode(this.viewModel.touchMode)) return;
+    if (this.ds5TouchpadZoneRevealTimer !== -1) {
+      clearTimeout(this.ds5TouchpadZoneRevealTimer);
+    }
+    this.ds5TouchpadZoneRevealVisible = true;
+    this.ds5TouchpadZoneRevealTimer = setTimeout(() => {
+      this.ds5TouchpadZoneRevealTimer = -1;
+      this.ds5TouchpadZoneRevealVisible = false;
+    }, 5000);
+  }
+
+  /**
+   * 对齐 Android TouchpadZoneOverlayView：任意屏幕触摸期间显示区域，
+   * 抬起后保留一个很短的尾迹，避免轮廓在 UP 时瞬间跳变。
+   */
+  private updateDs5TouchpadZoneTouchVisibility(event: TouchEvent): void {
+    this.updateDs5TouchActiveIds(event);
+    if (this.ds5TouchActiveIds.size > 0) {
+      if (this.ds5TouchpadZoneTouchFadeTimer !== -1) {
+        clearTimeout(this.ds5TouchpadZoneTouchFadeTimer);
+        this.ds5TouchpadZoneTouchFadeTimer = -1;
+      }
+      this.ds5TouchpadZoneTouchVisible = true;
+      return;
+    }
+
+    if (event.type === TouchType.Cancel || event.type === TouchType.Up) {
+      if (this.ds5TouchpadZoneTouchFadeTimer !== -1) {
+        clearTimeout(this.ds5TouchpadZoneTouchFadeTimer);
+      }
+      this.ds5TouchpadZoneTouchFadeTimer = setTimeout(() => {
+        this.ds5TouchpadZoneTouchFadeTimer = -1;
+        this.ds5TouchpadZoneTouchVisible = false;
+      }, 250);
+    }
+  }
+
+  /**
+   * ArkUI 在部分设备上会在 UP 事件中继续携带已抬起的触点，
+   * 因此不能只依赖 event.touches.length 判断是否还有活动触点。
+   */
+  private updateDs5TouchActiveIds(event: TouchEvent): void {
+    if (event.type === TouchType.Cancel) {
+      this.ds5TouchActiveIds.clear();
+      return;
+    }
+
+    if (event.type === TouchType.Down || event.type === TouchType.Move) {
+      for (let i = 0; i < event.touches.length; i++) {
+        this.ds5TouchActiveIds.add(event.touches[i].id);
+      }
+      for (let i = 0; i < event.changedTouches.length; i++) {
+        this.ds5TouchActiveIds.add(event.changedTouches[i].id);
+      }
+      return;
+    }
+
+    if (event.type !== TouchType.Up) return;
+
+    for (let i = 0; i < event.changedTouches.length; i++) {
+      this.ds5TouchActiveIds.delete(event.changedTouches[i].id);
+    }
+    if (event.touches.length === 0) {
+      this.ds5TouchActiveIds.clear();
+      return;
+    }
+
+    // 保留仍在屏幕上的触点，同时排除平台在 UP 中重复报告的已抬起触点。
+    for (let i = 0; i < event.touches.length; i++) {
+      const touch = event.touches[i];
+      let isChangedTouch = false;
+      for (let j = 0; j < event.changedTouches.length; j++) {
+        if (event.changedTouches[j].id === touch.id) {
+          isChangedTouch = true;
+          break;
+        }
+      }
+      if (!isChangedTouch) this.ds5TouchActiveIds.add(touch.id);
+    }
+  }
+
+  private clearDs5TouchpadZoneVisualState(): void {
+    if (this.ds5TouchpadZoneRevealTimer !== -1) {
+      clearTimeout(this.ds5TouchpadZoneRevealTimer);
+      this.ds5TouchpadZoneRevealTimer = -1;
+    }
+    if (this.ds5TouchpadZoneTouchFadeTimer !== -1) {
+      clearTimeout(this.ds5TouchpadZoneTouchFadeTimer);
+      this.ds5TouchpadZoneTouchFadeTimer = -1;
+    }
+    this.ds5TouchpadZoneRevealVisible = false;
+    this.ds5TouchpadZoneTouchVisible = false;
+    this.ds5TouchpadZoneResizing = false;
+    this.touchInputHandler.setDs5TouchpadZoneResizeEnabled(false);
+    this.ds5TouchActiveIds.clear();
+  }
+
+  private shouldShowDs5TouchpadZone(): boolean {
+    return this.ds5TouchpadZoneRevealVisible ||
+      this.ds5TouchpadZoneTouchVisible ||
+      this.ds5TouchIndicators.length > 0;
+  }
+
   /**
    * 处理本地系统触摸手势。
    *
@@ -2392,7 +2791,7 @@ struct StreamPage {
    */
   setTouchMode(mode: string): void {
     const nextMode = mode as TouchMode;
-    if (nextMode === TouchMode.DS5_TOUCHPAD && this.viewModel.isConnected &&
+    if (nextMode === TouchMode.DS5_TOUCHPAD_ZONE && this.viewModel.isConnected &&
       !this.viewModel.isDs5TouchpadSupported()) {
       ToastQueue.show({ message: '主机未启用 DS5 触控板协议', duration: 2200 });
       return;
@@ -2400,13 +2799,24 @@ struct StreamPage {
 
     this.touchInputHandler.cancelActiveInput();
     this.clearDs5TouchIndicators();
-    if (nextMode === TouchMode.DS5_TOUCHPAD && this.isTouchOverrideEnabled) {
+    if (this.isDs5TouchMode(nextMode) && this.isTouchOverrideEnabled) {
       this.isTouchOverrideEnabled = false;
       this.panZoomHandler.cancelActiveGesture();
     }
     this.viewModel.setTouchMode(nextMode);
     this.touchInputHandler.setMode(this.toTouchInputMode(nextMode));
+    if (this.isDs5TouchMode(nextMode)) {
+      // The menu can cover the stream surface while this callback runs. Keep
+      // the reveal alive so it remains visible after the menu disappears.
+      this.showDs5TouchpadZoneReveal();
+    } else {
+      this.clearDs5TouchpadZoneVisualState();
+    }
     Logger.info('StreamPage', `StreamPage: 触摸模式切换为 ${mode}`);
+  }
+
+  private isDs5TouchMode(mode: TouchMode): boolean {
+    return mode === TouchMode.DS5_TOUCHPAD_ZONE;
   }
 
   private toTouchInputMode(mode: TouchMode): TouchInputMode {
@@ -2415,8 +2825,8 @@ struct StreamPage {
         return TouchInputMode.DIRECT;
       case TouchMode.MOUSE:
         return TouchInputMode.MOUSE;
-      case TouchMode.DS5_TOUCHPAD:
-        return TouchInputMode.DS5_TOUCHPAD;
+      case TouchMode.DS5_TOUCHPAD_ZONE:
+        return TouchInputMode.DS5_TOUCHPAD_ZONE;
       case TouchMode.TRACKPAD:
       default:
         return TouchInputMode.TRACKPAD;
@@ -2473,20 +2883,21 @@ struct StreamPage {
           .height(this.xComponentHeight)
           .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
           .attributeModifier(this.aihdrModifier)
-          .hitTestBehavior((this.viewModel.showController && !this.touchPassthrough &&
-            this.viewModel.touchMode !== TouchMode.DS5_TOUCHPAD)
+          .hitTestBehavior(this.viewModel.showController &&
+            (!this.touchPassthrough && !this.isDs5TouchMode(this.viewModel.touchMode))
             ? HitTestMode.None : HitTestMode.Default)
           .onTouch((event: TouchEvent) => {
             // 过滤鼠标源触摸事件：物理鼠标点击会同时触发 .onMouse 和 .onTouch，
             // 鼠标事件已在 .onMouse 中处理，此处跳过避免重复发送为触摸
             if (event.source === SourceType.Mouse) return;
-            if (this.handleSystemTouchGesture(event)) return;
-            // 双指缩放模式：触摸事件完全由 PanZoomHandler 消费
-            if (this.isTouchOverrideEnabled) {
-              this.panZoomHandler.handleTouchEvent(event);
-              return;
+            // 系统手势和双指缩放可能消费后续事件，先更新 DS5 区域的视觉状态，
+            // 确保它们结束时也能正确收起轮廓。
+            if (this.viewModel.isConnected && this.isDs5TouchMode(this.viewModel.touchMode)) {
+              this.prepareDs5TouchpadZoneTouch();
+              this.updateDs5TouchpadZoneTouchVisibility(event);
             }
-            this.handleTouch(event);
+            if (this.handleSystemTouchGesture(event)) return;
+            this.handleTouchAfterSystemGesture(event);
           })
           .onMouse((event: MouseEvent) => {
             // 物理鼠标事件处理 → 委托给输入处理器
@@ -2510,6 +2921,8 @@ struct StreamPage {
             if (globalPos) {
               const screenX = globalPos.x as number;
               const screenY = globalPos.y as number;
+              this.xComponentGlobalLeftVp = screenX;
+              this.xComponentGlobalTopVp = screenY;
               this.inputHandler.updateXComponentScreenPosition(screenX, screenY);
             }
           })
@@ -2574,6 +2987,7 @@ struct StreamPage {
       if (this.viewModel.isConnected && this.viewModel.showController) {
         VirtualControllerOverlay({
           touchPassthrough: $touchPassthrough,
+          allowUnderlyingTouch: this.isDs5TouchMode(this.viewModel.touchMode),
           controllerScale: $controllerScaleValue,
           controllerOpacity: $controllerOpacityValue,
           onlyL3R3: this.viewModel.inputSettings?.onlyL3R3 ?? false,
@@ -2584,13 +2998,28 @@ struct StreamPage {
             this.viewModel.sendInput(input);
           },
           onSystemTouchGesture: (event: TouchEvent): boolean => {
-            return this.handleSystemTouchGesture(event);
+            return this.handleVirtualControllerSystemTouchGesture(event);
+          },
+          onUnderlyingTouch: (event: TouchEvent): void => {
+            this.handleTouchAfterSystemGesture(event, this.getDs5TouchCoordinateSpace());
+          },
+          onUnderlyingMouse: (event: MouseEvent): void => {
+            const point = this.getDs5TouchCoordinateSpace()?.toSurfacePoint(event.x, event.y);
+            this.inputHandler.handleMouseEvent(event, this.getUIContext().vp2px(1), point?.x, point?.y);
+          },
+          onUnderlyingAxis: (event: AxisEvent): void => {
+            this.inputHandler.handleAxisEvent(event);
           }
         })
       }
 
-      // DS5 触控板本地回显层：只画触点，不拦截后续触摸。
-      if (this.viewModel.isConnected && this.viewModel.touchMode === TouchMode.DS5_TOUCHPAD &&
+      // DS5 区域触控板只提供轻量视觉提示，触摸仍由底层 XComponent 接收。
+      if (this.viewModel.isConnected && this.viewModel.touchMode === TouchMode.DS5_TOUCHPAD_ZONE) {
+        this.Ds5TouchpadZoneOverlay()
+      }
+
+      // 区域 DS5 触控板本地回显层：只画触点，不拦截后续触摸。
+      if (this.viewModel.isConnected && this.isDs5TouchMode(this.viewModel.touchMode) &&
         this.ds5TouchIndicators.length > 0) {
         this.Ds5TouchpadFeedbackOverlay()
       }
@@ -2599,9 +3028,9 @@ struct StreamPage {
       if (this.showCustomKeys && this.viewModel.isConnected) {
         Column() {
           CustomKeyOverlay({
-            inputEnabled: !this.mouseInputSuspended && this.streamWindowFocused,
+            inputEnabled: !this.menuMouseSuspended && !this.hotkeyHelpVisible && this.streamWindowFocused,
             onMouseLookMovement: (dx: number, dy: number): void => {
-              if (!this.viewModel.isConnected || this.mouseInputSuspended || !this.streamWindowFocused) return;
+              if (!this.viewModel.isConnected || this.menuMouseSuspended || this.hotkeyHelpVisible || !this.streamWindowFocused) return;
               this.customKeyManager?.handleMouseLookMovement(dx, dy);
             },
             editMode: $customKeyEditMode,
@@ -2691,7 +3120,11 @@ struct StreamPage {
       // 记录容器全局原点，供画面之外的鼠标坐标换算使用（#152）
       const globalPos = newArea.globalPosition;
       if (globalPos) {
-        this.inputHandler.updateContainerOrigin(globalPos.x as number, globalPos.y as number);
+        const screenX = globalPos.x as number;
+        const screenY = globalPos.y as number;
+        this.containerGlobalLeftVp = screenX;
+        this.containerGlobalTopVp = screenY;
+        this.inputHandler.updateContainerOrigin(screenX, screenY);
       }
     })
     .onMouse((event: MouseEvent) => {
@@ -2713,47 +3146,124 @@ struct StreamPage {
 
   // ==================== UI Builders ====================
 
+  private getDs5TouchIndicatorX(indicator: Ds5TouchIndicator): string {
+    const zone = this.getDs5TouchpadZone();
+    const x = zone.left + indicator.x * TouchpadZoneGeometry.width(zone);
+    return (x * 100) + '%';
+  }
+
+  private getDs5TouchIndicatorY(indicator: Ds5TouchIndicator): string {
+    const zone = this.getDs5TouchpadZone();
+    const y = zone.top + indicator.y * TouchpadZoneGeometry.height(zone);
+    return (y * 100) + '%';
+  }
+
+  private persistDs5TouchpadZone(zone: TouchpadZoneRect): void {
+    const normalized = TouchpadZoneGeometry.clampZoneRect(
+      zone.left, zone.top, zone.right, zone.bottom);
+    const raw = TouchpadZoneGeometry.formatZoneRect(normalized);
+    this.ds5TouchpadZoneRect = raw;
+    this.touchInputHandler.setDs5TouchpadZone(normalized);
+    this.showDs5TouchpadZoneReveal();
+    PreferencesUtil.put(SettingsKeys.DS5_TOUCHPAD_ZONE_RECT, raw).catch((error: Error): void => {
+      Logger.warn('StreamPage', `保存 DS5 触控板区域失败: ${error.message}`);
+    });
+  }
+
   @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
+  @Builder
+  Ds5TouchpadZoneOverlay() {
+    if (this.shouldShowDs5TouchpadZone()) {
+      Stack() {
+        Stack() {
+          Column()
+            .width((TouchpadZoneGeometry.width(this.getDs5TouchpadZone()) * 100) + '%')
+            .height((TouchpadZoneGeometry.height(this.getDs5TouchpadZone()) * 100) + '%')
+            .position({
+              x: (this.getDs5TouchpadZone().left * 100) + '%',
+              y: (this.getDs5TouchpadZone().top * 100) + '%'
+            })
+            .backgroundColor('#24FFFFFF')
+            .border({
+              width: this.ds5TouchpadZoneResizing ? 3 : 2,
+              color: this.ds5TouchpadZoneResizing ? '#FF5DADE2' : '#D9FFFFFF'
+            })
+            .borderRadius(8)
+            .hitTestBehavior(HitTestMode.None)
+        }
+          .width(this.xComponentWidth)
+          .height(this.xComponentHeight)
+          .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+          .hitTestBehavior(HitTestMode.None)
+      }
+        .width('100%')
+        .height('100%')
+        .alignContent(this.xComponentAlignment)
+        .clip(true)
+        .scale({
+          x: this.videoScale,
+          y: this.videoScale,
+          centerX: 0,
+          centerY: 0
+        })
+        .translate({
+          x: this.videoTranslateX,
+          y: this.videoTranslateY
+        })
+        .hitTestBehavior(HitTestMode.None)
+    }
+  }
+
+  private getDs5TouchpadZone(): TouchpadZoneRect {
+    return TouchpadZoneGeometry.parseZoneRect(this.ds5TouchpadZoneRect);
+  }
+
   @Builder
   Ds5TouchpadFeedbackOverlay() {
     Stack() {
-      ForEach(this.ds5TouchIndicators, (indicator: Ds5TouchIndicator) => {
-        Stack() {
-          Circle()
+      Stack() {
+        ForEach(this.ds5TouchIndicators, (indicator: Ds5TouchIndicator) => {
+          Stack() {
+            Circle()
+              .width(42)
+              .height(42)
+              .fill(indicator.clickPressed ? '#45FFD166' : '#24FFFFFF')
+              .border({
+                width: indicator.clickPressed ? 2.5 : 1.5,
+                color: indicator.clickPressed ? '#FFF4C15D' : '#CCFFFFFF'
+              })
+            Circle()
+              .width(indicator.clickPressed ? 8 : 5)
+              .height(indicator.clickPressed ? 8 : 5)
+              .fill(indicator.clickPressed ? '#FFFFD166' : '#E6FFFFFF')
+          }
             .width(42)
             .height(42)
-            .fill(indicator.clickPressed ? '#45FFD166' : '#24FFFFFF')
-            .border({
-              width: indicator.clickPressed ? 2.5 : 1.5,
-              color: indicator.clickPressed ? '#FFF4C15D' : '#CCFFFFFF'
+            .position({
+              x: this.getDs5TouchIndicatorX(indicator),
+              y: this.getDs5TouchIndicatorY(indicator)
             })
-          Circle()
-            .width(indicator.clickPressed ? 8 : 5)
-            .height(indicator.clickPressed ? 8 : 5)
-            .fill(indicator.clickPressed ? '#FFFFD166' : '#E6FFFFFF')
-        }
-          .width(42)
-          .height(42)
-          .position({
-            x: (indicator.x * 100) + '%',
-            y: (indicator.y * 100) + '%'
-          })
-          .translate({
-            x: -21,
-            y: -21
-          })
-          .opacity(indicator.opacity)
-          .scale({
-            x: indicator.scale,
-            y: indicator.scale
-          })
-          .hitTestBehavior(HitTestMode.None)
-      }, (indicator: Ds5TouchIndicator): string => String(indicator.pointerId))
+            .translate({
+              x: -21,
+              y: -21
+            })
+            .opacity(indicator.opacity)
+            .scale({
+              x: indicator.scale,
+              y: indicator.scale
+            })
+            .hitTestBehavior(HitTestMode.None)
+        }, (indicator: Ds5TouchIndicator): string => String(indicator.pointerId))
+      }
+        .width(this.xComponentWidth)
+        .height(this.xComponentHeight)
+        .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+        .hitTestBehavior(HitTestMode.None)
     }
-      .width(this.xComponentWidth)
-      .height(this.xComponentHeight)
+      .width('100%')
+      .height('100%')
       .alignContent(this.xComponentAlignment)
-      .offset({ x: this.xComponentOffsetX, y: this.xComponentOffsetY })
+      .clip(true)
       .scale({
         x: this.videoScale,
         y: this.videoScale,
@@ -2764,7 +3274,6 @@ struct StreamPage {
         x: this.videoTranslateX,
         y: this.videoTranslateY
       })
-      .clip(true)
       .hitTestBehavior(HitTestMode.None)
   }
 

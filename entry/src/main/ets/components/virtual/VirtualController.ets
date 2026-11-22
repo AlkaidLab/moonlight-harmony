@@ -634,9 +634,15 @@ export struct VirtualControllerOverlay {
   onInput: (input: InputEvent) => void = () => {};
   /** 本地多指系统手势回调（如三指唤出 IME） */
   onSystemTouchGesture: (event: TouchEvent) => boolean = () => false;
+  /** DS5 区域模式下，虚拟按键以外的触摸转发给串流画面。 */
+  onUnderlyingTouch: (event: TouchEvent) => void = () => {};
+  onUnderlyingMouse: (event: MouseEvent) => void = () => {};
+  onUnderlyingAxis: (event: AxisEvent) => void = () => {};
 
   /** 触摸穿透状态（双向 — 外部需读取来控制 XComponent hitTest） */
   @Link touchPassthrough: boolean;
+  /** DS5 区域模式下让未命中按钮的触点继续到下层画面。 */
+  @Prop allowUnderlyingTouch: boolean = false;
 
   /** 控制器缩放值（双向 — 外部需读取传递给 config） */
   @Link controllerScale: number;
@@ -705,11 +711,24 @@ export struct VirtualControllerOverlay {
     }
     .width('100%')
     .height('100%')
-    .hitTestBehavior(this.touchPassthrough ? HitTestMode.Transparent : HitTestMode.Default)
+    .hitTestBehavior(this.allowUnderlyingTouch
+      ? HitTestMode.Default
+      : (this.touchPassthrough ? HitTestMode.Transparent : HitTestMode.Default))
     .onTouch((event: TouchEvent) => {
       if (this.onSystemTouchGesture(event)) {
         event.stopPropagation();
+        return;
       }
+      if (this.allowUnderlyingTouch) {
+        this.onUnderlyingTouch(event);
+        event.stopPropagation();
+      }
+    })
+    .onMouse((event: MouseEvent) => {
+      if (this.allowUnderlyingTouch) this.onUnderlyingMouse(event);
+    })
+    .onAxisEvent((event: AxisEvent) => {
+      if (this.allowUnderlyingTouch) this.onUnderlyingAxis(event);
     })
     // hitTestReady: 父层重渲染触发 ArkUI 重算命中测试区域（opacity 微变不可见）
     .opacity(this.hitTestReady > 0 ? 1 : 0.99)

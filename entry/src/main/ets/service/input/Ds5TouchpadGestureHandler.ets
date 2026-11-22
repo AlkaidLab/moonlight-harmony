@@ -16,6 +16,8 @@ import {
   TOUCH_EVENT_UP,
   LI_ERR_UNSUPPORTED,
 } from '../streaming/MoonBridge';
+import { PointXY } from './PanZoomHandler';
+import { TouchpadZoneGeometry, TouchpadZonePoint, TouchpadZoneRect } from './TouchpadZoneGeometry';
 
 /** DS5 touchpad output owned by the active streaming session. */
 export interface Ds5TouchpadInputSink {
@@ -37,6 +39,13 @@ export interface Ds5TouchpadFeedback {
   pointerId: number;
   x: number;
   y: number;
+}
+
+/** Coordinates of the surface that owns a forwarded touch event. */
+export interface TouchEventCoordinateSpace {
+  width: number;
+  height: number;
+  toSurfacePoint: (x: number, y: number) => PointXY;
 }
 
 interface Ds5TouchState {
@@ -94,18 +103,19 @@ export class Ds5TouchpadGestureHandler {
     if (!enabled) this.releaseClickButton();
   }
 
-  handleEvent(event: TouchEvent): void {
+  handleEvent(event: TouchEvent, zone: TouchpadZoneRect,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
     if (!this.sink) return;
 
     switch (event.type) {
       case TouchType.Down:
-        this.handleDown(event);
+        this.handleDown(event, zone, coordinateSpace);
         break;
       case TouchType.Move:
-        this.handleMove(event);
+        this.handleMove(event, zone, coordinateSpace);
         break;
       case TouchType.Up:
-        this.handleUp(event);
+        this.handleUp(event, zone, coordinateSpace);
         break;
       case TouchType.Cancel:
         this.cancelActiveInput();
@@ -130,10 +140,10 @@ export class Ds5TouchpadGestureHandler {
     this.unsupportedReported = false;
   }
 
-  private handleDown(event: TouchEvent): void {
-    const areaWidth = Number(event.target.area.width);
-    const areaHeight = Number(event.target.area.height);
-    if (areaWidth <= 0 || areaHeight <= 0) return;
+  private handleDown(event: TouchEvent, zone: TouchpadZoneRect,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
+    const space = this.getCoordinateSpace(event, coordinateSpace);
+    if (space.width <= 0 || space.height <= 0) return;
 
     const changedTouches = event.changedTouches;
     for (let i = 0; i < changedTouches.length; i++) {
@@ -146,17 +156,18 @@ export class Ds5TouchpadGestureHandler {
       const isOnlyTouch = this.touches.size === 0 && event.touches.length <= 1;
       if (!isOnlyTouch) this.markMultiTouchGesture();
 
-      const x = this.normalize(touch.x, areaWidth);
-      const y = this.normalize(touch.y, areaHeight);
+      const surfacePoint = this.toSurfacePoint(touch, space);
+      const point = this.normalizeToZone(surfacePoint.x, surfacePoint.y,
+        space.width, space.height, zone);
       const pressure = this.getPressure(touch, true);
-      const ret = this.sendTouch(TOUCH_EVENT_DOWN, touch.id, x, y, pressure);
+      const ret = this.sendTouch(TOUCH_EVENT_DOWN, touch.id, point.x, point.y, pressure);
       if (ret < 0) continue;
 
       const state: Ds5TouchState = {
-        startX: touch.x,
-        startY: touch.y,
-        lastX: touch.x,
-        lastY: touch.y,
+        startX: surfacePoint.x,
+        startY: surfacePoint.y,
+        lastX: surfacePoint.x,
+        lastY: surfacePoint.y,
         startTime: Date.now(),
         tapEligible: isOnlyTouch,
       };
@@ -166,10 +177,10 @@ export class Ds5TouchpadGestureHandler {
     if (this.touches.size > 1) this.markMultiTouchGesture();
   }
 
-  private handleMove(event: TouchEvent): void {
-    const areaWidth = Number(event.target.area.width);
-    const areaHeight = Number(event.target.area.height);
-    if (areaWidth <= 0 || areaHeight <= 0) return;
+  private handleMove(event: TouchEvent, zone: TouchpadZoneRect,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
+    const space = this.getCoordinateSpace(event, coordinateSpace);
+    if (space.width <= 0 || space.height <= 0) return;
 
     const activeTouches = event.touches;
     for (let i = 0; i < activeTouches.length; i++) {
@@ -177,23 +188,28 @@ export class Ds5TouchpadGestureHandler {
       const state = this.touches.get(touch.id);
       if (!state) continue;
 
-      if (this.exceedsTapMovement(touch, state)) state.tapEligible = false;
-      state.lastX = touch.x;
-      state.lastY = touch.y;
+      const surfacePoint = this.toSurfacePoint(touch, space);
+      if (this.exceedsTapMovement(surfacePoint.x, surfacePoint.y, state)) {
+        state.tapEligible = false;
+      }
+      state.lastX = surfacePoint.x;
+      state.lastY = surfacePoint.y;
+      const point = this.normalizeToZone(surfacePoint.x, surfacePoint.y,
+        space.width, space.height, zone);
       this.sendTouch(
         TOUCH_EVENT_MOVE,
         touch.id,
-        this.normalize(touch.x, areaWidth),
-        this.normalize(touch.y, areaHeight),
+        point.x,
+        point.y,
         this.getPressure(touch, true),
       );
     }
   }
 
-  private handleUp(event: TouchEvent): void {
-    const areaWidth = Number(event.target.area.width);
-    const areaHeight = Number(event.target.area.height);
-    if (areaWidth <= 0 || areaHeight <= 0) {
+  private handleUp(event: TouchEvent, zone: TouchpadZoneRect,
+    coordinateSpace?: TouchEventCoordinateSpace): void {
+    const space = this.getCoordinateSpace(event, coordinateSpace);
+    if (space.width <= 0 || space.height <= 0) {
       this.cancelActiveInput();
       return;
     }
@@ -209,9 +225,12 @@ export class Ds5TouchpadGestureHandler {
       const state = this.touches.get(touch.id);
       if (!state) continue;
 
-      const normalizedX = this.normalize(touch.x, areaWidth);
-      const normalizedY = this.normalize(touch.y, areaHeight);
-      if (this.tapToClickEnabled && this.isTap(touch, state, now)) {
+      const surfacePoint = this.toSurfacePoint(touch, space);
+      const point = this.normalizeToZone(surfacePoint.x, surfacePoint.y,
+        space.width, space.height, zone);
+      const normalizedX = point.x;
+      const normalizedY = point.y;
+      if (this.tapToClickEnabled && this.isTap(surfacePoint.x, surfacePoint.y, state, now)) {
         this.pressClickButton(touch.id, normalizedX, normalizedY);
       }
       this.sendTouch(
@@ -321,15 +340,15 @@ export class Ds5TouchpadGestureHandler {
     });
   }
 
-  private isTap(touch: TouchObject, state: Ds5TouchState, now: number): boolean {
+  private isTap(touchX: number, touchY: number, state: Ds5TouchState, now: number): boolean {
     return state.tapEligible &&
       now - state.startTime <= TAP_TIME_THRESHOLD_MS &&
-      !this.exceedsTapMovement(touch, state);
+      !this.exceedsTapMovement(touchX, touchY, state);
   }
 
-  private exceedsTapMovement(touch: TouchObject, state: Ds5TouchState): boolean {
-    return Math.abs(touch.x - state.startX) > TAP_MOVEMENT_THRESHOLD ||
-      Math.abs(touch.y - state.startY) > TAP_MOVEMENT_THRESHOLD;
+  private exceedsTapMovement(touchX: number, touchY: number, state: Ds5TouchState): boolean {
+    return Math.abs(touchX - state.startX) > TAP_MOVEMENT_THRESHOLD ||
+      Math.abs(touchY - state.startY) > TAP_MOVEMENT_THRESHOLD;
   }
 
   @SuppressWarnings({ rules: [SuppressWarningsType.COMPATIBILITY] })
@@ -339,7 +358,33 @@ export class Ds5TouchpadGestureHandler {
     return Math.max(0, Math.min(1, pressure));
   }
 
+  private normalizeToZone(touchX: number, touchY: number, areaWidth: number,
+    areaHeight: number, zone: TouchpadZoneRect): TouchpadZonePoint {
+    return TouchpadZoneGeometry.normalizeToZone(
+      this.normalize(touchX, areaWidth),
+      this.normalize(touchY, areaHeight),
+      zone
+    );
+  }
+
   private normalize(value: number, extent: number): number {
     return Math.max(0, Math.min(1, value / extent));
+  }
+
+  private getCoordinateSpace(event: TouchEvent,
+    coordinateSpace?: TouchEventCoordinateSpace): TouchEventCoordinateSpace {
+    if (coordinateSpace) return coordinateSpace;
+    return {
+      width: Number(event.target.area.width),
+      height: Number(event.target.area.height),
+      toSurfacePoint: (x: number, y: number): PointXY => {
+        return { x: x, y: y };
+      }
+    };
+  }
+
+  private toSurfacePoint(touch: TouchObject,
+    coordinateSpace: TouchEventCoordinateSpace): TouchpadZonePoint {
+    return coordinateSpace.toSurfacePoint(touch.x, touch.y);
   }
 }
