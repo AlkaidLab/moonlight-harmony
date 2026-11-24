@@ -266,6 +266,75 @@ const KB_BG_IMAGE_KEY = 'virtual_keyboard_bg_image';
 // 组件
 // =============================================================================
 
+/** 独立组件让多态样式拥有自己的刷新节点，按键事件仍交由键盘处理。 */
+@Component
+struct VirtualKeyboardKey {
+  keyDef: KeyDef = { label: '', vk: 0 };
+  isFuncRow: boolean = false;
+  @Prop isActive: boolean = false;
+  onKeyTouch: (event: TouchEvent) => void = () => {};
+
+  @Styles
+  private pressedKeyStyle() {
+    .backgroundColor(KEY_PRESSED_BG_COLOR)
+    .borderColor(KEY_PRESSED_BORDER_COLOR)
+  }
+
+  private getKeyBgColor(): string {
+    if (this.isActive) {
+      return '#60A8D8EA';
+    }
+    if (this.keyDef.type === KeyType.MODIFIER) {
+      return '#2A3A4A5A';
+    }
+    if (this.keyDef.vk === VK.SPACE) {
+      return '#1A3A4A5A';
+    }
+    return '#22FFFFFF';
+  }
+
+  private getKeyTextColor(): string {
+    if (this.isActive) {
+      return '#FFFFFF';
+    }
+    if (this.keyDef.type === KeyType.MODIFIER) {
+      return '#C0D0E0FF';
+    }
+    return '#E8F0FFFF';
+  }
+
+  build() {
+    Text(this.keyDef.label)
+      .fontSize(this.isFuncRow ? 10 : (this.keyDef.weight && this.keyDef.weight > 1.5 ? 11 : 13))
+      .fontColor(this.getKeyTextColor())
+      .fontWeight(FontWeight.Bold)
+      .fontFamily('HarmonyOS Sans')
+      .textAlign(TextAlign.Center)
+      .width('100%')
+      .height('100%')
+      .backgroundColor(this.getKeyBgColor())
+      .borderRadius(KEY_RADIUS)
+      .border({
+        width: { top: 1, left: 1, right: 1, bottom: 1 },
+        color: {
+          top: this.isActive ? '#70A8D8EA' : '#28FFFFFF',
+          left: this.isActive ? '#50A8D8EA' : '#18FFFFFF',
+          right: this.isActive ? '#50A8D8EA' : '#10FFFFFF',
+          bottom: this.isActive ? '#40A8D8EA' : '#08FFFFFF',
+        },
+      })
+      .shadow({
+        radius: this.isActive ? 6 : 2,
+        color: this.isActive ? '#40A8D8EA' : '#18000000',
+        offsetY: 1,
+      })
+      .stateStyles({ pressed: this.pressedKeyStyle })
+      .onTouch((event: TouchEvent) => {
+        this.onKeyTouch(event);
+      })
+  }
+}
+
 @Component
 export struct VirtualKeyboard {
   /** 按键事件回调 */
@@ -529,69 +598,19 @@ export struct VirtualKeyboard {
 
   // ── 单个按键 ──
 
-  @Styles
-  private pressedKeyStyle() {
-    .backgroundColor(KEY_PRESSED_BG_COLOR)
-    .borderColor(KEY_PRESSED_BORDER_COLOR)
-  }
-
   @Builder
   KeyButton(key: KeyDef, isFuncRow: boolean) {
-    Text(key.label)
-      .fontSize(isFuncRow ? 10 : (key.weight && key.weight > 1.5 ? 11 : 13))
-      .fontColor(this.getKeyTextColor(key))
-      .fontWeight(FontWeight.Bold)
-      .fontFamily('HarmonyOS Sans')
-      .textAlign(TextAlign.Center)
-      .height('100%')
+    VirtualKeyboardKey({
+      keyDef: key,
+      isFuncRow: isFuncRow,
+      isActive: this.isKeyActive(key),
+      onKeyTouch: (event: TouchEvent): void => this.handleKeyTouch(key, event),
+    })
       .layoutWeight(key.weight ?? 1)
-      .backgroundColor(this.getKeyBgColor(key))
-      .borderRadius(KEY_RADIUS)
-      .border({
-        width: { top: 1, left: 1, right: 1, bottom: 1 },
-        color: {
-          top: this.isKeyActive(key) ? '#70A8D8EA' : '#28FFFFFF',   // 顶部高光边
-          left: this.isKeyActive(key) ? '#50A8D8EA' : '#18FFFFFF',
-          right: this.isKeyActive(key) ? '#50A8D8EA' : '#10FFFFFF',
-          bottom: this.isKeyActive(key) ? '#40A8D8EA' : '#08FFFFFF', // 底部暗边
-        },
-      })
-      .shadow({
-        radius: this.isKeyActive(key) ? 6 : 2,
-        color: this.isKeyActive(key) ? '#40A8D8EA' : '#18000000',
-        offsetY: 1,
-      })
-      // 使用控件的按下状态，避免更新键盘状态导致触摸释放事件丢失。
-      .stateStyles({ pressed: this.pressedKeyStyle })
-      .onTouch((event: TouchEvent) => {
-        this.handleKeyTouch(key, event);
-      })
+      .height('100%')
   }
 
   // ── 按键颜色逻辑 ──
-
-  private getKeyBgColor(key: KeyDef): string {
-    if (this.isKeyActive(key)) {
-      return '#60A8D8EA';  // 激活状态：柔和蓝高光
-    }
-    if (key.type === KeyType.MODIFIER) {
-      return '#2A3A4A5A';  // 修饰键：蓝灰色调，与普通键区分
-    }
-    if (key.vk === VK.SPACE) {
-      return '#1A3A4A5A';  // 空格：微蓝灰
-    }
-    return '#22FFFFFF';    // 普通按键：微亮玻璃感
-  }
-
-  private getKeyTextColor(key: KeyDef): string {
-    if (this.isKeyActive(key)) {
-      return '#FFFFFF';
-    }
-    if (key.type === KeyType.MODIFIER) {
-      return '#C0D0E0FF'; // 修饰键：淡蓝白，优雅区分
-    }
-    return '#E8F0FFFF';   // 普通：清透白，略带冷色
-  }
 
   /** 按键是否处于激活状态（组合键模式下的粘滞修饰键） */
   private isKeyActive(key: KeyDef): boolean {
