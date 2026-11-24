@@ -13,7 +13,7 @@
  * 
  * 管理串流相关的状态、配置和业务逻辑
  */
-import { StreamConfig, getDefaultStreamConfig } from '../model/StreamConfig';
+import { StreamConfig, ScreenCombinationMode, getDefaultStreamConfig } from '../model/StreamConfig';
 import { SettingsService, InputSettings, DisplaySettings, SettingsKeys } from '../service/SettingsService';
 import { StreamingSession, StreamStats } from '../service/streaming/StreamingSession';
 import { DisplayScaleOptions, DisplayScaleResult } from '../service/streaming/NvHttp';
@@ -315,7 +315,8 @@ export class StreamViewModel {
     surfaceId: string, 
     context: common.UIAbilityContext,
     displayGuid?: string,
-    useVdd?: boolean
+    useVdd?: boolean,
+    screenCombinationMode?: ScreenCombinationMode
   ): Promise<void> {
     this.connectionState = StreamConnectionState.CONNECTING;
     this.isStopping = false;
@@ -325,6 +326,10 @@ export class StreamViewModel {
     
     try {
       await this.loadSettings();
+      if (this.streamConfig && screenCombinationMode !== undefined) {
+        // getStreamConfig 每次生成独立配置，本次覆盖不写入 Preferences。
+        this.streamConfig.screenCombinationMode = screenCombinationMode;
+      }
       
       // 初始化 actualHdr 状态为用户请求的 HDR 状态
       this.actualHdr = this.streamConfig?.hdr || false;

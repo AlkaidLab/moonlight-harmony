@@ -191,6 +191,8 @@ export enum ScreenCombinationMode {
   ENSURE_PRIMARY = 2,
   /** 仅启用串流屏幕（关闭其他） */
   ENSURE_ONLY_DISPLAY = 3,
+  /** 保留主屏幕，将串流屏幕用作副屏 */
+  ENSURE_SECONDARY = 4,
 }
 
 /**

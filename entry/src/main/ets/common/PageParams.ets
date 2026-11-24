@@ -8,6 +8,8 @@
  * (at your option) any later version.
  */
 
+import { ScreenCombinationMode } from '../model/StreamConfig';
+
 /**
  * 页面路由参数（Navigation 迁移）。
  *
@@ -47,6 +49,7 @@ export interface StreamPageParams {
   cmdList?: string;       // JSON 字符串格式的超级指令列表
   resume?: boolean;       // 是否恢复已运行的游戏
   displayGuid?: string;   // 指定的显示器 GUID
+  screenCombinationMode?: ScreenCombinationMode; // 本次串流覆盖；未指定时沿用全局设置
   useVdd?: boolean;       // 是否使用虚拟显示器
   posterPath?: string;    // 应用本地海报路径，连接中遮罩背景
 }

@@ -494,6 +494,8 @@ export class SettingsService {
         return ScreenCombinationMode.ENSURE_ACTIVE;
       case '设为主屏':
         return ScreenCombinationMode.ENSURE_PRIMARY;
+      case '设为副屏':
+        return ScreenCombinationMode.ENSURE_SECONDARY;
       case '仅此屏幕':
         return ScreenCombinationMode.ENSURE_ONLY_DISPLAY;
       default:

@@ -15,6 +15,7 @@
  */
 import { LengthMetrics } from '@kit.ArkUI';
 import { SuppressWarnings, SuppressWarningsType } from '@ohos.annotation';
+import { ScreenCombinationMode } from '../model/StreamConfig';
 import { AppNav } from '../common/AppNav';
 import { StreamPageParams } from '../common/PageParams';
 import { display } from '@kit.ArkUI';
@@ -325,6 +326,7 @@ struct StreamPage {
   private appName: string = '';
   private displayGuid: string = '';
   private useVdd: boolean = false;
+  private screenCombinationMode: ScreenCombinationMode | undefined = undefined;
   private cmdList: SuperCmd[] = [];  // 超级指令列表
   private enableBackgroundTask: boolean = true;  // 后台保活开关
   private endStreamReportEnabled: boolean = false;  // 结束串流显示数据/战报开关
@@ -346,6 +348,7 @@ struct StreamPage {
       this.appName = params.appName || '';
       this.displayGuid = params.displayGuid || '';
       this.useVdd = params.useVdd || false;
+      this.screenCombinationMode = params.screenCombinationMode;
       // 连接中遮罩背景（应用海报），让等待首帧时有视觉锚点
       this.posterPath = params.posterPath || '';
       // 解析超级指令列表
@@ -1744,7 +1747,7 @@ struct StreamPage {
       this.startStreamFrameDiagnostics(displayHz);
     }
 
-    await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+    await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd, this.screenCombinationMode);
 
     // 将区域 DS5 触控板绑定到本次会话的 controller slot 0。
     this.touchInputHandler.setDs5TouchpadSink(this.viewModel.getSession());
