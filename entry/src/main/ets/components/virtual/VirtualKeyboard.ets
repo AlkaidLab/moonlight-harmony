@@ -501,15 +501,19 @@ export struct VirtualKeyboard {
 
   @Builder
   KeyButton(key: KeyDef, isFuncRow: boolean) {
-    VirtualKeyboardKey({
-      keyDef: key,
-      isFuncRow: isFuncRow,
-      isActive: this.isKeyActive(key),
-      isSpace: key.vk === VK.SPACE,
-      onKeyTouch: (event: TouchEvent): void => this.handleKeyTouch(key, event),
-    })
-      .layoutWeight(key.weight ?? 1)
-      .height('100%')
+    Row() {
+      VirtualKeyboardKey({
+        keyDef: key,
+        isFuncRow: isFuncRow,
+        isActive: this.isKeyActive(key),
+        isSpace: key.vk === VK.SPACE,
+        onKeyTouch: (event: TouchEvent): void => {
+          this.handleKeyTouch(key, event);
+        },
+      })
+    }
+    .layoutWeight(key.weight ?? 1)
+    .height('100%')
   }
 
   // ── 按键颜色逻辑 ──
