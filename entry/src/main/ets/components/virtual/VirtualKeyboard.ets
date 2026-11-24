@@ -30,10 +30,7 @@ import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceVibrationCoordinator } from '../../service/input/DeviceVibrationCoordinator';
 import { display } from '@kit.ArkUI';
 import { Logger } from '../../common/Logger';
-
-/** 按下态使用较深的蓝色，与粘滞修饰键的浅色高亮区分。 */
-const KEY_PRESSED_BG_COLOR = '#D936708A';
-const KEY_PRESSED_BORDER_COLOR = '#B0D9F2FF';
+import { KeyDef, KeyType, VirtualKeyboardKey } from './VirtualKeyboardKey';
 
 // =============================================================================
 // Windows 虚拟键码
@@ -126,31 +123,6 @@ class VK {
   static readonly UP: number = 0x26;
   static readonly RIGHT: number = 0x27;
   static readonly DOWN: number = 0x28;
-}
-
-// =============================================================================
-// 按键数据模型
-// =============================================================================
-
-/** 按键类型 */
-enum KeyType {
-  NORMAL,     // 普通按键
-  MODIFIER,   // 修饰键（支持粘滞）
-  SPACER,     // 占位空白
-}
-
-/** 单个按键定义 */
-interface KeyDef {
-  /** 显示标签 */
-  label: string;
-  /** 按下时显示的标签（如 Shift 激活后显示的字符） */
-  subLabel?: string;
-  /** Windows VK 码 */
-  vk: number;
-  /** 宽度权重（默认 1） */
-  weight?: number;
-  /** 按键类型 */
-  type?: KeyType;
 }
 
 // =============================================================================
@@ -248,8 +220,6 @@ const KEYBOARD_ROWS: KeyDef[][] = [
 const KEY_GAP = 4;
 /** 行间距 */
 const ROW_GAP = 4;
-/** 按键圆角 */
-const KEY_RADIUS = 10;
 /** 键盘整体内边距 */
 const KB_PADDING = 8;
 /** 标题栏高度 */
@@ -265,75 +235,6 @@ const KB_BG_IMAGE_KEY = 'virtual_keyboard_bg_image';
 // =============================================================================
 // 组件
 // =============================================================================
-
-/** 独立组件让多态样式拥有自己的刷新节点，按键事件仍交由键盘处理。 */
-@Component
-struct VirtualKeyboardKey {
-  keyDef: KeyDef = { label: '', vk: 0 };
-  isFuncRow: boolean = false;
-  @Prop isActive: boolean = false;
-  onKeyTouch: (event: TouchEvent) => void = () => {};
-
-  @Styles
-  private pressedKeyStyle() {
-    .backgroundColor(KEY_PRESSED_BG_COLOR)
-    .borderColor(KEY_PRESSED_BORDER_COLOR)
-  }
-
-  private getKeyBgColor(): string {
-    if (this.isActive) {
-      return '#60A8D8EA';
-    }
-    if (this.keyDef.type === KeyType.MODIFIER) {
-      return '#2A3A4A5A';
-    }
-    if (this.keyDef.vk === VK.SPACE) {
-      return '#1A3A4A5A';
-    }
-    return '#22FFFFFF';
-  }
-
-  private getKeyTextColor(): string {
-    if (this.isActive) {
-      return '#FFFFFF';
-    }
-    if (this.keyDef.type === KeyType.MODIFIER) {
-      return '#C0D0E0FF';
-    }
-    return '#E8F0FFFF';
-  }
-
-  build() {
-    Text(this.keyDef.label)
-      .fontSize(this.isFuncRow ? 10 : (this.keyDef.weight && this.keyDef.weight > 1.5 ? 11 : 13))
-      .fontColor(this.getKeyTextColor())
-      .fontWeight(FontWeight.Bold)
-      .fontFamily('HarmonyOS Sans')
-      .textAlign(TextAlign.Center)
-      .width('100%')
-      .height('100%')
-      .backgroundColor(this.getKeyBgColor())
-      .borderRadius(KEY_RADIUS)
-      .border({
-        width: { top: 1, left: 1, right: 1, bottom: 1 },
-        color: {
-          top: this.isActive ? '#70A8D8EA' : '#28FFFFFF',
-          left: this.isActive ? '#50A8D8EA' : '#18FFFFFF',
-          right: this.isActive ? '#50A8D8EA' : '#10FFFFFF',
-          bottom: this.isActive ? '#40A8D8EA' : '#08FFFFFF',
-        },
-      })
-      .shadow({
-        radius: this.isActive ? 6 : 2,
-        color: this.isActive ? '#40A8D8EA' : '#18000000',
-        offsetY: 1,
-      })
-      .stateStyles({ pressed: this.pressedKeyStyle })
-      .onTouch((event: TouchEvent) => {
-        this.onKeyTouch(event);
-      })
-  }
-}
 
 @Component
 export struct VirtualKeyboard {
@@ -604,6 +505,7 @@ export struct VirtualKeyboard {
       keyDef: key,
       isFuncRow: isFuncRow,
       isActive: this.isKeyActive(key),
+      isSpace: key.vk === VK.SPACE,
       onKeyTouch: (event: TouchEvent): void => this.handleKeyTouch(key, event),
     })
       .layoutWeight(key.weight ?? 1)
