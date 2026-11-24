@@ -86,6 +86,8 @@ scripts/test-helpers/*
 !scripts/test-key-menu.cjs
 !scripts/test-cert-der-serial.cjs
 !scripts/test-touchpad-zone-geometry.cjs
+!scripts/test-overlay-appearance-save.cjs
+!scripts/test-stream-start-cancellation.cjs
 
 # Local release artifacts
 release-symbols/
