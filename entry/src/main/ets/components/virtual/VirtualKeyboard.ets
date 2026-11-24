@@ -31,6 +31,10 @@ import { DeviceVibrationCoordinator } from '../../service/input/DeviceVibrationC
 import { display } from '@kit.ArkUI';
 import { Logger } from '../../common/Logger';
 
+/** 按下态使用较深的蓝色，与粘滞修饰键的浅色高亮区分。 */
+const KEY_PRESSED_BG_COLOR = '#D936708A';
+const KEY_PRESSED_BORDER_COLOR = '#B0D9F2FF';
+
 // =============================================================================
 // Windows 虚拟键码
 // =============================================================================
@@ -525,6 +529,12 @@ export struct VirtualKeyboard {
 
   // ── 单个按键 ──
 
+  @Styles
+  private pressedKeyStyle() {
+    .backgroundColor(KEY_PRESSED_BG_COLOR)
+    .borderColor(KEY_PRESSED_BORDER_COLOR)
+  }
+
   @Builder
   KeyButton(key: KeyDef, isFuncRow: boolean) {
     Text(key.label)
@@ -551,6 +561,8 @@ export struct VirtualKeyboard {
         color: this.isKeyActive(key) ? '#40A8D8EA' : '#18000000',
         offsetY: 1,
       })
+      // 使用控件的按下状态，避免更新键盘状态导致触摸释放事件丢失。
+      .stateStyles({ pressed: this.pressedKeyStyle })
       .onTouch((event: TouchEvent) => {
         this.handleKeyTouch(key, event);
       })
