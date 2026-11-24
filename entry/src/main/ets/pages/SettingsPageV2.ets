@@ -30,6 +30,7 @@ import {
   VIDEO_FEC_AUTOMATIC
 } from '../model/StreamConfig';
 import { PerfLabels } from '../components/PerformanceOverlayManager';
+import { PerformanceOverlayPreview } from '../components/PerformanceOverlayPreview';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
 import { SettingsBackupService } from '../service/SettingsBackupService';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem as DialogOptionItem } from '../components/dialogs/OptionPickerDialog';
@@ -101,7 +102,7 @@ interface SettingItem {
   title: string;
   subtitle?: string;
   tooltip?: string;
-  type: 'toggle' | 'select' | 'input' | 'action' | 'slider' | 'segment' | 'grid';
+  type: 'toggle' | 'select' | 'input' | 'action' | 'slider' | 'segment' | 'grid' | 'overlayPreview';
   key?: string;
   value?: string | boolean | number;
   options?: string[];
@@ -109,6 +110,7 @@ interface SettingItem {
   disabled?: boolean;  // 是否禁用
   isPro?: boolean;     // 是否为 Pro 功能（需要开发者模式）
   visible?: boolean;   // 是否可见（用于条件显示子选项，默认 true）
+  isRemoteChild?: boolean; // 远程设置的子项
   // Slider 专用属性
   min?: number;
   max?: number;
@@ -275,7 +277,7 @@ struct SettingsPageV2 {
   @State perfOverlayLocked: boolean = false;
   @State perfOverlayVerticalPadding: number = 12;
   @State perfOverlayFontSize: number = 12;
-  @State perfOverlayBgOpacity: number = 53;
+  @State perfOverlayBgOpacity: number = 47;
   @State perfOverlayItems: string[] = ['resolution', 'decoder', 'render_fps', 'packet_loss', 'bitrate', 'network_latency', 'decode_latency'];
   @State latencyToast: boolean = false;
   @State disableWarnings: boolean = false;
@@ -452,6 +454,22 @@ struct SettingsPageV2 {
         maxInstances: 1
       };
     }
+  }
+
+  private formatResolution(value: string): string {
+    return value === 'native' ? '本机 (' + this.nativeWidth.toString() + '×' + this.nativeHeight.toString() + ')' : value;
+  }
+
+  private formatFps(value: string): string {
+    return value.startsWith('自定义:') ? value.split(':')[1] + ' FPS (自定义)' : value;
+  }
+
+  private remoteBitrateDescription(): string {
+    if (this.remoteBitrate < 0) {
+      return this.bitrate === 0 ? '跟随全局 · 自动（按远程画面推荐）' :
+        '跟随全局 · ' + this.bitrate.toString() + ' Mbps';
+    }
+    return this.remoteBitrate === 0 ? '自动推荐' : this.remoteBitrate.toString() + ' Mbps';
   }
 
   /**
@@ -1111,7 +1129,7 @@ struct SettingsPageV2 {
               },
               {
                 title: '启用远程串流设置',
-                subtitle: '经互联网或 VPN 串流时，按需覆盖全局视频设置',
+                subtitle: '互联网或 VPN 串流时使用，未修改的项目跟随全局',
                 type: 'toggle',
                 value: this.remoteStreamEnabled,
                 action: () => {
@@ -1121,30 +1139,34 @@ struct SettingsPageV2 {
               },
               {
                 title: '远程分辨率',
-                subtitle: this.remoteResolution === '' ? '跟随全局' :
-                  this.remoteResolution === 'native' ? `本机 (${this.nativeWidth}×${this.nativeHeight})` : this.remoteResolution,
+                isRemoteChild: true,
+                subtitle: this.remoteResolution === '' ? '跟随全局 · ' + this.formatResolution(this.resolution) :
+                  this.formatResolution(this.remoteResolution),
                 type: 'select',
                 visible: this.remoteStreamEnabled,
                 action: () => this.showResolutionPicker(true)
               },
               {
                 title: '远程帧率',
-                subtitle: this.remoteFps === '' ? '跟随全局' : this.remoteFps,
+                isRemoteChild: true,
+                subtitle: this.remoteFps === '' ? '跟随全局 · ' + this.formatFps(this.fps) :
+                  this.formatFps(this.remoteFps),
                 type: 'select',
                 visible: this.remoteStreamEnabled,
                 action: () => this.showFpsPicker(true)
               },
               {
                 title: '远程码率上限',
-                subtitle: this.remoteBitrate < 0 ? '跟随全局' :
-                  this.remoteBitrate === 0 ? '自动推荐' : `${this.remoteBitrate} Mbps`,
+                isRemoteChild: true,
+                subtitle: this.remoteBitrateDescription(),
                 type: 'select',
                 visible: this.remoteStreamEnabled,
                 action: () => this.showRemoteBitratePicker()
               },
               {
                 title: '远程码率数值',
-                subtitle: '开流前测速和串流中自动调节均以此为上限',
+                isRemoteChild: true,
+                subtitle: '作为测速和串流中自动调节的上限',
                 type: 'slider',
                 value: this.remoteBitrate > 0 ? this.remoteBitrate : 20,
                 min: 1,
@@ -2347,7 +2369,12 @@ struct SettingsPageV2 {
                 action: () => this.showPerfOverlayItemsPicker()
               },
               {
-                title: '性能信息上下黑边',
+                title: '覆盖层预览',
+                type: 'overlayPreview',
+                visible: this.enablePerfOverlay
+              },
+              {
+                title: '背景上下留白',
                 subtitle: '调整文字上下方的背景留白',
                 type: 'slider',
                 visible: this.enablePerfOverlay,
@@ -2355,28 +2382,28 @@ struct SettingsPageV2 {
                 min: 0,
                 max: 32,
                 step: 1,
-                unit: ' vp',
+                unit: '',
                 onSliderChange: (value: number) => {
                   this.perfOverlayVerticalPadding = value;
                   this.saveSetting(SettingsKeys.PERF_OVERLAY_VERTICAL_PADDING, value);
                 }
               },
               {
-                title: '性能信息字体大小',
+                title: '覆盖层大小',
                 type: 'slider',
                 visible: this.enablePerfOverlay,
                 value: this.perfOverlayFontSize,
                 min: 8,
                 max: 24,
                 step: 1,
-                unit: ' fp',
+                unit: '',
                 onSliderChange: (value: number) => {
                   this.perfOverlayFontSize = value;
                   this.saveSetting(SettingsKeys.PERF_OVERLAY_FONT_SIZE, value);
                 }
               },
               {
-                title: '性能信息背景透明度',
+                title: '背景透明度',
                 subtitle: '0% 为不透明，100% 为完全透明',
                 type: 'slider',
                 visible: this.enablePerfOverlay,
@@ -2388,6 +2415,20 @@ struct SettingsPageV2 {
                 onSliderChange: (value: number) => {
                   this.perfOverlayBgOpacity = value;
                   this.saveSetting(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 1 - value / 100);
+                }
+              },
+              {
+                title: '恢复覆盖层外观默认值',
+                subtitle: '恢复大小、留白和背景透明度',
+                type: 'action',
+                visible: this.enablePerfOverlay,
+                action: () => {
+                  this.perfOverlayVerticalPadding = 12;
+                  this.perfOverlayFontSize = 12;
+                  this.perfOverlayBgOpacity = 47;
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_VERTICAL_PADDING, 12);
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_FONT_SIZE, 12);
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53);
                 }
               },
               {
@@ -2871,7 +2912,15 @@ struct SettingsPageV2 {
 
   @Builder
   SettingItemView(item: SettingItem) {
-    if (item.type === 'segment') {
+    if (item.type === 'overlayPreview') {
+      PerformanceOverlayPreview({
+        fontSize: this.perfOverlayFontSize,
+        verticalPadding: this.perfOverlayVerticalPadding,
+        backgroundTransparency: this.perfOverlayBgOpacity,
+        isVertical: this.perfOverlayOrientation === '垂直'
+      })
+        .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium, top: AppSpacing.Medium, bottom: AppSpacing.Medium })
+    } else if (item.type === 'segment') {
       // 分段按钮布局 - 参考系统设置风格：标题 + 居中分段按钮 + 辅助说明
       Column() {
         // 标题行
@@ -3110,7 +3159,8 @@ struct SettingsPageV2 {
       }
       .width('100%')
       .height(item.type === 'slider' ? 70 : 60)
-      .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
+      .padding({ left: item.isRemoteChild ? AppSpacing.Medium + 16 : AppSpacing.Medium, right: AppSpacing.Medium })
+      .backgroundColor(item.isRemoteChild ? AppColors.SurfaceDark : Color.Transparent)
       .focusable(!item.disabled)
       .focusOnTouch(true)
       .focusBox({
@@ -3256,7 +3306,7 @@ struct SettingsPageV2 {
     }
     
     const inheritOptions: PickerOption[] = remote ? [
-      { title: '跟随全局', subtitle: '使用全局分辨率', value: '' } as PickerOption
+      { title: '跟随全局', subtitle: '当前：' + this.formatResolution(this.resolution), value: '' } as PickerOption
     ] : [];
     const allOptions = [...inheritOptions, ...presetOptions, ...nativeOptions, ...customOptions,
       customActionOption, ...manageOptions];
@@ -3547,6 +3597,7 @@ struct SettingsPageV2 {
     const supportedRates = getSupportedDisplayRates();
     // Older systems may not expose capabilities. Keep standard choices available.
     const deviceRefreshRate = supportedRates.length > 0 ? Math.max(...supportedRates) : 144;
+    const matchedRate: number = Math.round(deviceRefreshRate);
 
     // 基础帧率选项（所有设备通用）
     const presetOptions: PickerOption[] = [
@@ -3555,25 +3606,25 @@ struct SettingsPageV2 {
     ];
 
     // 根据设备刷新率动态添加高帧率选项
-    if (deviceRefreshRate >= 90) {
+    if (matchedRate >= 90) {
       presetOptions.push({ title: '90 FPS', subtitle: '高刷新率', value: '90 FPS' } as PickerOption);
     }
-    if (deviceRefreshRate >= 120) {
+    if (matchedRate >= 120) {
       presetOptions.push(
         { title: '119.88 FPS', subtitle: '视频标准 (NTSC)', value: '119.88 FPS' } as PickerOption,
         { title: '120 FPS', subtitle: '极致体验', value: '120 FPS' } as PickerOption
       );
     }
-    if (deviceRefreshRate >= 144) {
+    if (matchedRate >= 144) {
       presetOptions.push({ title: '144 FPS', subtitle: '高刷屏专属', value: '144 FPS' } as PickerOption);
     }
     // 如果设备刷新率不在预设中（如 165Hz, 240Hz 等），动态添加
-    const knownRates = [30, 60, 90, 120, 144];
-    if (deviceRefreshRate > 60 && !knownRates.includes(deviceRefreshRate)) {
+    const knownRates: number[] = [30, 60, 90, 120, 144];
+    if (matchedRate > 60 && matchedRate <= 360 && !knownRates.includes(matchedRate)) {
       presetOptions.push({
-        title: `${deviceRefreshRate} FPS`,
-        subtitle: `匹配设备屏幕 (${deviceRefreshRate}Hz)`,
-        value: `${deviceRefreshRate} FPS`
+        title: matchedRate.toString() + ' FPS',
+        subtitle: '匹配设备屏幕 (' + deviceRefreshRate.toString() + 'Hz)',
+        value: matchedRate.toString() + ' FPS'
       } as PickerOption);
     }
     
@@ -3586,8 +3637,16 @@ struct SettingsPageV2 {
         value: `自定义:${this.customFps}`
       } as PickerOption);
     }
+    if (!remote && this.fps.startsWith('自定义:') &&
+      this.fps !== '自定义:' + this.customFps.toString()) {
+      customOptions.push({
+        title: this.fps.split(':')[1] + ' FPS',
+        subtitle: '当前全局自定义帧率',
+        value: this.fps
+      });
+    }
     if (remote && this.remoteFps.startsWith('自定义:') &&
-      this.remoteFps !== `自定义:${this.customFps}`) {
+      this.remoteFps !== '自定义:' + this.customFps.toString()) {
       customOptions.push({
         title: `${this.remoteFps.split(':')[1]} FPS`,
         subtitle: '当前远程自定义帧率',
@@ -3603,7 +3662,7 @@ struct SettingsPageV2 {
     } as PickerOption;
     
     const inheritOptions: PickerOption[] = remote ? [
-      { title: '跟随全局', subtitle: '使用全局帧率', value: '' } as PickerOption
+      { title: '跟随全局', subtitle: '当前：' + this.formatFps(this.fps), value: '' } as PickerOption
     ] : [];
     const options = [...inheritOptions, ...presetOptions, ...customOptions, customActionOption];
     
@@ -3666,7 +3725,8 @@ struct SettingsPageV2 {
   private showCustomFpsInput(): void {
     this.textInputTitle = '自定义帧率';
     this.textInputPlaceholder = '输入帧率值 (如: 144)';
-    this.textInputValue = this.customFps > 0 ? this.customFps.toString() : '';
+    this.textInputValue = this.customFpsForRemote && this.remoteFps.startsWith('自定义:') ?
+      this.remoteFps.split(':')[1] : this.customFps > 0 ? this.customFps.toString() : '';
     this.textInputCallback = (value: string) => {
       if (value && value.trim()) {
         this.setCustomFps(value.trim());
@@ -3683,8 +3743,8 @@ struct SettingsPageV2 {
     const fps = parseInt(value);
     
     // 验证帧率值
-    if (isNaN(fps)) {
-      this.showToast('请输入有效的数字');
+    if (!/^\d+$/.test(value) || isNaN(fps)) {
+      this.showToast('请输入有效的整数');
       return;
     }
     
@@ -3693,14 +3753,14 @@ struct SettingsPageV2 {
       return;
     }
     
-    // 保存自定义帧率
-    this.customFps = fps;
-    this.saveSetting(SettingsKeys.CUSTOM_FPS, fps);
+    // 远程帧率保存在独立设置中，避免覆盖全局的自定义选项。
     if (this.customFpsForRemote) {
       this.remoteFps = `自定义:${fps}`;
       this.saveSetting(SettingsKeys.REMOTE_FPS, this.remoteFps);
       this.customFpsForRemote = false;
     } else {
+      this.customFps = fps;
+      this.saveSetting(SettingsKeys.CUSTOM_FPS, fps);
       this.fps = `自定义:${fps}`;
       this.saveSetting(SettingsKeys.FPS, this.fps);
     }
@@ -3713,7 +3773,8 @@ struct SettingsPageV2 {
 
   private showRemoteBitratePicker(): void {
     const options: PickerOption[] = [
-      { title: '跟随全局', subtitle: '使用全局码率设置', value: -1 } as PickerOption,
+      { title: '跟随全局', subtitle: this.bitrate === 0 ? '自动（按远程画面推荐）' :
+        this.bitrate.toString() + ' Mbps', value: -1 } as PickerOption,
       { title: '自动推荐', subtitle: '按远程分辨率和帧率计算', value: 0 } as PickerOption,
       { title: '手动设置', subtitle: '设置独立的远程码率上限', value: 1 } as PickerOption
     ];

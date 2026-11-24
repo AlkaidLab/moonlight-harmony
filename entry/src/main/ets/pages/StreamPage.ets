@@ -1729,6 +1729,8 @@ struct StreamPage {
     this.configureStreamFrameHints();
 
     await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+    // Startup may finish after the page has already released its frame-rate resources.
+    if (this.pageDisposed || this.viewModel.isStopping || this.streamExiting) return;
     if ((this.viewModel.streamConfig?.fps ?? 60) !== requestedFps) {
       this.resetStreamFrameHints();
       this.configureStreamFrameHints();
@@ -1736,6 +1738,7 @@ struct StreamPage {
     if (this.viewModel.displayInfo.streamWidth !== requestedWidth ||
       this.viewModel.displayInfo.streamHeight !== requestedHeight) {
       await this.configureStreamWindow();
+      if (this.pageDisposed || this.viewModel.isStopping || this.streamExiting) return;
     }
 
     // 将区域 DS5 触控板绑定到本次会话的 controller slot 0。
