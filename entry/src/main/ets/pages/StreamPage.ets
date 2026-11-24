@@ -1794,7 +1794,7 @@ struct StreamPage {
   async startStreaming(): Promise<void> {
     try {
       // 加载设置
-      await this.viewModel.loadSettings();
+      if (!(await this.viewModel.loadSettings())) return;
       if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
       const savedDs5Zone = await PreferencesUtil.get<string>(
         SettingsKeys.DS5_TOUCHPAD_ZONE_RECT,

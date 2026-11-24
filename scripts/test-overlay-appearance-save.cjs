@@ -366,3 +366,68 @@ test('a replacement started during loading is awaited and read again', async () 
   assert.equal(result.padding, 17);
   assert.equal(result.fontSize, 19);
 });
+
+test('preference read failure preserves the confirmed baseline for later save rollback', async () => {
+  const values = { padding: 18, font: 20 };
+  let failRead = false;
+  const calls = [];
+  const { AppearanceSettingsWriter: ProductionWriter } = loadArkTsModule(
+    'entry/src/main/ets/service/OverlayAppearanceSettings.ets', {
+      PreferencesUtil: {
+        getPreferences: async () => ({ get: async key => {
+          if (failRead) throw new Error('preferences read failed');
+          return values[name(key)];
+        } }),
+        put: async (key, value) => {
+          calls.push([name(key), value]);
+          if (value === 22) throw new Error('write failed');
+          values[name(key)] = value;
+        }
+      }
+    }, ['AppearanceSettingsWriter']);
+  const writer = ProductionWriter.getInstance();
+  await writer.load();
+  failRead = true;
+  const result = await writer.load();
+  assert.equal(result.padding, 18);
+  assert.equal(result.fontSize, 20);
+  const failures = [];
+  attach(writer, failures);
+  writer.saveFontSize(22);
+  await writer.queue;
+  assert.deepEqual(calls, [['font', 22], ['font', 20]]);
+  assert.deepEqual(failures, [['font', 20]]);
+});
+
+test('initial preference read failure is surfaced when no confirmed baseline exists', async () => {
+  const writer = new AppearanceSettingsWriter(12, 12, async () => {},
+    async () => { throw new Error('preferences read failed'); });
+  await assert.rejects(writer.load(), /preferences read failed/);
+});
+
+test('replacement reports a post-restore read failure even with a confirmed baseline', async () => {
+  let failRead = false;
+  const writer = new AppearanceSettingsWriter(12, 12, async () => {}, async (key, fallback) => {
+    if (failRead) throw new Error('preferences read failed');
+    return fallback;
+  });
+  await writer.load();
+  await assert.rejects(writer.replacePreferences(async () => { failRead = true; }), /preferences read failed/);
+});
+
+test('invalid stored values retain confirmed finite values while numeric strings remain supported', async () => {
+  const values = { padding: '18', font: '20' };
+  const { AppearanceSettingsWriter: ProductionWriter } = loadArkTsModule(
+    'entry/src/main/ets/service/OverlayAppearanceSettings.ets', {
+      PreferencesUtil: { getPreferences: async () => ({ get: async key => values[name(key)] }) }
+    }, ['AppearanceSettingsWriter']);
+  const writer = ProductionWriter.getInstance();
+  let result = await writer.load();
+  assert.equal(result.padding, 18);
+  assert.equal(result.fontSize, 20);
+  values.padding = 'bad';
+  values.font = 'Infinity';
+  result = await writer.load();
+  assert.equal(result.padding, 18);
+  assert.equal(result.fontSize, 20);
+});

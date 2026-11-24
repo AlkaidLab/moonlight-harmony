@@ -26,6 +26,8 @@ export class AppearanceSettingsWriter {
   private fontRevision: number = 0;
   private savedPadding: number;
   private savedFontSize: number;
+  private paddingKnown: boolean = false;
+  private fontKnown: boolean = false;
   private latestPadding: number;
   private latestFontSize: number;
   private paddingPending: boolean = false;
@@ -54,9 +56,44 @@ export class AppearanceSettingsWriter {
     if (!AppearanceSettingsWriter.instance) {
       AppearanceSettingsWriter.instance = new AppearanceSettingsWriter(12, 12,
         (key: string, value: number): Promise<void> => PreferencesUtil.put(key, value),
-        (key: string, fallback: number): Promise<number> => PreferencesUtil.get<number>(key, fallback));
+        (key: string, fallback: number): Promise<number> => AppearanceSettingsWriter.readPreference(key, fallback));
     }
     return AppearanceSettingsWriter.instance;
+  }
+
+  private static async readPreference(key: string, fallback: number): Promise<number> {
+    const prefs = await PreferencesUtil.getPreferences();
+    const rawValue = await prefs.get(key, fallback);
+    if (typeof rawValue === 'number') {
+      return Number.isFinite(rawValue) ? rawValue : fallback;
+    }
+    if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
+      const parsed = Number(rawValue);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+    return fallback;
+  }
+
+  private clamp(value: number, fallback: number, min: number, max: number): number {
+    return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+  }
+
+  private async readPadding(): Promise<number> {
+    try {
+      return this.clamp(await this.read(OVERLAY_PADDING_KEY, this.savedPadding), this.savedPadding, 0, 32);
+    } catch (error) {
+      if (!this.paddingKnown) throw new Error('Failed to read overlay padding: ' + String(error));
+      return this.savedPadding;
+    }
+  }
+
+  private async readFontSize(): Promise<number> {
+    try {
+      return this.clamp(await this.read(OVERLAY_FONT_SIZE_KEY, this.savedFontSize), this.savedFontSize, 8, 24);
+    } catch (error) {
+      if (!this.fontKnown) throw new Error('Failed to read overlay font size: ' + String(error));
+      return this.savedFontSize;
+    }
   }
 
   async load(): Promise<OverlayAppearanceValues> {
@@ -71,16 +108,25 @@ export class AppearanceSettingsWriter {
       const paddingWasPending = this.paddingPending;
       const fontWasPending = this.fontPending;
       const resetRevision = this.resetRevision;
-      const padding = Math.max(0, Math.min(32, await this.read(OVERLAY_PADDING_KEY, 12)));
-      const fontSize = Math.max(8, Math.min(24, await this.read(OVERLAY_FONT_SIZE_KEY, 12)));
+      let padding: number;
+      let fontSize: number;
+      try {
+        padding = await this.readPadding();
+        fontSize = await this.readFontSize();
+      } catch (error) {
+        if (this.resetsPending > 0 || resetRevision !== this.resetRevision) continue;
+        throw new Error('Failed to load overlay appearance: ' + String(error));
+      }
       if (this.resetsPending > 0 || resetRevision !== this.resetRevision) continue;
       if (!paddingWasPending && !this.paddingPending && paddingRevision === this.paddingRevision) {
         this.savedPadding = padding;
         this.latestPadding = padding;
+        this.paddingKnown = true;
       }
       if (!fontWasPending && !this.fontPending && fontRevision === this.fontRevision) {
         this.savedFontSize = fontSize;
         this.latestFontSize = fontSize;
+        this.fontKnown = true;
       }
       return this.snapshot();
     }
@@ -119,7 +165,7 @@ export class AppearanceSettingsWriter {
     this.paddingPending = true;
     this.enqueue(OVERLAY_PADDING_KEY, value,
       () => revision === this.paddingRevision, () => this.savedPadding,
-      (saved: number) => { this.savedPadding = saved; },
+      (saved: number) => { this.savedPadding = saved; this.paddingKnown = true; },
       () => { this.paddingPending = false; this.releaseDetachedOwner(); },
       (saved: number) => { this.latestPadding = saved; this.paddingFailure(saved); });
   }
@@ -130,7 +176,7 @@ export class AppearanceSettingsWriter {
     this.fontPending = true;
     this.enqueue(OVERLAY_FONT_SIZE_KEY, value,
       () => revision === this.fontRevision, () => this.savedFontSize,
-      (saved: number) => { this.savedFontSize = saved; },
+      (saved: number) => { this.savedFontSize = saved; this.fontKnown = true; },
       () => { this.fontPending = false; this.releaseDetachedOwner(); },
       (saved: number) => { this.latestFontSize = saved; this.fontFailure(saved); });
   }
@@ -143,10 +189,12 @@ export class AppearanceSettingsWriter {
     const reset = this.queue.then(async (): Promise<void> => {
       try {
         await replace();
-        const padding = Math.max(0, Math.min(32, await this.read(OVERLAY_PADDING_KEY, 12)));
-        const fontSize = Math.max(8, Math.min(24, await this.read(OVERLAY_FONT_SIZE_KEY, 12)));
+        const padding = this.clamp(await this.read(OVERLAY_PADDING_KEY, 12), 12, 0, 32);
+        const fontSize = this.clamp(await this.read(OVERLAY_FONT_SIZE_KEY, 12), 12, 8, 24);
         this.savedPadding = padding;
         this.savedFontSize = fontSize;
+        this.paddingKnown = true;
+        this.fontKnown = true;
         if (paddingRevision === this.paddingRevision) this.latestPadding = padding;
         if (fontRevision === this.fontRevision) this.latestFontSize = fontSize;
       } finally {

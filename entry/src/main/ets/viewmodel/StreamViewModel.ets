@@ -174,6 +174,7 @@ export class StreamViewModel {
   private settingsService: SettingsService = SettingsService.getInstance();
   private streamingSession: StreamingSession | null = null;
   private startGeneration: number = 0;
+  private settingsLoadGeneration: number = 0;
   private disposed: boolean = false;
   
   // 连接终止回调（由 StreamPage 设置）
@@ -232,10 +233,23 @@ export class StreamViewModel {
   /**
    * 加载设置
    */
-  async loadSettings(): Promise<void> {
-    this.streamConfig = await this.settingsService.getStreamConfig();
-    this.inputSettings = await this.settingsService.getInputSettings();
-    this.displaySettings = await this.settingsService.getDisplaySettings();
+  async loadSettings(): Promise<boolean> {
+    const generation = ++this.settingsLoadGeneration;
+    const startGeneration = this.startGeneration;
+    const streamConfig = await this.settingsService.getStreamConfig();
+    const inputSettings = await this.settingsService.getInputSettings();
+    const displaySettings = await this.settingsService.getDisplaySettings();
+    const lastTouchMode = await PreferencesUtil.get<string>(SettingsKeys.LAST_TOUCH_MODE, '');
+    let hasKeyboardOrMouse = false;
+    if (lastTouchMode !== 'trackpad' && lastTouchMode !== 'direct' && lastTouchMode !== 'mouse' &&
+      lastTouchMode !== 'ds5_touchpad' && lastTouchMode !== 'ds5_touchpad_zone' &&
+      !inputSettings.touchscreenTrackpad) {
+      hasKeyboardOrMouse = await this.detectKeyboardOrMouse();
+    }
+    if (this.disposed || generation !== this.settingsLoadGeneration || startGeneration !== this.startGeneration) return false;
+    this.streamConfig = streamConfig;
+    this.inputSettings = inputSettings;
+    this.displaySettings = displaySettings;
     
     // 更新 UI 显示选项
     this.showOverlay = this.displaySettings.enablePerfOverlay;
@@ -277,7 +291,6 @@ export class StreamViewModel {
     
     // 确定触摸模式
     // 优先使用用户在菜单中选择过的模式（持久化在 LAST_TOUCH_MODE）
-    const lastTouchMode = await PreferencesUtil.get<string>(SettingsKeys.LAST_TOUCH_MODE, '');
     if (lastTouchMode === 'trackpad') {
       this.touchMode = TouchMode.TRACKPAD;
     } else if (lastTouchMode === 'direct') {
@@ -298,7 +311,6 @@ export class StreamViewModel {
     } else {
       // 没有用户偏好时：检测是否有键盘/鼠标连接
       // 有键鼠 → 触控板模式(trackpad)，无键鼠 → 多点触控模式(direct)
-      const hasKeyboardOrMouse = await this.detectKeyboardOrMouse();
       this.touchMode = hasKeyboardOrMouse ? TouchMode.TRACKPAD : TouchMode.DIRECT;
     }
     
@@ -312,6 +324,7 @@ export class StreamViewModel {
       this.streamConfig.gameVibrationStrength,
       this.streamConfig.vibrationMode
     );
+    return true;
   }
   
   /**
@@ -334,7 +347,12 @@ export class StreamViewModel {
     this.errorMessage = '';
     
     try {
-      await this.loadSettings();
+      if (!(await this.loadSettings())) {
+        if (!this.disposed && generation === this.startGeneration) {
+          this.connectionState = StreamConnectionState.DISCONNECTED;
+        }
+        return;
+      }
       if (this.disposed || generation !== this.startGeneration) return;
       
       // 初始化 actualHdr 状态为用户请求的 HDR 状态

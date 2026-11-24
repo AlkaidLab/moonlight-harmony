@@ -39,7 +39,7 @@ function fixture(options = {}) {
     Logger: { info() {}, warn() {}, error() {} },
     PreferencesUtil: { get: async () => false },
     SettingsKeys: {},
-    GamepadManager: { getInstance: () => ({}) }
+    GamepadManager: { getInstance: () => ({ setGameVibration(...args) { options.vibrations?.push(args); } }) }
   }, ['StreamViewModel']);
   const vm = new StreamViewModel();
   vm.streamConfig = { width: 1920, height: 1080, fps: 60 };
@@ -59,7 +59,7 @@ test('dispose while loading settings prevents session creation', async () => {
 
 test('the view model waits for session shutdown while startup is in flight', async () => {
   const { vm, sessions, pending } = fixture();
-  vm.loadSettings = async () => {};
+  vm.loadSettings = async () => true;
   const start = vm.startStreaming('host', 1, 'surface', {});
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(sessions.length, 1);
@@ -75,9 +75,63 @@ test('the view model waits for session shutdown while startup is in flight', asy
   assert.equal(vm.connectionState, 'disconnected');
 });
 
+function settingsForTest(vm, firstConfig) {
+  let calls = 0;
+  vm.parseOverlayPosition = () => 'top-left';
+  vm.settingsService = {
+    getStreamConfig: async () => {
+      if (calls++ === 0) return await firstConfig.promise;
+      return { width: 2560, height: 1440, fps: 60, enableVibration: true };
+    },
+    getInputSettings: async () => ({ touchscreenTrackpad: true, enableOnscreenControls: false }),
+    getDisplaySettings: async () => ({ perfOverlayPosition: '左上' })
+  };
+}
+
+test('outdated settings load cannot overwrite a newer snapshot or vibration settings', async () => {
+  const vibrations = [];
+  const { vm } = fixture({ vibrations });
+  const old = deferred();
+  settingsForTest(vm, old);
+  const first = vm.loadSettings();
+  assert.equal(await vm.loadSettings(), true);
+  old.resolve({ width: 1280, height: 720, fps: 30, enableVibration: false });
+  assert.equal(await first, false);
+  assert.equal(vm.streamConfig.width, 2560);
+  assert.equal(vm.displayInfo.streamWidth, 2560);
+  assert.equal(vibrations.length, 1);
+  assert.equal(vibrations[0][0], true);
+});
+
+test('disposing during settings load prevents committing state or vibration', async () => {
+  const vibrations = [];
+  const { vm } = fixture({ vibrations });
+  const old = deferred();
+  settingsForTest(vm, old);
+  const load = vm.loadSettings();
+  vm.dispose();
+  old.resolve({ width: 1280, height: 720, fps: 30, enableVibration: true });
+  assert.equal(await load, false);
+  assert.equal(vm.streamConfig.width, 1920);
+  assert.equal(vibrations.length, 0);
+});
+
+test('startup stops when another settings load supersedes it', async () => {
+  const { vm, sessions } = fixture();
+  const old = deferred();
+  settingsForTest(vm, old);
+  const start = vm.startStreaming('host', 1, 'surface', {});
+  assert.equal(await vm.loadSettings(), true);
+  old.resolve({ width: 1280, height: 720, fps: 30 });
+  await start;
+  assert.equal(sessions.length, 0);
+  assert.equal(vm.streamConfig.width, 2560);
+  assert.equal(vm.connectionState, 'disconnected');
+});
+
 test('the same view model can start a fresh session after stopping', async () => {
   const { vm, sessions, pending } = fixture();
-  vm.loadSettings = async () => {};
+  vm.loadSettings = async () => true;
   pending.resolve();
   await vm.startStreaming('host', 1, 'surface', {});
   await vm.stopStreaming();
@@ -91,7 +145,7 @@ test('the same view model can start a fresh session after stopping', async () =>
 
 test('late stop completion does not overwrite a newer connection state', async () => {
   const { vm, sessions, pending } = fixture();
-  vm.loadSettings = async () => {};
+  vm.loadSettings = async () => true;
   const firstStart = vm.startStreaming('host', 1, 'surface', {});
   await new Promise(resolve => setImmediate(resolve));
   const stop = vm.stopStreaming();
@@ -107,7 +161,7 @@ test('late stop completion does not overwrite a newer connection state', async (
 
 test('late quit completion does not overwrite a newer connection state', async () => {
   const { vm, sessions, pending } = fixture();
-  vm.loadSettings = async () => {};
+  vm.loadSettings = async () => true;
   const firstStart = vm.startStreaming('host', 1, 'surface', {});
   await new Promise(resolve => setImmediate(resolve));
   const quit = vm.quitGame();
@@ -122,7 +176,7 @@ test('late quit completion does not overwrite a newer connection state', async (
 
 test('disposing during a pending quit does not replace it with stop', async () => {
   const { vm, sessions, pending } = fixture();
-  vm.loadSettings = async () => {};
+  vm.loadSettings = async () => true;
   const start = vm.startStreaming('host', 1, 'surface', {});
   await new Promise(resolve => setImmediate(resolve));
   const quit = vm.quitGame();
@@ -136,7 +190,7 @@ test('disposing during a pending quit does not replace it with stop', async () =
 
 test('the same view model can retry after startup fails', async () => {
   const { vm, sessions, pending } = fixture({ failFirstStart: true });
-  vm.loadSettings = async () => {};
+  vm.loadSettings = async () => true;
   await assert.rejects(vm.startStreaming('host', 1, 'surface', {}), /connection failed/);
   assert.equal(vm.connectionState, 'error');
   pending.resolve();
