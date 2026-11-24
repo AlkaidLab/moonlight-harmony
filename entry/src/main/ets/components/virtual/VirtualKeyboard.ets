@@ -30,6 +30,7 @@ import { PreferencesUtil } from '../../utils/PreferencesUtil';
 import { DeviceVibrationCoordinator } from '../../service/input/DeviceVibrationCoordinator';
 import { display } from '@kit.ArkUI';
 import { Logger } from '../../common/Logger';
+import { KeyDef, KeyType, VirtualKeyboardKey } from './VirtualKeyboardKey';
 
 // =============================================================================
 // Windows 虚拟键码
@@ -122,31 +123,6 @@ class VK {
   static readonly UP: number = 0x26;
   static readonly RIGHT: number = 0x27;
   static readonly DOWN: number = 0x28;
-}
-
-// =============================================================================
-// 按键数据模型
-// =============================================================================
-
-/** 按键类型 */
-enum KeyType {
-  NORMAL,     // 普通按键
-  MODIFIER,   // 修饰键（支持粘滞）
-  SPACER,     // 占位空白
-}
-
-/** 单个按键定义 */
-interface KeyDef {
-  /** 显示标签 */
-  label: string;
-  /** 按下时显示的标签（如 Shift 激活后显示的字符） */
-  subLabel?: string;
-  /** Windows VK 码 */
-  vk: number;
-  /** 宽度权重（默认 1） */
-  weight?: number;
-  /** 按键类型 */
-  type?: KeyType;
 }
 
 // =============================================================================
@@ -244,8 +220,6 @@ const KEYBOARD_ROWS: KeyDef[][] = [
 const KEY_GAP = 4;
 /** 行间距 */
 const ROW_GAP = 4;
-/** 按键圆角 */
-const KEY_RADIUS = 10;
 /** 键盘整体内边距 */
 const KB_PADDING = 8;
 /** 标题栏高度 */
@@ -527,59 +501,22 @@ export struct VirtualKeyboard {
 
   @Builder
   KeyButton(key: KeyDef, isFuncRow: boolean) {
-    Text(key.label)
-      .fontSize(isFuncRow ? 10 : (key.weight && key.weight > 1.5 ? 11 : 13))
-      .fontColor(this.getKeyTextColor(key))
-      .fontWeight(FontWeight.Bold)
-      .fontFamily('HarmonyOS Sans')
-      .textAlign(TextAlign.Center)
-      .height('100%')
-      .layoutWeight(key.weight ?? 1)
-      .backgroundColor(this.getKeyBgColor(key))
-      .borderRadius(KEY_RADIUS)
-      .border({
-        width: { top: 1, left: 1, right: 1, bottom: 1 },
-        color: {
-          top: this.isKeyActive(key) ? '#70A8D8EA' : '#28FFFFFF',   // 顶部高光边
-          left: this.isKeyActive(key) ? '#50A8D8EA' : '#18FFFFFF',
-          right: this.isKeyActive(key) ? '#50A8D8EA' : '#10FFFFFF',
-          bottom: this.isKeyActive(key) ? '#40A8D8EA' : '#08FFFFFF', // 底部暗边
+    Row() {
+      VirtualKeyboardKey({
+        keyDef: key,
+        isFuncRow: isFuncRow,
+        isActive: this.isKeyActive(key),
+        isSpace: key.vk === VK.SPACE,
+        onKeyTouch: (event: TouchEvent): void => {
+          this.handleKeyTouch(key, event);
         },
       })
-      .shadow({
-        radius: this.isKeyActive(key) ? 6 : 2,
-        color: this.isKeyActive(key) ? '#40A8D8EA' : '#18000000',
-        offsetY: 1,
-      })
-      .onTouch((event: TouchEvent) => {
-        this.handleKeyTouch(key, event);
-      })
+    }
+    .layoutWeight(key.weight ?? 1)
+    .height('100%')
   }
 
   // ── 按键颜色逻辑 ──
-
-  private getKeyBgColor(key: KeyDef): string {
-    if (this.isKeyActive(key)) {
-      return '#60A8D8EA';  // 激活状态：柔和蓝高光
-    }
-    if (key.type === KeyType.MODIFIER) {
-      return '#2A3A4A5A';  // 修饰键：蓝灰色调，与普通键区分
-    }
-    if (key.vk === VK.SPACE) {
-      return '#1A3A4A5A';  // 空格：微蓝灰
-    }
-    return '#22FFFFFF';    // 普通按键：微亮玻璃感
-  }
-
-  private getKeyTextColor(key: KeyDef): string {
-    if (this.isKeyActive(key)) {
-      return '#FFFFFF';
-    }
-    if (key.type === KeyType.MODIFIER) {
-      return '#C0D0E0FF'; // 修饰键：淡蓝白，优雅区分
-    }
-    return '#E8F0FFFF';   // 普通：清透白，略带冷色
-  }
 
   /** 按键是否处于激活状态（组合键模式下的粘滞修饰键） */
   private isKeyActive(key: KeyDef): boolean {
