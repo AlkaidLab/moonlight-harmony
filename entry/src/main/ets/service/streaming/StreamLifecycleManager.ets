@@ -49,6 +49,10 @@ export interface LifecycleCallbacks {
 }
 
 export class StreamLifecycleManager {
+  // The underlying background service is a process-wide singleton.
+  private static backgroundTail: Promise<void> = Promise.resolve();
+  private static backgroundOwner: StreamLifecycleManager | null = null;
+  private backgroundGeneration: number = 0;
   // ── 外部依赖 ──
   private viewModel: StreamViewModel | null = null;
   private windowManager: StreamWindowManager | null = null;
@@ -298,34 +302,51 @@ export class StreamLifecycleManager {
    * @param gameName 当前串流的游戏名称
    */
   async startBackgroundTask(context: common.UIAbilityContext, gameName?: string): Promise<void> {
-    try {
-      // 播控中心"停止"按钮 → 断开串流
-      const broadcastCallbacks: BroadcastControlCallbacks = {
-        onStop: () => {
-          Logger.info('StreamLifecycleManager', '[StreamPage] 播控中心请求停止串流');
-          if (this.callbacks) {
-            this.callbacks.stopStreaming();
-          }
+    const generation = ++this.backgroundGeneration;
+    const operation = StreamLifecycleManager.backgroundTail.then(async (): Promise<void> => {
+      if (generation !== this.backgroundGeneration) return;
+      try {
+        if (StreamLifecycleManager.backgroundOwner !== null && StreamLifecycleManager.backgroundOwner !== this) {
+          await this.backgroundService.stop();
+          StreamLifecycleManager.backgroundOwner = null;
+          if (generation !== this.backgroundGeneration) return;
         }
-      } as BroadcastControlCallbacks;
-      await this.backgroundService.start(context, gameName, broadcastCallbacks);
-      Logger.info('StreamLifecycleManager', '[StreamPage] 后台保活已启动');
-    } catch (err) {
-      Logger.warn('StreamLifecycleManager', '[StreamPage] 启动后台保活失败（不影响串流）:', err);
-    }
+        const broadcastCallbacks: BroadcastControlCallbacks = {
+          onStop: () => {
+            Logger.info('StreamLifecycleManager', '[StreamPage] 播控中心请求停止串流');
+            if (this.callbacks) this.callbacks.stopStreaming();
+          }
+        };
+        await this.backgroundService.start(context, gameName, broadcastCallbacks);
+        if (generation !== this.backgroundGeneration) {
+          await this.backgroundService.stop();
+          return;
+        }
+        StreamLifecycleManager.backgroundOwner = this;
+        Logger.info('StreamLifecycleManager', '[StreamPage] 后台保活已启动');
+      } catch (err) {
+        Logger.warn('StreamLifecycleManager', '[StreamPage] 启动后台保活失败（不影响串流）:', err);
+      }
+    });
+    StreamLifecycleManager.backgroundTail = operation.catch(() => {});
+    await operation;
   }
 
-  /**
-   * 停止后台保活服务
-   * 在串流结束时调用
-   */
+  /** Stop only the singleton service owned by this page. */
   async stopBackgroundTask(): Promise<void> {
-    try {
-      await this.backgroundService.stop();
-      Logger.info('StreamLifecycleManager', '[StreamPage] 后台保活已停止');
-    } catch (err) {
-      Logger.warn('StreamLifecycleManager', '[StreamPage] 停止后台保活失败:', err);
-    }
+    this.backgroundGeneration++;
+    const operation = StreamLifecycleManager.backgroundTail.then(async (): Promise<void> => {
+      if (StreamLifecycleManager.backgroundOwner !== this) return;
+      StreamLifecycleManager.backgroundOwner = null;
+      try {
+        await this.backgroundService.stop();
+        Logger.info('StreamLifecycleManager', '[StreamPage] 后台保活已停止');
+      } catch (err) {
+        Logger.warn('StreamLifecycleManager', '[StreamPage] 停止后台保活失败:', err);
+      }
+    });
+    StreamLifecycleManager.backgroundTail = operation.catch(() => {});
+    await operation;
   }
 
   // ==================== 应用恢复 ====================

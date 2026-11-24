@@ -39,6 +39,7 @@ import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundIma
 import { InputInterceptorService } from '../service/input/InputInterceptorService';
 import { GamepadManager } from '../service/input/GamepadManager';
 import { SettingsKeys, UiSettings } from '../service/SettingsService';
+import { AppearanceSettingsWriter, OverlayAppearanceValues } from '../service/OverlayAppearanceSettings';
 import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
 import { isAihdrSupported } from '../components/AihdrModifier';
@@ -277,6 +278,7 @@ struct SettingsPageV2 {
   @State perfOverlayLocked: boolean = false;
   @State perfOverlayVerticalPadding: number = 12;
   @State perfOverlayFontSize: number = 12;
+  @State appearanceSettingsReady: boolean = false;
   @State perfOverlayBgOpacity: number = 47;
   @State perfOverlayItems: string[] = ['resolution', 'decoder', 'render_fps', 'packet_loss', 'bitrate', 'network_latency', 'decode_latency'];
   @State latencyToast: boolean = false;
@@ -368,6 +370,9 @@ struct SettingsPageV2 {
   // CustomDialogController
   private optionPickerDialogController: CustomDialogController | null = null;
   private multiOptionPickerDialogController: CustomDialogController | null = null;
+  private appearanceSettingsWriter: AppearanceSettingsWriter = AppearanceSettingsWriter.getInstance();
+  private appearanceWriterOwner: number = 0;
+  private settingsPageVisible: boolean = false;
   private licensesDialogController: CustomDialogController | null = null;
   private privacyDialogController: CustomDialogController | null = null;
   private changelogDialogController: CustomDialogController | null = null;
@@ -377,10 +382,17 @@ struct SettingsPageV2 {
   private nativeHeight: number = 0;
 
   aboutToAppear(): void {
+    this.settingsPageVisible = true;
     this.loadVersionInfo();
     this.loadNativeResolution();
     this.loadSettings();
     this.loadDecoderCapabilities();
+  }
+
+  aboutToDisappear(): void {
+    this.settingsPageVisible = false;
+    this.appearanceSettingsReady = false;
+    this.appearanceSettingsWriter.detach(this.appearanceWriterOwner);
   }
 
   onPageShow(): void {
@@ -657,10 +669,21 @@ struct SettingsPageV2 {
       this.perfOverlayOrientation = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_ORIENTATION, '垂直');
       this.perfOverlayPosition = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_POSITION, '右上角');
       this.perfOverlayLocked = await this.loadBoolean(SettingsKeys.PERF_OVERLAY_LOCKED, false);
-      this.perfOverlayVerticalPadding = Math.max(0, Math.min(32,
-        await PreferencesUtil.get<number>(SettingsKeys.PERF_OVERLAY_VERTICAL_PADDING, 12)));
-      this.perfOverlayFontSize = Math.max(8, Math.min(24,
-        await PreferencesUtil.get<number>(SettingsKeys.PERF_OVERLAY_FONT_SIZE, 12)));
+      await this.appearanceSettingsWriter.load();
+      if (!this.settingsPageVisible) return;
+      this.appearanceWriterOwner = this.appearanceSettingsWriter.attach(
+        (saved: number): void => {
+          this.perfOverlayVerticalPadding = saved;
+          if (this.settingsPageVisible) this.showToast('覆盖层设置保存失败，请重新调整');
+        },
+        (saved: number): void => {
+          this.perfOverlayFontSize = saved;
+          if (this.settingsPageVisible) this.showToast('覆盖层设置保存失败，请重新调整');
+        }, (): void => { SettingsBackupService.scheduleAutoSave(); });
+      const appearance: OverlayAppearanceValues = this.appearanceSettingsWriter.snapshot();
+      this.perfOverlayVerticalPadding = appearance.padding;
+      this.perfOverlayFontSize = appearance.fontSize;
+      this.appearanceSettingsReady = true;
       this.perfOverlayBgOpacity = 100 - Math.round(Math.max(0, Math.min(1,
         await PreferencesUtil.get<number>(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53))) * 100);
       const itemsStr = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_ITEMS, 'resolution,decoder,render_fps,packet_loss,bitrate,network_latency,decode_latency');
@@ -685,6 +708,9 @@ struct SettingsPageV2 {
       this.autoBackupEnabled = await SettingsBackupService.isAutoBackupEnabled();
     } catch (error) {
       Logger.error('SettingsPageV2', 'Failed to load settings:', error);
+      if (!this.appearanceSettingsReady && this.settingsPageVisible) {
+        this.showToast('覆盖层设置加载失败，请重新打开设置页');
+      }
     } finally {
       this.isLoading = false;
       setTimeout(() => {
@@ -2377,7 +2403,7 @@ struct SettingsPageV2 {
                 title: '背景上下留白',
                 subtitle: '调整文字上下方的背景留白',
                 type: 'slider',
-                visible: this.enablePerfOverlay,
+                visible: this.enablePerfOverlay && this.appearanceSettingsReady,
                 value: this.perfOverlayVerticalPadding,
                 min: 0,
                 max: 32,
@@ -2385,13 +2411,13 @@ struct SettingsPageV2 {
                 unit: '',
                 onSliderChange: (value: number) => {
                   this.perfOverlayVerticalPadding = value;
-                  this.saveSetting(SettingsKeys.PERF_OVERLAY_VERTICAL_PADDING, value);
+                  this.appearanceSettingsWriter.savePadding(value);
                 }
               },
               {
                 title: '覆盖层大小',
                 type: 'slider',
-                visible: this.enablePerfOverlay,
+                visible: this.enablePerfOverlay && this.appearanceSettingsReady,
                 value: this.perfOverlayFontSize,
                 min: 8,
                 max: 24,
@@ -2399,7 +2425,7 @@ struct SettingsPageV2 {
                 unit: '',
                 onSliderChange: (value: number) => {
                   this.perfOverlayFontSize = value;
-                  this.saveSetting(SettingsKeys.PERF_OVERLAY_FONT_SIZE, value);
+                  this.appearanceSettingsWriter.saveFontSize(value);
                 }
               },
               {
@@ -2421,13 +2447,13 @@ struct SettingsPageV2 {
                 title: '恢复覆盖层外观默认值',
                 subtitle: '恢复大小、留白和背景透明度',
                 type: 'action',
-                visible: this.enablePerfOverlay,
+                visible: this.enablePerfOverlay && this.appearanceSettingsReady,
                 action: () => {
                   this.perfOverlayVerticalPadding = 12;
                   this.perfOverlayFontSize = 12;
                   this.perfOverlayBgOpacity = 47;
-                  this.saveSetting(SettingsKeys.PERF_OVERLAY_VERTICAL_PADDING, 12);
-                  this.saveSetting(SettingsKeys.PERF_OVERLAY_FONT_SIZE, 12);
+                  this.appearanceSettingsWriter.savePadding(12);
+                  this.appearanceSettingsWriter.saveFontSize(12);
                   this.saveSetting(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53);
                 }
               },
@@ -2913,13 +2939,16 @@ struct SettingsPageV2 {
   @Builder
   SettingItemView(item: SettingItem) {
     if (item.type === 'overlayPreview') {
-      PerformanceOverlayPreview({
-        fontSize: this.perfOverlayFontSize,
-        verticalPadding: this.perfOverlayVerticalPadding,
-        backgroundTransparency: this.perfOverlayBgOpacity,
-        isVertical: this.perfOverlayOrientation === '垂直'
-      })
-        .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium, top: AppSpacing.Medium, bottom: AppSpacing.Medium })
+      Column() {
+        PerformanceOverlayPreview({
+          fontSize: this.perfOverlayFontSize,
+          verticalPadding: this.perfOverlayVerticalPadding,
+          backgroundTransparency: this.perfOverlayBgOpacity,
+          isVertical: this.perfOverlayOrientation === '垂直'
+        })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium, top: AppSpacing.Medium, bottom: AppSpacing.Medium })
     } else if (item.type === 'segment') {
       // 分段按钮布局 - 参考系统设置风格：标题 + 居中分段按钮 + 辅助说明
       Column() {
@@ -3566,12 +3595,15 @@ struct SettingsPageV2 {
         ]
       }).then(async (result) => {
         if (result.index === 0) {
+          const appearanceWasReady = this.appearanceSettingsReady;
           try {
             const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-            await PreferencesUtil.clear(context);
+            this.appearanceSettingsReady = false;
+            await this.appearanceSettingsWriter.replacePreferences((): Promise<void> => PreferencesUtil.clear(context));
             this.loadSettings();
             this.showToast('已还原默认设置');
           } catch (e) {
+            this.appearanceSettingsReady = appearanceWasReady;
             this.showToast('还原失败，请重试');
           }
         }

@@ -24,6 +24,7 @@
 import { picker, fileIo, fileShare } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { AppearanceSettingsWriter } from './OverlayAppearanceSettings';
 import { promptAction } from '@kit.ArkUI';
 import { CryptoService } from './CryptoService';
 import { NvHttp } from './streaming/NvHttp';
@@ -171,40 +172,42 @@ export class SettingsBackupService {
 
       const prefs = await PreferencesUtil.getPreferences();
       
-      // 保留内部 key 的值
-      const preserved: Record<string, string | number | boolean> = {};
-      for (const key of INTERNAL_KEYS) {
-        try {
-          const val = await prefs.get(key, undefined);
-          if (val !== undefined) {
-            preserved[key] = val as string | number | boolean;
-          }
-        } catch {
-          // ignore
-        }
-      }
-      
-      // 清除所有旧数据再导入，避免残留 key 产生混合数据
-      await prefs.clear();
-      
-      // 恢复内部 key
-      const preservedKeys = Object.keys(preserved);
-      for (let i = 0; i < preservedKeys.length; i++) {
-        await prefs.put(preservedKeys[i], preserved[preservedKeys[i]]);
-      }
-      
       let count = 0;
-      const settingKeys = Object.keys(backup.settings);
-      for (let i = 0; i < settingKeys.length; i++) {
-        const key = settingKeys[i];
-        const value = backup.settings[key];
-        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-          await prefs.put(key, value);
-          count++;
+      await AppearanceSettingsWriter.getInstance().replacePreferences(async (): Promise<void> => {
+        // 保留内部 key 的值
+        const preserved: Record<string, string | number | boolean> = {};
+        for (const key of INTERNAL_KEYS) {
+          try {
+            const val = await prefs.get(key, undefined);
+            if (val !== undefined) {
+              preserved[key] = val as string | number | boolean;
+            }
+          } catch {
+            // ignore
+          }
         }
-      }
+      
+        // 清除所有旧数据再导入，避免残留 key 产生混合数据
+        await prefs.clear();
+      
+        // 恢复内部 key
+        const preservedKeys = Object.keys(preserved);
+        for (let i = 0; i < preservedKeys.length; i++) {
+          await prefs.put(preservedKeys[i], preserved[preservedKeys[i]]);
+        }
+      
+        const settingKeys = Object.keys(backup.settings);
+        for (let i = 0; i < settingKeys.length; i++) {
+          const key = settingKeys[i];
+          const value = backup.settings[key];
+          if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+            await prefs.put(key, value);
+            count++;
+          }
+        }
 
-      await prefs.flush();
+        await prefs.flush();
+      });
 
       // 恢复客户端 SSL 证书/私钥/唯一标识（保持配对关系）
       const filesDir = PreferencesUtil.getFilesDir();

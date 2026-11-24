@@ -173,6 +173,8 @@ export class StreamViewModel {
   // 私有服务
   private settingsService: SettingsService = SettingsService.getInstance();
   private streamingSession: StreamingSession | null = null;
+  private startGeneration: number = 0;
+  private disposed: boolean = false;
   
   // 连接终止回调（由 StreamPage 设置）
   private connectionTerminatedCallback: ((errorCode: number) => void) | null = null;
@@ -323,6 +325,8 @@ export class StreamViewModel {
     displayGuid?: string,
     useVdd?: boolean
   ): Promise<void> {
+    if (this.disposed) return;
+    const generation = ++this.startGeneration;
     this.connectionState = StreamConnectionState.CONNECTING;
     this.isStopping = false;
     this.connectionProgress = 0;
@@ -331,6 +335,7 @@ export class StreamViewModel {
     
     try {
       await this.loadSettings();
+      if (this.disposed || generation !== this.startGeneration) return;
       
       // 初始化 actualHdr 状态为用户请求的 HDR 状态
       this.actualHdr = this.streamConfig?.hdr || false;
@@ -446,8 +451,9 @@ export class StreamViewModel {
       this.connectionProgress = 0.05;
       this.connectionStageText = '正在获取服务器信息...';
       
-      await this.streamingSession.start(computerId, appId, this.streamConfig!, surfaceId, context, displayGuid, useVdd);
-      
+      await session.start(computerId, appId, this.streamConfig!, surfaceId, context, displayGuid, useVdd);
+      if (this.disposed || generation !== this.startGeneration || this.streamingSession !== session) return;
+
       // 同步实际使用的配置（可能与初始配置不同，例如 HDR 因设备不支持被禁用）
       const effectiveConfig = this.streamingSession.getEffectiveConfig();
       if (effectiveConfig) {
@@ -479,13 +485,16 @@ export class StreamViewModel {
 
       // 自动启动智能码率（如果用户在设置中启用了）
       const abrEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.ADAPTIVE_BITRATE, false);
+      if (this.disposed || generation !== this.startGeneration || this.streamingSession !== session) return;
       if (abrEnabled) {
         const abrMode = await PreferencesUtil.get<string>(SettingsKeys.ABR_MODE, 'balanced');
+        if (this.disposed || generation !== this.startGeneration || this.streamingSession !== session) return;
         await this.startAbr(abrMode);
         Logger.info('StreamViewModel', `StreamViewModel: 智能码率已自动启动 (mode=${abrMode})`);
       }
       
     } catch (err) {
+      if (this.disposed || generation !== this.startGeneration) return;
       this.stopFirstFrameWatcher();
       this.connectionState = StreamConnectionState.ERROR;
       const error = err as Error;
@@ -498,6 +507,7 @@ export class StreamViewModel {
    * 停止串流
    */
   async stopStreaming(): Promise<void> {
+    const generation = ++this.startGeneration;
     this.isStopping = true;
 
     // 重置旋转状态
@@ -514,11 +524,13 @@ export class StreamViewModel {
     AppStorage.setOrCreate('connectionPoor', false);
     
     // 停止串流会话
-    if (this.streamingSession) {
-      await this.streamingSession.stop();
-      this.streamingSession = null;
+    const session = this.streamingSession;
+    if (session) {
+      await session.stop();
+      if (this.streamingSession === session) this.streamingSession = null;
     }
 
+    if (generation !== this.startGeneration) return;
     this.connectionState = StreamConnectionState.DISCONNECTED;
     this.isStopping = false;
   }
@@ -706,23 +718,26 @@ export class StreamViewModel {
    * 调用服务器 API 退出当前运行的游戏并停止串流
    */
   async quitGame(): Promise<void> {
+    const generation = ++this.startGeneration;
     this.isStopping = true;
 
     // 调用 StreamingSession 的 quitApp 方法退出远程游戏
     try {
-      if (this.streamingSession) {
-        const success = await this.streamingSession.quitApp();
+      const session = this.streamingSession;
+      if (session) {
+        const success = await session.quitApp();
         if (success) {
           Logger.info('StreamViewModel', '远程游戏已退出');
         } else {
           Logger.warn('StreamViewModel', '退出远程游戏失败，但已断开连接');
         }
-        this.streamingSession = null;
+        if (this.streamingSession === session) this.streamingSession = null;
       }
     } catch (err) {
       Logger.error('StreamViewModel', '退出游戏失败:', err);
     }
 
+    if (generation !== this.startGeneration) return;
     this.connectionState = StreamConnectionState.DISCONNECTED;
     this.isStopping = false;
   }
@@ -955,10 +970,13 @@ export class StreamViewModel {
    * 清理资源
    */
   dispose(): void {
+    this.disposed = true;
+    this.startGeneration++;
     this.resetRotationState();
-    if (this.streamingSession) {
-      this.streamingSession.stop();
-      this.streamingSession = null;
+    if (!this.isStopping) {
+      this.stopStreaming().catch((err: Error) => {
+        Logger.warn('StreamViewModel', '清理串流失败: ' + err.message);
+      });
     }
   }
 }

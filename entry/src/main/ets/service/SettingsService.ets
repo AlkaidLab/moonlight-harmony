@@ -15,6 +15,7 @@
  * 将设置值转换为串流配置
  */
 import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { AppearanceSettingsWriter, OVERLAY_PADDING_KEY, OVERLAY_FONT_SIZE_KEY } from './OverlayAppearanceSettings';
 import { display } from '@kit.ArkUI';
 import { ConnectionPath } from './network/ConnectionPathService';
 import {
@@ -166,8 +167,8 @@ export class SettingsKeys {
   static readonly PERF_OVERLAY_LOCKED: string = 'settings_perf_overlay_locked';
   static readonly PERF_OVERLAY_ITEMS: string = 'settings_perf_overlay_items';
   static readonly PERF_OVERLAY_BG_OPACITY: string = 'settings_perf_overlay_bg_opacity';
-  static readonly PERF_OVERLAY_VERTICAL_PADDING: string = 'settings_perf_overlay_vertical_padding';
-  static readonly PERF_OVERLAY_FONT_SIZE: string = 'settings_perf_overlay_font_size';
+  static readonly PERF_OVERLAY_VERTICAL_PADDING: string = OVERLAY_PADDING_KEY;
+  static readonly PERF_OVERLAY_FONT_SIZE: string = OVERLAY_FONT_SIZE_KEY;
   static readonly PERF_OVERLAY_GUIDE_SHOWN: string = 'settings_perf_overlay_guide_shown';
   static readonly LATENCY_TOAST: string = 'settings_latency_toast';
   static readonly LAST_STREAM_DIAGNOSTICS: string = 'last_stream_diagnostics';
@@ -916,12 +917,14 @@ export class SettingsService {
    * 获取显示设置
    */
   async getDisplaySettings(): Promise<DisplaySettings> {
+    const appearanceWriter = AppearanceSettingsWriter.getInstance();
+    await appearanceWriter.load();
     const itemsStr = await this.getString(SettingsKeys.PERF_OVERLAY_ITEMS, 'resolution,decoder,render_fps,packet_loss,bitrate,network_latency,decode_latency');
     const items = itemsStr.split(',').filter(item => item.length > 0);
     const hdrPeakBrightnessNits = Math.max(300, Math.min(4000,
       await this.getNumber(SettingsKeys.HDR_PEAK_BRIGHTNESS_NITS, 1000)));
     
-    return {
+    const settings: DisplaySettings = {
       stretchVideo: await this.getBoolean(SettingsKeys.STRETCH_VIDEO, false),
       reverseResolution: await this.getBoolean(SettingsKeys.REVERSE_RESOLUTION, false),
       rotableScreen: await this.getBoolean(SettingsKeys.ROTABLE_SCREEN, false),
@@ -938,11 +941,13 @@ export class SettingsService {
       perfOverlayItems: items,
       perfOverlayBgOpacity: Math.max(0, Math.min(1,
         await this.getNumber(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53))),
-      perfOverlayVerticalPadding: Math.max(0, Math.min(32,
-        await this.getNumber(SettingsKeys.PERF_OVERLAY_VERTICAL_PADDING, 12))),
-      perfOverlayFontSize: Math.max(8, Math.min(24,
-        await this.getNumber(SettingsKeys.PERF_OVERLAY_FONT_SIZE, 12)))
+      perfOverlayVerticalPadding: 12,
+      perfOverlayFontSize: 12
     };
+    const appearance = appearanceWriter.snapshot();
+    settings.perfOverlayVerticalPadding = appearance.padding;
+    settings.perfOverlayFontSize = appearance.fontSize;
+    return settings;
   }
 
   /**

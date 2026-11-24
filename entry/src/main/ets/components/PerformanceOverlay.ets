@@ -30,6 +30,7 @@ import {
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { SettingsKeys } from '../service/SettingsService';
+import { AppearanceSettingsWriter, OverlayAppearanceValues } from '../service/OverlayAppearanceSettings';
 
 /**
  * 点击检测阈值常量
@@ -110,8 +111,12 @@ export struct PerformanceOverlay {
   
   // 弹窗控制器
   private settingsDialogController: CustomDialogController | null = null;
+  private appearanceSettingsWriter: AppearanceSettingsWriter | null = null;
+  private overlayVisible: boolean = false;
+  private appearanceWriterOwner: number = 0;
   
   aboutToAppear(): void {
+    this.overlayVisible = true;
     // 初始化位置和布局
     this.initPosition();
     
@@ -122,6 +127,23 @@ export struct PerformanceOverlay {
     this.overlayBgOpacity = this.viewModel.overlayState.config.bgOpacity;
     this.overlayVerticalPadding = this.viewModel.overlayState.config.verticalPadding;
     this.overlayFontSize = this.viewModel.overlayState.config.fontSize;
+    this.appearanceSettingsWriter = AppearanceSettingsWriter.getInstance();
+    this.appearanceWriterOwner = this.appearanceSettingsWriter.attach(
+      (saved: number): void => {
+        this.overlayVerticalPadding = saved;
+        this.viewModel.overlayState.config.verticalPadding = saved;
+        if (this.overlayVisible) this.showAppearanceSaveFailure();
+      },
+      (saved: number): void => {
+        this.overlayFontSize = saved;
+        this.viewModel.overlayState.config.fontSize = saved;
+        if (this.overlayVisible) this.showAppearanceSaveFailure();
+      }, (): void => {});
+    const appearance: OverlayAppearanceValues = this.appearanceSettingsWriter.snapshot();
+    this.overlayVerticalPadding = appearance.padding;
+    this.viewModel.overlayState.config.verticalPadding = appearance.padding;
+    this.overlayFontSize = appearance.fontSize;
+    this.viewModel.overlayState.config.fontSize = appearance.fontSize;
     
     // 同步启用项目列表（@State 数组驱动 UI）
     this.enabledItemsList = Array.from(this.viewModel.overlayState.config.enabledItems);
@@ -137,6 +159,8 @@ export struct PerformanceOverlay {
   }
   
   aboutToDisappear(): void {
+    this.overlayVisible = false;
+    this.appearanceSettingsWriter?.detach(this.appearanceWriterOwner);
     this.stopUpdateTimer();
     if (this.guideTimer !== -1) {
       clearTimeout(this.guideTimer);
@@ -1153,12 +1177,18 @@ export struct PerformanceOverlay {
   private updateVerticalPadding(value: number): void {
     this.overlayVerticalPadding = value;
     this.viewModel.overlayState.config.verticalPadding = value;
-    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_VERTICAL_PADDING, value);
+    this.appearanceSettingsWriter?.savePadding(value);
   }
 
   private updateFontSize(value: number): void {
     this.overlayFontSize = value;
     this.viewModel.overlayState.config.fontSize = value;
-    PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_FONT_SIZE, value);
+    this.appearanceSettingsWriter?.saveFontSize(value);
+  }
+
+  private showAppearanceSaveFailure(): void {
+    // The dialog keeps its own slider values; close it to avoid displaying a stale value.
+    this.settingsDialogController?.close();
+    ToastQueue.show({ message: '覆盖层设置保存失败，请重新调整', duration: 2500 });
   }
 }
