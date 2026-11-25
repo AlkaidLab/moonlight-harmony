@@ -15,6 +15,7 @@
  * 将设置值转换为串流配置
  */
 import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { Logger } from '../common/Logger';
 import { AppearanceSettingsWriter, OVERLAY_PADDING_KEY, OVERLAY_FONT_SIZE_KEY } from './OverlayAppearanceSettings';
 import { display } from '@kit.ArkUI';
 import { ConnectionPath } from './network/ConnectionPathService';
@@ -918,7 +919,12 @@ export class SettingsService {
    */
   async getDisplaySettings(): Promise<DisplaySettings> {
     const appearanceWriter = AppearanceSettingsWriter.getInstance();
-    await appearanceWriter.load();
+    try {
+      await appearanceWriter.load();
+    } catch (error) {
+      // Appearance must not prevent streaming; keep the writer's unconfirmed state for later retry.
+      Logger.warn('SettingsService', '读取性能覆盖层外观失败，使用当前值: ' + String(error));
+    }
     const itemsStr = await this.getString(SettingsKeys.PERF_OVERLAY_ITEMS, 'resolution,decoder,render_fps,packet_loss,bitrate,network_latency,decode_latency');
     const items = itemsStr.split(',').filter(item => item.length > 0);
     const hdrPeakBrightnessNits = Math.max(300, Math.min(4000,

@@ -3599,7 +3599,9 @@ struct SettingsPageV2 {
           try {
             const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
             this.appearanceSettingsReady = false;
-            await this.appearanceSettingsWriter.replacePreferences((): Promise<void> => PreferencesUtil.clear(context));
+            const appearance: OverlayAppearanceValues = { padding: 12, fontSize: 12 };
+            await this.appearanceSettingsWriter.replacePreferences((): Promise<void> => PreferencesUtil.clear(context),
+              appearance);
             this.loadSettings();
             this.showToast('已还原默认设置');
           } catch (e) {

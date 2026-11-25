@@ -24,7 +24,7 @@
 import { picker, fileIo, fileShare } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
-import { AppearanceSettingsWriter } from './OverlayAppearanceSettings';
+import { AppearanceSettingsWriter, OverlayAppearanceValues, OVERLAY_PADDING_KEY, OVERLAY_FONT_SIZE_KEY } from './OverlayAppearanceSettings';
 import { promptAction } from '@kit.ArkUI';
 import { CryptoService } from './CryptoService';
 import { NvHttp } from './streaming/NvHttp';
@@ -171,6 +171,15 @@ export class SettingsBackupService {
       }
 
       const prefs = await PreferencesUtil.getPreferences();
+
+      // A numeric default makes Preferences.get return the default for values
+      // of another type; use the imported values directly after a successful flush.
+      const importedPadding = backup.settings[OVERLAY_PADDING_KEY];
+      const importedFont = backup.settings[OVERLAY_FONT_SIZE_KEY];
+      const appearance: OverlayAppearanceValues = {
+        padding: typeof importedPadding === 'number' ? importedPadding : 12,
+        fontSize: typeof importedFont === 'number' ? importedFont : 12
+      };
       
       let count = 0;
       await AppearanceSettingsWriter.getInstance().replacePreferences(async (): Promise<void> => {
@@ -207,7 +216,7 @@ export class SettingsBackupService {
         }
 
         await prefs.flush();
-      });
+      }, appearance);
 
       // 恢复客户端 SSL 证书/私钥/唯一标识（保持配对关系）
       const filesDir = PreferencesUtil.getFilesDir();

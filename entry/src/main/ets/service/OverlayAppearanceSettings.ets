@@ -22,6 +22,7 @@ class AppearanceField {
   key: string;
   min: number;
   max: number;
+  defaultValue: number;
   saved: number;
   latest: number;
   revision: number = 0;
@@ -33,6 +34,7 @@ class AppearanceField {
     this.key = key;
     this.min = min;
     this.max = max;
+    this.defaultValue = initial;
     this.saved = initial;
     this.latest = initial;
   }
@@ -87,7 +89,8 @@ export class AppearanceSettingsWriter {
 
   private async readField(field: AppearanceField): Promise<number> {
     try {
-      return field.clamp(await this.read(field.key, field.saved), field.saved);
+      const fallback = field.known ? field.saved : field.defaultValue;
+      return field.clamp(await this.read(field.key, fallback), fallback);
     } catch (error) {
       if (!field.known) throw new Error('Failed to read overlay appearance: ' + String(error));
       return field.saved;
@@ -167,13 +170,22 @@ export class AppearanceSettingsWriter {
     this.queue = this.queue.then(async (): Promise<void> => {
       if (revision !== field.revision) return;
       try {
+        // A failed read or partially applied replacement leaves no safe value
+        // to restore if the following put updates the cache but flush fails.
+        if (!field.known) {
+          const saved = await this.readField(field);
+          this.confirm(field, saved);
+          if (revision !== field.revision) return;
+        }
         await this.write(field.key, value);
         this.confirm(field, value);
         try { onSaved(); } catch (_) {}
       } catch (_) {
         if (revision !== field.revision) return;
         // put may have changed the preferences cache before flush failed.
-        try { await this.write(field.key, field.saved); } catch (_) {}
+        if (field.known) {
+          try { await this.write(field.key, field.saved); } catch (_) {}
+        }
         if (revision !== field.revision) return;
         field.latest = field.saved;
         try { field.onFailure(field.saved); } catch (_) {}
@@ -185,7 +197,7 @@ export class AppearanceSettingsWriter {
     });
   }
 
-  async replacePreferences(replace: () => Promise<void>): Promise<void> {
+  async replacePreferences(replace: () => Promise<void>, restored?: OverlayAppearanceValues): Promise<void> {
     const paddingRevision = this.padding.revision;
     const fontRevision = this.font.revision;
     this.resetRevision++;
@@ -193,12 +205,17 @@ export class AppearanceSettingsWriter {
     const reset = this.queue.then(async (): Promise<void> => {
       try {
         await replace();
-        const padding = this.padding.clamp(await this.read(this.padding.key, 12), 12);
-        const font = this.font.clamp(await this.read(this.font.key, 12), 12);
+        const padding = this.padding.clamp(restored ? restored.padding : await this.read(this.padding.key, 12), 12);
+        const font = this.font.clamp(restored ? restored.fontSize : await this.read(this.font.key, 12), 12);
         this.confirm(this.padding, padding);
         this.confirm(this.font, font);
         if (paddingRevision === this.padding.revision) this.padding.latest = padding;
         if (fontRevision === this.font.revision) this.font.latest = font;
+      } catch (error) {
+        // Replacement may already have changed the preferences cache.
+        this.padding.known = false;
+        this.font.known = false;
+        throw new Error('Failed to replace settings: ' + String(error));
       } finally {
         this.resetsPending--;
         this.resetRevision++;
