@@ -390,8 +390,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private static shutdownBarrier: Promise<void> = Promise.resolve();
   private static resourceOwner: StreamingSession | null = null;
   private activeStart: Promise<void> | null = null;
-  private stopOperation: Promise<void> | null = null;
-  private quitOperation: Promise<boolean> | null = null;
+  private shutdownOperation: Promise<boolean> | null = null;
 
   // ---------------------------------------------------------------------------
   // 静态方法
@@ -687,7 +686,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     displayGuid?: string,
     useVdd?: boolean
   ): Promise<void> {
-    if (this.stopOperation || this.quitOperation) return;
+    if (this.shutdownOperation) return;
     if (this.activeStart) {
       await this.activeStart;
       return;
@@ -834,36 +833,33 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     }
   }
 
-  /**
-   * 停止串流会话
-   */
+  /** 停止串流会话。 */
   async stop(): Promise<void> {
-    if (this.stopOperation) {
-      await this.stopOperation;
-      return;
-    }
-    if (this.quitOperation) {
-      await this.quitOperation;
-      return;
-    }
+    await this.shutdown(false);
+  }
+
+  /** 退出远程应用并停止串流。 */
+  async quitApp(): Promise<boolean> {
+    return await this.shutdown(true);
+  }
+
+  private async shutdown(quit: boolean): Promise<boolean> {
+    if (this.shutdownOperation) return await this.shutdownOperation;
     this.userInitiatedStop = true;
-    const previousShutdown = StreamingSession.shutdownBarrier;
-    const pendingStart = this.activeStart;
-    const operation = this.stopAfterShutdown(previousShutdown, pendingStart);
-    this.stopOperation = operation;
-    StreamingSession.shutdownBarrier = operation.catch(() => {});
+    const operation = this.finishShutdown(StreamingSession.shutdownBarrier, this.activeStart, quit);
+    this.shutdownOperation = operation;
+    StreamingSession.shutdownBarrier = operation.then(() => {}, () => {});
     try {
-      await operation;
+      return await operation;
     } finally {
       if (StreamingSession.resourceOwner === this) StreamingSession.resourceOwner = null;
     }
   }
 
-  private async stopAfterShutdown(previousShutdown: Promise<void>, pendingStart: Promise<void> | null): Promise<void> {
-    await previousShutdown;
-    Logger.info('StreamingSession', '停止串流');
-    // 必须在 isRunning 翻转前注销：回调闭包以 isRunning 守卫，
-    // 翻转后 CANCEL 无法发出，主机侧活动触点将悬死到断连
+  private async finishShutdown(previous: Promise<void>, pendingStart: Promise<void> | null,
+    quit: boolean): Promise<boolean> {
+    await previous;
+    // 先注销触点，避免 isRunning 翻转后无法向主机发送 CANCEL。
     GamepadManager.getInstance().setControllerTouchCallback(null);
     this.isRunning = false;
     this.resetControllerState();
@@ -877,63 +873,18 @@ export class StreamingSession implements Ds5TouchpadInputSink {
       } catch (err) {
         Logger.warn('StreamingSession', '等待启动取消完成失败: ' + String(err));
       }
-      // In-flight initialization can finish after the first cleanup.
+      // 启动中的初始化可能在第一次清理之后才完成。
       await this.cleanup();
     }
-  }
-
-  /**
-   * 退出远程应用并停止串流
-   */
-  async quitApp(): Promise<boolean> {
-    if (this.quitOperation) return await this.quitOperation;
-    if (this.stopOperation) {
-      await this.stopOperation;
+    if (!quit || !this.nvHttp) return false;
+    try {
+      const success = await this.nvHttp.quitApp();
+      if (success) ComputerManager.getInstance().invalidateServerInfoCache(this.computerId);
+      return success;
+    } catch (err) {
+      Logger.error('StreamingSession', '退出远程应用出错:', err);
       return false;
     }
-    this.userInitiatedStop = true;
-    const previousShutdown = StreamingSession.shutdownBarrier;
-    const pendingStart = this.activeStart;
-    const operation = this.quitAfterShutdown(previousShutdown, pendingStart);
-    this.quitOperation = operation;
-    StreamingSession.shutdownBarrier = operation.then(() => {}, () => {});
-    try {
-      return await operation;
-    } finally {
-      if (StreamingSession.resourceOwner === this) StreamingSession.resourceOwner = null;
-    }
-  }
-
-  private async quitAfterShutdown(previousShutdown: Promise<void>, pendingStart: Promise<void> | null): Promise<boolean> {
-    await previousShutdown;
-    Logger.info('StreamingSession', '退出远程应用');
-    let quitSuccess = false;
-
-    // 与 stop() 相同：在 isRunning 翻转前注销触点回调并发送 CANCEL
-    GamepadManager.getInstance().setControllerTouchCallback(null);
-    this.isRunning = false;
-    this.stopNetworkBoost();
-    await this.cleanup();
-    if (pendingStart) {
-      try {
-        await pendingStart;
-      } catch (err) {
-        Logger.warn('StreamingSession', '等待启动取消完成失败: ' + String(err));
-      }
-      await this.cleanup();
-    }
-    // A launch request already in flight can finish after cancellation. Wait
-    // for it to settle before asking the host to quit the application.
-    if (this.nvHttp) {
-      try {
-        quitSuccess = await this.nvHttp.quitApp();
-        if (quitSuccess) ComputerManager.getInstance().invalidateServerInfoCache(this.computerId);
-        Logger.info('StreamingSession', quitSuccess ? '远程应用已退出' : '退出远程应用失败');
-      } catch (err) {
-        Logger.error('StreamingSession', '退出远程应用出错:', err);
-      }
-    }
-    return quitSuccess;
   }
 
   /**

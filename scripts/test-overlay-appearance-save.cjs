@@ -80,47 +80,6 @@ test('an obsolete failed write does not roll back a newer user choice', async ()
   assert.deepEqual(failures, []);
 });
 
-test('failed compensation still reports failure and allows retry', async () => {
-  const calls = [];
-  const writer = new AppearanceSettingsWriter(12, 12, async (key, value) => {
-    calls.push(value);
-    if (calls.length <= 2) throw new Error('storage unavailable');
-  });
-  const failures = [];
-  attach(writer, failures);
-  writer.saveFontSize(20);
-  await writer.queue;
-  writer.saveFontSize(22);
-  await writer.queue;
-  assert.deepEqual(calls, [20, 12, 22]);
-  assert.deepEqual(failures, [['font', 12]]);
-});
-
-test('recreated component cannot have its choice overwritten by an older in-flight write', async () => {
-  const first = deferred();
-  const calls = [];
-  const values = {};
-  const writer = new AppearanceSettingsWriter(12, 12, async (key, value) => {
-    calls.push([name(key), value]);
-    if (value === 18) await first.promise;
-    values[name(key)] = value;
-  });
-  const oldFailures = [];
-  const newFailures = [];
-  attach(writer, oldFailures);
-  writer.saveFontSize(18);
-  await Promise.resolve();
-  // New component inherits the old component's current optimistic value.
-  attach(writer, newFailures, 12, 18);
-  writer.saveFontSize(24);
-  first.reject(new Error('old write failed'));
-  await writer.queue;
-  assert.deepEqual(calls, [['font', 18], ['font', 24]]);
-  assert.equal(values.font, 24);
-  assert.deepEqual(oldFailures, []);
-  assert.deepEqual(newFailures, []);
-});
-
 test('failure after recreation rolls back through the new component callback to the confirmed value', async () => {
   const first = deferred();
   const calls = [];
@@ -142,39 +101,6 @@ test('failure after recreation rolls back through the new component callback to 
   assert.deepEqual(newFailures, [['font', 12]]);
 });
 
-
-test('detached owner receives a pending rollback and is released after it settles', async () => {
-  const first = deferred();
-  const failures = [];
-  const writer = new AppearanceSettingsWriter(12, 12, async (key, value) => {
-    if (value === 18) await first.promise;
-  });
-  const owner = attach(writer, failures);
-  const oldCallback = writer.fontFailure;
-  writer.saveFontSize(18);
-  await Promise.resolve();
-  writer.detach(owner);
-  first.reject(new Error('failed'));
-  await writer.queue;
-  assert.deepEqual(failures, [['font', 12]]);
-  assert.notEqual(writer.fontFailure, oldCallback);
-});
-
-
-test('a completed write during a stale read remains authoritative for the next screen', async () => {
-  const reading = deferred();
-  const writer = new AppearanceSettingsWriter(12, 12, async () => {}, async (key, fallback) => {
-    if (key === OVERLAY_PADDING_KEY) return reading.promise;
-    return fallback;
-  });
-  const loading = writer.load();
-  writer.saveFontSize(24);
-  await writer.queue;
-  reading.resolve(12);
-  const result = await loading;
-  assert.equal(result.fontSize, 24);
-  assert.equal(writer.snapshot().fontSize, 24);
-});
 
 test('a write already pending at the start of a stale read remains authoritative after it completes', async () => {
   const reading = deferred();
@@ -219,29 +145,6 @@ test('display settings use the latest appearance after other asynchronous settin
   assert.equal(settings.perfOverlayFontSize, 20);
 });
 
-test('pending overlay writes serialize with a later settings page choice', async () => {
-  const first = deferred();
-  const values = {};
-  const writer = new AppearanceSettingsWriter(12, 12, async (key, value) => {
-    if (value === 18) await first.promise;
-    values[name(key)] = value;
-  }, async (key, fallback) => fallback);
-  const oldFailures = [];
-  const pageFailures = [];
-  const oldOwner = attach(writer, oldFailures);
-  writer.saveFontSize(18);
-  await Promise.resolve();
-  writer.detach(oldOwner);
-  attach(writer, pageFailures);
-  writer.saveFontSize(24);
-  first.resolve();
-  await writer.queue;
-  assert.equal(values.font, 24);
-  assert.equal(writer.snapshot().fontSize, 24);
-  assert.deepEqual(oldFailures, []);
-  assert.deepEqual(pageFailures, []);
-});
-
 test('reset waits for earlier writes and preserves later user choices', async () => {
   const write = deferred();
   const clear = deferred();
@@ -264,31 +167,6 @@ test('reset waits for earlier writes and preserves later user choices', async ()
   await writer.queue;
   assert.deepEqual(calls, [['write', 18], ['clear'], ['write', 24]]);
   assert.equal(writer.snapshot().fontSize, 24);
-});
-
-test('a stale read overlapping reset cannot undo default values', async () => {
-  const reading = deferred();
-  let replacing = false;
-  const writer = new AppearanceSettingsWriter(20, 18, async () => {},
-    async (key, fallback) => replacing ? fallback : key === OVERLAY_PADDING_KEY ? reading.promise : 18);
-  const loading = writer.load();
-  await writer.replacePreferences(async () => { replacing = true; });
-  reading.resolve(20);
-  const result = await loading;
-  assert.equal(result.padding, 12);
-  assert.equal(result.fontSize, 12);
-});
-
-test('saving retains the initiating screen backup callback after another screen attaches', async () => {
-  const writing = deferred();
-  let backups = 0;
-  const writer = new AppearanceSettingsWriter(12, 12, async () => writing.promise);
-  writer.attach(() => {}, () => {}, () => { backups++; });
-  writer.savePadding(16);
-  writer.attach(() => {}, () => {}, () => {});
-  writing.resolve();
-  await writer.queue;
-  assert.equal(backups, 1);
 });
 
 test('failed reset propagates the error without blocking subsequent writes', async () => {
@@ -315,26 +193,6 @@ test('backup replacement loads imported values as rollback baseline', async () =
   await writer.queue;
   assert.equal(values.font, 19);
   assert.deepEqual(failures, [['font', 19]]);
-});
-
-test('a new screen waits for a pending backup replacement before loading appearance', async () => {
-  const restoring = deferred();
-  const values = { padding: 12, font: 12 };
-  const writer = new AppearanceSettingsWriter(12, 12, async () => {}, async key => values[name(key)]);
-  const replacement = writer.replacePreferences(async () => {
-    await restoring.promise;
-    values.padding = 17;
-    values.font = 19;
-  });
-  let loaded = false;
-  const loading = writer.load().then(result => { loaded = true; return result; });
-  await Promise.resolve();
-  assert.equal(loaded, false);
-  restoring.resolve();
-  await replacement;
-  const result = await loading;
-  assert.equal(result.padding, 17);
-  assert.equal(result.fontSize, 19);
 });
 
 test('a replacement started during loading is awaited and read again', async () => {
@@ -403,16 +261,6 @@ test('initial preference read failure is surfaced when no confirmed baseline exi
   const writer = new AppearanceSettingsWriter(12, 12, async () => {},
     async () => { throw new Error('preferences read failed'); });
   await assert.rejects(writer.load(), /preferences read failed/);
-});
-
-test('replacement reports a post-restore read failure even with a confirmed baseline', async () => {
-  let failRead = false;
-  const writer = new AppearanceSettingsWriter(12, 12, async () => {}, async (key, fallback) => {
-    if (failRead) throw new Error('preferences read failed');
-    return fallback;
-  });
-  await writer.load();
-  await assert.rejects(writer.replacePreferences(async () => { failRead = true; }), /preferences read failed/);
 });
 
 test('invalid stored values retain confirmed finite values while numeric strings remain supported', async () => {

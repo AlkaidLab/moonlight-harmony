@@ -18,38 +18,51 @@ export interface OverlayAppearanceValues {
   fontSize: number;
 }
 
-/** Serialize appearance writes and retain the last successfully flushed values. */
+class AppearanceField {
+  key: string;
+  min: number;
+  max: number;
+  saved: number;
+  latest: number;
+  revision: number = 0;
+  pending: boolean = false;
+  known: boolean = false;
+  onFailure: (saved: number) => void = (_saved: number): void => {};
+
+  constructor(key: string, initial: number, min: number, max: number) {
+    this.key = key;
+    this.min = min;
+    this.max = max;
+    this.saved = initial;
+    this.latest = initial;
+  }
+
+  clamp(value: number, fallback: number): number {
+    return Number.isFinite(value) ? Math.max(this.min, Math.min(this.max, value)) : fallback;
+  }
+}
+
+/** Serializes writes and restores the last confirmed value on failure. */
 export class AppearanceSettingsWriter {
   private static instance: AppearanceSettingsWriter | null = null;
   private queue: Promise<void> = Promise.resolve();
-  private paddingRevision: number = 0;
-  private fontRevision: number = 0;
-  private savedPadding: number;
-  private savedFontSize: number;
-  private paddingKnown: boolean = false;
-  private fontKnown: boolean = false;
-  private latestPadding: number;
-  private latestFontSize: number;
-  private paddingPending: boolean = false;
-  private fontPending: boolean = false;
+  private padding: AppearanceField;
+  private font: AppearanceField;
   private resetRevision: number = 0;
   private resetsPending: number = 0;
   private ownerRevision: number = 0;
   private ownerDetached: boolean = false;
-  private paddingFailure: (saved: number) => void = (_saved: number): void => {};
-  private fontFailure: (saved: number) => void = (_saved: number): void => {};
+  private savedCallback: () => void = (): void => {};
   private write: (key: string, value: number) => Promise<void>;
   private read: (key: string, fallback: number) => Promise<number>;
-  private savedCallback: () => void = (): void => {};
 
-  constructor(padding: number, fontSize: number, write: (key: string, value: number) => Promise<void>,
+  constructor(padding: number, fontSize: number,
+    write: (key: string, value: number) => Promise<void>,
     read: (key: string, fallback: number) => Promise<number>) {
-    this.savedPadding = padding;
-    this.savedFontSize = fontSize;
-    this.latestPadding = padding;
-    this.latestFontSize = fontSize;
     this.write = write;
     this.read = read;
+    this.padding = new AppearanceField(OVERLAY_PADDING_KEY, padding, 0, 32);
+    this.font = new AppearanceField(OVERLAY_FONT_SIZE_KEY, fontSize, 8, 24);
   }
 
   static getInstance(): AppearanceSettingsWriter {
@@ -63,83 +76,62 @@ export class AppearanceSettingsWriter {
 
   private static async readPreference(key: string, fallback: number): Promise<number> {
     const prefs = await PreferencesUtil.getPreferences();
-    const rawValue = await prefs.get(key, fallback);
-    if (typeof rawValue === 'number') {
-      return Number.isFinite(rawValue) ? rawValue : fallback;
-    }
-    if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
-      const parsed = Number(rawValue);
+    const value = await prefs.get(key, fallback);
+    if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
       return Number.isFinite(parsed) ? parsed : fallback;
     }
     return fallback;
   }
 
-  private clamp(value: number, fallback: number, min: number, max: number): number {
-    return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
-  }
-
-  private async readPadding(): Promise<number> {
+  private async readField(field: AppearanceField): Promise<number> {
     try {
-      return this.clamp(await this.read(OVERLAY_PADDING_KEY, this.savedPadding), this.savedPadding, 0, 32);
+      return field.clamp(await this.read(field.key, field.saved), field.saved);
     } catch (error) {
-      if (!this.paddingKnown) throw new Error('Failed to read overlay padding: ' + String(error));
-      return this.savedPadding;
-    }
-  }
-
-  private async readFontSize(): Promise<number> {
-    try {
-      return this.clamp(await this.read(OVERLAY_FONT_SIZE_KEY, this.savedFontSize), this.savedFontSize, 8, 24);
-    } catch (error) {
-      if (!this.fontKnown) throw new Error('Failed to read overlay font size: ' + String(error));
-      return this.savedFontSize;
+      if (!field.known) throw new Error('Failed to read overlay appearance: ' + String(error));
+      return field.saved;
     }
   }
 
   async load(): Promise<OverlayAppearanceValues> {
     while (true) {
-      // A replacement can begin before or during the asynchronous reads.
-      // Wait for it and retry so a new screen sees the restored values.
-      while (this.resetsPending > 0) {
-        await this.queue;
-      }
-      const paddingRevision = this.paddingRevision;
-      const fontRevision = this.fontRevision;
-      const paddingWasPending = this.paddingPending;
-      const fontWasPending = this.fontPending;
+      while (this.resetsPending > 0) await this.queue;
+      const paddingRevision = this.padding.revision;
+      const fontRevision = this.font.revision;
+      const paddingPending = this.padding.pending;
+      const fontPending = this.font.pending;
       const resetRevision = this.resetRevision;
       let padding: number;
-      let fontSize: number;
+      let font: number;
       try {
-        padding = await this.readPadding();
-        fontSize = await this.readFontSize();
+        padding = await this.readField(this.padding);
+        font = await this.readField(this.font);
       } catch (error) {
         if (this.resetsPending > 0 || resetRevision !== this.resetRevision) continue;
         throw new Error('Failed to load overlay appearance: ' + String(error));
       }
       if (this.resetsPending > 0 || resetRevision !== this.resetRevision) continue;
-      if (!paddingWasPending && !this.paddingPending && paddingRevision === this.paddingRevision) {
-        this.savedPadding = padding;
-        this.latestPadding = padding;
-        this.paddingKnown = true;
+      if (!paddingPending && !this.padding.pending && paddingRevision === this.padding.revision) {
+        this.confirm(this.padding, padding);
+        this.padding.latest = padding;
       }
-      if (!fontWasPending && !this.fontPending && fontRevision === this.fontRevision) {
-        this.savedFontSize = fontSize;
-        this.latestFontSize = fontSize;
-        this.fontKnown = true;
+      if (!fontPending && !this.font.pending && fontRevision === this.font.revision) {
+        this.confirm(this.font, font);
+        this.font.latest = font;
       }
       return this.snapshot();
     }
   }
 
   snapshot(): OverlayAppearanceValues {
-    return { padding: this.latestPadding, fontSize: this.latestFontSize };
+    return { padding: this.padding.latest, fontSize: this.font.latest };
   }
 
   attach(onPaddingFailure: (saved: number) => void, onFontFailure: (saved: number) => void,
     onSaved: () => void): number {
-    this.paddingFailure = onPaddingFailure;
-    this.fontFailure = onFontFailure;
+    this.padding.onFailure = onPaddingFailure;
+    this.font.onFailure = onFontFailure;
     this.savedCallback = onSaved;
     this.ownerDetached = false;
     return ++this.ownerRevision;
@@ -152,51 +144,61 @@ export class AppearanceSettingsWriter {
   }
 
   private releaseDetachedOwner(): void {
-    if (this.ownerDetached && !this.paddingPending && !this.fontPending) {
-      this.paddingFailure = (_saved: number): void => {};
-      this.fontFailure = (_saved: number): void => {};
+    if (this.ownerDetached && !this.padding.pending && !this.font.pending) {
+      this.padding.onFailure = (_saved: number): void => {};
+      this.font.onFailure = (_saved: number): void => {};
       this.savedCallback = (): void => {};
     }
   }
 
-  savePadding(value: number): void {
-    const revision = ++this.paddingRevision;
-    this.latestPadding = value;
-    this.paddingPending = true;
-    this.enqueue(OVERLAY_PADDING_KEY, value,
-      () => revision === this.paddingRevision, () => this.savedPadding,
-      (saved: number) => { this.savedPadding = saved; this.paddingKnown = true; },
-      () => { this.paddingPending = false; this.releaseDetachedOwner(); },
-      (saved: number) => { this.latestPadding = saved; this.paddingFailure(saved); });
+  savePadding(value: number): void { this.save(this.padding, value); }
+  saveFontSize(value: number): void { this.save(this.font, value); }
+
+  private confirm(field: AppearanceField, value: number): void {
+    field.saved = value;
+    field.known = true;
   }
 
-  saveFontSize(value: number): void {
-    const revision = ++this.fontRevision;
-    this.latestFontSize = value;
-    this.fontPending = true;
-    this.enqueue(OVERLAY_FONT_SIZE_KEY, value,
-      () => revision === this.fontRevision, () => this.savedFontSize,
-      (saved: number) => { this.savedFontSize = saved; this.fontKnown = true; },
-      () => { this.fontPending = false; this.releaseDetachedOwner(); },
-      (saved: number) => { this.latestFontSize = saved; this.fontFailure(saved); });
+  private save(field: AppearanceField, value: number): void {
+    const revision = ++field.revision;
+    field.latest = value;
+    field.pending = true;
+    const onSaved = this.savedCallback;
+    this.queue = this.queue.then(async (): Promise<void> => {
+      if (revision !== field.revision) return;
+      try {
+        await this.write(field.key, value);
+        this.confirm(field, value);
+        try { onSaved(); } catch (_) {}
+      } catch (_) {
+        if (revision !== field.revision) return;
+        // put may have changed the preferences cache before flush failed.
+        try { await this.write(field.key, field.saved); } catch (_) {}
+        if (revision !== field.revision) return;
+        field.latest = field.saved;
+        try { field.onFailure(field.saved); } catch (_) {}
+      }
+      if (revision === field.revision) {
+        field.pending = false;
+        this.releaseDetachedOwner();
+      }
+    });
   }
 
   async replacePreferences(replace: () => Promise<void>): Promise<void> {
-    const paddingRevision = this.paddingRevision;
-    const fontRevision = this.fontRevision;
+    const paddingRevision = this.padding.revision;
+    const fontRevision = this.font.revision;
     this.resetRevision++;
     this.resetsPending++;
     const reset = this.queue.then(async (): Promise<void> => {
       try {
         await replace();
-        const padding = this.clamp(await this.read(OVERLAY_PADDING_KEY, 12), 12, 0, 32);
-        const fontSize = this.clamp(await this.read(OVERLAY_FONT_SIZE_KEY, 12), 12, 8, 24);
-        this.savedPadding = padding;
-        this.savedFontSize = fontSize;
-        this.paddingKnown = true;
-        this.fontKnown = true;
-        if (paddingRevision === this.paddingRevision) this.latestPadding = padding;
-        if (fontRevision === this.fontRevision) this.latestFontSize = fontSize;
+        const padding = this.padding.clamp(await this.read(this.padding.key, 12), 12);
+        const font = this.font.clamp(await this.read(this.font.key, 12), 12);
+        this.confirm(this.padding, padding);
+        this.confirm(this.font, font);
+        if (paddingRevision === this.padding.revision) this.padding.latest = padding;
+        if (fontRevision === this.font.revision) this.font.latest = font;
       } finally {
         this.resetsPending--;
         this.resetRevision++;
@@ -204,39 +206,5 @@ export class AppearanceSettingsWriter {
     });
     this.queue = reset.catch((): void => {});
     await reset;
-  }
-
-  private enqueue(key: string, value: number, isCurrent: () => boolean, getSaved: () => number,
-    confirm: (saved: number) => void, settle: () => void, onFailure: (saved: number) => void): void {
-    const onSaved = this.savedCallback;
-    this.queue = this.queue.then(async (): Promise<void> => {
-      // Skip obsolete slider positions, but never reorder writes that have started.
-      if (!isCurrent()) return;
-      try {
-        await this.write(key, value);
-        confirm(value);
-        try { onSaved(); } catch (_) {}
-        if (isCurrent()) settle();
-      } catch (_) {
-        if (!isCurrent()) return;
-        const saved = getSaved();
-        // A failed flush may still have changed the preferences cache. Restore it
-        // before handling the error; if restoration also fails, inform the user.
-        try {
-          await this.write(key, saved);
-        } catch (_) {
-          // No further recovery is possible here; the next change can retry.
-        }
-        if (isCurrent()) {
-          try {
-            onFailure(saved);
-          } catch (_) {
-            // A UI callback must not permanently block subsequent saves.
-          } finally {
-            settle();
-          }
-        }
-      }
-    });
   }
 }
