@@ -15,7 +15,10 @@
  * 将设置值转换为串流配置
  */
 import { PreferencesUtil } from '../utils/PreferencesUtil';
+import { Logger } from '../common/Logger';
+import { AppearanceSettingsWriter, OVERLAY_PADDING_KEY, OVERLAY_FONT_SIZE_KEY } from './OverlayAppearanceSettings';
 import { display } from '@kit.ArkUI';
+import { ConnectionPath } from './network/ConnectionPathService';
 import {
   StreamConfig,
   normalizeVideoFecPercentage,
@@ -42,6 +45,10 @@ export class SettingsKeys {
   static readonly FPS: string = 'settings_fps';
   static readonly CUSTOM_FPS: string = 'settings_custom_fps';
   static readonly BITRATE: string = 'settings_bitrate';
+  static readonly REMOTE_STREAM_ENABLED: string = 'settings_remote_stream_enabled';
+  static readonly REMOTE_RESOLUTION: string = 'settings_remote_resolution';
+  static readonly REMOTE_FPS: string = 'settings_remote_fps';
+  static readonly REMOTE_BITRATE: string = 'settings_remote_bitrate';
   static readonly VIDEO_FEC_PERCENTAGE: string = 'settings_video_fec_percentage';
   static readonly VIDEO_FEC_FIXED_PERCENTAGE: string = 'settings_video_fec_fixed_percentage';
   static readonly BANDWIDTH_PROBE_ENABLED: string = 'settings_bandwidth_probe_enabled';
@@ -161,6 +168,8 @@ export class SettingsKeys {
   static readonly PERF_OVERLAY_LOCKED: string = 'settings_perf_overlay_locked';
   static readonly PERF_OVERLAY_ITEMS: string = 'settings_perf_overlay_items';
   static readonly PERF_OVERLAY_BG_OPACITY: string = 'settings_perf_overlay_bg_opacity';
+  static readonly PERF_OVERLAY_VERTICAL_PADDING: string = OVERLAY_PADDING_KEY;
+  static readonly PERF_OVERLAY_FONT_SIZE: string = OVERLAY_FONT_SIZE_KEY;
   static readonly PERF_OVERLAY_GUIDE_SHOWN: string = 'settings_perf_overlay_guide_shown';
   static readonly LATENCY_TOAST: string = 'settings_latency_toast';
   static readonly LAST_STREAM_DIAGNOSTICS: string = 'last_stream_diagnostics';
@@ -285,6 +294,8 @@ export interface DisplaySettings {
   perfOverlayLocked?: boolean;       // 是否锁定覆盖层
   perfOverlayItems?: string[];       // 启用的性能项目
   perfOverlayBgOpacity?: number;     // 背景透明度 (0.0-1.0)
+  perfOverlayVerticalPadding?: number; // 上下背景内边距 (vp)
+  perfOverlayFontSize?: number;        // 正文字号 (fp)
 }
 
 /**
@@ -778,6 +789,57 @@ export class SettingsService {
     return config;
   }
 
+  /** Apply per-field video overrides for the selected connection path. Never persists the result. */
+  async applyRemoteStreamSettings(config: StreamConfig, path: ConnectionPath): Promise<boolean> {
+    if (path !== ConnectionPath.WAN && path !== ConnectionPath.VPN) return false;
+    if (!await this.getBoolean(SettingsKeys.REMOTE_STREAM_ENABLED, false)) return false;
+
+    const resolutionStr = await this.getString(SettingsKeys.REMOTE_RESOLUTION, '');
+    const fpsStr = await this.getString(SettingsKeys.REMOTE_FPS, '');
+    const bitrateRaw = await this.getNumber(SettingsKeys.REMOTE_BITRATE, -1);
+
+    if (resolutionStr.length > 0) {
+      // Reject malformed stored values rather than silently changing a stream to 1080p.
+      const validPreset = ['360p', '480p', '720p', '1080p', '1440p', '4K', 'native'].includes(resolutionStr);
+      const custom = resolutionStr.match(/^(\d+)x(\d+)$/);
+      const validCustom = custom !== null && Number(custom[1]) >= 320 && Number(custom[1]) <= 7680 &&
+        Number(custom[2]) >= 240 && Number(custom[2]) <= 4320;
+      if (validPreset || validCustom) {
+        const resolution = this.parseResolution(resolutionStr);
+        const hostScale = await this.getNumber(SettingsKeys.HOST_SCALE, 100);
+        const reverse = await this.getBoolean(SettingsKeys.REVERSE_RESOLUTION, false);
+        let width = Math.round(resolution.width * hostScale / 100);
+        let height = Math.round(resolution.height * hostScale / 100);
+        if (reverse) {
+          const tmp = width;
+          width = height;
+          height = tmp;
+        }
+        config.width = width;
+        config.height = height;
+      }
+    }
+    if (fpsStr.length > 0) {
+      const validFps = /^(30|60|90|119\.88|120|144) FPS$/.test(fpsStr) ||
+        /^(\d{2,3}) FPS$/.test(fpsStr) || /^自定义:\d{2,3}$/.test(fpsStr);
+      const fps = this.parseFps(fpsStr);
+      if (validFps && Number.isFinite(fps) && fps >= 10 && fps <= 360) {
+        config.fps = fps;
+        config.clientRefreshRateX100 = this.parseClientRefreshRateX100(fpsStr);
+      }
+    }
+    if (Number.isFinite(bitrateRaw) && bitrateRaw >= 0 && bitrateRaw <= 800) {
+      config.bitrate = bitrateRaw === 0
+        ? getRecommendedBitrate(config.width, config.height, config.fps)
+        : Math.round(bitrateRaw * 1000);
+    } else if (bitrateRaw === -1 && (resolutionStr.length > 0 || fpsStr.length > 0)) {
+      // Preserve the global automatic bitrate relationship when resolution or FPS changes.
+      const globalBitrate = await this.getNumber(SettingsKeys.BITRATE, 0);
+      if (globalBitrate <= 0) config.bitrate = getRecommendedBitrate(config.width, config.height, config.fps);
+    }
+    return true;
+  }
+
   /**
    * 获取输入设置
    */
@@ -856,12 +918,19 @@ export class SettingsService {
    * 获取显示设置
    */
   async getDisplaySettings(): Promise<DisplaySettings> {
+    const appearanceWriter = AppearanceSettingsWriter.getInstance();
+    try {
+      await appearanceWriter.load();
+    } catch (error) {
+      // Appearance must not prevent streaming; keep the writer's unconfirmed state for later retry.
+      Logger.warn('SettingsService', '读取性能覆盖层外观失败，使用当前值: ' + String(error));
+    }
     const itemsStr = await this.getString(SettingsKeys.PERF_OVERLAY_ITEMS, 'resolution,decoder,render_fps,packet_loss,bitrate,network_latency,decode_latency');
     const items = itemsStr.split(',').filter(item => item.length > 0);
     const hdrPeakBrightnessNits = Math.max(300, Math.min(4000,
       await this.getNumber(SettingsKeys.HDR_PEAK_BRIGHTNESS_NITS, 1000)));
     
-    return {
+    const settings: DisplaySettings = {
       stretchVideo: await this.getBoolean(SettingsKeys.STRETCH_VIDEO, false),
       reverseResolution: await this.getBoolean(SettingsKeys.REVERSE_RESOLUTION, false),
       rotableScreen: await this.getBoolean(SettingsKeys.ROTABLE_SCREEN, false),
@@ -876,8 +945,15 @@ export class SettingsService {
       perfOverlayPosition: await this.getString(SettingsKeys.PERF_OVERLAY_POSITION, '右上角'),
       perfOverlayLocked: await this.getBoolean(SettingsKeys.PERF_OVERLAY_LOCKED, false),
       perfOverlayItems: items,
-      perfOverlayBgOpacity: await this.getNumber(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53)
+      perfOverlayBgOpacity: Math.max(0, Math.min(1,
+        await this.getNumber(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53))),
+      perfOverlayVerticalPadding: 12,
+      perfOverlayFontSize: 12
     };
+    const appearance = appearanceWriter.snapshot();
+    settings.perfOverlayVerticalPadding = appearance.padding;
+    settings.perfOverlayFontSize = appearance.fontSize;
+    return settings;
   }
 
   /**

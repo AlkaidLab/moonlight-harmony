@@ -30,6 +30,7 @@ import {
   VIDEO_FEC_AUTOMATIC
 } from '../model/StreamConfig';
 import { PerfLabels } from '../components/PerformanceOverlayManager';
+import { PerformanceOverlayPreview } from '../components/PerformanceOverlayPreview';
 import { SettingSlider, SettingSliderConfig, LogarithmicSlider } from '../components/SettingSlider';
 import { SettingsBackupService } from '../service/SettingsBackupService';
 import { OptionPickerDialog, OptionPickerDialogConfig, OptionItem as DialogOptionItem } from '../components/dialogs/OptionPickerDialog';
@@ -38,6 +39,7 @@ import { BackgroundImageUtil, BackgroundImageType } from '../utils/BackgroundIma
 import { InputInterceptorService } from '../service/input/InputInterceptorService';
 import { GamepadManager } from '../service/input/GamepadManager';
 import { SettingsKeys, UiSettings } from '../service/SettingsService';
+import { AppearanceSettingsWriter, OverlayAppearanceValues } from '../service/OverlayAppearanceSettings';
 import { loadChangelog, ChangelogEntry, ChangeItem, getChangeTypeConfig } from '../common/Changelog';
 import { InlineSegmentPicker } from '../components/InlineSegmentPicker';
 import { isAihdrSupported } from '../components/AihdrModifier';
@@ -101,7 +103,7 @@ interface SettingItem {
   title: string;
   subtitle?: string;
   tooltip?: string;
-  type: 'toggle' | 'select' | 'input' | 'action' | 'slider' | 'segment' | 'grid';
+  type: 'toggle' | 'select' | 'input' | 'action' | 'slider' | 'segment' | 'grid' | 'overlayPreview';
   key?: string;
   value?: string | boolean | number;
   options?: string[];
@@ -109,6 +111,7 @@ interface SettingItem {
   disabled?: boolean;  // 是否禁用
   isPro?: boolean;     // 是否为 Pro 功能（需要开发者模式）
   visible?: boolean;   // 是否可见（用于条件显示子选项，默认 true）
+  isRemoteChild?: boolean; // 远程设置的子项
   // Slider 专用属性
   min?: number;
   max?: number;
@@ -161,6 +164,12 @@ struct SettingsPageV2 {
   @State fps: string = '60 FPS';
   @State customFps: number = 0;  // 自定义帧率值 (0 表示使用预设)
   @State bitrate: number = 20;
+  @State remoteStreamEnabled: boolean = false;
+  @State remoteResolution: string = '';
+  @State remoteFps: string = '';
+  @State remoteBitrate: number = -1;
+  private customResolutionForRemote: boolean = false;
+  private customFpsForRemote: boolean = false;
   @State bandwidthProbeEnabled: boolean = false;
   @State meteredBandwidthProbeEnabled: boolean = false;
   @State adaptiveBitrate: boolean = false;
@@ -267,6 +276,10 @@ struct SettingsPageV2 {
   @State perfOverlayOrientation: string = '垂直';
   @State perfOverlayPosition: string = '右上角';
   @State perfOverlayLocked: boolean = false;
+  @State perfOverlayVerticalPadding: number = 12;
+  @State perfOverlayFontSize: number = 12;
+  @State appearanceSettingsReady: boolean = false;
+  @State perfOverlayBgOpacity: number = 47;
   @State perfOverlayItems: string[] = ['resolution', 'decoder', 'render_fps', 'packet_loss', 'bitrate', 'network_latency', 'decode_latency'];
   @State latencyToast: boolean = false;
   @State disableWarnings: boolean = false;
@@ -357,6 +370,9 @@ struct SettingsPageV2 {
   // CustomDialogController
   private optionPickerDialogController: CustomDialogController | null = null;
   private multiOptionPickerDialogController: CustomDialogController | null = null;
+  private appearanceSettingsWriter: AppearanceSettingsWriter = AppearanceSettingsWriter.getInstance();
+  private appearanceWriterOwner: number = 0;
+  private settingsPageVisible: boolean = false;
   private licensesDialogController: CustomDialogController | null = null;
   private privacyDialogController: CustomDialogController | null = null;
   private changelogDialogController: CustomDialogController | null = null;
@@ -366,10 +382,17 @@ struct SettingsPageV2 {
   private nativeHeight: number = 0;
 
   aboutToAppear(): void {
+    this.settingsPageVisible = true;
     this.loadVersionInfo();
     this.loadNativeResolution();
     this.loadSettings();
     this.loadDecoderCapabilities();
+  }
+
+  aboutToDisappear(): void {
+    this.settingsPageVisible = false;
+    this.appearanceSettingsReady = false;
+    this.appearanceSettingsWriter.detach(this.appearanceWriterOwner);
   }
 
   onPageShow(): void {
@@ -445,6 +468,22 @@ struct SettingsPageV2 {
     }
   }
 
+  private formatResolution(value: string): string {
+    return value === 'native' ? '本机 (' + this.nativeWidth.toString() + '×' + this.nativeHeight.toString() + ')' : value;
+  }
+
+  private formatFps(value: string): string {
+    return value.startsWith('自定义:') ? value.split(':')[1] + ' FPS (自定义)' : value;
+  }
+
+  private remoteBitrateDescription(): string {
+    if (this.remoteBitrate < 0) {
+      return this.bitrate === 0 ? '跟随全局 · 自动（按远程画面推荐）' :
+        '跟随全局 · ' + this.bitrate.toString() + ' Mbps';
+    }
+    return this.remoteBitrate === 0 ? '自动推荐' : this.remoteBitrate.toString() + ' Mbps';
+  }
+
   /**
    * 获取当前设置的推荐码率（Mbps）
    */
@@ -509,6 +548,10 @@ struct SettingsPageV2 {
       this.fps = await PreferencesUtil.get<string>(SettingsKeys.FPS, '60 FPS');
       this.customFps = await PreferencesUtil.get<number>(SettingsKeys.CUSTOM_FPS, 0);
       this.bitrate = await PreferencesUtil.get<number>(SettingsKeys.BITRATE, 0);
+      this.remoteStreamEnabled = await this.loadBoolean(SettingsKeys.REMOTE_STREAM_ENABLED, false);
+      this.remoteResolution = await PreferencesUtil.get<string>(SettingsKeys.REMOTE_RESOLUTION, '');
+      this.remoteFps = await PreferencesUtil.get<string>(SettingsKeys.REMOTE_FPS, '');
+      this.remoteBitrate = await PreferencesUtil.get<number>(SettingsKeys.REMOTE_BITRATE, -1);
       this.bandwidthProbeEnabled = await this.loadBoolean(SettingsKeys.BANDWIDTH_PROBE_ENABLED, false);
       this.meteredBandwidthProbeEnabled = await this.loadBoolean(
         SettingsKeys.METERED_BANDWIDTH_PROBE_ENABLED, false);
@@ -626,6 +669,23 @@ struct SettingsPageV2 {
       this.perfOverlayOrientation = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_ORIENTATION, '垂直');
       this.perfOverlayPosition = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_POSITION, '右上角');
       this.perfOverlayLocked = await this.loadBoolean(SettingsKeys.PERF_OVERLAY_LOCKED, false);
+      await this.appearanceSettingsWriter.load();
+      if (!this.settingsPageVisible) return;
+      this.appearanceWriterOwner = this.appearanceSettingsWriter.attach(
+        (saved: number): void => {
+          this.perfOverlayVerticalPadding = saved;
+          if (this.settingsPageVisible) this.showToast('覆盖层设置保存失败，请重新调整');
+        },
+        (saved: number): void => {
+          this.perfOverlayFontSize = saved;
+          if (this.settingsPageVisible) this.showToast('覆盖层设置保存失败，请重新调整');
+        }, (): void => { SettingsBackupService.scheduleAutoSave(); });
+      const appearance: OverlayAppearanceValues = this.appearanceSettingsWriter.snapshot();
+      this.perfOverlayVerticalPadding = appearance.padding;
+      this.perfOverlayFontSize = appearance.fontSize;
+      this.appearanceSettingsReady = true;
+      this.perfOverlayBgOpacity = 100 - Math.round(Math.max(0, Math.min(1,
+        await PreferencesUtil.get<number>(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53))) * 100);
       const itemsStr = await PreferencesUtil.get<string>(SettingsKeys.PERF_OVERLAY_ITEMS, 'resolution,decoder,render_fps,packet_loss,bitrate,network_latency,decode_latency');
       this.perfOverlayItems = itemsStr.split(',').filter(item => item.length > 0);
       this.latencyToast = await this.loadBoolean(SettingsKeys.LATENCY_TOAST, false);
@@ -648,6 +708,9 @@ struct SettingsPageV2 {
       this.autoBackupEnabled = await SettingsBackupService.isAutoBackupEnabled();
     } catch (error) {
       Logger.error('SettingsPageV2', 'Failed to load settings:', error);
+      if (!this.appearanceSettingsReady && this.settingsPageVisible) {
+        this.showToast('覆盖层设置加载失败，请重新打开设置页');
+      }
     } finally {
       this.isLoading = false;
       setTimeout(() => {
@@ -1088,6 +1151,61 @@ struct SettingsPageV2 {
                 onSliderChange: (value: number) => {
                   this.bitrate = value;
                   this.saveSetting(SettingsKeys.BITRATE, value);
+                }
+              },
+              {
+                title: '启用远程串流设置',
+                subtitle: '互联网或 VPN 串流时使用，未修改的项目跟随全局',
+                type: 'toggle',
+                value: this.remoteStreamEnabled,
+                action: () => {
+                  this.remoteStreamEnabled = !this.remoteStreamEnabled;
+                  this.saveSetting(SettingsKeys.REMOTE_STREAM_ENABLED, this.remoteStreamEnabled);
+                }
+              },
+              {
+                title: '远程分辨率',
+                isRemoteChild: true,
+                subtitle: this.remoteResolution === '' ? '跟随全局 · ' + this.formatResolution(this.resolution) :
+                  this.formatResolution(this.remoteResolution),
+                type: 'select',
+                visible: this.remoteStreamEnabled,
+                action: () => this.showResolutionPicker(true)
+              },
+              {
+                title: '远程帧率',
+                isRemoteChild: true,
+                subtitle: this.remoteFps === '' ? '跟随全局 · ' + this.formatFps(this.fps) :
+                  this.formatFps(this.remoteFps),
+                type: 'select',
+                visible: this.remoteStreamEnabled,
+                action: () => this.showFpsPicker(true)
+              },
+              {
+                title: '远程码率上限',
+                isRemoteChild: true,
+                subtitle: this.remoteBitrateDescription(),
+                type: 'select',
+                visible: this.remoteStreamEnabled,
+                action: () => this.showRemoteBitratePicker()
+              },
+              {
+                title: '远程码率数值',
+                isRemoteChild: true,
+                subtitle: '作为测速和串流中自动调节的上限',
+                type: 'slider',
+                value: this.remoteBitrate > 0 ? this.remoteBitrate : 20,
+                min: 1,
+                max: 800,
+                step: 1,
+                unit: ' Mbps',
+                isLogarithmic: true,
+                snapValues: [5, 10, 15, 20, 30, 40, 50, 60, 80, 100, 120, 150, 200, 300, 400, 500],
+                snapThreshold: 8,
+                visible: this.remoteStreamEnabled && this.remoteBitrate > 0,
+                onSliderChange: (value: number) => {
+                  this.remoteBitrate = value;
+                  this.saveSetting(SettingsKeys.REMOTE_BITRATE, value);
                 }
               },
               {
@@ -2277,6 +2395,69 @@ struct SettingsPageV2 {
                 action: () => this.showPerfOverlayItemsPicker()
               },
               {
+                title: '覆盖层预览',
+                type: 'overlayPreview',
+                visible: this.enablePerfOverlay
+              },
+              {
+                title: '背景上下留白',
+                subtitle: '调整文字上下方的背景留白',
+                type: 'slider',
+                visible: this.enablePerfOverlay && this.appearanceSettingsReady,
+                value: this.perfOverlayVerticalPadding,
+                min: 0,
+                max: 32,
+                step: 1,
+                unit: '',
+                onSliderChange: (value: number) => {
+                  this.perfOverlayVerticalPadding = value;
+                  this.appearanceSettingsWriter.savePadding(value);
+                }
+              },
+              {
+                title: '覆盖层大小',
+                type: 'slider',
+                visible: this.enablePerfOverlay && this.appearanceSettingsReady,
+                value: this.perfOverlayFontSize,
+                min: 8,
+                max: 24,
+                step: 1,
+                unit: '',
+                onSliderChange: (value: number) => {
+                  this.perfOverlayFontSize = value;
+                  this.appearanceSettingsWriter.saveFontSize(value);
+                }
+              },
+              {
+                title: '背景透明度',
+                subtitle: '0% 为不透明，100% 为完全透明',
+                type: 'slider',
+                visible: this.enablePerfOverlay,
+                value: this.perfOverlayBgOpacity,
+                min: 0,
+                max: 100,
+                step: 1,
+                unit: '%',
+                onSliderChange: (value: number) => {
+                  this.perfOverlayBgOpacity = value;
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 1 - value / 100);
+                }
+              },
+              {
+                title: '恢复覆盖层外观默认值',
+                subtitle: '恢复大小、留白和背景透明度',
+                type: 'action',
+                visible: this.enablePerfOverlay && this.appearanceSettingsReady,
+                action: () => {
+                  this.perfOverlayVerticalPadding = 12;
+                  this.perfOverlayFontSize = 12;
+                  this.perfOverlayBgOpacity = 47;
+                  this.appearanceSettingsWriter.savePadding(12);
+                  this.appearanceSettingsWriter.saveFontSize(12);
+                  this.saveSetting(SettingsKeys.PERF_OVERLAY_BG_OPACITY, 0.53);
+                }
+              },
+              {
                 title: '串流后延迟提示',
                 subtitle: '串流结束后显示延迟统计',
                 type: 'toggle',
@@ -2757,7 +2938,18 @@ struct SettingsPageV2 {
 
   @Builder
   SettingItemView(item: SettingItem) {
-    if (item.type === 'segment') {
+    if (item.type === 'overlayPreview') {
+      Column() {
+        PerformanceOverlayPreview({
+          fontSize: this.perfOverlayFontSize,
+          verticalPadding: this.perfOverlayVerticalPadding,
+          backgroundTransparency: this.perfOverlayBgOpacity,
+          isVertical: this.perfOverlayOrientation === '垂直'
+        })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium, top: AppSpacing.Medium, bottom: AppSpacing.Medium })
+    } else if (item.type === 'segment') {
       // 分段按钮布局 - 参考系统设置风格：标题 + 居中分段按钮 + 辅助说明
       Column() {
         // 标题行
@@ -2996,7 +3188,8 @@ struct SettingsPageV2 {
       }
       .width('100%')
       .height(item.type === 'slider' ? 70 : 60)
-      .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
+      .padding({ left: item.isRemoteChild ? AppSpacing.Medium + 16 : AppSpacing.Medium, right: AppSpacing.Medium })
+      .backgroundColor(item.isRemoteChild ? AppColors.SurfaceDark : Color.Transparent)
       .focusable(!item.disabled)
       .focusOnTouch(true)
       .focusBox({
@@ -3076,7 +3269,8 @@ struct SettingsPageV2 {
     this.showPicker(config);
   }
 
-  private showResolutionPicker(): void {
+  private showResolutionPicker(remote: boolean = false): void {
+    this.customResolutionForRemote = remote;
     // 预设分辨率（对齐Android）
     const presetOptions: PickerOption[] = [
       { title: '720p', subtitle: '1280×720', value: '720p' } as PickerOption,
@@ -3140,23 +3334,33 @@ struct SettingsPageV2 {
       );
     }
     
-    const allOptions = [...presetOptions, ...nativeOptions, ...customOptions, customActionOption, ...manageOptions];
+    const inheritOptions: PickerOption[] = remote ? [
+      { title: '跟随全局', subtitle: '当前：' + this.formatResolution(this.resolution), value: '' } as PickerOption
+    ] : [];
+    const allOptions = [...inheritOptions, ...presetOptions, ...nativeOptions, ...customOptions,
+      customActionOption, ...manageOptions];
     
     const config: PickerConfig = {
-      title: '选择分辨率',
+      title: remote ? '选择远程分辨率' : '选择分辨率',
       subtitle: '选择适合您显示器的分辨率',
-      selectedValue: this.resolution,
+      selectedValue: remote ? this.remoteResolution : this.resolution,
       options: allOptions,
       onSelect: (option: PickerOption) => {
         const value = option.value as string;
         if (value === 'custom_input') {
           // 延迟打开输入框，等待 picker dialog 关闭动画完成
+          this.customResolutionForRemote = remote;
           setTimeout(() => this.showAddResolutionInput(), 200);
         } else if (value === 'manage_custom') {
           setTimeout(() => this.showCustomResolutionDialog(), 200);
         } else {
-          this.resolution = value;
-          this.saveSetting(SettingsKeys.RESOLUTION, value);
+          if (remote) {
+            this.remoteResolution = value;
+            this.saveSetting(SettingsKeys.REMOTE_RESOLUTION, value);
+          } else {
+            this.resolution = value;
+            this.saveSetting(SettingsKeys.RESOLUTION, value);
+          }
         }
       }
     };
@@ -3293,13 +3497,25 @@ struct SettingsPageV2 {
 
     // 检查是否已存在
     if (this.customResolutions.includes(resolution)) {
-      this.showToast('该分辨率已存在');
+      if (this.customResolutionForRemote) {
+        this.remoteResolution = resolution;
+        this.saveSetting(SettingsKeys.REMOTE_RESOLUTION, resolution);
+        this.customResolutionForRemote = false;
+        this.showToast(`已选择远程分辨率: ${resolution}`);
+      } else {
+        this.showToast('该分辨率已存在');
+      }
       return;
     }
 
     // 添加并保存
     this.customResolutions = [...this.customResolutions, resolution];
     this.saveCustomResolutions();
+    if (this.customResolutionForRemote) {
+      this.remoteResolution = resolution;
+      this.saveSetting(SettingsKeys.REMOTE_RESOLUTION, resolution);
+      this.customResolutionForRemote = false;
+    }
     this.showToast(`已添加: ${resolution}`);
   }
 
@@ -3314,6 +3530,10 @@ struct SettingsPageV2 {
     }
     this.customResolutions = this.customResolutions.filter(r => r !== resolution);
     this.saveCustomResolutions();
+    if (this.remoteResolution === resolution) {
+      this.remoteResolution = '';
+      this.saveSetting(SettingsKeys.REMOTE_RESOLUTION, '');
+    }
     // 如果当前正在使用被删除的分辨率，回退到 1080p
     if (this.resolution === resolution) {
       this.resolution = '1080p';
@@ -3346,6 +3566,10 @@ struct SettingsPageV2 {
         if (result.index === 0) {
           this.customResolutions = [];
           this.saveCustomResolutions();
+          if (/^\d+x\d+$/.test(this.remoteResolution)) {
+            this.remoteResolution = '';
+            this.saveSetting(SettingsKeys.REMOTE_RESOLUTION, '');
+          }
           this.showToast('已清空所有自定义分辨率');
         }
       }).catch((err: Error) => {
@@ -3371,12 +3595,17 @@ struct SettingsPageV2 {
         ]
       }).then(async (result) => {
         if (result.index === 0) {
+          const appearanceWasReady = this.appearanceSettingsReady;
           try {
             const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-            await PreferencesUtil.clear(context);
+            this.appearanceSettingsReady = false;
+            const appearance: OverlayAppearanceValues = { padding: 12, fontSize: 12 };
+            await this.appearanceSettingsWriter.replacePreferences((): Promise<void> => PreferencesUtil.clear(context),
+              appearance);
             this.loadSettings();
             this.showToast('已还原默认设置');
           } catch (e) {
+            this.appearanceSettingsReady = appearanceWasReady;
             this.showToast('还原失败，请重试');
           }
         }
@@ -3397,10 +3626,12 @@ struct SettingsPageV2 {
     this.saveSetting(SettingsKeys.CUSTOM_RESOLUTIONS, resStr);
   }
 
-  private showFpsPicker(): void {
+  private showFpsPicker(remote: boolean = false): void {
+    this.customFpsForRemote = remote;
     const supportedRates = getSupportedDisplayRates();
     // Older systems may not expose capabilities. Keep standard choices available.
     const deviceRefreshRate = supportedRates.length > 0 ? Math.max(...supportedRates) : 144;
+    const matchedRate: number = Math.round(deviceRefreshRate);
 
     // 基础帧率选项（所有设备通用）
     const presetOptions: PickerOption[] = [
@@ -3409,25 +3640,25 @@ struct SettingsPageV2 {
     ];
 
     // 根据设备刷新率动态添加高帧率选项
-    if (deviceRefreshRate >= 90) {
+    if (matchedRate >= 90) {
       presetOptions.push({ title: '90 FPS', subtitle: '高刷新率', value: '90 FPS' } as PickerOption);
     }
-    if (deviceRefreshRate >= 120) {
+    if (matchedRate >= 120) {
       presetOptions.push(
         { title: '119.88 FPS', subtitle: '视频标准 (NTSC)', value: '119.88 FPS' } as PickerOption,
         { title: '120 FPS', subtitle: '极致体验', value: '120 FPS' } as PickerOption
       );
     }
-    if (deviceRefreshRate >= 144) {
+    if (matchedRate >= 144) {
       presetOptions.push({ title: '144 FPS', subtitle: '高刷屏专属', value: '144 FPS' } as PickerOption);
     }
     // 如果设备刷新率不在预设中（如 165Hz, 240Hz 等），动态添加
-    const knownRates = [30, 60, 90, 120, 144];
-    if (deviceRefreshRate > 60 && !knownRates.includes(deviceRefreshRate)) {
+    const knownRates: number[] = [30, 60, 90, 120, 144];
+    if (matchedRate > 60 && matchedRate <= 360 && !knownRates.includes(matchedRate)) {
       presetOptions.push({
-        title: `${deviceRefreshRate} FPS`,
-        subtitle: `匹配设备屏幕 (${deviceRefreshRate}Hz)`,
-        value: `${deviceRefreshRate} FPS`
+        title: matchedRate.toString() + ' FPS',
+        subtitle: '匹配设备屏幕 (' + deviceRefreshRate.toString() + 'Hz)',
+        value: matchedRate.toString() + ' FPS'
       } as PickerOption);
     }
     
@@ -3440,6 +3671,22 @@ struct SettingsPageV2 {
         value: `自定义:${this.customFps}`
       } as PickerOption);
     }
+    if (!remote && this.fps.startsWith('自定义:') &&
+      this.fps !== '自定义:' + this.customFps.toString()) {
+      customOptions.push({
+        title: this.fps.split(':')[1] + ' FPS',
+        subtitle: '当前全局自定义帧率',
+        value: this.fps
+      });
+    }
+    if (remote && this.remoteFps.startsWith('自定义:') &&
+      this.remoteFps !== '自定义:' + this.customFps.toString()) {
+      customOptions.push({
+        title: `${this.remoteFps.split(':')[1]} FPS`,
+        subtitle: '当前远程自定义帧率',
+        value: this.remoteFps
+      } as PickerOption);
+    }
     
     // 添加"自定义..."选项
     const customActionOption: PickerOption = {
@@ -3448,26 +3695,29 @@ struct SettingsPageV2 {
       value: 'custom_input'
     } as PickerOption;
     
-    const options = [...presetOptions, ...customOptions, customActionOption];
+    const inheritOptions: PickerOption[] = remote ? [
+      { title: '跟随全局', subtitle: '当前：' + this.formatFps(this.fps), value: '' } as PickerOption
+    ] : [];
+    const options = [...inheritOptions, ...presetOptions, ...customOptions, customActionOption];
     
     const config: PickerConfig = {
-      title: '选择帧率',
+      title: remote ? '选择远程帧率' : '选择帧率',
       subtitle: supportedRates.length > 0 ? `屏幕最高 ${deviceRefreshRate}Hz · 更高帧率需要更多带宽` : '屏幕最高刷新率未知 · 请按设备能力选择',
-      selectedValue: this.fps,
+      selectedValue: remote ? this.remoteFps : this.fps,
       options: options,
       onSelect: (option: PickerOption) => {
         const value = option.value as string;
         if (value === 'custom_input') {
           // 延迟打开输入框，等待 picker dialog 关闭动画完成
           setTimeout(() => this.showCustomFpsInput(), 200);
-        } else if (value.startsWith('自定义:')) {
-          // 选择了已保存的自定义帧率
-          this.fps = value;
-          this.saveSetting(SettingsKeys.FPS, value);
         } else {
-          // 选择了预设帧率
-          this.fps = value;
-          this.saveSetting(SettingsKeys.FPS, value);
+          if (remote) {
+            this.remoteFps = value;
+            this.saveSetting(SettingsKeys.REMOTE_FPS, value);
+          } else {
+            this.fps = value;
+            this.saveSetting(SettingsKeys.FPS, value);
+          }
         }
       }
     };
@@ -3509,7 +3759,8 @@ struct SettingsPageV2 {
   private showCustomFpsInput(): void {
     this.textInputTitle = '自定义帧率';
     this.textInputPlaceholder = '输入帧率值 (如: 144)';
-    this.textInputValue = this.customFps > 0 ? this.customFps.toString() : '';
+    this.textInputValue = this.customFpsForRemote && this.remoteFps.startsWith('自定义:') ?
+      this.remoteFps.split(':')[1] : this.customFps > 0 ? this.customFps.toString() : '';
     this.textInputCallback = (value: string) => {
       if (value && value.trim()) {
         this.setCustomFps(value.trim());
@@ -3526,8 +3777,8 @@ struct SettingsPageV2 {
     const fps = parseInt(value);
     
     // 验证帧率值
-    if (isNaN(fps)) {
-      this.showToast('请输入有效的数字');
+    if (!/^\d+$/.test(value) || isNaN(fps)) {
+      this.showToast('请输入有效的整数');
       return;
     }
     
@@ -3536,17 +3787,44 @@ struct SettingsPageV2 {
       return;
     }
     
-    // 保存自定义帧率
-    this.customFps = fps;
-    this.fps = `自定义:${fps}`;
-    this.saveSetting(SettingsKeys.CUSTOM_FPS, fps);
-    this.saveSetting(SettingsKeys.FPS, this.fps);
+    // 远程帧率保存在独立设置中，避免覆盖全局的自定义选项。
+    if (this.customFpsForRemote) {
+      this.remoteFps = `自定义:${fps}`;
+      this.saveSetting(SettingsKeys.REMOTE_FPS, this.remoteFps);
+      this.customFpsForRemote = false;
+    } else {
+      this.customFps = fps;
+      this.saveSetting(SettingsKeys.CUSTOM_FPS, fps);
+      this.fps = `自定义:${fps}`;
+      this.saveSetting(SettingsKeys.FPS, this.fps);
+    }
     
     this.showToast(`已设置帧率为 ${fps} FPS`);
   }
 
   // 已转换为 Slider，保留空方法以防未来需要
   private showBitratePicker(): void { }
+
+  private showRemoteBitratePicker(): void {
+    const options: PickerOption[] = [
+      { title: '跟随全局', subtitle: this.bitrate === 0 ? '自动（按远程画面推荐）' :
+        this.bitrate.toString() + ' Mbps', value: -1 } as PickerOption,
+      { title: '自动推荐', subtitle: '按远程分辨率和帧率计算', value: 0 } as PickerOption,
+      { title: '手动设置', subtitle: '设置独立的远程码率上限', value: 1 } as PickerOption
+    ];
+    this.showPicker({
+      title: '远程码率上限',
+      selectedValue: this.remoteBitrate > 0 ? 1 : this.remoteBitrate,
+      options: options,
+      onSelect: (option: PickerOption) => {
+        const value = option.value as number;
+        this.remoteBitrate = value > 0
+          ? (this.remoteBitrate > 0 ? this.remoteBitrate : this.bitrate > 0 ? this.bitrate : 20)
+          : value;
+        this.saveSetting(SettingsKeys.REMOTE_BITRATE, this.remoteBitrate);
+      }
+    });
+  }
 
   private showAudioConfigPicker(): void {
     const options: PickerOption[] = [

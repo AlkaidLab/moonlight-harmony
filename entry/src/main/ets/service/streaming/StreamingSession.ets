@@ -34,6 +34,8 @@ import { AudioVibrationService } from '../AudioVibrationService';
 import { AdaptiveBitrateService } from './AdaptiveBitrateService';
 import { NetworkBoostService } from '../network/NetworkBoostService';
 import { BandwidthProbeService } from '../network/BandwidthProbeService';
+import { ConnectionPathInfo, ConnectionPathService } from '../network/ConnectionPathService';
+import { SettingsService } from '../SettingsService';
 import { Ds5TouchpadInputSink } from '../input/Ds5TouchpadGestureHandler';
 import { onClipboardDataReceived } from '../jni/ClipboardBridge';
 import { sampleDisplayBrightness, MeasuredBrightnessProfile } from './BrightnessSampler';
@@ -383,6 +385,12 @@ const SDR_WHITE_MIN_DELTA_RATIO = 0.05;
  * - 性能统计
  */
 export class StreamingSession implements Ds5TouchpadInputSink {
+  // Native connection and surface resources are process-wide. A later page must
+  // wait for an older session's in-flight startup and teardown to finish.
+  private static shutdownBarrier: Promise<void> = Promise.resolve();
+  private static resourceOwner: StreamingSession | null = null;
+  private activeStart: Promise<void> | null = null;
+  private shutdownOperation: Promise<boolean> | null = null;
 
   // ---------------------------------------------------------------------------
   // 静态方法
@@ -474,6 +482,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
   private appId: number = 0;
   private config: StreamConfig | null = null;
   private userBitrateLimitKbps: number = 0;
+  private connectionPathInfo: ConnectionPathInfo | null = null;
   private surfaceId: string = '';
   private isRunning: boolean = false;
   private networkBoostGeneration: number | null = null;
@@ -677,15 +686,51 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     displayGuid?: string,
     useVdd?: boolean
   ): Promise<void> {
+    if (this.shutdownOperation) return;
+    if (this.activeStart) {
+      await this.activeStart;
+      return;
+    }
+    // Claim shared native resources synchronously. If navigation creates a new
+    // page before the old page is destroyed, retire its session first.
+    const previousOwner = StreamingSession.resourceOwner;
+    if (previousOwner !== null && previousOwner !== this) {
+      previousOwner.stop().catch((err: Error) => {
+        Logger.warn('StreamingSession', '停止旧会话失败: ' + err.message);
+      });
+    }
+    StreamingSession.resourceOwner = this;
+    this.userInitiatedStop = false;
+    const barrier = StreamingSession.shutdownBarrier;
+    const operation = this.startAfterShutdown(barrier, computerId, appId, config, surfaceId, context, displayGuid, useVdd);
+    this.activeStart = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.activeStart === operation) this.activeStart = null;
+    }
+  }
+
+  private async startAfterShutdown(
+    barrier: Promise<void>,
+    computerId: string,
+    appId: number,
+    config: StreamConfig,
+    surfaceId: string,
+    context?: common.UIAbilityContext,
+    displayGuid?: string,
+    useVdd?: boolean
+  ): Promise<void> {
+    await barrier;
+    if (this.userInitiatedStop) return;
     this.computerId = computerId;
     this.appId = appId;
     this.config = config;
-    this.userBitrateLimitKbps = config.bitrate;
+    this.connectionPathInfo = null;
     this.surfaceId = surfaceId;
     this.displayGuid = displayGuid || '';
     this.useVdd = useVdd || false;
     this.abilityContext = context;
-    this.userInitiatedStop = false;
     this.lastMeasuredSdrNits = 0;
     this.lastSentSdrWhiteNits = 0;
     this.brightnessSamplePending = false;
@@ -697,7 +742,6 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.registerBrightnessProbe();
 
     Logger.info('StreamingSession', `开始串流: computer=${computerId}, app=${appId}`);
-    Logger.info('StreamingSession', `配置: ${config.width}x${config.height}@${config.fps}fps, ${config.bitrate}kbps, ${config.codec}`);
     Logger.info('StreamingSession', `HDR: hdr=${config.hdr}, hdrMode=${config.hdrMode}, colorRange=${config.colorRange}`);
     if (this.displayGuid || this.useVdd) {
       Logger.info('StreamingSession', `显示器: displayGuid=${this.displayGuid}, useVdd=${this.useVdd}`);
@@ -705,6 +749,15 @@ export class StreamingSession implements Ds5TouchpadInputSink {
 
     try {
       await this.resolveComputer(computerId, context);
+      if (this.userInitiatedStop) return;
+      this.connectionPathInfo = await ConnectionPathService.inspect(this.selectedAddress);
+      if (this.userInitiatedStop) return;
+      const remoteApplied = await SettingsService.getInstance().applyRemoteStreamSettings(config,
+        this.connectionPathInfo.path);
+      if (this.userInitiatedStop) return;
+      this.userBitrateLimitKbps = config.bitrate;
+      Logger.info('StreamingSession', `配置: path=${this.connectionPathInfo.path}, remote=${remoteApplied}, ` +
+        `${config.width}x${config.height}@${config.fps}fps, ${config.bitrate}kbps, ${config.codec}`);
       // USB/IP 反向隧道：OTG 手柄直通主机。必须先于本地 USB 驱动标记排除，
       // 异步进行（含权限弹窗与主机能力查询），不阻塞会话启动
       if (this.computer && this.nvHttp) {
@@ -718,25 +771,37 @@ export class StreamingSession implements Ds5TouchpadInputSink {
           });
       }
       await this.applyInitialBitratePolicy();
+      if (this.userInitiatedStop) return;
       this.generateInputKey();
       // 并行执行：网络请求（fetchServerInfo）与本地 native 初始化没有依赖，
       // 可重叠执行节省 50-300ms。两者都会更新 stageProgressCallback 文本，
       // 后到者覆盖前者，对用户感知无影响。
-      await Promise.all([
-        this.fetchServerInfo(),
-        this.initializeNative(),
-      ]);
+      const serverInfoTask = this.fetchServerInfo();
+      const nativeInitTask = this.initializeNative();
+      try {
+        await Promise.all([serverInfoTask, nativeInitTask]);
+      } catch (err) {
+        // Do not release shared resources until both branches have settled.
+        await Promise.all([serverInfoTask.catch(() => {}), nativeInitTask.catch(() => {})]);
+        throw new Error(String(err));
+      }
+      if (this.userInitiatedStop) return;
       this.applyPreConnectionSettings(config);
       await this.setupVideoSurface();
+      if (this.userInitiatedStop) return;
 
       if (this.stageProgressCallback) {
         this.stageProgressCallback(0, '正在启动应用...');
       }
       const cachedCurrentGame = this.getCachedCurrentGame();
-      await this.launchApp(cachedCurrentGame);
-      // 成功 launch/resume 后 currentGame 必然变化（变为本次 appId），
-      // 让缓存立即失效，避免下次进入串流复用陈旧的 currentGame 导致误判
-      ComputerManager.getInstance().invalidateServerInfoCache(this.computerId);
+      try {
+        await this.launchApp(cachedCurrentGame);
+      } finally {
+        // The host may have changed even if a later request failed or startup
+        // was canceled while an earlier request was in flight.
+        ComputerManager.getInstance().invalidateServerInfoCache(this.computerId);
+      }
+      if (this.userInitiatedStop) return;
       await this.connectToServer();
       if (this.userInitiatedStop) {
         return;
@@ -768,14 +833,33 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     }
   }
 
-  /**
-   * 停止串流会话
-   */
+  /** 停止串流会话。 */
   async stop(): Promise<void> {
-    Logger.info('StreamingSession', '停止串流');
+    await this.shutdown(false);
+  }
+
+  /** 退出远程应用并停止串流。 */
+  async quitApp(): Promise<boolean> {
+    return await this.shutdown(true);
+  }
+
+  private async shutdown(quit: boolean): Promise<boolean> {
+    if (this.shutdownOperation) return await this.shutdownOperation;
     this.userInitiatedStop = true;
-    // 必须在 isRunning 翻转前注销：回调闭包以 isRunning 守卫，
-    // 翻转后 CANCEL 无法发出，主机侧活动触点将悬死到断连
+    const operation = this.finishShutdown(StreamingSession.shutdownBarrier, this.activeStart, quit);
+    this.shutdownOperation = operation;
+    StreamingSession.shutdownBarrier = operation.then(() => {}, () => {});
+    try {
+      return await operation;
+    } finally {
+      if (StreamingSession.resourceOwner === this) StreamingSession.resourceOwner = null;
+    }
+  }
+
+  private async finishShutdown(previous: Promise<void>, pendingStart: Promise<void> | null,
+    quit: boolean): Promise<boolean> {
+    await previous;
+    // 先注销触点，避免 isRunning 翻转后无法向主机发送 CANCEL。
     GamepadManager.getInstance().setControllerTouchCallback(null);
     this.isRunning = false;
     this.resetControllerState();
@@ -783,31 +867,24 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     this.audioVibrationService.stop();
     this.stopNetworkBoost();
     await this.cleanup();
-  }
-
-  /**
-   * 退出远程应用并停止串流
-   */
-  async quitApp(): Promise<boolean> {
-    Logger.info('StreamingSession', '退出远程应用');
-    this.userInitiatedStop = true;
-    let quitSuccess = false;
-
-    if (this.nvHttp) {
+    if (pendingStart) {
       try {
-        quitSuccess = await this.nvHttp.quitApp();
-        Logger.info('StreamingSession', quitSuccess ? '远程应用已退出' : '退出远程应用失败');
+        await pendingStart;
       } catch (err) {
-        Logger.error('StreamingSession', '退出远程应用出错:', err);
+        Logger.warn('StreamingSession', '等待启动取消完成失败: ' + String(err));
       }
+      // 启动中的初始化可能在第一次清理之后才完成。
+      await this.cleanup();
     }
-
-    // 与 stop() 相同：在 isRunning 翻转前注销触点回调并发送 CANCEL
-    GamepadManager.getInstance().setControllerTouchCallback(null);
-    this.isRunning = false;
-    this.stopNetworkBoost();
-    await this.cleanup();
-    return quitSuccess;
+    if (!quit || !this.nvHttp) return false;
+    try {
+      const success = await this.nvHttp.quitApp();
+      if (success) ComputerManager.getInstance().invalidateServerInfoCache(this.computerId);
+      return success;
+    } catch (err) {
+      Logger.error('StreamingSession', '退出远程应用出错:', err);
+      return false;
+    }
   }
 
   /**
@@ -903,9 +980,14 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     if (!this.nvHttp || !this.config) return;
     if (this.abrService) return;  // 已启动
 
-    this.abrService = new AdaptiveBitrateService(this.nvHttp);
-    await this.abrService.checkCapabilities();
-    await this.abrService.start(
+    const abrService = new AdaptiveBitrateService(this.nvHttp);
+    this.abrService = abrService;
+    await abrService.checkCapabilities();
+    if (this.userInitiatedStop || this.abrService !== abrService) {
+      await abrService.stop();
+      return;
+    }
+    await abrService.start(
       this.config.bitrate,
       this.userBitrateLimitKbps,
       mode,
@@ -919,6 +1001,9 @@ export class StreamingSession implements Ds5TouchpadInputSink {
         }
       }
     );
+    if (this.userInitiatedStop || this.abrService !== abrService) {
+      await abrService.stop();
+    }
   }
 
   /**
@@ -1369,7 +1454,8 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     }
     try {
       const decision = await BandwidthProbeService.getInstance().resolveInitialBitrate(
-        this.computerId, this.selectedAddress, this.config.bitrate, this.nvHttp);
+        this.computerId, this.selectedAddress, this.config.bitrate, this.nvHttp,
+        this.connectionPathInfo || undefined);
       this.config.bitrate = decision.bitrateKbps;
       Logger.info('StreamingSession', 'StreamingSession: 初始码率路径=' + decision.path + ', userLimit=' +
         decision.userLimitKbps.toString() + 'kbps, effective=' + decision.bitrateKbps.toString() +
@@ -1711,6 +1797,7 @@ export class StreamingSession implements Ds5TouchpadInputSink {
     }
 
     const brightnessRange = await this.resolveBrightnessRange(effectiveHdr);
+    if (this.userInitiatedStop) return;
 
     this.stats.hdrMode = effectiveHdr ? this.config.hdrMode : 0;
     this.stats.hdrBrightnessSource = effectiveHdr ? this.brightnessSource : 'static';
@@ -1752,16 +1839,19 @@ export class StreamingSession implements Ds5TouchpadInputSink {
             Logger.info('StreamingSession', `恢复会话成功, sessionUrl=${this.rtspSessionUrl}`);
             return;
           } catch (resumeErr) {
+            if (this.userInitiatedStop) return;
             Logger.warn('StreamingSession', `恢复失败: ${(resumeErr as Error).message}，尝试重新启动...`);
           }
         }
 
+        if (this.userInitiatedStop) return;
         Logger.info('StreamingSession', '正在退出当前运行的应用...');
         if (!(await this.nvHttp.quitApp())) {
           throw new Error('无法退出当前运行的应用，请在 PC 上手动退出');
         }
       }
 
+      if (this.userInitiatedStop) return;
       this.rtspSessionUrl = await this.nvHttp.launchApp(this.appId, launchConfig);
       Logger.info('StreamingSession', `应用启动成功, sessionUrl=${this.rtspSessionUrl}`);
     } catch (err) {

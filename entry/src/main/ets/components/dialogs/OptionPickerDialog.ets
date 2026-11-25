@@ -41,7 +41,7 @@ export interface SliderConfig {
   title: string;
   /** 滑块图标 */
   icon?: Resource;
-  /** 当前值 (0-100) */
+  /** 当前值 */
   value: number;
   /** 最小值 */
   min: number;
@@ -49,6 +49,8 @@ export interface SliderConfig {
   max: number;
   /** 步进 */
   step: number;
+  /** 显示单位（默认为 %，兼容原有单滑块弹窗） */
+  unit?: string;
   /** 值变化回调 */
   onChange: (value: number) => void;
 }
@@ -69,8 +71,10 @@ export interface OptionPickerDialogConfig {
   onSelect: (option: OptionItem) => void;
   /** 取消回调（可选）*/
   onCancel?: () => void;
-  /** 滑块配置（可选，显示在选项列表底部）*/
+  /** 单个滑块配置（可选，显示在选项列表顶部）*/
   sliderConfig?: SliderConfig;
+  /** 多个滑块配置；设置后优先于 sliderConfig */
+  sliderConfigs?: SliderConfig[];
   /** 选中后是否关闭弹窗（默认 true）*/
   closeOnSelect?: boolean;
   /** 选中后刷新选项列表（closeOnSelect=false 时使用）*/
@@ -91,29 +95,19 @@ export struct OptionPickerDialog {
   
   /** 内部响应式选项列表（支持实时刷新） */
   @State liveOptions: OptionItem[] = [];
-  /** 内部响应式滑块值 */
-  @State sliderValue: number = 0;
-  /** 是否显示滑块 */
-  @State showSlider: boolean = false;
-  /** 滑块标签 */
-  @State sliderTitle: string = '';
-  /** 滑块最小值 */
-  @State sliderMin: number = 0;
-  /** 滑块最大值 */
-  @State sliderMax: number = 100;
-  /** 滑块步进 */
-  @State sliderStep: number = 5;
+  /** 各滑块的响应式当前值 */
+  @State sliderValues: number[] = [];
+
+  private getSliderConfigs(): SliderConfig[] {
+    if (this.config.sliderConfigs) {
+      return this.config.sliderConfigs;
+    }
+    return this.config.sliderConfig ? [this.config.sliderConfig] : [];
+  }
   
   aboutToAppear(): void {
     this.liveOptions = [...this.config.options];
-    if (this.config.sliderConfig) {
-      this.sliderValue = this.config.sliderConfig.value;
-      this.sliderTitle = this.config.sliderConfig.title;
-      this.sliderMin = this.config.sliderConfig.min;
-      this.sliderMax = this.config.sliderConfig.max;
-      this.sliderStep = this.config.sliderConfig.step;
-      this.showSlider = true;
-    }
+    this.sliderValues = this.getSliderConfigs().map((slider: SliderConfig): number => slider.value);
   }
   
   build() {
@@ -164,6 +158,57 @@ export struct OptionPickerDialog {
       // 选项列表（使用响应式 liveOptions）
       Scroll() {
         Column() {
+          // 滑块区域（在选项列表顶部，滚动区域内）
+          if (this.getSliderConfigs().length > 0) {
+            Divider()
+              .strokeWidth(0.5)
+              .color(AppColors.Divider)
+              .margin({ top: AppSpacing.Small, bottom: AppSpacing.Small })
+
+            ForEach(this.getSliderConfigs(), (slider: SliderConfig, index: number) => {
+              Row() {
+                if (slider.icon) {
+                  Image(slider.icon)
+                    .width(20)
+                    .height(20)
+                    .fillColor(AppColors.TextPrimary)
+                    .margin({ right: AppSpacing.Small })
+                }
+                Text(slider.title)
+                  .fontSize(AppSizes.FontBody)
+                  .fontColor(AppColors.TextPrimary)
+                Blank()
+                Text(`${Math.round(this.sliderValues[index] ?? slider.value)}${slider.unit ?? '%'}`)
+                  .fontSize(AppSizes.FontBody)
+                  .fontColor(AppColors.Primary)
+                  .fontWeight(FontWeight.Medium)
+              }
+              .width('100%')
+              .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
+
+              Slider({
+                value: this.sliderValues[index] ?? slider.value,
+                min: slider.min,
+                max: slider.max,
+                step: slider.step,
+                style: SliderStyle.OutSet
+              })
+              .width('100%')
+              .blockColor(AppColors.Primary)
+              .trackColor(AppColors.Surface)
+              .selectedColor(AppColors.Primary)
+              .showSteps(false)
+              .showTips(false)
+              .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+              .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
+              .onChange((value: number) => {
+                const values = [...this.sliderValues];
+                values[index] = value;
+                this.sliderValues = values;
+                slider.onChange(value);
+              })
+            }, (slider: SliderConfig, index: number): string => `slider_${index}_${slider.title}`)
+          }
           ForEach(this.liveOptions, (option: OptionItem, index: number) => {
             Row() {
               // 复选框（当 checked 已定义时显示系统 Checkbox）
@@ -268,53 +313,7 @@ export struct OptionPickerDialog {
             })
           }, (option: OptionItem, index: number) => `option_${index}_${option.title}`)
           
-          // 滑块区域（在选项列表末尾，滚动区域内）
-          if (this.showSlider) {
-            Divider()
-              .strokeWidth(0.5)
-              .color(AppColors.Divider)
-              .margin({ top: AppSpacing.Small, bottom: AppSpacing.Small })
-            
-            Row() {
-              if (this.config.sliderConfig?.icon) {
-                Image(this.config.sliderConfig.icon)
-                  .width(20)
-                  .height(20)
-                  .fillColor(AppColors.TextPrimary)
-                  .margin({ right: AppSpacing.Small })
-              }
-              Text(this.sliderTitle)
-                .fontSize(AppSizes.FontBody)
-                .fontColor(AppColors.TextPrimary)
-              Blank()
-              Text(`${Math.round(this.sliderValue)}%`)
-                .fontSize(AppSizes.FontBody)
-                .fontColor(AppColors.Primary)
-                .fontWeight(FontWeight.Medium)
-            }
-            .width('100%')
-            .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
-            
-            Slider({
-              value: this.sliderValue,
-              min: this.sliderMin,
-              max: this.sliderMax,
-              step: this.sliderStep,
-              style: SliderStyle.OutSet
-            })
-              .width('100%')
-              .blockColor(AppColors.Primary)
-              .trackColor(AppColors.Surface)
-              .selectedColor(AppColors.Primary)
-              .showSteps(false)
-              .showTips(false)
-              .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
-              .padding({ left: AppSpacing.Medium, right: AppSpacing.Medium })
-              .onChange((value: number) => {
-                this.sliderValue = value;
-                this.config.sliderConfig?.onChange(value);
-              })
-          }
+
         }
         .width('100%')
       }

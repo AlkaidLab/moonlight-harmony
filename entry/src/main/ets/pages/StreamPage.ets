@@ -317,6 +317,7 @@ struct StreamPage {
   // 页面已销毁标志：startStreaming 异步链路在销毁后恢复时据此放弃启动，
   // 防止已销毁页面重新产生高刷请求
   private pageDisposed: boolean = false;
+  private clipboardStartGeneration: number = 0;
   private ds5TouchFadeTimers: Map<number, number> = new Map();
   
   // 页面参数
@@ -1723,28 +1724,23 @@ struct StreamPage {
     this.resetStreamFrameHints();
     const surfaceId = this.xComponentController.getXComponentSurfaceId();
 
-    const streamConfig = this.viewModel.streamConfig;
-    if (streamConfig && streamConfig.fps > 60) {
-      const displayHz = getDisplayRequestHz(streamConfig.fps);
-      try {
-        const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
-        this.xComponentFrameRequestActive = frameNode !== null && frameNode !== undefined &&
-          MoonBridge.setXComponentFrameRate(frameNode, displayHz);
-      } catch (e) {
-        Logger.warn('StreamPage', `XComponent 帧率请求不可用: ${e}`);
-      }
-      if (!this.xComponentFrameRequestActive && displayHz > 60) {
-        this.startStreamDisplaySync(displayHz);
-      }
-      try {
-        MoonBridge.setFrameRateKeepAlive(true, displayHz);
-      } catch (e) {
-        Logger.warn('StreamPage', `启用帧率请求失败: ${e}`);
-      }
-      this.startStreamFrameDiagnostics(displayHz);
-    }
+    const requestedFps = this.viewModel.streamConfig?.fps ?? 60;
+    const requestedWidth = this.viewModel.displayInfo.streamWidth;
+    const requestedHeight = this.viewModel.displayInfo.streamHeight;
+    this.configureStreamFrameHints();
 
     await this.viewModel.startStreaming(this.computerId, this.appId, surfaceId, this.context, this.displayGuid, this.useVdd);
+    // Startup may finish after the page has already released its frame-rate resources.
+    if (this.pageDisposed || this.viewModel.isStopping || this.streamExiting) return;
+    if ((this.viewModel.streamConfig?.fps ?? 60) !== requestedFps) {
+      this.resetStreamFrameHints();
+      this.configureStreamFrameHints();
+    }
+    if (this.viewModel.displayInfo.streamWidth !== requestedWidth ||
+      this.viewModel.displayInfo.streamHeight !== requestedHeight) {
+      await this.configureStreamWindow();
+      if (this.pageDisposed || this.viewModel.isStopping || this.streamExiting) return;
+    }
 
     // 将区域 DS5 触控板绑定到本次会话的 controller slot 0。
     this.touchInputHandler.setDs5TouchpadSink(this.viewModel.getSession());
@@ -1773,10 +1769,33 @@ struct StreamPage {
     this.requestStreamFocus();
   }
 
+  private configureStreamFrameHints(): void {
+    const streamConfig = this.viewModel.streamConfig;
+    if (!streamConfig || streamConfig.fps <= 60) return;
+    const displayHz = getDisplayRequestHz(streamConfig.fps);
+    try {
+      const frameNode = this.getUIContext().getFrameNodeById('streamSurface');
+      this.xComponentFrameRequestActive = frameNode !== null && frameNode !== undefined &&
+        MoonBridge.setXComponentFrameRate(frameNode, displayHz);
+    } catch (e) {
+      Logger.warn('StreamPage', `XComponent 帧率请求不可用: ${e}`);
+    }
+    if (!this.xComponentFrameRequestActive && displayHz > 60) {
+      this.startStreamDisplaySync(displayHz);
+    }
+    try {
+      MoonBridge.setFrameRateKeepAlive(true, displayHz);
+    } catch (e) {
+      Logger.warn('StreamPage', `启用帧率请求失败: ${e}`);
+    }
+    this.startStreamFrameDiagnostics(displayHz);
+  }
+
   async startStreaming(): Promise<void> {
     try {
       // 加载设置
-      await this.viewModel.loadSettings();
+      if (!(await this.viewModel.loadSettings())) return;
+      if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
       const savedDs5Zone = await PreferencesUtil.get<string>(
         SettingsKeys.DS5_TOUCHPAD_ZONE_RECT,
         TouchpadZoneGeometry.DEFAULT_ZONE_RECT
@@ -1804,14 +1823,17 @@ struct StreamPage {
 
       // 初始化自定义按键存储
       await this.customKeyManager?.init();
+      if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
 
       // 配置窗口（分辨率→全屏→方向→屏幕尺寸→XComponent 尺寸）
       await this.configureStreamWindow();
+      if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
 
       // 设置 HDR 高亮度（如果启用）
       const streamConfig = this.viewModel.streamConfig;
       if (streamConfig) {
         await this.windowManager?.setHdrBrightness(streamConfig.hdr, streamConfig.hdrHighBrightness);
+        if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
         // AIHDR 模式 (sdrToHdrMode===2)：启用系统 AI HDR 修饰器
         if (streamConfig.sdrToHdrMode === 2 && isAihdrSupported()) {
           const m = new AihdrModifier();
@@ -1843,12 +1865,14 @@ struct StreamPage {
 
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
+      if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
       this.streamStartedAtMs = Date.now();
 
       // 串流就绪后再做 AI 服务可用性探测，避免与启动链路抢带宽
       this.probeAiAvailableDeferred();
 
       await this.startClipboardSync();
+      if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
 
       // 超分辨率状态 Toast
       this.showUpscaleToast();
@@ -1856,6 +1880,10 @@ struct StreamPage {
       // 启动后台保活（AVSession + 长时任务），防止退到后台时进程被冻结
       if (this.enableBackgroundTask) {
         await this.lifecycleManager.startBackgroundTask(this.context, this.appName || undefined);
+        if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) {
+          await this.lifecycleManager.stopBackgroundTask();
+          return;
+        }
       }
 
       // 启动按键拦截器与修饰键自愈看门狗（开关与注入 API 检查在
@@ -2137,6 +2165,7 @@ struct StreamPage {
   }
 
   private stopClipboardSync(): void {
+    this.clipboardStartGeneration++;
     if (!this.clipboardSyncService) {
       return;
     }
@@ -2173,6 +2202,7 @@ struct StreamPage {
 
   private async startClipboardSync(): Promise<void> {
     this.stopClipboardSync();
+    const generation = this.clipboardStartGeneration;
 
     try {
       const enableClipboardSyncText = await PreferencesUtil.get(SettingsKeys.ENABLE_CLIPBOARD_SYNC_TEXT, false);
@@ -2181,7 +2211,9 @@ struct StreamPage {
         return;
       }
 
+      if (generation !== this.clipboardStartGeneration || this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
       const granted = await this.ensureClipboardPermissionGranted();
+      if (generation !== this.clipboardStartGeneration || this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
       if (!granted) {
         ToastQueue.show({ message: '未授予剪贴板权限，无法启用剪贴板同步', duration: 2000 });
         return;
@@ -2208,7 +2240,7 @@ struct StreamPage {
       this.clipboardSyncService.start();
     } catch (error) {
       Logger.error('StreamPage', 'Failed to initialize clipboard sync:', error);
-      this.stopClipboardSync();
+      if (generation === this.clipboardStartGeneration) this.stopClipboardSync();
     }
   }
 
@@ -2355,9 +2387,12 @@ struct StreamPage {
     if (!this.endStreamReportEnabled) {
       await this.lifecycleManager.stopBackgroundTask();
       await this.sendLockScreenShortcutBeforeDisconnect();
+      // Mark the quit in progress before navigation destroys the page, so
+      // dispose() does not start a competing stop that skips the host quit.
+      const quitPromise = this.viewModel.quitGame();
       await this.exitStreamAndReturn();
       this.runDetachedAsyncTask('后台退出游戏', async (): Promise<void> => {
-        await this.viewModel.quitGame();
+        await quitPromise;
         // teardown 完成后丢弃期间关闭浮层挂起的待恢复标记（退出串流不恢复）
         this.pendingHotkeyDialogRecovery = false;
         this.pendingHotkeyInterceptorStart = false;
@@ -2399,15 +2434,18 @@ struct StreamPage {
       this.touchInputHandler.setDs5TouchpadSink(null);
       this.touchInputHandler.setDs5TouchpadFeedbackCallback(null);
       await this.viewModel.stopStreaming();
+      if (this.pageDisposed || this.streamExiting) return;
       // stopStreaming() 等待期间可能重新收到触摸事件，启动新会话前再次清理。
       this.clearDs5TouchpadZoneVisualState();
       Logger.info('StreamPage', '[StreamPage] 旧会话已停止，开始重新连接...');
 
       // 重新配置窗口和尺寸（与初次连接共用同一流程，避免画面缩小/黑边）
       await this.configureStreamWindow();
+      if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
 
       // 获取 surfaceId → 设置帧率 → 启动串流
       await this.launchStream();
+      if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
       this.streamStartedAtMs = Date.now();
 
       // 连接终止时已停用键盘转发，重连成功后恢复（条件判断在 startKeyInterceptor
@@ -2426,6 +2464,7 @@ struct StreamPage {
       }
 
       await this.startClipboardSync();
+      if (this.pageDisposed || this.streamExiting || this.viewModel.isStopping) return;
       Logger.info('StreamPage', '[StreamPage] 重连串流成功');
 
       ToastQueue.show({ message: '已重新连接' });

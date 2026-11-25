@@ -151,9 +151,9 @@ export class BandwidthProbeService {
   }
 
   async resolveInitialBitrate(hostId: string, endpoint: string, configuredBitrateKbps: number,
-    nvHttp: NvHttp): Promise<InitialBitrateDecision> {
+    nvHttp: NvHttp, inspectedPath?: ConnectionPathInfo): Promise<InitialBitrateDecision> {
     const settings = await SettingsService.getInstance().getBandwidthProbeSettings();
-    const pathInfo = await ConnectionPathService.inspect(endpoint);
+    const pathInfo = inspectedPath || await ConnectionPathService.inspect(endpoint);
     let effective = configuredBitrateKbps;
     let measured = 0;
     let probeApplied = false;

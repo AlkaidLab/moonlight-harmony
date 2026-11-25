@@ -173,6 +173,9 @@ export class StreamViewModel {
   // 私有服务
   private settingsService: SettingsService = SettingsService.getInstance();
   private streamingSession: StreamingSession | null = null;
+  private startGeneration: number = 0;
+  private settingsLoadGeneration: number = 0;
+  private disposed: boolean = false;
   
   // 连接终止回调（由 StreamPage 设置）
   private connectionTerminatedCallback: ((errorCode: number) => void) | null = null;
@@ -230,10 +233,23 @@ export class StreamViewModel {
   /**
    * 加载设置
    */
-  async loadSettings(): Promise<void> {
-    this.streamConfig = await this.settingsService.getStreamConfig();
-    this.inputSettings = await this.settingsService.getInputSettings();
-    this.displaySettings = await this.settingsService.getDisplaySettings();
+  async loadSettings(): Promise<boolean> {
+    const generation = ++this.settingsLoadGeneration;
+    const startGeneration = this.startGeneration;
+    const streamConfig = await this.settingsService.getStreamConfig();
+    const inputSettings = await this.settingsService.getInputSettings();
+    const displaySettings = await this.settingsService.getDisplaySettings();
+    const lastTouchMode = await PreferencesUtil.get<string>(SettingsKeys.LAST_TOUCH_MODE, '');
+    let hasKeyboardOrMouse = false;
+    if (lastTouchMode !== 'trackpad' && lastTouchMode !== 'direct' && lastTouchMode !== 'mouse' &&
+      lastTouchMode !== 'ds5_touchpad' && lastTouchMode !== 'ds5_touchpad_zone' &&
+      !inputSettings.touchscreenTrackpad) {
+      hasKeyboardOrMouse = await this.detectKeyboardOrMouse();
+    }
+    if (this.disposed || generation !== this.settingsLoadGeneration || startGeneration !== this.startGeneration) return false;
+    this.streamConfig = streamConfig;
+    this.inputSettings = inputSettings;
+    this.displaySettings = displaySettings;
     
     // 更新 UI 显示选项
     this.showOverlay = this.displaySettings.enablePerfOverlay;
@@ -259,6 +275,12 @@ export class StreamViewModel {
     if (this.displaySettings.perfOverlayBgOpacity !== undefined) {
       this.overlayState.config.bgOpacity = this.displaySettings.perfOverlayBgOpacity;
     }
+    if (this.displaySettings.perfOverlayVerticalPadding !== undefined) {
+      this.overlayState.config.verticalPadding = this.displaySettings.perfOverlayVerticalPadding;
+    }
+    if (this.displaySettings.perfOverlayFontSize !== undefined) {
+      this.overlayState.config.fontSize = this.displaySettings.perfOverlayFontSize;
+    }
     
     // 更新串流尺寸
     this.displayInfo.streamWidth = this.streamConfig.width;
@@ -269,7 +291,6 @@ export class StreamViewModel {
     
     // 确定触摸模式
     // 优先使用用户在菜单中选择过的模式（持久化在 LAST_TOUCH_MODE）
-    const lastTouchMode = await PreferencesUtil.get<string>(SettingsKeys.LAST_TOUCH_MODE, '');
     if (lastTouchMode === 'trackpad') {
       this.touchMode = TouchMode.TRACKPAD;
     } else if (lastTouchMode === 'direct') {
@@ -290,7 +311,6 @@ export class StreamViewModel {
     } else {
       // 没有用户偏好时：检测是否有键盘/鼠标连接
       // 有键鼠 → 触控板模式(trackpad)，无键鼠 → 多点触控模式(direct)
-      const hasKeyboardOrMouse = await this.detectKeyboardOrMouse();
       this.touchMode = hasKeyboardOrMouse ? TouchMode.TRACKPAD : TouchMode.DIRECT;
     }
     
@@ -304,6 +324,7 @@ export class StreamViewModel {
       this.streamConfig.gameVibrationStrength,
       this.streamConfig.vibrationMode
     );
+    return true;
   }
   
   /**
@@ -317,6 +338,8 @@ export class StreamViewModel {
     displayGuid?: string,
     useVdd?: boolean
   ): Promise<void> {
+    if (this.disposed) return;
+    const generation = ++this.startGeneration;
     this.connectionState = StreamConnectionState.CONNECTING;
     this.isStopping = false;
     this.connectionProgress = 0;
@@ -324,7 +347,13 @@ export class StreamViewModel {
     this.errorMessage = '';
     
     try {
-      await this.loadSettings();
+      if (!(await this.loadSettings())) {
+        if (!this.disposed && generation === this.startGeneration) {
+          this.connectionState = StreamConnectionState.DISCONNECTED;
+        }
+        return;
+      }
+      if (this.disposed || generation !== this.startGeneration) return;
       
       // 初始化 actualHdr 状态为用户请求的 HDR 状态
       this.actualHdr = this.streamConfig?.hdr || false;
@@ -335,6 +364,7 @@ export class StreamViewModel {
       // 创建串流会话
       this.streamingSession = new StreamingSession();
       this.streamingSession.setDs5TouchpadEnabled(this.touchMode === TouchMode.DS5_TOUCHPAD_ZONE);
+      let serverResolutionReceived = false;
       
       // 设置 HDR 状态回调，当 drSetup 检测到实际 HDR 状态时更新 UI
       this.streamingSession.setHdrStateCallback((isHdr: boolean) => {
@@ -361,6 +391,7 @@ export class StreamViewModel {
       // 设置分辨率变化回调（服务端分辨率/旋转同步）
       this.streamingSession.setResolutionChangedCallback((width: number, height: number) => {
         Logger.info('StreamViewModel', `StreamViewModel: 服务端分辨率变化 ${width}x${height}`);
+        serverResolutionReceived = true;
         // 更新串流分辨率
         this.displayInfo.streamWidth = width;
         this.displayInfo.streamHeight = height;
@@ -438,11 +469,17 @@ export class StreamViewModel {
       this.connectionProgress = 0.05;
       this.connectionStageText = '正在获取服务器信息...';
       
-      await this.streamingSession.start(computerId, appId, this.streamConfig!, surfaceId, context, displayGuid, useVdd);
-      
+      await session.start(computerId, appId, this.streamConfig!, surfaceId, context, displayGuid, useVdd);
+      if (this.disposed || generation !== this.startGeneration || this.streamingSession !== session) return;
+
       // 同步实际使用的配置（可能与初始配置不同，例如 HDR 因设备不支持被禁用）
       const effectiveConfig = this.streamingSession.getEffectiveConfig();
       if (effectiveConfig) {
+        // 启动期间主机可能先上报新尺寸，避免用请求的尺寸覆盖上报结果。
+        if (!serverResolutionReceived) {
+          this.displayInfo.streamWidth = effectiveConfig.width;
+          this.displayInfo.streamHeight = effectiveConfig.height;
+        }
         // 更新关键配置项以确保 UI 显示正确
         if (this.streamConfig!.hdr !== effectiveConfig.hdr) {
           Logger.info('StreamViewModel', `StreamViewModel: HDR 状态同步 ${this.streamConfig!.hdr} -> ${effectiveConfig.hdr}`);
@@ -466,13 +503,16 @@ export class StreamViewModel {
 
       // 自动启动智能码率（如果用户在设置中启用了）
       const abrEnabled = await PreferencesUtil.get<boolean>(SettingsKeys.ADAPTIVE_BITRATE, false);
+      if (this.disposed || generation !== this.startGeneration || this.streamingSession !== session) return;
       if (abrEnabled) {
         const abrMode = await PreferencesUtil.get<string>(SettingsKeys.ABR_MODE, 'balanced');
+        if (this.disposed || generation !== this.startGeneration || this.streamingSession !== session) return;
         await this.startAbr(abrMode);
         Logger.info('StreamViewModel', `StreamViewModel: 智能码率已自动启动 (mode=${abrMode})`);
       }
       
     } catch (err) {
+      if (this.disposed || generation !== this.startGeneration) return;
       this.stopFirstFrameWatcher();
       this.connectionState = StreamConnectionState.ERROR;
       const error = err as Error;
@@ -485,6 +525,7 @@ export class StreamViewModel {
    * 停止串流
    */
   async stopStreaming(): Promise<void> {
+    const generation = ++this.startGeneration;
     this.isStopping = true;
 
     // 重置旋转状态
@@ -501,11 +542,13 @@ export class StreamViewModel {
     AppStorage.setOrCreate('connectionPoor', false);
     
     // 停止串流会话
-    if (this.streamingSession) {
-      await this.streamingSession.stop();
-      this.streamingSession = null;
+    const session = this.streamingSession;
+    if (session) {
+      await session.stop();
+      if (this.streamingSession === session) this.streamingSession = null;
     }
 
+    if (generation !== this.startGeneration) return;
     this.connectionState = StreamConnectionState.DISCONNECTED;
     this.isStopping = false;
   }
@@ -693,23 +736,26 @@ export class StreamViewModel {
    * 调用服务器 API 退出当前运行的游戏并停止串流
    */
   async quitGame(): Promise<void> {
+    const generation = ++this.startGeneration;
     this.isStopping = true;
 
     // 调用 StreamingSession 的 quitApp 方法退出远程游戏
     try {
-      if (this.streamingSession) {
-        const success = await this.streamingSession.quitApp();
+      const session = this.streamingSession;
+      if (session) {
+        const success = await session.quitApp();
         if (success) {
           Logger.info('StreamViewModel', '远程游戏已退出');
         } else {
           Logger.warn('StreamViewModel', '退出远程游戏失败，但已断开连接');
         }
-        this.streamingSession = null;
+        if (this.streamingSession === session) this.streamingSession = null;
       }
     } catch (err) {
       Logger.error('StreamViewModel', '退出游戏失败:', err);
     }
 
+    if (generation !== this.startGeneration) return;
     this.connectionState = StreamConnectionState.DISCONNECTED;
     this.isStopping = false;
   }
@@ -942,10 +988,13 @@ export class StreamViewModel {
    * 清理资源
    */
   dispose(): void {
+    this.disposed = true;
+    this.startGeneration++;
     this.resetRotationState();
-    if (this.streamingSession) {
-      this.streamingSession.stop();
-      this.streamingSession = null;
+    if (!this.isStopping) {
+      this.stopStreaming().catch((err: Error) => {
+        Logger.warn('StreamViewModel', '清理串流失败: ' + err.message);
+      });
     }
   }
 }

@@ -63,6 +63,7 @@ function loadArkTsModule(relativePath, bindings, exportNames) {
     .replace(/^import\s[\s\S]*?;\s*$/gm, '')
     // OHOS 编译期注解无运行时语义，装饰器也无法被类型擦除
     .replace(/^\s*@SuppressWarnings\(.*\)\s*$/gm, '')
+    .replace(/^\s*@Observed\s*$/gm, '')
     .replace(/^export\s+(?=(?:class|interface|const|function|type|enum)\s)/gm, ''));
   const context = vm.createContext({
     Error, console, setTimeout, clearTimeout, setInterval, clearInterval,

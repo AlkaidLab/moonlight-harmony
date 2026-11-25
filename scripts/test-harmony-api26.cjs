@@ -525,6 +525,9 @@ function sessionFixture(socketsAvailable = true) {
       },
       registerStreamingFlows() {}
     }) },
+    // Session startup also probes the path and applies optional remote settings.
+    ConnectionPathService: { inspect: async () => ({ path: 'lan' }) },
+    SettingsService: { getInstance: () => ({ applyRemoteStreamSettings: async () => false }) },
     MoonBridge: { getStreamSocketFds: () => socketsAvailable ? flows() : null }
   }, ['StreamingSession']);
   const session = Object.assign(Object.create(StreamingSession.prototype), {

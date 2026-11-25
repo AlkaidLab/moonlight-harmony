@@ -30,6 +30,7 @@ import {
 import { StreamViewModel } from '../viewmodel/StreamViewModel';
 import { PreferencesUtil } from '../utils/PreferencesUtil';
 import { SettingsKeys } from '../service/SettingsService';
+import { AppearanceSettingsWriter, OverlayAppearanceValues } from '../service/OverlayAppearanceSettings';
 
 /**
  * 点击检测阈值常量
@@ -73,6 +74,8 @@ export struct PerformanceOverlay {
   @State overlayScale: number = 1.0;
   @State isVertical: boolean = true;
   @State overlayBgOpacity: number = 0.53;
+  @State overlayVerticalPadding: number = 12;
+  @State overlayFontSize: number = 12;
   @State currentSnapPosition: SnapPosition = SnapPosition.TOP_RIGHT;
   @State overlayDragging: boolean = false;  // 拖动中显示全圆角
   
@@ -108,8 +111,12 @@ export struct PerformanceOverlay {
   
   // 弹窗控制器
   private settingsDialogController: CustomDialogController | null = null;
+  private appearanceSettingsWriter: AppearanceSettingsWriter | null = null;
+  private overlayVisible: boolean = false;
+  private appearanceWriterOwner: number = 0;
   
   aboutToAppear(): void {
+    this.overlayVisible = true;
     // 初始化位置和布局
     this.initPosition();
     
@@ -118,6 +125,25 @@ export struct PerformanceOverlay {
     
     // 初始化背景透明度
     this.overlayBgOpacity = this.viewModel.overlayState.config.bgOpacity;
+    this.overlayVerticalPadding = this.viewModel.overlayState.config.verticalPadding;
+    this.overlayFontSize = this.viewModel.overlayState.config.fontSize;
+    this.appearanceSettingsWriter = AppearanceSettingsWriter.getInstance();
+    this.appearanceWriterOwner = this.appearanceSettingsWriter.attach(
+      (saved: number): void => {
+        this.overlayVerticalPadding = saved;
+        this.viewModel.overlayState.config.verticalPadding = saved;
+        if (this.overlayVisible) this.showAppearanceSaveFailure();
+      },
+      (saved: number): void => {
+        this.overlayFontSize = saved;
+        this.viewModel.overlayState.config.fontSize = saved;
+        if (this.overlayVisible) this.showAppearanceSaveFailure();
+      }, (): void => {});
+    const appearance: OverlayAppearanceValues = this.appearanceSettingsWriter.snapshot();
+    this.overlayVerticalPadding = appearance.padding;
+    this.viewModel.overlayState.config.verticalPadding = appearance.padding;
+    this.overlayFontSize = appearance.fontSize;
+    this.viewModel.overlayState.config.fontSize = appearance.fontSize;
     
     // 同步启用项目列表（@State 数组驱动 UI）
     this.enabledItemsList = Array.from(this.viewModel.overlayState.config.enabledItems);
@@ -133,6 +159,8 @@ export struct PerformanceOverlay {
   }
   
   aboutToDisappear(): void {
+    this.overlayVisible = false;
+    this.appearanceSettingsWriter?.detach(this.appearanceWriterOwner);
     this.stopUpdateTimer();
     if (this.guideTimer !== -1) {
       clearTimeout(this.guideTimer);
@@ -187,6 +215,10 @@ export struct PerformanceOverlay {
     this.overlayX = snapPos.x;
     this.overlayY = snapPos.y;
     this.isVertical = this.viewModel.overlayState.config.isVertical;
+  }
+
+  private scaledFontSize(baseSize: number): number {
+    return baseSize * this.overlayFontSize / 12;
   }
   
   private startUpdateTimer(): void {
@@ -329,40 +361,40 @@ export struct PerformanceOverlay {
       // 四个刻度（12/3/6/9 点钟位置）
       ForEach([0, 90, 180, 270], (angle: number) => {
         Line()
-          .width(0.8)
-          .height(size * 0.13)
+          .width(this.scaledFontSize(0.8))
+          .height(this.scaledFontSize(size * 0.13))
           .backgroundColor('#80FFFFFF')
           .borderRadius(0.4)
-          .position({ x: size / 2 - 0.4, y: 0.5 })
-          .rotate({ angle: angle, centerX: '50%', centerY: size / 2 - 0.5 })
+          .position({ x: this.scaledFontSize(size / 2 - 0.4), y: this.scaledFontSize(0.5) })
+          .rotate({ angle: angle, centerX: '50%', centerY: this.scaledFontSize(size / 2 - 0.5) })
       })
       // 时针（短粗）
       Line()
-        .width(1.5)
-        .height(size * 0.28)
+        .width(this.scaledFontSize(1.5))
+        .height(this.scaledFontSize(size * 0.28))
         .backgroundColor('#FFFFFF')
         .borderRadius(1)
         .rotate({ angle: this.clockHourAngle, centerX: '50%', centerY: '100%' })
         .animation({ duration: 800, curve: Curve.EaseOut })
-        .position({ x: size / 2 - 0.75, y: size / 2 - size * 0.28 })
+        .position({ x: this.scaledFontSize(size / 2 - 0.75), y: this.scaledFontSize(size / 2 - size * 0.28) })
       // 分针（长细）
       Line()
-        .width(1)
-        .height(size * 0.4)
+        .width(this.scaledFontSize(1))
+        .height(this.scaledFontSize(size * 0.4))
         .backgroundColor('#FFFFFF')
         .borderRadius(0.5)
         .rotate({ angle: this.clockMinuteAngle, centerX: '50%', centerY: '100%' })
         .animation({ duration: 800, curve: Curve.EaseOut })
-        .position({ x: size / 2 - 0.5, y: size / 2 - size * 0.4 })
+        .position({ x: this.scaledFontSize(size / 2 - 0.5), y: this.scaledFontSize(size / 2 - size * 0.4) })
       // 中心点
       Circle()
-        .width(2)
-        .height(2)
+        .width(this.scaledFontSize(2))
+        .height(this.scaledFontSize(2))
         .fill('#FFFFFF')
-        .position({ x: size / 2 - 1, y: size / 2 - 1 })
+        .position({ x: this.scaledFontSize(size / 2 - 1), y: this.scaledFontSize(size / 2 - 1) })
     }
-    .width(size)
-    .height(size)
+    .width(this.scaledFontSize(size))
+    .height(this.scaledFontSize(size))
     .scale({ x: this.clockIconScale, y: this.clockIconScale })
     .animation({ duration: 200, curve: Curve.EaseOut })
   }
@@ -400,7 +432,9 @@ export struct PerformanceOverlay {
           this.HorizontalContent()
         }
       }
-      .padding(this.isVertical ? 12 : { left: 12, right: 12, top: 8, bottom: 8 })
+      .padding({ left: 12, right: 12, top: this.isVertical ? this.overlayVerticalPadding :
+        Math.max(0, this.overlayVerticalPadding - 4), bottom: this.isVertical ? this.overlayVerticalPadding :
+        Math.max(0, this.overlayVerticalPadding - 4) })
       .backgroundColor(`#${Math.round(this.overlayBgOpacity * 255).toString(16).padStart(2, '0')}161616`)
       .borderRadius(this.overlayDragging ? 12 : getSnapBorderRadius(this.currentSnapPosition, 12))
       .border({
@@ -512,8 +546,8 @@ export struct PerformanceOverlay {
   @Builder
   PerfIcon(res: Resource, size: number = 14, color: ResourceColor = '#FFFFFF') {
     Image(res)
-      .width(size)
-      .height(size)
+      .width(this.scaledFontSize(size))
+      .height(this.scaledFontSize(size))
       .fillColor(color)
   }
 
@@ -524,15 +558,20 @@ export struct PerformanceOverlay {
   @Builder
   BatteryIcon(size: number) {
     if (this.perfIsCharging) {
-      Image(PerfSymbols.CHARGING).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+      Image(PerfSymbols.CHARGING).width(this.scaledFontSize(size)).height(this.scaledFontSize(size))
+        .fillColor(getBatteryColor(this.perfBatteryLevel))
     } else if (this.perfBatteryLevel > 75) {
-      Image(PerfSymbols.BATTERY_FULL).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+      Image(PerfSymbols.BATTERY_FULL).width(this.scaledFontSize(size)).height(this.scaledFontSize(size))
+        .fillColor(getBatteryColor(this.perfBatteryLevel))
     } else if (this.perfBatteryLevel > 50) {
-      Image(PerfSymbols.BATTERY_MID).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+      Image(PerfSymbols.BATTERY_MID).width(this.scaledFontSize(size)).height(this.scaledFontSize(size))
+        .fillColor(getBatteryColor(this.perfBatteryLevel))
     } else if (this.perfBatteryLevel > 20) {
-      Image(PerfSymbols.BATTERY_LOW).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+      Image(PerfSymbols.BATTERY_LOW).width(this.scaledFontSize(size)).height(this.scaledFontSize(size))
+        .fillColor(getBatteryColor(this.perfBatteryLevel))
     } else {
-      Image(PerfSymbols.BATTERY_EMPTY).width(size).height(size).fillColor(getBatteryColor(this.perfBatteryLevel))
+      Image(PerfSymbols.BATTERY_EMPTY).width(this.scaledFontSize(size)).height(this.scaledFontSize(size))
+        .fillColor(getBatteryColor(this.perfBatteryLevel))
     }
   }
   
@@ -547,21 +586,21 @@ export struct PerformanceOverlay {
           this.MiniClock(14)
         } else {
           Text(getMoonPhaseIcon(this.overlayLocked))
-            .fontSize(13)
+            .fontSize(this.scaledFontSize(13))
             .fontWeight(FontWeight.Bold)
         }
         Text(` ${this.viewModel.displayInfo.streamWidth}x${this.viewModel.displayInfo.streamHeight}@${this.viewModel.streamConfig?.fps || 60}`)
-          .fontSize(12)
+          .fontSize(this.scaledFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor('#FFFFFF')
         if (this.perfUpscaleMode > 0) {
           Text(` ${this.perfUpscaleMode === 1 ? 'XEngine' : 'FSR1'}`)
-            .fontSize(11)
+            .fontSize(this.scaledFontSize(11))
             .fontWeight(FontWeight.Medium)
             .fontColor('#7CFC00')
         }
       }
-      .margin({ bottom: 4 })
+      .margin({ bottom: this.scaledFontSize(4) })
     }
 
     // 解码器行
@@ -569,25 +608,25 @@ export struct PerformanceOverlay {
       Row() {
         Text(getDecoderString(this.viewModel.actualCodec || 'HEVC', this.viewModel.actualHdr,
           this.viewModel.streamConfig?.hdrMode || 0, this.perfHdrVivid))
-          .fontSize(12)
+          .fontSize(this.scaledFontSize(12))
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
       }
-      .margin({ bottom: 4 })
+      .margin({ bottom: this.scaledFontSize(4) })
     }
 
     // FPS行
     if (this.enabledItemsList.includes(PerformanceItem.RENDER_FPS)) {
       Row() {
         Text(`Rx ${this.perfFps} / Rd ${this.perfRenderedFps}`)
-          .fontSize(12)
+          .fontSize(this.scaledFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor('#0DDAF4')
         Text(' FPS')
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontColor('#CCFFFFFF')
       }
-      .margin({ bottom: 4 })
+      .margin({ bottom: this.scaledFontSize(4) })
     }
 
     // 丢包行
@@ -595,14 +634,14 @@ export struct PerformanceOverlay {
       Row() {
         this.PerfIcon(PerfSymbols.PACKET_LOSS, 14, getPacketLossColor(this.perfPacketLoss))
         Text(` ${this.perfPacketLoss.toFixed(2)}`)
-          .fontSize(12)
+          .fontSize(this.scaledFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor(getPacketLossColor(this.perfPacketLoss))
         Text('%')
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontColor('#CCFFFFFF')
       }
-      .margin({ bottom: 4 })
+      .margin({ bottom: this.scaledFontSize(4) })
     }
 
     // 带宽行
@@ -610,11 +649,11 @@ export struct PerformanceOverlay {
       Row() {
         this.PerfIcon(PerfSymbols.BITRATE, 14, '#BCEDD3')
         Text(` ${formatDataRate(this.perfBitrate)}`)
-          .fontSize(12)
+          .fontSize(this.scaledFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor('#BCEDD3')
       }
-      .margin({ bottom: 4 })
+      .margin({ bottom: this.scaledFontSize(4) })
     }
 
     // 网络延迟行
@@ -623,35 +662,35 @@ export struct PerformanceOverlay {
         this.PerfIcon(PerfSymbols.NETWORK, 14,
           this.perfNetworkLatency < 0 ? '#64FFDA' : (this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50'))
         Text(this.perfNetworkLatency !== 0 ? ` ${this.perfNetworkLatency}` : ' N/A')
-          .fontSize(12)
+          .fontSize(this.scaledFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor(this.perfNetworkLatency < 0 ? '#64FFDA' : (this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50'))
         Text(' ms')
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontColor('#CCFFFFFF')
       }
-      .margin({ bottom: 4 })
+      .margin({ bottom: this.scaledFontSize(4) })
     }
 
     // 解码延迟行
     if (this.enabledItemsList.includes(PerformanceItem.DECODE_LATENCY)) {
       Row() {
         if (this.perfLatency >= 20) {
-          Text('🔥').fontSize(13)
+          Text('🔥').fontSize(this.scaledFontSize(13))
         } else if (this.perfLatency < 0) {
-          Text('❄️').fontSize(13)
+          Text('❄️').fontSize(this.scaledFontSize(13))
         } else {
           this.PerfIcon(PerfSymbols.DECODE_NORMAL, 14, getLatencyColor(this.perfLatency))
         }
         Text(` ${this.perfLatency.toFixed(2)}`)
-          .fontSize(12)
+          .fontSize(this.scaledFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor(getLatencyColor(this.perfLatency))
         Text(' ms')
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontColor('#CCFFFFFF')
       }
-      .margin({ bottom: 4 })
+      .margin({ bottom: this.scaledFontSize(4) })
     }
 
     // 主机延迟行
@@ -659,14 +698,14 @@ export struct PerformanceOverlay {
       Row() {
         this.PerfIcon(PerfSymbols.HOST, 14, this.perfHostLatency < 0 ? '#64FFDA' : '#009688')
         Text(this.perfHostLatency !== 0 ? ` ${this.perfHostLatency.toFixed(1)}` : ' N/A')
-          .fontSize(12)
+          .fontSize(this.scaledFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor(this.perfHostLatency < 0 ? '#64FFDA' : '#009688')
         Text(' ms')
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontColor('#CCFFFFFF')
       }
-      .margin({ bottom: 4 })
+      .margin({ bottom: this.scaledFontSize(4) })
     }
 
     // 电池行
@@ -674,11 +713,11 @@ export struct PerformanceOverlay {
       Row() {
         this.BatteryIcon(14)
         Text(` ${this.perfBatteryLevel}`)
-          .fontSize(12)
+          .fontSize(this.scaledFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor(getBatteryColor(this.perfBatteryLevel))
         Text('%')
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontColor('#CCFFFFFF')
       }
     }
@@ -695,16 +734,16 @@ export struct PerformanceOverlay {
           this.MiniClock(13)
         } else {
           Text(getMoonPhaseIcon(this.overlayLocked))
-            .fontSize(12)
+            .fontSize(this.scaledFontSize(12))
             .fontWeight(FontWeight.Bold)
         }
         Text(` ${this.viewModel.displayInfo.streamWidth}x${this.viewModel.displayInfo.streamHeight}@${this.viewModel.streamConfig?.fps || 60}`)
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontWeight(FontWeight.Medium)
           .fontColor('#FFFFFF')
         if (this.perfUpscaleMode > 0) {
           Text(` ${this.perfUpscaleMode === 1 ? 'XEngine' : 'FSR1'}`)
-            .fontSize(10)
+            .fontSize(this.scaledFontSize(10))
             .fontWeight(FontWeight.Medium)
             .fontColor('#7CFC00')
         }
@@ -715,7 +754,7 @@ export struct PerformanceOverlay {
       if (this.enabledItemsList.includes(PerformanceItem.DECODER)) {
         Text(getDecoderString(this.viewModel.actualCodec || 'HEVC', this.viewModel.actualHdr,
           this.viewModel.streamConfig?.hdrMode || 0, this.perfHdrVivid))
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
         if (this.hasNextItem(PerformanceItem.DECODER)) this.Separator()
@@ -724,11 +763,11 @@ export struct PerformanceOverlay {
       // FPS
       if (this.enabledItemsList.includes(PerformanceItem.RENDER_FPS)) {
         Text(`${this.perfFps}/${this.perfRenderedFps}`)
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontWeight(FontWeight.Medium)
           .fontColor('#0DDAF4')
         Text(' FPS')
-          .fontSize(10)
+          .fontSize(this.scaledFontSize(10))
           .fontColor('#CCFFFFFF')
         if (this.hasNextItem(PerformanceItem.RENDER_FPS)) this.Separator()
       }
@@ -737,7 +776,7 @@ export struct PerformanceOverlay {
       if (this.enabledItemsList.includes(PerformanceItem.PACKET_LOSS)) {
         this.PerfIcon(PerfSymbols.PACKET_LOSS, 13, getPacketLossColor(this.perfPacketLoss))
         Text(` ${this.perfPacketLoss.toFixed(1)}%`)
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontWeight(FontWeight.Medium)
           .fontColor(getPacketLossColor(this.perfPacketLoss))
         if (this.hasNextItem(PerformanceItem.PACKET_LOSS)) this.Separator()
@@ -747,7 +786,7 @@ export struct PerformanceOverlay {
       if (this.enabledItemsList.includes(PerformanceItem.BITRATE)) {
         this.PerfIcon(PerfSymbols.BITRATE, 13, '#BCEDD3')
         Text(` ${formatDataRate(this.perfBitrate)}`)
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontWeight(FontWeight.Medium)
           .fontColor('#BCEDD3')
         if (this.hasNextItem(PerformanceItem.BITRATE)) this.Separator()
@@ -758,7 +797,7 @@ export struct PerformanceOverlay {
         this.PerfIcon(PerfSymbols.NETWORK, 13,
           this.perfNetworkLatency < 0 ? '#64FFDA' : (this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50'))
         Text(this.perfNetworkLatency !== 0 ? ` ${this.perfNetworkLatency} ms` : ' N/A')
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontWeight(FontWeight.Medium)
           .fontColor(this.perfNetworkLatency < 0 ? '#64FFDA' : (this.perfNetworkLatency > 50 ? '#FFA726' : '#4CAF50'))
         if (this.hasNextItem(PerformanceItem.NETWORK_LATENCY)) this.Separator()
@@ -767,14 +806,14 @@ export struct PerformanceOverlay {
       // 解码延迟
       if (this.enabledItemsList.includes(PerformanceItem.DECODE_LATENCY)) {
         if (this.perfLatency >= 20) {
-          Text('🥵').fontSize(12)
+          Text('🥵').fontSize(this.scaledFontSize(12))
         } else if (this.perfLatency < 0) {
-          Text('❄️').fontSize(12)
+          Text('❄️').fontSize(this.scaledFontSize(12))
         } else {
           this.PerfIcon(PerfSymbols.DECODE_NORMAL, 13, getLatencyColor(this.perfLatency))
         }
         Text(` ${this.perfLatency.toFixed(1)} ms`)
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontWeight(FontWeight.Medium)
           .fontColor(getLatencyColor(this.perfLatency))
         if (this.hasNextItem(PerformanceItem.DECODE_LATENCY)) this.Separator()
@@ -784,7 +823,7 @@ export struct PerformanceOverlay {
       if (this.enabledItemsList.includes(PerformanceItem.HOST_LATENCY)) {
         this.PerfIcon(PerfSymbols.HOST, 13, this.perfHostLatency < 0 ? '#64FFDA' : '#009688')
         Text(this.perfHostLatency !== 0 ? ` ${this.perfHostLatency.toFixed(1)} ms` : ' N/A')
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontWeight(FontWeight.Medium)
           .fontColor(this.perfHostLatency < 0 ? '#64FFDA' : '#009688')
         if (this.hasNextItem(PerformanceItem.HOST_LATENCY)) this.Separator()
@@ -794,7 +833,7 @@ export struct PerformanceOverlay {
       if (this.enabledItemsList.includes(PerformanceItem.BATTERY)) {
         this.BatteryIcon(13)
         Text(` ${this.perfBatteryLevel}%`)
-          .fontSize(11)
+          .fontSize(this.scaledFontSize(11))
           .fontWeight(FontWeight.Medium)
           .fontColor(getBatteryColor(this.perfBatteryLevel))
       }
@@ -804,7 +843,7 @@ export struct PerformanceOverlay {
   @Builder
   Separator() {
     Text('  |  ')
-      .fontSize(11)
+      .fontSize(this.scaledFontSize(11))
       .fontColor('#66FFFFFF')
   }
   
@@ -1037,26 +1076,50 @@ export struct PerformanceOverlay {
    */
   private showSettingsDialog(perfData: PerformanceData): void {
     const allItems = PerformanceOverlay.ALL_ITEMS;
-    const currentPercent = Math.round(this.overlayBgOpacity * 100);
+    const currentPercent = 100 - Math.round(this.overlayBgOpacity * 100);
 
-    const sliderCfg: SliderConfig = {
-      title: '背景透明度',
-      icon: $r('app.media.perf_opacity'),
-      value: currentPercent,
-      min: 0,
-      max: 100,
-      step: 5,
-      onChange: (value: number) => {
-        this.updateBgOpacity(value / 100);
+    const sliderConfigs: SliderConfig[] = [
+      {
+        title: '上下黑边',
+        value: this.overlayVerticalPadding,
+        min: 0,
+        max: 32,
+        step: 1,
+        unit: ' vp',
+        onChange: (value: number) => {
+          this.updateVerticalPadding(value);
+        }
+      },
+      {
+        title: '字体大小',
+        value: this.overlayFontSize,
+        min: 8,
+        max: 24,
+        step: 1,
+        unit: ' fp',
+        onChange: (value: number) => {
+          this.updateFontSize(value);
+        }
+      },
+      {
+        title: '背景透明度',
+        icon: $r('app.media.perf_opacity'),
+        value: currentPercent,
+        min: 0,
+        max: 100,
+        step: 1,
+        onChange: (value: number) => {
+          this.updateBgOpacity(1 - value / 100);
+        }
       }
-    };
+    ];
 
     const config: OptionPickerDialogConfig = {
       title: '性能覆盖层',
-      subtitle: '单击设置显示/隐藏项目，拖动调整位置，双击切换布局，长按锁定事件穿透',
+      subtitle: '调整大小与透明度，单击设置显示项目；拖动定位，双击切换布局，长按锁定',
       options: this.buildSettingsOptions(),
       selectedValue: '',
-      sliderConfig: sliderCfg,
+      sliderConfigs: sliderConfigs,
       closeOnSelect: false,
       refreshOptions: (): OptionItem[] => {
         return this.buildSettingsOptions();
@@ -1109,5 +1172,23 @@ export struct PerformanceOverlay {
     this.overlayBgOpacity = value;
     this.viewModel.overlayState.config.bgOpacity = value;
     PreferencesUtil.put(SettingsKeys.PERF_OVERLAY_BG_OPACITY, value).catch(() => {});
+  }
+
+  private updateVerticalPadding(value: number): void {
+    this.overlayVerticalPadding = value;
+    this.viewModel.overlayState.config.verticalPadding = value;
+    this.appearanceSettingsWriter?.savePadding(value);
+  }
+
+  private updateFontSize(value: number): void {
+    this.overlayFontSize = value;
+    this.viewModel.overlayState.config.fontSize = value;
+    this.appearanceSettingsWriter?.saveFontSize(value);
+  }
+
+  private showAppearanceSaveFailure(): void {
+    // The dialog keeps its own slider values; close it to avoid displaying a stale value.
+    this.settingsDialogController?.close();
+    ToastQueue.show({ message: '覆盖层设置保存失败，请重新调整', duration: 2500 });
   }
 }
